@@ -109,6 +109,9 @@ type Daemon struct {
 	// Agent binary version cache for self-update endpoint
 	agentVersionCache *agentVersionCache
 
+	// Agent binary manifest: platform/arch → binary metadata for multi-platform deployment
+	agentManifest *AgentManifest
+
 	// Log shipper: tails journald and ships batches to Central Command
 	logShipper *logshipper.Shipper
 
@@ -350,6 +353,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Initialize agent version cache (used by both HTTP file server and gRPC heartbeat)
 	agentDir := filepath.Join(d.config.StateDir, "agent")
 	d.agentVersionCache = newAgentVersionCache(agentDir)
+
+	// Initialize agent binary manifest (multi-platform binary tracking).
+	// ScanDirectory auto-detects binaries from filename conventions; idempotent.
+	d.agentManifest = NewAgentManifest(d.config.StateDir)
+	binDir := filepath.Join(d.config.StateDir, "bin")
+	if err := d.agentManifest.ScanDirectory(binDir); err != nil {
+		log.Printf("[daemon] Agent manifest scan failed: %v", err)
+	} else {
+		log.Printf("[daemon] Agent manifest: %d binaries registered", d.agentManifest.Count())
+	}
 
 	// Start HTTP file server for agent binary distribution.
 	// Domain controllers download the agent binary via Invoke-WebRequest

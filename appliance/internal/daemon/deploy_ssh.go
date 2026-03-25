@@ -31,10 +31,14 @@ func (d *Daemon) deployViaSSH(ctx context.Context, deploy PendingDeploy, siteID 
 		target.Password = &password
 	}
 
-	// Get the local binary path
-	binaryPath, err := d.getLocalBinaryPath(deploy.OSType)
+	// Get the agent binary via manifest-based lookup (with fallback to legacy path).
+	// PendingDeploy doesn't carry OS version, so we pass empty and let the manifest
+	// skip version-compatibility checks (best effort).
+	platform := NormalizeOSType(deploy.OSType)
+	arch := InferArch(platform, "")
+	binaryPath, binaryMeta, err := d.getAgentBinary(platform, arch, "")
 	if err != nil {
-		return fmt.Errorf("get local binary: %w", err)
+		return fmt.Errorf("get agent binary: %w", err)
 	}
 
 	// Read the binary from disk
@@ -43,7 +47,12 @@ func (d *Daemon) deployViaSSH(ctx context.Context, deploy PendingDeploy, siteID 
 		return fmt.Errorf("read binary %s: %w", binaryPath, err)
 	}
 
-	log.Printf("[deploy-ssh] Uploading agent binary (%d bytes) to %s (%s)", len(binaryData), deploy.Hostname, deploy.OSType)
+	version := "unknown"
+	if binaryMeta != nil {
+		version = binaryMeta.Version
+	}
+	log.Printf("[deploy-ssh] Uploading agent binary v%s (%d bytes) to %s (%s/%s)",
+		version, len(binaryData), deploy.Hostname, platform, arch)
 
 	// Upload via base64-chunked transfer over SSH
 	if err := d.uploadBinarySSH(ctx, target, binaryData); err != nil {
@@ -269,9 +278,38 @@ echo "UNINSTALL_SUCCESS"
 	}
 }
 
+// getAgentBinary finds the agent binary for the given platform, arch, and OS version.
+// It first consults the agent manifest for a compatible binary. If no manifest is
+// available (nil or empty), it falls back to the legacy hardcoded path convention.
+// Returns the file path, optional binary metadata, and any error.
+func (d *Daemon) getAgentBinary(platform, arch, osVersion string) (string, *AgentBinary, error) {
+	binDir := filepath.Join(d.config.StateDir, "bin")
+
+	// Try manifest-based lookup first.
+	if d.agentManifest != nil {
+		if entry := d.agentManifest.LookupCompatible(platform, arch, osVersion); entry != nil {
+			path := filepath.Join(binDir, entry.Filename)
+			if _, err := os.Stat(path); err == nil {
+				return path, entry, nil
+			}
+			// Binary listed in manifest but missing on disk — fall through to legacy.
+			log.Printf("[deploy-ssh] Manifest entry %s/%s points to missing file %s, trying fallback",
+				platform, arch, entry.Filename)
+		}
+	}
+
+	// Legacy fallback: hardcoded binary name convention.
+	path, err := d.getLocalBinaryPath(legacyOSType(platform))
+	if err != nil {
+		return path, nil, err
+	}
+	return path, nil, nil
+}
+
 // getLocalBinaryPath returns the path to the cached agent binary for the given OS type.
 // Returns the path (even if the file is missing) alongside any error, so callers
 // can include the expected path in diagnostics.
+// Preserved for backward compatibility — new code should use getAgentBinary.
 func (d *Daemon) getLocalBinaryPath(osType string) (string, error) {
 	var binaryName string
 	switch osType {
@@ -288,6 +326,17 @@ func (d *Daemon) getLocalBinaryPath(osType string) (string, error) {
 		return path, fmt.Errorf("agent binary not found at %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// legacyOSType converts a normalized platform name back to the legacy osType
+// strings used by getLocalBinaryPath.
+func legacyOSType(platform string) string {
+	switch platform {
+	case "darwin":
+		return "macos"
+	default:
+		return platform
+	}
 }
 
 // handleRemoveAgent handles a "remove_agent" fleet order.

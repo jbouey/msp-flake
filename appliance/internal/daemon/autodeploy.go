@@ -205,14 +205,22 @@ func deployPriority(d PendingDeploy) int {
 }
 
 // ensureLocalBinary downloads the agent binary for the given OS type if it is
-// not already cached on disk. The cache path is determined by getLocalBinaryPath.
+// not already cached on disk. Checks manifest first, then falls back to
+// getLocalBinaryPath for the legacy path convention.
 func (a *autoDeployer) ensureLocalBinary(ctx context.Context, osType string) error {
-	path, err := a.daemon.getLocalBinaryPath(osType)
-	if err == nil {
-		// getLocalBinaryPath already stat-checks the file; no error means it exists
-		return nil
+	// Try manifest-based lookup first.
+	platform := NormalizeOSType(osType)
+	arch := InferArch(platform, "")
+	if _, _, err := a.daemon.getAgentBinary(platform, arch, ""); err == nil {
+		return nil // binary exists on disk
 	}
-	// path is still set even when the file is missing — use it as the target
+
+	// Binary missing — download from Central Command using legacy path.
+	path, _ := a.daemon.getLocalBinaryPath(osType)
+	if path == "" {
+		// getLocalBinaryPath returns "" for unknown OS types
+		path = filepath.Join(a.svc.Config.StateDir, "bin", fmt.Sprintf("osiris-agent-%s-%s", platform, arch))
+	}
 
 	// Download from Central Command
 	apiEndpoint := a.svc.Config.APIEndpoint
@@ -255,6 +263,14 @@ func (a *autoDeployer) ensureLocalBinary(ctx context.Context, osType string) err
 	}
 
 	log.Printf("[autodeploy] Cached agent binary at %s", path)
+
+	// Re-scan the bin directory so the manifest picks up the new binary.
+	if a.daemon.agentManifest != nil {
+		if err := a.daemon.agentManifest.ScanDirectory(filepath.Dir(path)); err != nil {
+			log.Printf("[autodeploy] Manifest re-scan after download: %v", err)
+		}
+	}
+
 	return nil
 }
 
