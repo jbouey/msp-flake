@@ -392,6 +392,10 @@ func (d *Daemon) isKnownTarget(hostname, platform string) bool {
 				return true
 			}
 		}
+		// Also check gRPC agent registry — connected agents are known targets
+		if d.registry != nil && d.registry.HasAgentForHost(hostname) {
+			return true
+		}
 		return false
 
 	default:
