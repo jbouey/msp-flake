@@ -3990,6 +3990,43 @@ async def get_drift_config(
     return {"site_id": site_id, "checks": checks}
 
 
+# Critical checks that cannot be disabled — disabling these breaks compliance monitoring
+CRITICAL_DRIFT_CHECKS = {"firewall_status", "windows_defender", "audit_logging", "bitlocker_status"}
+
+
+def _validate_drift_config_checks(checks):
+    """Validate drift config safety bounds.
+
+    Prevents partners/clients from:
+    1. Disabling ALL checks (at least 1 must remain enabled)
+    2. Disabling critical compliance checks (firewall, defender, audit, bitlocker)
+    """
+    # Works with both DriftCheckItem objects and plain dicts
+    enabled_count = 0
+    blocked_critical = []
+    for item in checks:
+        check_type = item.check_type if hasattr(item, "check_type") else item.get("check_type", "")
+        enabled = item.enabled if hasattr(item, "enabled") else item.get("enabled", True)
+
+        if enabled:
+            enabled_count += 1
+        elif check_type in CRITICAL_DRIFT_CHECKS:
+            blocked_critical.append(check_type)
+
+    if blocked_critical:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot disable critical compliance checks: {', '.join(sorted(blocked_critical))}. "
+            f"These checks are required for HIPAA compliance monitoring.",
+        )
+
+    if enabled_count < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="At least 1 drift check must remain enabled. Disabling all checks removes compliance monitoring.",
+        )
+
+
 class DriftCheckItem(BaseModel):
     check_type: str
     enabled: bool
@@ -4007,6 +4044,10 @@ async def update_drift_config(
 ):
     """Upsert drift scan configuration for a site."""
     await check_site_access_pool(user, site_id)
+
+    # Safety bounds: prevent partners/clients from breaking compliance monitoring
+    _validate_drift_config_checks(body.checks)
+
     from .fleet import get_pool
     pool = await get_pool()
     async with admin_connection(pool) as conn:

@@ -47,6 +47,22 @@ const (
 	driftScanInterval = 15 * time.Minute // How often to scan all targets
 )
 
+// clampScanInterval enforces safety bounds on scan intervals.
+// Prevents misconfiguration from setting intervals too low (DoS) or too high (stale data).
+func clampScanInterval(d time.Duration) time.Duration {
+	const minInterval = 5 * time.Minute  // 300 seconds
+	const maxInterval = 1 * time.Hour    // 3600 seconds
+	if d < minInterval {
+		log.Printf("[driftscan] Scan interval %v clamped to minimum %v", d, minInterval)
+		return minInterval
+	}
+	if d > maxInterval {
+		log.Printf("[driftscan] Scan interval %v clamped to maximum %v", d, maxInterval)
+		return maxInterval
+	}
+	return d
+}
+
 // driftScanner periodically checks Windows and Linux targets for security drift.
 // Windows: firewall disabled, Defender stopped, rogue users, rogue scheduled tasks,
 // critical services stopped, BitLocker, SMB signing, etc.
@@ -149,7 +165,7 @@ func (ds *driftScanner) runDriftScanIfNeeded(ctx context.Context) {
 	first := ds.lastScanTime.IsZero()
 	ds.mu.Unlock()
 
-	if !first && since < driftScanInterval {
+	if !first && since < clampScanInterval(driftScanInterval) {
 		return
 	}
 
@@ -1437,7 +1453,7 @@ func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
 	first := ds.lastLinuxScanTime.IsZero()
 	ds.linuxMu.Unlock()
 
-	if !first && since < driftScanInterval {
+	if !first && since < clampScanInterval(driftScanInterval) {
 		return
 	}
 

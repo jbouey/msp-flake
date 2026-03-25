@@ -254,9 +254,18 @@ func (s *servicer) Register(_ context.Context, req *pb.RegisterRequest) (*pb.Reg
 		enabledChecks = nil // Linux agent uses its own defaults
 	}
 
+	// Safety bounds: clamp check interval to 60-3600 seconds
+	interval := int32(300) // 5 min default
+	if interval < 60 {
+		interval = 60
+	}
+	if interval > 3600 {
+		interval = 3600
+	}
+
 	return &pb.RegisterResponse{
 		AgentId:              agentID,
-		CheckIntervalSeconds: 300,
+		CheckIntervalSeconds: interval,
 		EnabledChecks:        enabledChecks,
 		CapabilityTier: pb.CapabilityTier_MONITOR_ONLY,
 		CheckConfig:    map[string]string{},

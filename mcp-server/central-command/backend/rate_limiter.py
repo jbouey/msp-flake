@@ -24,9 +24,20 @@ class RateLimiter:
         requests_per_hour: int = 1000,
         burst_limit: int = 10,
     ):
-        self.requests_per_minute = requests_per_minute
-        self.requests_per_hour = requests_per_hour
-        self.burst_limit = burst_limit
+        # Safety bounds: clamp to sane ranges to prevent misconfiguration
+        self.requests_per_minute = max(1, min(requests_per_minute, 100000))
+        self.requests_per_hour = max(1, min(requests_per_hour, 1000000))
+        self.burst_limit = max(1, min(burst_limit, 1000))
+
+        if (self.requests_per_minute != requests_per_minute
+                or self.requests_per_hour != requests_per_hour
+                or self.burst_limit != burst_limit):
+            logger.warning(
+                "Rate limiter bounds clamped: rpm=%d->%d, rph=%d->%d, burst=%d->%d",
+                requests_per_minute, self.requests_per_minute,
+                requests_per_hour, self.requests_per_hour,
+                burst_limit, self.burst_limit,
+            )
 
         # Storage: {client_key: [(timestamp, count), ...]}
         self._minute_windows: Dict[str, list] = defaultdict(list)

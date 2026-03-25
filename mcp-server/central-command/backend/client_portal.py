@@ -1166,6 +1166,11 @@ async def update_client_drift_config(site_id: str, body: dict, user: dict = Depe
             raise HTTPException(status_code=404, detail="Site not found")
 
         checks = body.get("checks", [])
+
+        # Safety bounds: prevent disabling all checks or critical checks
+        from .routes import _validate_drift_config_checks
+        _validate_drift_config_checks(checks)
+
         async with conn.transaction():
             for item in checks:
                 await conn.execute("""

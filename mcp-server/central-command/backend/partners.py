@@ -579,6 +579,16 @@ async def update_partner_org_drift_config(
     if not isinstance(disabled_checks, list):
         raise HTTPException(status_code=400, detail="disabled_checks must be a list")
 
+    # Safety bounds: prevent disabling critical compliance checks
+    from .routes import CRITICAL_DRIFT_CHECKS
+    blocked = [c for c in disabled_checks if c in CRITICAL_DRIFT_CHECKS]
+    if blocked:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot disable critical compliance checks: {', '.join(sorted(blocked))}. "
+            f"These checks are required for HIPAA compliance monitoring.",
+        )
+
     async with admin_connection(pool) as conn:
         # Verify partner owns this org
         org = await conn.fetchrow(
@@ -2028,6 +2038,11 @@ async def update_partner_drift_config(site_id: str, body: dict, partner=Depends(
             raise HTTPException(status_code=404, detail="Site not found")
 
         checks = body.get("checks", [])
+
+        # Safety bounds: prevent disabling all checks or critical checks
+        from .routes import _validate_drift_config_checks
+        _validate_drift_config_checks(checks)
+
         async with conn.transaction():
             for item in checks:
                 await conn.execute("""
