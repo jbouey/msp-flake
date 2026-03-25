@@ -363,16 +363,22 @@ func (s *servicer) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*pb.H
 		PendingCommands: pending,
 	}
 
-	// Check if agent needs an update
+	// Check if agent needs an update.
+	// Only offer updates to Windows agents — the cached binary is osiris-agent.exe.
+	// macOS/Linux agents need platform-specific binaries served via the manifest.
 	if s.agentVersion != nil && req.AgentVersion != "" {
-		ver, sha, url, ok := s.agentVersion.CurrentAgentVersion()
-		if ok && ver != "" && ver != req.AgentVersion {
-			resp.UpdateAvailable = true
-			resp.UpdateVersion = ver
-			resp.UpdateUrl = url
-			resp.UpdateSha256 = sha
-			log.Printf("[gRPC] Agent %s running v%s, update v%s available",
-				req.AgentId, req.AgentVersion, ver)
+		agent := s.registry.GetAgent(req.AgentId)
+		isWindows := agent == nil || agent.OSType() == "windows" || agent.OSType() == ""
+		if isWindows {
+			ver, sha, url, ok := s.agentVersion.CurrentAgentVersion()
+			if ok && ver != "" && ver != req.AgentVersion {
+				resp.UpdateAvailable = true
+				resp.UpdateVersion = ver
+				resp.UpdateUrl = url
+				resp.UpdateSha256 = sha
+				log.Printf("[gRPC] Agent %s running v%s, update v%s available",
+					req.AgentId, req.AgentVersion, ver)
+			}
 		}
 	}
 
