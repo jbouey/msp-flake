@@ -522,6 +522,18 @@ async def promote_pattern_in_db(db: AsyncSession, pattern_id: str) -> Optional[s
             "runbook_id": pattern.runbook_id,
         })
 
+        # Cross-site learning: create a synced version available to all appliances
+        synced_rule_id = f"SYNC-{rule_id}"
+        await db.execute(text("""
+            INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled, source)
+            VALUES (:rule_id, :pattern, :runbook_id, 0.9, true, true, 'synced')
+            ON CONFLICT (rule_id) DO NOTHING
+        """), {
+            "rule_id": synced_rule_id,
+            "pattern": _json.dumps({"incident_type": pattern.incident_type}),
+            "runbook_id": pattern.runbook_id,
+        })
+
         # Update pattern status
         await db.execute(text("""
             UPDATE patterns

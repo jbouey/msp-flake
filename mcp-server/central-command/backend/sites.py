@@ -718,7 +718,8 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
             SELECT s.clinic_name, s.contact_name, s.contact_email, s.contact_phone,
                    s.address, s.notes, s.tier, s.onboarding_stage, s.healing_tier,
                    s.client_org_id, co.name as org_name,
-                   s.wg_ip, s.wg_connected_at
+                   s.wg_ip, s.wg_connected_at,
+                   s.maintenance_until, s.maintenance_reason, s.maintenance_set_by
             FROM sites s
             LEFT JOIN client_orgs co ON co.id = s.client_org_id
             WHERE s.site_id = $1
@@ -790,6 +791,9 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
             'org_name': site_row['org_name'] if site_row else None,
             'wg_ip': site_row['wg_ip'] if site_row else None,
             'wg_connected_at': site_row['wg_connected_at'].isoformat() if site_row and site_row['wg_connected_at'] else None,
+            'maintenance_until': site_row['maintenance_until'].isoformat() if site_row and site_row['maintenance_until'] and site_row['maintenance_until'] > datetime.now(timezone.utc) else None,
+            'maintenance_reason': site_row['maintenance_reason'] if site_row and site_row['maintenance_until'] and site_row['maintenance_until'] > datetime.now(timezone.utc) else None,
+            'maintenance_set_by': site_row['maintenance_set_by'] if site_row and site_row['maintenance_until'] and site_row['maintenance_until'] > datetime.now(timezone.utc) else None,
             'appliances': appliances,
             'credentials': credentials,
             'stale_credentials_count': stale_credentials_count,
@@ -2828,6 +2832,19 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         except Exception as e:
             logger.warning(f"Checkin {checkin.site_id}: drift config lookup failed: {e}")
 
+        # === STEP 6c: Get maintenance window (if active) ===
+        maintenance_until = None
+        try:
+            async with conn.transaction():
+                maint_row = await conn.fetchval("""
+                    SELECT maintenance_until FROM sites
+                    WHERE site_id = $1 AND maintenance_until > NOW()
+                """, checkin.site_id)
+                if maint_row:
+                    maintenance_until = maint_row.isoformat()
+        except Exception as e:
+            logger.warning(f"Checkin {checkin.site_id}: maintenance window lookup failed: {e}")
+
         # === STEP 7: Check for enumeration/scan triggers (zero-friction deployment) ===
         trigger_enumeration = False
         trigger_immediate_scan = False
@@ -2969,11 +2986,16 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
         "encrypted_credentials": encrypted_credentials,
         "enabled_runbooks": enabled_runbooks,
         "disabled_checks": disabled_checks,
+        "maintenance_until": maintenance_until,
         "trigger_enumeration": trigger_enumeration,
         "trigger_immediate_scan": trigger_immediate_scan,
         "billing_hold": billing_hold,
         "billing_status": billing_status,
         "pending_deploys": pending_deploys,
+        # L2 confidence threshold: daemon uses this to gate auto-execution.
+        # Default 0.8 for production safety (higher than the 0.6 hardcoded in daemon).
+        # Will be made per-site configurable via site_drift_config in a future update.
+        "l2_confidence_threshold": 0.8,
     }
 
 

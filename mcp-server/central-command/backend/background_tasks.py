@@ -461,8 +461,12 @@ async def flywheel_promotion_loop():
                     logger.debug(f"Platform auto-promotion: {e}")
                     await db.rollback()
 
-                # Step 5: Post-promotion health monitoring
+                # Step 5: Post-promotion health monitoring (canary → rollout)
+                # Promoted rules start site-specific (source='promoted').
+                # After 48h with >70% success and 3+ executions → promote to 'synced' (fleet-wide).
+                # After 48h with <70% success → disable (protects against bad promotions).
                 try:
+                    # 5a: Disable degraded promoted rules (<70% success after 48h)
                     degraded = await db.execute(text("""
                         UPDATE l1_rules SET enabled = false
                         WHERE source = 'promoted'
@@ -488,6 +492,36 @@ async def flywheel_promotion_loop():
                         for row in auto_disabled:
                             logger.warning(
                                 "Promoted rule auto-disabled (success rate < 70%)",
+                                rule_id=row[0],
+                            )
+
+                    # 5b: Graduate successful promoted rules to 'synced' (>70% success after 48h)
+                    # This is the canary → rollout transition: proven rules become fleet-wide
+                    graduated = await db.execute(text("""
+                        UPDATE l1_rules SET source = 'synced'
+                        WHERE source = 'promoted'
+                          AND enabled = true
+                          AND created_at < NOW() - INTERVAL '48 hours'
+                          AND rule_id IN (
+                              SELECT r.rule_id FROM l1_rules r
+                              JOIN execution_telemetry et
+                                ON et.runbook_id = r.runbook_id
+                                AND et.created_at > r.created_at
+                              WHERE r.source = 'promoted'
+                                AND r.enabled = true
+                                AND r.created_at < NOW() - INTERVAL '48 hours'
+                              GROUP BY r.rule_id
+                              HAVING COUNT(*) >= 3
+                                AND SUM(CASE WHEN et.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*) >= 0.70
+                          )
+                        RETURNING rule_id
+                    """))
+                    auto_graduated = graduated.fetchall()
+                    await db.commit()
+                    if auto_graduated:
+                        for row in auto_graduated:
+                            logger.info(
+                                "Promoted rule graduated to synced (canary success)",
                                 rule_id=row[0],
                             )
                 except Exception as e:

@@ -2054,6 +2054,79 @@ async def update_partner_drift_config(site_id: str, body: dict, partner=Depends(
     return {"status": "ok", "site_id": site_id, "updated": len(checks)}
 
 
+# =============================================================================
+# MAINTENANCE MODE (partner-scoped)
+# =============================================================================
+
+class PartnerMaintenanceRequest(BaseModel):
+    duration_hours: float
+    reason: str
+
+
+@router.put("/me/sites/{site_id}/maintenance")
+async def set_partner_maintenance(
+    site_id: str,
+    body: PartnerMaintenanceRequest,
+    partner=Depends(require_partner),
+):
+    """Set a maintenance window for a partner-managed site."""
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(status_code=422, detail="reason is required")
+    if body.duration_hours < 0.5 or body.duration_hours > 48:
+        raise HTTPException(status_code=422, detail="duration_hours must be between 0.5 and 48")
+
+    pool = await get_pool()
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        owner = await conn.fetchval(
+            "SELECT partner_id FROM sites WHERE site_id = $1", site_id)
+        if str(owner) != str(partner["id"]):
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        set_by = f"partner:{partner.get('name', partner['id'])}"
+        await conn.execute("""
+            UPDATE sites
+            SET maintenance_until = NOW() + ($1 || ' hours')::INTERVAL,
+                maintenance_reason = $2,
+                maintenance_set_by = $3
+            WHERE site_id = $4
+        """, str(body.duration_hours), body.reason.strip(), set_by, site_id)
+
+    logger.info("Partner maintenance window set",
+                site_id=site_id,
+                duration_hours=body.duration_hours,
+                partner_id=str(partner['id']))
+
+    return {"status": "ok", "site_id": site_id, "duration_hours": body.duration_hours}
+
+
+@router.delete("/me/sites/{site_id}/maintenance")
+async def cancel_partner_maintenance(
+    site_id: str,
+    partner=Depends(require_partner),
+):
+    """Cancel an active maintenance window for a partner-managed site."""
+    pool = await get_pool()
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        owner = await conn.fetchval(
+            "SELECT partner_id FROM sites WHERE site_id = $1", site_id)
+        if str(owner) != str(partner["id"]):
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        await conn.execute("""
+            UPDATE sites
+            SET maintenance_until = NULL,
+                maintenance_reason = NULL,
+                maintenance_set_by = NULL
+            WHERE site_id = $1
+        """, site_id)
+
+    logger.info("Partner maintenance window cancelled",
+                site_id=site_id,
+                partner_id=str(partner['id']))
+
+    return {"status": "ok", "site_id": site_id, "maintenance_until": None}
+
+
 @router.get("/me/onboarding")
 async def get_partner_onboarding(request: Request, partner=Depends(require_partner)):
     """Get onboarding pipeline for partner's sites (excludes active/compliant)."""

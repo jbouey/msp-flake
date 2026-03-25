@@ -869,10 +869,12 @@ async def _flywheel_promotion_loop():
                     logger.debug(f"Platform auto-promotion: {e}")
                     await db.rollback()
 
-                # Step 5: Post-promotion health monitoring
-                # Auto-disable promoted rules whose success rate dropped below 70%
-                # in the 48 hours after promotion (protects against bad promotions)
+                # Step 5: Post-promotion health monitoring (canary → rollout)
+                # Promoted rules start site-specific (source='promoted').
+                # After 48h with >70% success and 3+ executions → promote to 'synced' (fleet-wide).
+                # After 48h with <70% success → disable (protects against bad promotions).
                 try:
+                    # 5a: Disable degraded promoted rules (<70% success after 48h)
                     degraded = await db.execute(text("""
                         UPDATE l1_rules SET enabled = false
                         WHERE source = 'promoted'
@@ -898,6 +900,36 @@ async def _flywheel_promotion_loop():
                         for row in auto_disabled:
                             logger.warning(
                                 "Promoted rule auto-disabled (success rate < 70%)",
+                                rule_id=row[0],
+                            )
+
+                    # 5b: Graduate successful promoted rules to 'synced' (>70% success after 48h)
+                    # This is the canary → rollout transition: proven rules become fleet-wide
+                    graduated = await db.execute(text("""
+                        UPDATE l1_rules SET source = 'synced'
+                        WHERE source = 'promoted'
+                          AND enabled = true
+                          AND created_at < NOW() - INTERVAL '48 hours'
+                          AND rule_id IN (
+                              SELECT r.rule_id FROM l1_rules r
+                              JOIN execution_telemetry et
+                                ON et.runbook_id = r.runbook_id
+                                AND et.created_at > r.created_at
+                              WHERE r.source = 'promoted'
+                                AND r.enabled = true
+                                AND r.created_at < NOW() - INTERVAL '48 hours'
+                              GROUP BY r.rule_id
+                              HAVING COUNT(*) >= 3
+                                AND SUM(CASE WHEN et.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*) >= 0.70
+                          )
+                        RETURNING rule_id
+                    """))
+                    auto_graduated = graduated.fetchall()
+                    await db.commit()
+                    if auto_graduated:
+                        for row in auto_graduated:
+                            logger.info(
+                                "Promoted rule graduated to synced (canary success)",
                                 rule_id=row[0],
                             )
                 except Exception as e:
@@ -1513,17 +1545,31 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
             "signed_payload": row[8],
         })
     
-    logger.info("Appliance checked in", 
-                site_id=req.site_id, 
+    # Check maintenance window for this site
+    maintenance_until = None
+    try:
+        maint_result = await db.execute(
+            text("SELECT maintenance_until FROM sites WHERE site_id = :site_id AND maintenance_until > NOW()"),
+            {"site_id": req.site_id}
+        )
+        maint_row = maint_result.fetchone()
+        if maint_row and maint_row[0]:
+            maintenance_until = maint_row[0].isoformat()
+    except Exception:
+        pass  # Non-critical — column may not exist yet
+
+    logger.info("Appliance checked in",
+                site_id=req.site_id,
                 action=action,
                 pending_orders=len(orders))
-    
+
     return {
         "status": "ok",
         "action": action,
         "timestamp": now.isoformat(),
         "server_public_key": get_public_key_hex(),
-        "pending_orders": orders
+        "pending_orders": orders,
+        "maintenance_until": maintenance_until,
     }
 
 @app.get("/orders/{site_id}")
@@ -1625,6 +1671,27 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         )
 
     appliance_id = str(appliance[0])  # UUID for orders.appliance_id FK
+
+    # Check maintenance window — suppress incident creation if site is under maintenance
+    maint_check = await db.execute(
+        text("SELECT maintenance_until FROM sites WHERE site_id = :site_id AND maintenance_until > NOW()"),
+        {"site_id": incident.site_id}
+    )
+    maint_row = maint_check.fetchone()
+    if maint_row:
+        logger.info("Incident suppressed — site in maintenance",
+                     site_id=incident.site_id,
+                     incident_type=incident.incident_type,
+                     maintenance_until=maint_row[0].isoformat() if maint_row[0] else None)
+        return {
+            "status": "suppressed_maintenance",
+            "incident_id": None,
+            "resolution_tier": None,
+            "order_id": None,
+            "runbook_id": None,
+            "timestamp": now.isoformat(),
+            "maintenance_until": maint_row[0].isoformat() if maint_row[0] else None,
+        }
 
     # Get canonical appliance_id (site_id + MAC) for order signing.
     # The Go daemon verifies target_appliance_id against its canonical ID.

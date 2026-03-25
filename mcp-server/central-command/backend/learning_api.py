@@ -466,6 +466,7 @@ async def approve_candidate(
                     site_name,
                     check_type,
                     total_occurrences,
+                    l2_resolutions,
                     success_rate,
                     recommended_action
                 FROM v_partner_promotion_candidates
@@ -475,6 +476,15 @@ async def approve_candidate(
             if not candidate:
                 await transaction.rollback()
                 raise HTTPException(status_code=404, detail="Candidate not found or not owned by partner")
+
+            # Require minimum 3 successful L2 resolutions before eligible for promotion
+            l2_count = candidate.get('l2_resolutions') or 0
+            if l2_count < 3:
+                await transaction.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Insufficient L2 evidence: {l2_count}/3 minimum resolutions required"
+                )
 
             # Step 2: Lock the base table row to prevent concurrent approvals
             locked = await conn.fetchrow("""
@@ -571,6 +581,57 @@ async def approve_candidate(
                 request.custom_name,
                 request.notes
             )
+
+            # Cross-site learning: create a synced version available to all appliances
+            # The daemon already syncs 'synced' rules during checkin, so this makes
+            # every partner-approved promotion automatically available fleet-wide.
+            synced_rule_id = f"SYNC-{rule['id']}"
+            try:
+                await conn.execute("""
+                    INSERT INTO l1_rules (
+                        rule_id, incident_pattern, runbook_id,
+                        confidence, promoted_from_l2, enabled, source
+                    ) VALUES ($1, $2, $3, $4, true, true, 'synced')
+                    ON CONFLICT (rule_id) DO NOTHING
+                """,
+                    synced_rule_id,
+                    json.dumps(rule.get('conditions', [{"field": "drift_detected", "operator": "eq", "value": True}])),
+                    rule['action_params']['runbook_id'],
+                    float(candidate.get('success_rate') or 0.9)
+                )
+            except Exception as e:
+                logger.warning(f"Cross-site sync rule creation failed for {synced_rule_id}: {e}")
+
+            # Archive promotion telemetry to append-only audit log (WORM-style)
+            try:
+                await conn.execute("""
+                    INSERT INTO promotion_audit_log (
+                        event_type, rule_id, pattern_signature, check_type,
+                        site_id, confidence_score, success_rate,
+                        l2_resolutions, total_occurrences, source, actor, metadata
+                    ) VALUES (
+                        'approved', $1, $2, $3, $4, $5, $6, $7, $8,
+                        'partner', $9, $10
+                    )
+                """,
+                    rule['id'],
+                    candidate['pattern_signature'],
+                    candidate.get('check_type') or '',
+                    candidate['site_id'],
+                    float(candidate.get('success_rate') or 0),
+                    float(candidate.get('success_rate') or 0),
+                    int(candidate.get('l2_resolutions') or 0),
+                    int(candidate.get('total_occurrences') or 0),
+                    redact_partner_id(partner_id),
+                    json.dumps({
+                        "synced_rule_id": synced_rule_id,
+                        "custom_name": request.custom_name,
+                        "deploy_immediately": request.deploy_immediately,
+                        "promoted_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                )
+            except Exception as e:
+                logger.warning(f"Promotion audit log write failed: {e}")
 
             deployed_count = 0
             failed_appliances = []
@@ -935,8 +996,8 @@ async def bulk_approve_candidates(
                 # Verify ownership
                 candidate = await conn.fetchrow("""
                     SELECT id, pattern_signature, site_id, site_name,
-                           check_type, total_occurrences, success_rate,
-                           recommended_action
+                           check_type, total_occurrences, l2_resolutions,
+                           success_rate, recommended_action
                     FROM v_partner_promotion_candidates
                     WHERE partner_id = $1 AND id::text = $2
                 """, partner_id, pattern_id)
@@ -944,6 +1005,14 @@ async def bulk_approve_candidates(
                 if not candidate:
                     await transaction.rollback()
                     errors.append(f"{pattern_id}: not found")
+                    failed += 1
+                    continue
+
+                # Require minimum 3 successful L2 resolutions before eligible
+                l2_count = candidate.get('l2_resolutions') or 0
+                if l2_count < 3:
+                    await transaction.rollback()
+                    errors.append(f"{pattern_id}: insufficient L2 evidence ({l2_count}/3)")
                     failed += 1
                     continue
 
@@ -1021,6 +1090,54 @@ async def bulk_approve_candidates(
                     str(uuid.uuid4()), candidate['site_id'],
                     candidate['pattern_signature'], request.notes
                 )
+
+                # Cross-site learning: create synced version for fleet-wide availability
+                synced_rule_id = f"SYNC-{rule['id']}"
+                try:
+                    await conn.execute("""
+                        INSERT INTO l1_rules (
+                            rule_id, incident_pattern, runbook_id,
+                            confidence, promoted_from_l2, enabled, source
+                        ) VALUES ($1, $2, $3, $4, true, true, 'synced')
+                        ON CONFLICT (rule_id) DO NOTHING
+                    """,
+                        synced_rule_id,
+                        json.dumps(rule.get('conditions', [{"field": "drift_detected", "operator": "eq", "value": True}])),
+                        rule['action_params']['runbook_id'],
+                        float(candidate.get('success_rate') or 0.9)
+                    )
+                except Exception as e:
+                    logger.warning(f"Cross-site sync rule creation failed for {synced_rule_id}: {e}")
+
+                # Archive promotion telemetry to append-only audit log
+                try:
+                    await conn.execute("""
+                        INSERT INTO promotion_audit_log (
+                            event_type, rule_id, pattern_signature, check_type,
+                            site_id, confidence_score, success_rate,
+                            l2_resolutions, total_occurrences, source, actor, metadata
+                        ) VALUES (
+                            'approved', $1, $2, $3, $4, $5, $6, $7, $8,
+                            'partner', $9, $10
+                        )
+                    """,
+                        rule['id'],
+                        candidate['pattern_signature'],
+                        candidate.get('check_type') or '',
+                        candidate['site_id'],
+                        float(candidate.get('success_rate') or 0),
+                        float(candidate.get('success_rate') or 0),
+                        int(candidate.get('l2_resolutions') or 0),
+                        int(candidate.get('total_occurrences') or 0),
+                        redact_partner_id(str(partner_id)),
+                        json.dumps({
+                            "synced_rule_id": synced_rule_id,
+                            "bulk": True,
+                            "promoted_at": datetime.now(timezone.utc).isoformat(),
+                        })
+                    )
+                except Exception as e:
+                    logger.warning(f"Promotion audit log write failed: {e}")
 
                 # Deploy commands
                 if request.deploy_immediately:

@@ -1000,6 +1000,18 @@ async def promote_pattern(
             "runbook_id": runbook_id,
         })
 
+        # Cross-site learning: create a synced version available to all appliances
+        synced_rule_id = f"SYNC-{rule_id}"
+        await db.execute(text("""
+            INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled, source)
+            VALUES (:rule_id, :pattern, :runbook_id, 0.95, true, true, 'synced')
+            ON CONFLICT (rule_id) DO NOTHING
+        """), {
+            "rule_id": synced_rule_id,
+            "pattern": json.dumps({"incident_type": incident_type}),
+            "runbook_id": runbook_id,
+        })
+
         # Mark as no longer eligible
         await db.execute(text("""
             UPDATE aggregated_pattern_stats SET promotion_eligible = false WHERE id = :pid
@@ -4060,6 +4072,72 @@ async def update_drift_config(
                     DO UPDATE SET enabled = $3, modified_by = $4, modified_at = NOW()
                 """, site_id, item.check_type, item.enabled, user.get("username", "admin"))
     return {"status": "ok", "site_id": site_id, "updated": len(body.checks)}
+
+
+# =============================================================================
+# MAINTENANCE MODE
+# =============================================================================
+
+class MaintenanceRequest(BaseModel):
+    duration_hours: float
+    reason: str
+
+
+@router.put("/sites/{site_id}/maintenance")
+async def set_maintenance(
+    site_id: str,
+    body: MaintenanceRequest,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Set a maintenance window for a site. Suppresses incident creation until expiry."""
+    await check_site_access_pool(user, site_id)
+
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(status_code=422, detail="reason is required")
+    if body.duration_hours < 0.5 or body.duration_hours > 48:
+        raise HTTPException(status_code=422, detail="duration_hours must be between 0.5 and 48")
+
+    from .fleet import get_pool
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        await conn.execute("""
+            UPDATE sites
+            SET maintenance_until = NOW() + ($1 || ' hours')::INTERVAL,
+                maintenance_reason = $2,
+                maintenance_set_by = $3
+            WHERE site_id = $4
+        """, str(body.duration_hours), body.reason.strip(), user.get("username", "admin"), site_id)
+
+    logger.info("Maintenance window set",
+                site_id=site_id,
+                duration_hours=body.duration_hours,
+                set_by=user.get("username", "admin"))
+
+    return {"status": "ok", "site_id": site_id, "duration_hours": body.duration_hours}
+
+
+@router.delete("/sites/{site_id}/maintenance")
+async def cancel_maintenance(
+    site_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Cancel an active maintenance window for a site."""
+    await check_site_access_pool(user, site_id)
+
+    from .fleet import get_pool
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        await conn.execute("""
+            UPDATE sites
+            SET maintenance_until = NULL,
+                maintenance_reason = NULL,
+                maintenance_set_by = NULL
+            WHERE site_id = $1
+        """, site_id)
+
+    logger.info("Maintenance window cancelled", site_id=site_id, cancelled_by=user.get("username", "admin"))
+
+    return {"status": "ok", "site_id": site_id, "maintenance_until": None}
 
 
 # =============================================================================
