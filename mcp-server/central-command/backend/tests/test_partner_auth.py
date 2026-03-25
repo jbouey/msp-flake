@@ -152,6 +152,7 @@ def _partner_record(**overrides):
         "slug": "test-msp",
         "contact_email": "admin@testmsp.com",
         "status": "active",
+        "user_role": "admin",
     }
     defaults.update(overrides)
     return FakeRecord(**defaults)
