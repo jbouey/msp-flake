@@ -570,10 +570,15 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		return
 	}
 
-	// Split into servers and workstations (same logic as EnumerateAll).
+	// Collect deployable targets: workstations + member servers (not DCs).
+	// DCs are monitored via WinRM pull scans; workstations and member servers
+	// get Go agents for push-first compliance monitoring.
 	var workstations []discovery.ADComputer
 	for _, c := range allComputers {
-		if c.IsWorkstation {
+		if c.IsDomainController {
+			continue // DCs monitored via WinRM, don't deploy agent
+		}
+		if c.IsWorkstation || c.IsServer {
 			workstations = append(workstations, c)
 		}
 	}
@@ -601,11 +606,11 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 	log.Printf("[autodeploy] AD host cache updated: %d computer objects, %d entries", len(allComputers), len(adHosts))
 
 	if len(workstations) == 0 {
-		log.Printf("[autodeploy] No workstations found in AD")
+		log.Printf("[autodeploy] No deployable targets in AD (workstations + member servers)")
 		return
 	}
 
-	log.Printf("[autodeploy] Found %d workstations in AD", len(workstations))
+	log.Printf("[autodeploy] Found %d deployable targets in AD (workstations + member servers)", len(workstations))
 
 	// Resolve missing IPs
 	enumerator.ResolveMissingIPs(ctx, workstations)

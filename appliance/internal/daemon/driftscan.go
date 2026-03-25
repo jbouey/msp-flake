@@ -165,14 +165,22 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		},
 	}
 
-	// Add deployed workstations from the autodeploy tracker.
-	// Push-first, pull-fallback: skip WinRM for hosts with connected Go agents.
+	// Build WinRM scan targets from two sources:
+	// 1. Deployed hosts from autodeploy tracker (workstations + servers)
+	// 2. Credential-delivered Windows targets (fallback for non-deployed hosts)
+	// Push-first: skip any host with a connected Go agent.
+	scanned := map[string]bool{*cfg.DomainController: true} // DC already added above
+
 	if ds.daemon.deployer != nil {
 		ds.daemon.deployer.mu.Lock()
 		for hostname := range ds.daemon.deployer.deployed {
+			if scanned[hostname] {
+				continue
+			}
 			// If a Go agent is connected for this host, skip WinRM — push covers it
 			if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
 				log.Printf("[driftscan] Skipping WinRM for %s (covered by Go agent)", hostname)
+				scanned[hostname] = true
 				continue
 			}
 			ws := ds.svc.Targets.ProbeWinRMPort(hostname)
@@ -210,8 +218,33 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 					VerifySSL: false,
 				},
 			})
+			scanned[hostname] = true
 		}
 		ds.daemon.deployer.mu.Unlock()
+	}
+
+	// Add credential-delivered Windows targets not yet covered (servers, non-deployed hosts).
+	// These are hosts with WinRM credentials but no Go agent — WinRM pull scan is the only path.
+	for hostname, wt := range ds.svc.Targets.GetWinTargets() {
+		if scanned[hostname] || wt.Role == "domain_admin" {
+			continue
+		}
+		if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
+			continue
+		}
+		ws := ds.svc.Targets.ProbeWinRMPort(hostname)
+		targets = append(targets, scanTarget{
+			hostname: hostname,
+			label:    "SRV",
+			target: &winrm.Target{
+				Hostname:  hostname,
+				Port:      ws.Port,
+				Username:  wt.Username,
+				Password:  wt.Password,
+				UseSSL:    ws.UseSSL,
+				VerifySSL: false,
+			},
+		})
 	}
 
 	var allFindings []driftFinding
