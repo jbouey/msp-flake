@@ -174,15 +174,16 @@ async def get_client_user_from_session(session_token: str, pool):
                 )
                 return None
 
-        # Update last_activity and get user + org
+        # Update last_activity and get user + org + partner branding
         row = await conn.fetchrow("""
             UPDATE client_sessions cs
             SET last_activity_at = NOW()
-            FROM client_users cu, client_orgs co
+            FROM client_users cu
+            JOIN client_orgs co ON cu.client_org_id = co.id
+            LEFT JOIN partners p ON co.current_partner_id = p.id
             WHERE cs.token_hash = $1
               AND cs.expires_at > NOW()
               AND cs.user_id = cu.id
-              AND cu.client_org_id = co.id
               AND cu.is_active = true
               AND co.status = 'active'
             RETURNING
@@ -192,7 +193,11 @@ async def get_client_user_from_session(session_token: str, pool):
                 cu.role,
                 co.id as org_id,
                 co.name as org_name,
-                co.current_partner_id
+                co.current_partner_id,
+                p.brand_name as partner_brand_name,
+                p.primary_color as partner_primary_color,
+                p.logo_url as partner_logo_url,
+                p.support_email as partner_support_email
         """, token_hash)
 
         return row
@@ -212,7 +217,15 @@ async def require_client_user(
     if not user:
         raise HTTPException(status_code=401, detail="Session expired or invalid")
 
-    return dict(user)
+    result = dict(user)
+    # Attach partner branding context for frontend rendering
+    result["partner_branding"] = {
+        "brand_name": result.pop("partner_brand_name", None) or "OsirisCare",
+        "primary_color": result.pop("partner_primary_color", None) or "#0D9488",
+        "logo_url": result.pop("partner_logo_url", None),
+        "support_email": result.pop("partner_support_email", None),
+    }
+    return result
 
 
 async def require_client_admin(user: dict = Depends(require_client_user)):

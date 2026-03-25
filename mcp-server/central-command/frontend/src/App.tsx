@@ -131,6 +131,18 @@ const ClientRoutes = lazy(() => import('./client').then(m => ({
   }
 })));
 
+// Branded client login - lazy loaded for /portal/:slug/login route
+const BrandedClientLogin = lazy(() => import('./client').then(m => ({
+  default: () => {
+    const { ClientProvider, ClientLogin } = m;
+    return (
+      <ClientProvider>
+        <ClientLogin />
+      </ClientProvider>
+    );
+  }
+})));
+
 // Suspense fallback component
 const PageLoader: React.FC = () => (
   <div className="flex items-center justify-center min-h-[400px]">
@@ -410,6 +422,9 @@ const App: React.FC = () => {
                 <Route path="/portal/site/:siteId/verify" element={<PortalVerify />} />
                 <Route path="/portal/site/:siteId/scorecard" element={<PortalScorecard />} />
                 <Route path="/portal/site/:siteId/login" element={<PortalLogin />} />
+
+                {/* White-label branded client login */}
+                <Route path="/portal/:slug/login" element={<BrandedClientLogin />} />
 
                 {/* Partner routes - API key auth (lazy loaded module) */}
                 <Route path="/partner/*" element={<PartnerRoutes />} />

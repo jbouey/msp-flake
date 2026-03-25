@@ -1,12 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { OsirisCareLeaf } from '../components/shared';
-import { BRANDING, SSO_LABELS } from '../constants';
+import { BRANDING, SSO_LABELS, WHITE_LABEL } from '../constants';
+import { useBranding } from '../hooks/useBranding';
 
-export const ClientLogin: React.FC = () => {
+interface ClientLoginProps {
+  slug?: string;
+}
+
+export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
   const navigate = useNavigate();
+  const params = useParams<{ slug?: string }>();
+  const slug = slugProp ?? params.slug;
   const { isAuthenticated, isLoading } = useClient();
+  const { branding, loading: brandingLoading } = useBranding(slug);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,6 +32,22 @@ export const ClientLogin: React.FC = () => {
   // SSO state
   const [ssoLoading, setSsoLoading] = useState(false);
   const [ssoEnforced, setSsoEnforced] = useState(false);
+
+  // Derived branding values
+  const brandName = branding?.brand_name ?? WHITE_LABEL.DEFAULT_BRAND;
+  const brandPrimary = branding?.primary_color ?? WHITE_LABEL.DEFAULT_PRIMARY;
+  const brandTagline = branding?.tagline ?? WHITE_LABEL.DEFAULT_TAGLINE;
+  const brandLogo = branding?.logo_url ?? null;
+  const hasPartnerBranding = !!slug && !!branding && branding.partner_slug !== '';
+
+  // Button gradient derived from partner primary color
+  const buttonBg = `linear-gradient(135deg, ${brandPrimary} 0%, ${brandPrimary}cc 100%)`;
+  const buttonShadow = `0 4px 14px ${brandPrimary}59`;
+
+  // Footer text
+  const footerText = hasPartnerBranding
+    ? WHITE_LABEL.POWERED_BY
+    : `Powered by ${BRANDING.name} ${BRANDING.tagline}`;
 
   useEffect(() => {
     if (isAuthenticated && !isLoading) {
@@ -175,6 +199,31 @@ export const ClientLogin: React.FC = () => {
     }
   };
 
+  // Logo element — partner logo or default OsirisCare leaf
+  const renderLogo = (size: 'sm' | 'lg' = 'lg') => {
+    const dimension = size === 'lg' ? 'w-16 h-16' : 'w-14 h-14';
+    const iconDimension = size === 'lg' ? 'w-9 h-9' : 'w-7 h-7';
+
+    if (brandLogo) {
+      return (
+        <img
+          src={brandLogo}
+          alt={`${brandName} logo`}
+          className={`${dimension} rounded-2xl mx-auto mb-4 object-contain shadow-lg`}
+        />
+      );
+    }
+
+    return (
+      <div
+        className={`${dimension} rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg`}
+        style={{ background: buttonBg, boxShadow: `0 4px 20px ${brandPrimary}66` }}
+      >
+        <OsirisCareLeaf className={iconDimension} color="white" />
+      </div>
+    );
+  };
+
   if (mfaRequired) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-teal-950 via-cyan-900 to-teal-900 flex items-center justify-center p-6 relative overflow-hidden animate-fade-in">
@@ -184,7 +233,7 @@ export const ClientLogin: React.FC = () => {
           <div className="text-center mb-8">
             <div
               className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 20px rgba(60, 188, 180, 0.4)' }}
+              style={{ background: buttonBg, boxShadow: `0 4px 20px ${brandPrimary}66` }}
             >
               <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -231,7 +280,7 @@ export const ClientLogin: React.FC = () => {
                 type="submit"
                 disabled={!totpCode.trim() || mfaLoading}
                 className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
-                style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+                style={{ background: buttonBg, boxShadow: buttonShadow }}
               >
                 {mfaLoading ? (
                   <>
@@ -266,21 +315,21 @@ export const ClientLogin: React.FC = () => {
           </div>
 
           <p className="mt-8 text-center text-sm text-teal-300/60">
-            {`Powered by ${BRANDING.name} ${BRANDING.tagline}`}
+            {footerText}
           </p>
         </div>
       </div>
     );
   }
 
-  if (isLoading) {
+  if (isLoading || brandingLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-teal-950 via-cyan-900 to-teal-900 flex items-center justify-center p-6 relative overflow-hidden">
         <div className="absolute top-1/4 -left-32 w-96 h-96 bg-teal-600/20 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-cyan-600/20 rounded-full blur-3xl" />
         <div className="max-w-md w-full relative" style={{ background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.5)' }}>
           <div className="p-8 text-center">
-            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center animate-pulse-soft" style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}>
+            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center animate-pulse-soft" style={{ background: buttonBg }}>
               <OsirisCareLeaf className="w-7 h-7" color="white" />
             </div>
             <p className="text-slate-500">Loading...</p>
@@ -313,10 +362,10 @@ export const ClientLogin: React.FC = () => {
               Login Link Sent
             </h2>
             <p className="text-slate-600 mb-6">
-              If <strong>{email}</strong> is registered, you'll receive a login link shortly.
+              If <strong>{email}</strong> is registered, you&apos;ll receive a login link shortly.
             </p>
             <p className="text-sm text-slate-500">
-              The link expires in 60 minutes. Check your spam folder if you don't see it.
+              The link expires in 60 minutes. Check your spam folder if you don&apos;t see it.
             </p>
             <button
               onClick={() => {
@@ -340,14 +389,11 @@ export const ClientLogin: React.FC = () => {
       <div className="max-w-md w-full relative z-10">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div
-            className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg"
-            style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 20px rgba(60, 188, 180, 0.4)' }}
-          >
-            <OsirisCareLeaf className="w-9 h-9" color="white" />
-          </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Client Portal</h1>
-          <p className="text-teal-200/80 mt-2">Access your HIPAA monitoring dashboard</p>
+          {renderLogo('lg')}
+          <h1 className="text-3xl font-bold text-white tracking-tight">{brandName}</h1>
+          {brandTagline && (
+            <p className="text-teal-200/80 mt-2">{brandTagline}</p>
+          )}
         </div>
 
         {/* Login Card */}
@@ -390,7 +436,7 @@ export const ClientLogin: React.FC = () => {
                 onClick={handleSsoLogin}
                 disabled={!email.trim() || ssoLoading}
                 className="w-full flex items-center justify-center gap-3 px-4 py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110"
-                style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+                style={{ background: buttonBg, boxShadow: buttonShadow }}
               >
                 {ssoLoading ? (
                   <>
@@ -478,7 +524,7 @@ export const ClientLogin: React.FC = () => {
                     type="submit"
                     disabled={!email.trim() || !password.trim() || status === 'loading'}
                     className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
-                    style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+                    style={{ background: buttonBg, boxShadow: buttonShadow }}
                   >
                     {status === 'loading' ? (
                       <>
@@ -511,7 +557,7 @@ export const ClientLogin: React.FC = () => {
                     type="submit"
                     disabled={!email.trim() || status === 'loading'}
                     className="w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:brightness-110 flex items-center justify-center gap-2"
-                    style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)', boxShadow: '0 4px 14px rgba(60, 188, 180, 0.35)' }}
+                    style={{ background: buttonBg, boxShadow: buttonShadow }}
                   >
                     {status === 'loading' ? (
                       <>
@@ -523,7 +569,7 @@ export const ClientLogin: React.FC = () => {
                     )}
                   </button>
                   <p className="text-center text-sm text-slate-500">
-                    No password required. We'll send you a secure link.
+                    No password required. We&apos;ll send you a secure link.
                   </p>
                 </form>
               )}
@@ -557,7 +603,7 @@ export const ClientLogin: React.FC = () => {
 
         {/* Footer */}
         <p className="mt-8 text-center text-sm text-teal-300/60">
-          {`Powered by ${BRANDING.name} ${BRANDING.tagline}`}
+          {footerText}
         </p>
       </div>
     </div>

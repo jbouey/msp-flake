@@ -52,6 +52,7 @@ class PartnerEventType(str, Enum):
 
     # Self-service
     PROFILE_VIEWED = "profile_viewed"
+    BRANDING_UPDATED = "branding_updated"
     SITES_LISTED = "sites_listed"
     SITE_VIEWED = "site_viewed"
 
@@ -103,6 +104,7 @@ EVENT_CATEGORIES: Dict[PartnerEventType, PartnerEventCategory] = {
     PartnerEventType.API_KEY_REGENERATED: PartnerEventCategory.ADMIN,
     # Site
     PartnerEventType.PROFILE_VIEWED: PartnerEventCategory.SITE,
+    PartnerEventType.BRANDING_UPDATED: PartnerEventCategory.SITE,
     PartnerEventType.SITES_LISTED: PartnerEventCategory.SITE,
     PartnerEventType.SITE_VIEWED: PartnerEventCategory.SITE,
     # Provision

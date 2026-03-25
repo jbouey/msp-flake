@@ -10,6 +10,7 @@ export {
   SRA_CATEGORY_LABELS,
   PHYSICAL_SAFEGUARD_LABELS,
   SSO_LABELS,
+  WHITE_LABEL,
 } from './copy';
 export type { StatusKey, MetricKey } from './copy';
 

@@ -1,5 +1,6 @@
 export { ClientProvider, useClient } from './ClientContext';
 export { ClientLogin } from './ClientLogin';
+export { BrandedLayout } from './BrandedLayout';
 export { ClientVerify } from './ClientVerify';
 export { ClientDashboard } from './ClientDashboard';
 export { ClientEvidence } from './ClientEvidence';

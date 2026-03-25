@@ -172,6 +172,22 @@ export const PHYSICAL_SAFEGUARD_LABELS = {
 // SSO LABELS
 // =============================================================================
 
+// =============================================================================
+// WHITE-LABEL BRANDING DEFAULTS
+// =============================================================================
+
+export const WHITE_LABEL = {
+  POWERED_BY: 'Powered by OsirisCare',
+  DEFAULT_BRAND: 'OsirisCare',
+  DEFAULT_TAGLINE: 'HIPAA Compliance Simplified',
+  DEFAULT_PRIMARY: '#0D9488',
+  DEFAULT_SECONDARY: '#6366F1',
+} as const;
+
+// =============================================================================
+// SSO LABELS
+// =============================================================================
+
 export const SSO_LABELS = {
   sign_in_with_sso: 'Sign in with SSO',
   sso_not_configured: 'SSO is not configured for this organization.',

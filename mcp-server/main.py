@@ -46,7 +46,7 @@ from dashboard_api.portal import router as portal_router
 from dashboard_api.evidence_chain import router as evidence_router
 from dashboard_api.org_credentials import router as org_credentials_router
 from dashboard_api.provisioning import router as provisioning_router
-from dashboard_api.partners import router as partners_router
+from dashboard_api.partners import router as partners_router, branding_public_router
 from dashboard_api.discovery import router as discovery_router
 from dashboard_api.runbook_config import router as runbook_config_router
 from dashboard_api.users import router as users_router
@@ -1189,6 +1189,7 @@ app.include_router(portal_router)
 app.include_router(evidence_router)
 app.include_router(provisioning_router)
 app.include_router(partners_router)
+app.include_router(branding_public_router)  # Public partner branding (no auth, for login pages)
 app.include_router(discovery_router)
 app.include_router(runbook_config_router)
 app.include_router(users_router)

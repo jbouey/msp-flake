@@ -12,6 +12,8 @@ before /{partner_id} routes to avoid /me being captured as a partner_id.
 
 import json
 import os
+import re
+import html
 import secrets
 import hashlib
 import logging
@@ -110,9 +112,35 @@ class ProvisionClaim(BaseModel):
     hostname: Optional[str] = None
 
 
+class BrandingUpdate(BaseModel):
+    """Model for updating partner white-label branding."""
+    brand_name: Optional[str] = None
+    logo_url: Optional[str] = None
+    primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
+    tagline: Optional[str] = None
+    support_email: Optional[str] = None
+    support_phone: Optional[str] = None
+
+
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
+
+_HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
+_STRIP_HTML_RE = re.compile(r'<[^>]+>')
+
+
+def _validate_hex_color(value: str) -> str:
+    """Validate that a string is a valid #XXXXXX hex color."""
+    if not _HEX_COLOR_RE.match(value):
+        raise HTTPException(status_code=400, detail=f"Invalid hex color format: {value}")
+    return value
+
+
+def _sanitize_text(value: str) -> str:
+    """Strip HTML tags and decode entities from user-provided text."""
+    return html.unescape(_STRIP_HTML_RE.sub('', value)).strip()
 
 def hash_api_key(api_key: str) -> str:
     """Hash an API key for secure storage.
@@ -871,6 +899,155 @@ async def get_provision_qr_by_code(
             "Cache-Control": "no-cache",
         }
     )
+
+
+# =============================================================================
+# PARTNER BRANDING ENDPOINTS (Partner-authenticated)
+# =============================================================================
+
+@router.get("/me/branding")
+async def get_my_branding(partner: dict = require_partner_role("admin", "tech", "billing")):
+    """Get own branding config."""
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow("""
+            SELECT brand_name, logo_url, primary_color, secondary_color,
+                   tagline, support_email, support_phone, slug
+            FROM partners WHERE id = $1
+        """, partner['id'])
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Partner not found")
+
+    return {
+        "brand_name": row["brand_name"] or "OsirisCare",
+        "logo_url": row["logo_url"],
+        "primary_color": row["primary_color"] or "#0D9488",
+        "secondary_color": row["secondary_color"] or "#6366F1",
+        "tagline": row["tagline"],
+        "support_email": row["support_email"],
+        "support_phone": row["support_phone"],
+        "partner_slug": row["slug"],
+    }
+
+
+@router.put("/me/branding")
+async def update_my_branding(
+    request: Request,
+    body: BrandingUpdate,
+    partner: dict = require_partner_role("admin"),
+):
+    """Update branding. Admin only."""
+    updates = {}
+
+    # Validate colors
+    if body.primary_color is not None:
+        _validate_hex_color(body.primary_color)
+        updates["primary_color"] = body.primary_color
+    if body.secondary_color is not None:
+        _validate_hex_color(body.secondary_color)
+        updates["secondary_color"] = body.secondary_color
+
+    # Validate logo_url must be HTTPS if provided
+    if body.logo_url is not None:
+        if body.logo_url and not body.logo_url.startswith("https://"):
+            raise HTTPException(
+                status_code=400,
+                detail="logo_url must use HTTPS",
+            )
+        updates["logo_url"] = body.logo_url
+
+    # Sanitize text fields — strip HTML
+    if body.brand_name is not None:
+        sanitized = _sanitize_text(body.brand_name)
+        if not sanitized:
+            raise HTTPException(status_code=400, detail="brand_name cannot be empty")
+        updates["brand_name"] = sanitized[:255]
+    if body.tagline is not None:
+        updates["tagline"] = _sanitize_text(body.tagline)[:500]
+
+    # Support contact fields (light validation)
+    if body.support_email is not None:
+        updates["support_email"] = body.support_email[:255] if body.support_email else None
+    if body.support_phone is not None:
+        updates["support_phone"] = body.support_phone[:50] if body.support_phone else None
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Build dynamic UPDATE
+    set_clauses = []
+    params = []
+    for i, (col, val) in enumerate(updates.items(), start=1):
+        set_clauses.append(f"{col} = ${i}")
+        params.append(val)
+    params.append(partner['id'])
+    set_sql = ", ".join(set_clauses)
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        await conn.execute(
+            f"UPDATE partners SET {set_sql}, updated_at = NOW() WHERE id = ${len(params)}",
+            *params,
+        )
+
+    await log_partner_activity(
+        partner_id=str(partner['id']),
+        event_type=PartnerEventType.BRANDING_UPDATED,
+        target_type="partner",
+        target_id=str(partner['id']),
+        event_data={"updated_fields": list(updates.keys())},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
+    return {"status": "updated", "updated_fields": list(updates.keys())}
+
+
+# =============================================================================
+# PUBLIC BRANDING ENDPOINT (no auth — for login page rendering)
+# =============================================================================
+
+# Separate router for the public branding endpoint (no partner auth prefix)
+branding_public_router = APIRouter(tags=["portal-branding"])
+
+
+@branding_public_router.get("/api/portal/branding/{partner_slug}")
+async def get_portal_branding(partner_slug: str):
+    """Public endpoint — returns partner branding for login page rendering."""
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow("""
+            SELECT brand_name, logo_url, primary_color, secondary_color,
+                   tagline, support_email, support_phone, slug
+            FROM partners WHERE slug = $1 AND status = 'active'
+        """, partner_slug)
+
+    if not row:
+        # Return OsirisCare defaults — don't reveal partner doesn't exist
+        return {
+            "brand_name": "OsirisCare",
+            "logo_url": None,
+            "primary_color": "#0D9488",
+            "secondary_color": "#6366F1",
+            "tagline": "HIPAA Compliance Simplified",
+            "support_email": None,
+            "support_phone": None,
+            "partner_slug": partner_slug,
+        }
+
+    return {
+        "brand_name": row["brand_name"] or "OsirisCare",
+        "logo_url": row["logo_url"],
+        "primary_color": row["primary_color"] or "#0D9488",
+        "secondary_color": row["secondary_color"] or "#6366F1",
+        "tagline": row["tagline"],
+        "support_email": row["support_email"],
+        "support_phone": row["support_phone"],
+        "partner_slug": row["slug"],
+    }
 
 
 # =============================================================================
