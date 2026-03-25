@@ -813,8 +813,9 @@ func (d *Daemon) getApplianceLANIP() string {
 
 // winrmSettings holds the cached WinRM connection settings for a host.
 type winrmSettings struct {
-	Port   int
-	UseSSL bool
+	Port     int
+	UseSSL   bool
+	CachedAt time.Time
 }
 
 // probeWinRM delegates to StateManager.

@@ -139,18 +139,20 @@ func (sm *StateManager) FindCredentialsForHost(hostname, ip string) *HostCredent
 
 // ProbeWinRMPort checks which WinRM port is available on a host.
 // Prefers 5986 (HTTPS), falls back to 5985 (HTTP). Results are cached.
+const winrmCacheTTL = 10 * time.Minute
+
 func (sm *StateManager) ProbeWinRMPort(hostname string) winrmSettings {
 	sm.winrmMu.Lock()
 	if sm.winrmCache == nil {
 		sm.winrmCache = make(map[string]winrmSettings)
 	}
-	if cached, ok := sm.winrmCache[hostname]; ok {
+	if cached, ok := sm.winrmCache[hostname]; ok && time.Since(cached.CachedAt) < winrmCacheTTL {
 		sm.winrmMu.Unlock()
 		return cached
 	}
 	sm.winrmMu.Unlock()
 
-	result := winrmSettings{Port: 5986, UseSSL: true} // default
+	result := winrmSettings{Port: 5986, UseSSL: true, CachedAt: time.Now()} // default
 	dialer := net.Dialer{Timeout: 3 * time.Second}
 	conn, err := dialer.Dial("tcp", net.JoinHostPort(hostname, "5986"))
 	if err == nil {
@@ -159,7 +161,7 @@ func (sm *StateManager) ProbeWinRMPort(hostname string) winrmSettings {
 		conn2, err2 := dialer.Dial("tcp", net.JoinHostPort(hostname, "5985"))
 		if err2 == nil {
 			conn2.Close()
-			result = winrmSettings{Port: 5985, UseSSL: false}
+			result = winrmSettings{Port: 5985, UseSSL: false, CachedAt: time.Now()}
 			log.Printf("[daemon] WinRM: %s using HTTP (5985) — HTTPS unavailable", hostname)
 		}
 	}
