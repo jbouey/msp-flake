@@ -134,6 +134,14 @@ golang | sd_notify | docs/golang/golang.md | READY=1, WATCHDOG=1
 golang | func options | docs/golang/golang.md | WithPort(8080)
 golang | circuit breaker | docs/golang/golang.md | gobreaker.Settings
 -----|---------|-----|------------------
+windows | 25 drift checks | ~/.claude/skills/windows-server-compliance/SKILL.md | driftscan.go checkTarget
+windows | WinRM execution | ~/.claude/skills/windows-server-compliance/SKILL.md | 5985 HTTP, 5986 HTTPS, NTLM/Kerberos
+windows | GPO WinRM enable | ~/.claude/skills/windows-server-compliance/SKILL.md | ensureWinRMViaGPO + startup script
+windows | 22 event IDs | ~/.claude/skills/windows-server-compliance/SKILL.md | 4625 brute force, 1102 audit clear
+windows | threat detect | ~/.claude/skills/windows-server-compliance/SKILL.md | cross-host brute force, VSS deletion
+windows | 50+ runbooks | ~/.claude/skills/windows-server-compliance/SKILL.md | RB-WIN-*, MAC-*, LIN-*
+windows | agent deploy | ~/.claude/skills/windows-server-compliance/SKILL.md | 5-tier fallback, NETLOGON, base64 chunk
+-----|---------|-----|------------------
 frontend | React Query | docs/frontend/frontend.md | useQuery({queryKey,queryFn})
 frontend | mutation | docs/frontend/frontend.md | useMutation + invalidateQueries
 frontend | api.ts | docs/frontend/frontend.md | fetchApi<T> with Bearer
