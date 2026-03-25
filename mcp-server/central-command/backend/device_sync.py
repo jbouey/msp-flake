@@ -438,6 +438,58 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
     except Exception as e:
         logger.warning(f"Auto-archive sweep failed for {report.site_id}: {e}")
 
+    # Auto-update credential IPs when a device's MAC is seen at a new address.
+    # Zero-friction: the device identity is the MAC, not the IP. DHCP changes
+    # shouldn't break scanning.
+    try:
+        async with admin_connection(pool) as cred_conn:
+            creds = await cred_conn.fetch("""
+                SELECT id, convert_from(encrypted_data, 'UTF8') as cred_json
+                FROM site_credentials
+                WHERE site_id = $1
+                  AND credential_type IN ('winrm', 'domain_admin', 'local_admin')
+            """, report.site_id)
+
+            for cred in creds:
+                try:
+                    cred_data = json.loads(cred["cred_json"])
+                    cred_host = cred_data.get("host") or cred_data.get("target_host")
+                    if not cred_host:
+                        continue
+
+                    # Find a discovered device whose old IP matches the credential host
+                    # but has moved to a new IP (MAC-verified)
+                    for device in report.devices:
+                        if not device.mac_address or not device.ip_address:
+                            continue
+                        # Check if this device was previously at the credential's IP
+                        # by looking at the DB record
+                        prev = await cred_conn.fetchrow("""
+                            SELECT ip_address FROM discovered_devices
+                            WHERE site_id = $1 AND mac_address = $2
+                              AND ip_address != $3
+                            ORDER BY last_seen_at DESC LIMIT 1
+                        """, report.site_id, device.mac_address, device.ip_address)
+
+                        if prev and prev["ip_address"] == cred_host and device.ip_address != cred_host:
+                            # MAC was at cred_host, now at device.ip_address — update credential
+                            cred_data["host"] = device.ip_address
+                            new_json = json.dumps(cred_data)
+                            await cred_conn.execute("""
+                                UPDATE site_credentials
+                                SET encrypted_data = convert_to($1, 'UTF8'),
+                                    updated_at = NOW()
+                                WHERE id = $2
+                            """, new_json, cred["id"])
+                            logger.info(
+                                f"Auto-updated credential {cred['id']} IP: {cred_host} → {device.ip_address} "
+                                f"(MAC {device.mac_address}, site {report.site_id})"
+                            )
+                except Exception as e:
+                    logger.debug(f"Credential IP check failed for {cred['id']}: {e}")
+    except Exception as e:
+        logger.warning(f"Credential IP auto-update failed for {report.site_id}: {e}")
+
     status = "success"
     message = f"Synced {devices_created} new, {devices_updated} updated"
     if errors:
