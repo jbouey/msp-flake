@@ -433,10 +433,10 @@ func TestWindowsBackupVerificationMissing(t *testing.T) {
 
 	found := false
 	for _, f := range findings {
-		if f.CheckType == "backup_verification" {
+		if f.CheckType == "backup_not_configured" {
 			found = true
-			if f.Severity != "high" {
-				t.Errorf("expected severity 'high', got %q", f.Severity)
+			if f.Severity != "low" {
+				t.Errorf("expected severity 'low' for setup requirement, got %q", f.Severity)
 			}
 			if f.HIPAAControl != "164.308(a)(7)(ii)(A)" {
 				t.Errorf("expected HIPAA control '164.308(a)(7)(ii)(A)', got %q", f.HIPAAControl)
@@ -445,7 +445,7 @@ func TestWindowsBackupVerificationMissing(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected backup_verification finding for missing backup")
+		t.Error("expected backup_not_configured finding for missing backup")
 	}
 }
 

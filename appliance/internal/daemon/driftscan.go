@@ -1238,19 +1238,22 @@ func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanT
 	}
 
 	// 25. Backup verification — must have recent backup (within 7 days)
+	// "missing"/"none" = backup not configured (setup requirement, not drift).
+	// Report as a low-severity setup item, not a high-severity drift finding.
+	// Only "stale" (configured but outdated) is real drift.
 	bv := state.BackupVerification
 	if bv.BackupStatus == "missing" || bv.BackupTool == "none" {
 		findings = append(findings, driftFinding{
 			Hostname:     t.hostname,
-			CheckType:    "backup_verification",
-			Expected:     "backup_within_7d",
-			Actual:       "no backup found",
+			CheckType:    "backup_not_configured",
+			Expected:     "backup software installed and configured",
+			Actual:       "no backup tool detected — requires client/partner setup",
 			HIPAAControl: "164.308(a)(7)(ii)(A)",
-			Severity:     "high",
+			Severity:     "low",
 			Details: map[string]string{
 				"backup_tool":   bv.BackupTool,
 				"backup_status": bv.BackupStatus,
-				"restore_test":  bv.RestoreTest,
+				"category":      "setup_requirement",
 			},
 		})
 	} else if bv.BackupStatus == "stale" {
