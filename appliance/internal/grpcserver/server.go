@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -235,14 +236,28 @@ func (s *servicer) Register(_ context.Context, req *pb.RegisterRequest) (*pb.Reg
 		log.Printf("[gRPC] WARNING: Agent %s requested certificates but agent_ca is not configured", req.Hostname)
 	}
 
+	// Select checks based on agent's OS
+	enabledChecks := []string{
+		"bitlocker", "defender", "patches",
+		"firewall", "screenlock", "rmm_detection",
+		"winrm", "dns_service",
+	}
+	osLower := strings.ToLower(req.OsVersion)
+	if strings.Contains(osLower, "darwin") || strings.Contains(osLower, "macos") {
+		enabledChecks = []string{
+			"macos_filevault", "macos_gatekeeper", "macos_sip",
+			"macos_firewall", "macos_auto_update", "macos_screen_lock",
+			"macos_remote_login", "macos_file_sharing", "macos_time_machine",
+			"macos_ntp_sync", "macos_admin_users", "macos_disk_space",
+		}
+	} else if strings.Contains(osLower, "linux") {
+		enabledChecks = nil // Linux agent uses its own defaults
+	}
+
 	return &pb.RegisterResponse{
 		AgentId:              agentID,
 		CheckIntervalSeconds: 300,
-		EnabledChecks: []string{
-			"bitlocker", "defender", "patches",
-			"firewall", "screenlock", "rmm_detection",
-			"winrm", "dns_service",
-		},
+		EnabledChecks:        enabledChecks,
 		CapabilityTier: pb.CapabilityTier_MONITOR_ONLY,
 		CheckConfig:    map[string]string{},
 		CaCertPem:      caCertPEM,

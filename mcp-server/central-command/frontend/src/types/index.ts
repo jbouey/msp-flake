@@ -833,6 +833,9 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   iis_binding_drift: 'IIS Binding',
   odbc_dsn_drift: 'ODBC Drift',
   process_unhealthy: 'Process Down',
+  // Device reachability
+  device_unreachable: 'Unreachable',
+  credential_stale: 'Stale Creds',
 };
 
 // =============================================================================

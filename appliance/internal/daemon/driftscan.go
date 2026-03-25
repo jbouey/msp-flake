@@ -62,15 +62,38 @@ type driftScanner struct {
 	linuxMu           sync.Mutex
 	lastLinuxScanTime time.Time
 	linuxRunning      int32 // atomic guard
+
+	// credential_ip_mismatch cooldown: 1-hour per hostname to avoid spamming
+	// the dashboard on every 15-min scan cycle while a credential is stale.
+	ipMismatchMu       sync.Mutex
+	ipMismatchCooldown map[string]time.Time // hostname -> last reported
 }
 
 func newDriftScanner(svc *Services, d *Daemon) *driftScanner {
-	return &driftScanner{svc: svc, daemon: d}
+	return &driftScanner{
+		svc:                svc,
+		daemon:             d,
+		ipMismatchCooldown: make(map[string]time.Time),
+	}
 }
 
 // isCheckDisabled returns true if the given check type has been disabled in site drift config.
 func (ds *driftScanner) isCheckDisabled(checkType string) bool {
 	return ds.svc.Checks.IsDisabled(checkType)
+}
+
+// shouldSuppressIPMismatch returns true if a credential_ip_mismatch drift report
+// for the given hostname should be suppressed (still within the 1-hour cooldown).
+func (ds *driftScanner) shouldSuppressIPMismatch(hostname string) bool {
+	ds.ipMismatchMu.Lock()
+	defer ds.ipMismatchMu.Unlock()
+
+	last, exists := ds.ipMismatchCooldown[hostname]
+	if exists && time.Since(last) < time.Hour {
+		return true
+	}
+	ds.ipMismatchCooldown[hostname] = time.Now()
+	return false
 }
 
 // ForceScan runs both Windows and Linux drift scans immediately,
@@ -232,12 +255,52 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
 			continue
 		}
-		ws := ds.svc.Targets.ProbeWinRMPort(hostname)
+		connectHost := hostname
+		// DNS re-resolution: if the credential is stored by hostname and the
+		// connect address looks like a stale IP, check if DNS has a newer address.
+		// We log the mismatch but don't auto-update (security decision for partner).
+		if newIP := dnsReResolve(ctx, hostname, wt.Hostname); newIP != "" {
+			log.Printf("[driftscan] Credential %q stored IP %s differs from DNS %s — using stored IP (partner must update credentials to switch)",
+				hostname, wt.Hostname, newIP)
+		}
+		if wt.Hostname != "" {
+			connectHost = wt.Hostname
+		}
+		// Netscan IP cross-reference: check if netscan discovered this host at a
+		// different IP than the credential stores. If so, report the mismatch as a
+		// drift finding and use the discovered IP for the scan attempt (the stale
+		// credential IP is likely unreachable after a DHCP change).
+		if discoveredIP, found := ds.lookupDeviceIP(hostname); found && discoveredIP != connectHost {
+			log.Printf("[driftscan] Credential for %s points to %s but device discovered at %s",
+				hostname, connectHost, discoveredIP)
+			// Report credential_ip_mismatch drift finding with 1-hour cooldown
+			if !ds.isCheckDisabled("credential_ip_mismatch") && !ds.shouldSuppressIPMismatch(hostname) {
+				mismatchFinding := driftFinding{
+					Hostname:     hostname,
+					CheckType:    "credential_ip_mismatch",
+					Expected:     fmt.Sprintf("Credential IP %s matches device", connectHost),
+					Actual:       fmt.Sprintf("Device discovered at %s via ARP/netscan", discoveredIP),
+					HIPAAControl: "164.312(a)(1)",
+					Severity:     "medium",
+					Details: map[string]string{
+						"hostname":      hostname,
+						"credential_ip": connectHost,
+						"discovered_ip": discoveredIP,
+						"platform":      "windows",
+						"source":        "netscan_cross_ref",
+					},
+				}
+				ds.reportDrift(&mismatchFinding)
+			}
+			// Use the discovered IP for the scan attempt
+			connectHost = discoveredIP
+		}
+		ws := ds.svc.Targets.ProbeWinRMPort(connectHost)
 		targets = append(targets, scanTarget{
 			hostname: hostname,
 			label:    "SRV",
 			target: &winrm.Target{
-				Hostname:  hostname,
+				Hostname:  connectHost,
 				Port:      ws.Port,
 				Username:  wt.Username,
 				Password:  wt.Password,
@@ -260,10 +323,32 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		scannedHosts = append(scannedHosts, t.hostname)
 		drifts := ds.checkTarget(ctx, t)
 		allFindings = append(allFindings, drifts...)
+
+		// Track successful scans for credential staleness detection.
+		// A scan is successful if it didn't produce a device_unreachable finding.
+		wasUnreachable := false
 		for i := range drifts {
+			if drifts[i].CheckType == "device_unreachable" {
+				wasUnreachable = true
+				// Feature 2: If unreachable host is domain-joined, log GPO hint.
+				// The next autodeploy cycle's ensureWinRMViaGPO() will handle enablement.
+				if ds.daemon.deployer != nil {
+					adHosts := ds.svc.Targets.GetADHostnames()
+					if adHosts[t.hostname] || adHosts[drifts[i].Hostname] {
+						log.Printf("[driftscan] Unreachable host %s is domain-joined — GPO should enable WinRM on next boot", t.hostname)
+					}
+				}
+			}
 			ds.reportDrift(&drifts[i])
 		}
+		if !wasUnreachable {
+			ds.daemon.state.RecordSuccessfulScan(t.hostname)
+		}
 	}
+
+	// Feature 1: Check for stale credentials — hosts that haven't had a
+	// successful scan in 7+ days (or never scanned at all).
+	ds.checkStaleCredentials(targets)
 
 	log.Printf("[driftscan] Scan complete: targets=%d, drifts_found=%d",
 		len(targets), len(allFindings))
@@ -655,7 +740,9 @@ $result | ConvertTo-Json -Depth 3 -Compress
 			return ds.checkTargetViaDCProxy(ctx, t)
 		}
 		log.Printf("[driftscan] Scan failed for %s (%s): %s", t.hostname, t.label, scanResult.Error)
-		return nil
+		// Report unreachable so it surfaces as an incident in the dashboard.
+		// Cooldown in healIncident prevents spam for the same host.
+		return ds.unreachableFinding(t, "windows", scanResult.Error)
 	}
 
 	stdout := maputil.String(scanResult.Output, "std_out")
@@ -1264,7 +1351,8 @@ $result | ConvertTo-Json -Depth 3 -Compress
 	scanResult := ds.svc.WinRM.Execute(dcTarget, proxyScript, "DRIFT-SCAN-PROXY", "driftscan", 60, 0, 30.0, nil)
 	if !scanResult.Success {
 		log.Printf("[driftscan] DC proxy scan failed for %s: %s", t.hostname, scanResult.Error)
-		return nil
+		// Direct WinRM and DC proxy both failed — try direct fallback with per-host creds
+		return ds.checkTargetDirectFallback(ctx, t)
 	}
 
 	stdout := maputil.String(scanResult.Output, "std_out")
@@ -1308,7 +1396,9 @@ func (ds *driftScanner) checkTargetDirectFallback(ctx context.Context, t scanTar
 	}
 	if !ok || wt.Username == "" {
 		log.Printf("[driftscan] No workstation-specific credentials for %s, cannot fallback", t.hostname)
-		return nil
+		// All three scan paths failed (direct, DC proxy, direct fallback).
+		// Report unreachable so it appears as an incident in the dashboard.
+		return ds.unreachableFinding(t, "windows", "all scan methods failed (direct WinRM, DC proxy, direct fallback — no per-host credentials)")
 	}
 
 	// Build a new target with workstation-specific credentials
@@ -1365,6 +1455,58 @@ func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
 	ds.scanLinuxTargets(ctx)
 }
 
+// staleCredentialThreshold is how long a credential can go without a
+// successful scan before it is flagged as stale.
+const staleCredentialThreshold = 7 * 24 * time.Hour // 7 days
+
+// checkStaleCredentials iterates over all scanned targets and reports a
+// credential_stale finding for any host whose last successful scan is
+// older than 7 days (or has never succeeded).
+func (ds *driftScanner) checkStaleCredentials(targets []scanTarget) {
+	if ds.isCheckDisabled("credential_stale") {
+		return
+	}
+
+	now := time.Now()
+
+	for _, t := range targets {
+		lastScan, ever := ds.daemon.state.GetLastSuccessfulScan(t.hostname)
+
+		var daysSince int
+		var lastScanStr string
+		if !ever {
+			daysSince = -1 // never scanned
+			lastScanStr = "never"
+		} else {
+			daysSince = int(now.Sub(lastScan).Hours() / 24)
+			lastScanStr = lastScan.Format(time.RFC3339)
+		}
+
+		if ever && now.Sub(lastScan) < staleCredentialThreshold {
+			continue // scanned recently enough
+		}
+
+		// 24h dedup: only fire once per day per host
+		if !ds.daemon.state.ShouldSendStaleAlert(t.hostname) {
+			continue
+		}
+
+		ds.reportDrift(&driftFinding{
+			Hostname:     t.hostname,
+			CheckType:    "credential_stale",
+			Expected:     "Successful scan within 7 days",
+			Actual:       fmt.Sprintf("Last successful scan: %s", lastScanStr),
+			Severity:     "medium",
+			HIPAAControl: "164.308(a)(8)",
+			Details: map[string]string{
+				"hostname":        t.hostname,
+				"days_since_scan": fmt.Sprintf("%d", daysSince),
+				"credential_name": t.hostname,
+			},
+		})
+	}
+}
+
 // reportDrift sends a drift finding through the L1→L2→L3 healing pipeline.
 func (ds *driftScanner) reportDrift(f *driftFinding) {
 	metadata := map[string]string{
@@ -1398,4 +1540,67 @@ func (ds *driftScanner) reportDrift(f *driftFinding) {
 
 	// Route through the healing pipeline
 	ds.daemon.healIncident(context.Background(), &req)
+}
+
+// unreachableFinding creates a device_unreachable drift finding for a target
+// that failed all scan methods. Returns a single-element slice so it can be
+// returned directly from checkTarget / checkTargetDirectFallback.
+// Cooldown deduplication is handled downstream in healIncident.
+func (ds *driftScanner) unreachableFinding(t scanTarget, platform, errorMsg string) []driftFinding {
+	if ds.isCheckDisabled("device_unreachable") {
+		return nil
+	}
+	return []driftFinding{{
+		Hostname:     t.hostname,
+		CheckType:    "device_unreachable",
+		Expected:     "Device responding to management protocol",
+		Actual:       fmt.Sprintf("Connection failed: %s", errorMsg),
+		HIPAAControl: "164.312(a)(1)",
+		Severity:     "medium",
+		Details: map[string]string{
+			"hostname":   t.hostname,
+			"ip_address": t.target.Hostname,
+			"port":       fmt.Sprintf("%d", t.target.Port),
+			"error":      errorMsg,
+			"platform":   platform,
+			"label":      t.label,
+		},
+	}}
+}
+
+// lookupDeviceIP searches the netscan's discovered devices for one matching
+// the given hostname (case-insensitive). Returns the discovered IP and true
+// if found. This enables cross-referencing credential targets against ARP data
+// to detect DHCP IP changes.
+func (ds *driftScanner) lookupDeviceIP(hostname string) (string, bool) {
+	if ds.daemon.netScan == nil {
+		return "", false
+	}
+	return ds.daemon.netScan.LookupDeviceByHostname(hostname)
+}
+
+// dnsReResolve checks whether a credential-delivered target's stored IP still
+// matches DNS. If DNS resolves to a different IP, it logs a diagnostic warning.
+// It does NOT auto-update credentials (that is a security decision for the partner).
+// Returns the DNS-resolved IP if different from stored, or empty string if same/unresolvable.
+func dnsReResolve(ctx context.Context, credName, storedIP string) string {
+	// Only meaningful when the stored address looks like an IP
+	if net.ParseIP(storedIP) == nil {
+		return "" // stored as hostname, DNS handled naturally
+	}
+
+	addrs, err := net.DefaultResolver.LookupHost(ctx, credName)
+	if err != nil || len(addrs) == 0 {
+		return "" // credential name doesn't resolve via DNS — normal for IP-only entries
+	}
+
+	for _, addr := range addrs {
+		if addr == storedIP {
+			return "" // stored IP matches DNS — all good
+		}
+	}
+
+	log.Printf("[driftscan] DNS mismatch for credential %q: stored=%s, DNS=%s (possible DHCP change)",
+		credName, storedIP, addrs[0])
+	return addrs[0]
 }

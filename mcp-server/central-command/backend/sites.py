@@ -727,6 +727,29 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
         # Human-readable name (from sites table or derived)
         clinic_name = site_row['clinic_name'] if site_row and site_row['clinic_name'] else site_id.replace('-', ' ').title()
 
+        # Credential scan status — per-credential last-scan check for onboarding health gate
+        credential_scan_status = await conn.fetch("""
+            SELECT sc.credential_name, sc.credential_type, sc.sensor_deployed,
+                   (SELECT MAX(created_at) FROM incidents
+                    WHERE site_id = $1
+                      AND details->>'hostname' ILIKE '%' || sc.credential_name || '%'
+                      AND created_at > NOW() - INTERVAL '7 days'
+                   ) as last_scan_at
+            FROM site_credentials sc
+            WHERE sc.site_id = $1
+        """, site_id)
+
+        credential_health = [
+            {
+                "name": row["credential_name"],
+                "type": row["credential_type"],
+                "sensor_deployed": row["sensor_deployed"],
+                "last_scan_at": row["last_scan_at"].isoformat() if row["last_scan_at"] else None,
+                "status": "healthy" if row["last_scan_at"] else "not_scanned",
+            }
+            for row in credential_scan_status
+        ]
+
         return {
             'site_id': site_id,
             'clinic_name': clinic_name,
@@ -770,6 +793,7 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
             'appliances': appliances,
             'credentials': credentials,
             'stale_credentials_count': stale_credentials_count,
+            'credential_health': credential_health,
         }
 
 

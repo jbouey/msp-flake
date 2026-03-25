@@ -12,6 +12,7 @@ import (
 	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/maputil"
 	"github.com/osiriscare/appliance/internal/sshexec"
+	"github.com/osiriscare/appliance/internal/winrm"
 )
 
 // linuxScanScript is a comprehensive bash script that checks all Linux security
@@ -518,7 +519,21 @@ func (ds *driftScanner) scanLinuxRemote(ctx context.Context, target *sshexec.Tar
 		stderr := maputil.String(result.Output, "stderr")
 		log.Printf("[linuxscan] Remote scan failed for %s (%s): error=%q exit=%d stderr=%q",
 			target.Hostname, label, result.Error, result.ExitCode, stderr)
-		return nil
+		// Report unreachable so it surfaces as an incident in the dashboard.
+		// Cooldown in healIncident prevents spam for the same host.
+		errMsg := result.Error
+		if errMsg == "" && stderr != "" {
+			errMsg = stderr
+		}
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("SSH scan failed (exit code %d)", result.ExitCode)
+		}
+		st := scanTarget{
+			hostname: target.Hostname,
+			label:    label,
+			target:   &winrm.Target{Hostname: target.Hostname, Port: target.Port},
+		}
+		return ds.unreachableFinding(st, "linux", errMsg)
 	}
 
 	stdout := maputil.String(result.Output, "stdout")

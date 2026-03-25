@@ -287,6 +287,7 @@ type deviceSyncPayload struct {
 	ExcludedDevices  int                      `json:"excluded_devices"`
 	MedicalDevices   int                      `json:"medical_devices"`
 	ComplianceRate   float64                  `json:"compliance_rate"`
+	IPChanges        []ipChange               `json:"ip_changes,omitempty"`
 }
 
 // deviceSyncEntry is one device in the sync payload.

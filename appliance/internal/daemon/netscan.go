@@ -98,6 +98,14 @@ func (rd *rogueDetector) checkForRogues(devices []discoveredDevice) []discovered
 	return rogues
 }
 
+// ipChange records a MAC address moving from one IP to another.
+type ipChange struct {
+	MACAddress string `json:"mac_address"`
+	OldIP      string `json:"old_ip"`
+	NewIP      string `json:"new_ip"`
+	Hostname   string `json:"hostname,omitempty"`
+}
+
 // netScanner periodically checks network-level security:
 // - Appliance listening ports (detect unexpected services)
 // - Host reachability (known hosts responsive on expected ports)
@@ -115,6 +123,11 @@ type netScanner struct {
 	devicesMu      sync.Mutex
 	discoveredDevs []discoveredDevice
 
+	// MAC-to-IP history: tracks last-known IP for each MAC address.
+	// Used to detect DHCP IP changes between scan cycles.
+	macIPMu      sync.Mutex
+	macIPHistory map[string]string // MAC → last known IP
+
 	// Rogue device detection
 	rogueDetector *rogueDetector
 }
@@ -123,6 +136,7 @@ func newNetScanner(svc *Services, d *Daemon) *netScanner {
 	return &netScanner{
 		svc:           svc,
 		daemon:        d,
+		macIPHistory:  make(map[string]string),
 		rogueDetector: newRogueDetector(),
 	}
 }
@@ -252,6 +266,9 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 		}
 	}
 
+	// Detect DHCP IP changes by comparing current MAC→IP mappings with history
+	ipChanges := ns.detectIPChanges(devices)
+
 	ns.devicesMu.Lock()
 	ns.discoveredDevs = devices
 	ns.devicesMu.Unlock()
@@ -280,10 +297,10 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 		log.Printf("[netscan] Rogue devices detected: %d new MACs", len(rogues))
 	}
 
-	// Sync discovered devices (with probe data) to Central Command
-	ns.syncDiscoveredDevices(ctx, devices)
+	// Sync discovered devices (with probe data + IP changes) to Central Command
+	ns.syncDiscoveredDevices(ctx, devices, ipChanges)
 
-	log.Printf("[netscan] Scan complete: findings=%d, arp_devices=%d", len(findings), len(devices))
+	log.Printf("[netscan] Scan complete: findings=%d, arp_devices=%d, ip_changes=%d", len(findings), len(devices), len(ipChanges))
 }
 
 // expectedPorts are the ports the appliance should have open.
@@ -451,10 +468,60 @@ func (ns *netScanner) checkHostReachability(ctx context.Context, applianceHostna
 	return findings
 }
 
+// detectIPChanges compares current MAC→IP mappings with the previous scan cycle.
+// Returns a list of devices whose IP changed (DHCP reassignment) and updates the
+// history map. Logs each change for operator visibility.
+func (ns *netScanner) detectIPChanges(devices []discoveredDevice) []ipChange {
+	ns.macIPMu.Lock()
+	defer ns.macIPMu.Unlock()
+
+	var changes []ipChange
+	for _, d := range devices {
+		if d.MACAddress == "" {
+			continue
+		}
+		prevIP, known := ns.macIPHistory[d.MACAddress]
+		ns.macIPHistory[d.MACAddress] = d.IPAddress
+		if known && prevIP != d.IPAddress {
+			log.Printf("[netscan] IP change detected: MAC %s moved from %s to %s",
+				d.MACAddress, prevIP, d.IPAddress)
+			changes = append(changes, ipChange{
+				MACAddress: d.MACAddress,
+				OldIP:      prevIP,
+				NewIP:      d.IPAddress,
+				Hostname:   d.Hostname,
+			})
+		}
+	}
+	if len(changes) > 0 {
+		log.Printf("[netscan] %d IP change(s) detected this cycle", len(changes))
+	}
+	return changes
+}
+
+// LookupDeviceByHostname searches the last netscan results for a device matching
+// the given hostname (case-insensitive). Returns the discovered IP and true if found.
+func (ns *netScanner) LookupDeviceByHostname(hostname string) (string, bool) {
+	ns.devicesMu.Lock()
+	defer ns.devicesMu.Unlock()
+
+	lower := strings.ToLower(hostname)
+	for _, d := range ns.discoveredDevs {
+		if strings.ToLower(d.Hostname) == lower {
+			return d.IPAddress, true
+		}
+		// Also match short hostname against FQDN (e.g. "NVSRV01" matches "nvsrv01.northvalley.local")
+		if strings.HasPrefix(strings.ToLower(d.Hostname), lower+".") {
+			return d.IPAddress, true
+		}
+	}
+	return "", false
+}
+
 // syncDiscoveredDevices sends the discovered device list (with probe data) to
 // Central Command via POST /api/devices/sync. This is what populates the
 // dashboard's device inventory with SSH/WinRM/AD status and OS fingerprints.
-func (ns *netScanner) syncDiscoveredDevices(ctx context.Context, devices []discoveredDevice) {
+func (ns *netScanner) syncDiscoveredDevices(ctx context.Context, devices []discoveredDevice, ipChanges []ipChange) {
 	if len(devices) == 0 {
 		return
 	}
@@ -520,6 +587,7 @@ func (ns *netScanner) syncDiscoveredDevices(ctx context.Context, devices []disco
 		ExcludedDevices:  0,
 		MedicalDevices:   0,
 		ComplianceRate:   0,
+		IPChanges:        ipChanges,
 	}
 
 	if err := ns.daemon.phoneCli.SyncDevices(ctx, payload); err != nil {

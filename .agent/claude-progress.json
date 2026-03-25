@@ -1,13 +1,13 @@
 {
   "session": 186,
-  "updated": "2026-03-24T21:30:53.329967Z",
+  "updated": "2026-03-25T00:50:13.714531Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "healthy_metrics_endpoint_structured_logging",
-    "physical_appliance": "go_daemon_v0.3.28_online_autodiscovery_7devices_selfheal_ostype_fix",
+    "physical_appliance": "go_daemon_v0.3.31_online_autodiscovery_winrm_selfheal_live_nvws01_redeployed",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
@@ -17,7 +17,7 @@
     "evidence_pipeline": "end_to_end_live_heartbeats_site_appliances",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "v0.3.28_deployed_auto_recovery_pipeline_bulletproof",
+    "fleet_updates": "v0.3.31_deployed_auto_recovery_pipeline_bulletproof",
     "log_pipeline": "operational_35k_plus_entries_csrf_gzip_auth_fixed",
     "prometheus_metrics": "live_at_slash_metrics_7_gauges_counters",
     "offline_alerting": "partner_email_on_15min_offline",
@@ -224,6 +224,14 @@
     "Selfheal skips Windows agents (use fleet orders) and empty OS types",
     "Handler count test fix (22\u219223 for isolate_host)"
   ],
+  "daemon_v0_3_29_to_v0_3_31_changes": [
+    "WinRM selfheal auto-deploy: DeployWindowsAgentByHostname() via autodeploy fallback chain",
+    "OS type inference from probe results: WinRM open \u2192 windows, SSH open \u2192 linux",
+    "DNS resolution for missing agent IPs in selfheal",
+    "Autodeploy WinRM stub replaced with working DeployWindowsAgentByHostname()",
+    "Agent registry cleanup: 14 \u2192 3 entries on appliance",
+    "VPS WireGuard status script PATH fix (commands not found in systemd)"
+  ],
   "session_186_changes": [
     "OAuth continuous health monitoring in health_monitor_loop (5-min cycle)",
     "3 health signals: token expiry, consecutive failures (>=3), stale sync (>24h)",
@@ -231,13 +239,29 @@
     "7 new Python tests for OAuth health (test_oauth_health.py)",
     "6 new Go concurrent race-condition tests (concurrent_test.go, all pass with -race)",
     "Selfheal OS type bug fix: empty OSType caused 'unsupported OS type' errors",
-    "All Tier 3/4 production hardening items complete"
+    "WinRM selfheal auto-deploy: NVWS01 redeployed successfully on first attempt",
+    "VPN status fix: dashboard now shows Connected (was stale 20h data)",
+    "All Tier 3/4 production hardening items complete",
+    "Daemon versions: v0.3.27 → v0.3.32 (6 iterative deploys)",
+    "Client portal OIDC SSO: per-org config, PKCE+nonce, auto-provision, enforcement",
+    "Partner portal RBAC: require_partner_role() on 9 endpoints, session user link",
+    "Migration 100: client_org_sso + client_oauth_state + partner_sessions.partner_user_id",
+    "Selfheal IP resolution: credential store + DNS + DC pattern fallback",
+    "NVDC01 auto-redeployed via WinRM selfheal (DC pattern IP resolution)",
+    "Escalate/suppress 500 fix: i.hostname → i.details->>'hostname'",
+    "Agent binaries staged on appliance (linux-amd64 + darwin-amd64)",
+    "Chaos lab VM snapshot fix in progress (replacing 4GB snapshots with 6GB+)"
   ],
   "completed_this_session": [
-    "Daemon v0.3.27 deployed + verified on appliance (auto-discovery live)",
-    "OAuth continuous health monitoring (Tier 3 complete)",
-    "Concurrent scan+heal integration tests (Tier 4 complete)",
-    "Selfheal OS type fix (v0.3.28 deployed)",
-    "Progress file updated"
+    "Daemon v0.3.27-v0.3.32 deployed (auto-discovery + selfheal + OS inference)",
+    "All Tier 3/4 hardening complete (OAuth health, concurrent tests)",
+    "WinRM selfheal: NVWS01 + NVDC01 auto-redeployed",
+    "Client portal OIDC SSO (spec + implementation + 12 tests)",
+    "Partner portal RBAC enforcement (6 tests, 9 routes protected)",
+    "Migration 100 applied to VPS",
+    "Escalate/suppress 500 fix deployed",
+    "Agent binaries staged on appliance for SSH selfheal",
+    "VPN status + onboarding stage fixes",
+    "Chaos lab snapshot fix (in progress)"
   ]
 }

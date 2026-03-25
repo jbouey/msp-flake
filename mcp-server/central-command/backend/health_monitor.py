@@ -54,6 +54,13 @@ async def health_monitor_loop():
         except Exception as e:
             logger.error(f"OAuth health check error: {e}", exc_info=True)
 
+        try:
+            await _check_device_reachability()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Device reachability check error: {e}", exc_info=True)
+
         await asyncio.sleep(300)  # Every 5 minutes
 
 
@@ -487,3 +494,51 @@ async def _check_oauth_health():
 
         if updated:
             logger.info(f"OAuth health check: updated {updated} integration(s)")
+
+
+async def _check_device_reachability():
+    """Roll up device_unreachable incidents into partner notifications."""
+    import json
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Find sites with unreachable devices in last hour
+        rows = await conn.fetch("""
+            SELECT i.site_id, s.clinic_name,
+                   COUNT(*) as unreachable_count,
+                   array_agg(DISTINCT i.details->>'hostname') as hosts
+            FROM incidents i
+            JOIN sites s ON s.site_id = i.site_id
+            WHERE i.check_type = 'device_unreachable'
+              AND i.status = 'active'
+              AND i.created_at > NOW() - INTERVAL '1 hour'
+            GROUP BY i.site_id, s.clinic_name
+            HAVING COUNT(*) >= 1
+        """)
+
+        for row in rows:
+            # Check dedup: don't re-notify within 24h
+            existing = await conn.fetchval("""
+                SELECT 1 FROM notifications
+                WHERE category = 'device_unreachable'
+                  AND site_id = $1
+                  AND created_at > NOW() - INTERVAL '24 hours'
+                LIMIT 1
+            """, row["site_id"])
+
+            if existing:
+                continue
+
+            hosts = [h for h in (row["hosts"] or []) if h]
+            await conn.execute("""
+                INSERT INTO notifications (site_id, severity, category, title, message, metadata)
+                VALUES ($1, 'warning', 'device_unreachable', $2, $3, $4::jsonb)
+            """,
+                row["site_id"],
+                f"{row['unreachable_count']} device(s) unreachable at {row['clinic_name']}",
+                f"Devices not responding: {', '.join(hosts[:5])}",
+                json.dumps({"hosts": hosts, "count": row["unreachable_count"]}),
+            )
+            logger.warning(f"[health] {row['unreachable_count']} unreachable devices at {row['clinic_name']}")

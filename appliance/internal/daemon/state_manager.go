@@ -71,15 +71,26 @@ type StateManager struct {
 	// adHostnamesFn is a callback to get AD hostnames from the deployer.
 	// Set after the deployer is created via SetADHostnamesFunc.
 	adHostnamesFn func() map[string]bool
+
+	// Credential health monitoring: last successful WinRM scan per host.
+	// Persisted to disk so staleness survives daemon restarts.
+	lastSuccessfulScanMu sync.Mutex
+	lastSuccessfulScan   map[string]time.Time
+
+	// Stale credential alert dedup: fire at most once per 24h per host.
+	lastStaleAlertMu sync.Mutex
+	lastStaleAlert   map[string]time.Time
 }
 
 // NewStateManager creates a StateManager with all maps initialised.
 func NewStateManager() *StateManager {
 	return &StateManager{
-		cooldowns:      make(map[string]*driftCooldown),
-		exhaustion:     make(map[string]*healingExhaustion),
-		winTargets:     make(map[string]winTarget),
-		disabledChecks: make(map[string]bool),
+		cooldowns:          make(map[string]*driftCooldown),
+		exhaustion:         make(map[string]*healingExhaustion),
+		winTargets:         make(map[string]winTarget),
+		disabledChecks:     make(map[string]bool),
+		lastSuccessfulScan: make(map[string]time.Time),
+		lastStaleAlert:     make(map[string]time.Time),
 	}
 }
 
@@ -196,6 +207,40 @@ func (sm *StateManager) GetADHostnames() map[string]bool {
 // SetADHostnamesFunc registers the callback used by GetADHostnames.
 func (sm *StateManager) SetADHostnamesFunc(fn func() map[string]bool) {
 	sm.adHostnamesFn = fn
+}
+
+// ---------------------------------------------------------------------------
+// Credential health monitoring
+// ---------------------------------------------------------------------------
+
+// RecordSuccessfulScan updates the last successful scan time for a host.
+func (sm *StateManager) RecordSuccessfulScan(hostname string) {
+	sm.lastSuccessfulScanMu.Lock()
+	sm.lastSuccessfulScan[hostname] = time.Now()
+	sm.lastSuccessfulScanMu.Unlock()
+}
+
+// GetLastSuccessfulScan returns the last successful scan time for a host.
+// The boolean is false if the host has never been scanned successfully.
+func (sm *StateManager) GetLastSuccessfulScan(hostname string) (time.Time, bool) {
+	sm.lastSuccessfulScanMu.Lock()
+	defer sm.lastSuccessfulScanMu.Unlock()
+	t, ok := sm.lastSuccessfulScan[hostname]
+	return t, ok
+}
+
+// ShouldSendStaleAlert returns true if a stale credential alert should be
+// sent for this host (24h cooldown between alerts per host).
+// Automatically records the alert time when returning true.
+func (sm *StateManager) ShouldSendStaleAlert(hostname string) bool {
+	sm.lastStaleAlertMu.Lock()
+	defer sm.lastStaleAlertMu.Unlock()
+	now := time.Now()
+	if last, ok := sm.lastStaleAlert[hostname]; ok && now.Sub(last) < 24*time.Hour {
+		return false
+	}
+	sm.lastStaleAlert[hostname] = now
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -505,11 +550,20 @@ func (sm *StateManager) SaveToDisk(stateDir string) {
 	}
 	sm.cooldownMu.Unlock()
 
+	// Snapshot last-successful-scan times for credential staleness detection
+	sm.lastSuccessfulScanMu.Lock()
+	lastScans := make(map[string]time.Time, len(sm.lastSuccessfulScan))
+	for k, v := range sm.lastSuccessfulScan {
+		lastScans[k] = v
+	}
+	sm.lastSuccessfulScanMu.Unlock()
+
 	state := PersistedState{
 		LinuxTargets:       targets,
 		L2Mode:             l2,
 		SubscriptionStatus: sub,
 		Cooldowns:          cooldowns,
+		LastSuccessfulScan: lastScans,
 		SavedAt:            time.Now(),
 	}
 
@@ -569,8 +623,19 @@ func (sm *StateManager) LoadFromDisk(stateDir string) error {
 	}
 	sm.cooldownMu.Unlock()
 
-	log.Printf("[daemon] Restored state from disk: %d linux_targets, l2=%s, sub=%s, cooldowns=%d (saved %s ago)",
-		len(saved.LinuxTargets), saved.L2Mode, saved.SubscriptionStatus, restored, time.Since(saved.SavedAt).Round(time.Second))
+	// Restore last-successful-scan times (credential staleness detection)
+	restoredScans := 0
+	if len(saved.LastSuccessfulScan) > 0 {
+		sm.lastSuccessfulScanMu.Lock()
+		for k, v := range saved.LastSuccessfulScan {
+			sm.lastSuccessfulScan[k] = v
+			restoredScans++
+		}
+		sm.lastSuccessfulScanMu.Unlock()
+	}
+
+	log.Printf("[daemon] Restored state from disk: %d linux_targets, l2=%s, sub=%s, cooldowns=%d, scan_times=%d (saved %s ago)",
+		len(saved.LinuxTargets), saved.L2Mode, saved.SubscriptionStatus, restored, restoredScans, time.Since(saved.SavedAt).Round(time.Second))
 
 	return nil
 }

@@ -23,6 +23,7 @@ type PersistedState struct {
 	L2Mode             string                       `json:"l2_mode,omitempty"`
 	SubscriptionStatus string                       `json:"subscription_status,omitempty"`
 	Cooldowns          map[string]persistedCooldown `json:"cooldowns,omitempty"`
+	LastSuccessfulScan map[string]time.Time         `json:"last_successful_scan,omitempty"`
 	SavedAt            time.Time                    `json:"saved_at"`
 }
 
