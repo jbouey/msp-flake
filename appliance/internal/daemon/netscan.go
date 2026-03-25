@@ -475,9 +475,27 @@ func (ns *netScanner) detectIPChanges(devices []discoveredDevice) []ipChange {
 	ns.macIPMu.Lock()
 	defer ns.macIPMu.Unlock()
 
+	// Count how many IPs each MAC appears on in THIS scan cycle.
+	// MACs seen on 2+ IPs are bridged adapters (e.g., WiFi bridge hosting VMs)
+	// and should be excluded from IP change tracking.
+	macIPs := make(map[string]map[string]bool)
+	for _, d := range devices {
+		if d.MACAddress == "" {
+			continue
+		}
+		if macIPs[d.MACAddress] == nil {
+			macIPs[d.MACAddress] = make(map[string]bool)
+		}
+		macIPs[d.MACAddress][d.IPAddress] = true
+	}
+
 	var changes []ipChange
 	for _, d := range devices {
 		if d.MACAddress == "" {
+			continue
+		}
+		// Skip bridged adapters — same MAC on multiple IPs in one scan
+		if len(macIPs[d.MACAddress]) > 1 {
 			continue
 		}
 		prevIP, known := ns.macIPHistory[d.MACAddress]
