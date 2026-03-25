@@ -232,6 +232,15 @@ func (sh *selfHealer) resolveAgentIP(hostname string) string {
 		return addrs[0]
 	}
 
+	// 3b. Try matching agent hostname against linux target labels/hostnames
+	// Credentials are often keyed by IP, but the label matches the hostname
+	// (e.g., label="MaCs-iMac.local", hostname="192.168.88.50")
+	for _, lt := range sh.svc.Targets.GetLinuxTargets() {
+		if strings.EqualFold(lt.Label, hostname) || strings.EqualFold(lt.Hostname, hostname) {
+			return lt.Hostname // lt.Hostname is the IP from the credential
+		}
+	}
+
 	// 4. DC config fallback — if this hostname matches the DC pattern
 	if sh.svc.Config.DomainController != nil {
 		dc := *sh.svc.Config.DomainController

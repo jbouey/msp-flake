@@ -554,10 +554,6 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[daemon] Checkin OK: appliance=%s, orders=%d, win_targets=%d, linux_targets=%d, triggers=(enum=%v, scan=%v)",
-		resp.ApplianceID, len(resp.PendingOrders), len(resp.WindowsTargets), len(resp.LinuxTargets),
-		resp.TriggerEnumeration, resp.TriggerImmediateScan)
-
 	// Set appliance ID on telemetry reporter and order processor (received from Central Command)
 	if resp.ApplianceID != "" {
 		if d.telemetry != nil {
@@ -620,6 +616,11 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	if len(resp.WindowsTargets) > 0 {
 		d.state.LoadWindowsTargets(resp.WindowsTargets, d.config)
 	}
+
+	// Log after envelope decryption so target counts are accurate
+	log.Printf("[daemon] Checkin OK: appliance=%s, orders=%d, win_targets=%d, linux_targets=%d, triggers=(enum=%v, scan=%v)",
+		resp.ApplianceID, len(resp.PendingOrders), len(resp.WindowsTargets), len(resp.LinuxTargets),
+		resp.TriggerEnumeration, resp.TriggerImmediateScan)
 
 	// Store L2 healing mode from checkin response
 	if resp.L2Mode != "" {

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/healing"
@@ -238,32 +239,61 @@ func (d *Daemon) buildHealingWinRMTarget(hostID string) *winrm.Target {
 // Looks up credentials from linuxTargets first, falls back to root@22.
 func (d *Daemon) buildHealingSSHTarget(hostID string) *sshexec.Target {
 	targets := d.state.GetLinuxTargets()
+
+	// Helper to build an SSH target from a linuxTarget credential entry.
+	buildFromLT := func(lt linuxTarget) *sshexec.Target {
+		port := lt.Port
+		if port == 0 {
+			port = 22
+		}
+		user := lt.Username
+		if user == "" {
+			user = "root"
+		}
+		t := &sshexec.Target{
+			Hostname: lt.Hostname,
+			Port:     port,
+			Username: user,
+		}
+		if lt.Password != "" {
+			pw := lt.Password
+			t.Password = &pw
+		}
+		if lt.PrivateKey != "" {
+			pk := lt.PrivateKey
+			t.PrivateKey = &pk
+		}
+		return t
+	}
+
+	// 1. Direct hostname match (credentials keyed by this hostID)
 	for _, lt := range targets {
 		if lt.Hostname == hostID {
-			port := lt.Port
-			if port == 0 {
-				port = 22
-			}
-			user := lt.Username
-			if user == "" {
-				user = "root"
-			}
-			t := &sshexec.Target{
-				Hostname: lt.Hostname,
-				Port:     port,
-				Username: user,
-			}
-			if lt.Password != "" {
-				pw := lt.Password
-				t.Password = &pw
-			}
-			if lt.PrivateKey != "" {
-				pk := lt.PrivateKey
-				t.PrivateKey = &pk
-			}
-			return t
+			return buildFromLT(lt)
 		}
 	}
+
+	// 2. Label match — credentials are often keyed by IP, but the label
+	// matches the hostname (e.g., hostID="MaCs-iMac.local", label="MaCs-iMac.local",
+	// lt.Hostname="192.168.88.50")
+	for _, lt := range targets {
+		if strings.EqualFold(lt.Label, hostID) || strings.EqualFold(lt.Hostname, hostID) {
+			return buildFromLT(lt)
+		}
+	}
+
+	// 3. gRPC registry — resolve the hostname to an IP via a connected agent,
+	// then look up credentials by that IP
+	if d.registry != nil {
+		if agent := d.registry.GetAgentByHostname(hostID); agent != nil && agent.IPAddress != "" {
+			for _, lt := range targets {
+				if lt.Hostname == agent.IPAddress {
+					return buildFromLT(lt)
+				}
+			}
+		}
+	}
+
 	// Fallback for unknown hosts
 	return &sshexec.Target{
 		Hostname: hostID,

@@ -518,6 +518,27 @@ func (ns *netScanner) LookupDeviceByHostname(hostname string) (string, bool) {
 	return "", false
 }
 
+// classifyDeviceType derives a device type from probe data.
+// Priority: AD-joined Windows → WinRM (workstation) → SSH with OS hint → server/workstation fallback.
+func classifyDeviceType(d discoveredDevice) string {
+	switch {
+	case d.ADJoined:
+		return "workstation"
+	case d.ProbeWinRM:
+		return "workstation"
+	case d.OSType == "macos":
+		return "workstation"
+	case d.OSType == "windows":
+		return "workstation"
+	case d.OSType == "linux" && d.ProbeSSH:
+		return "server"
+	case d.ProbeSSH:
+		return "server"
+	default:
+		return "unknown"
+	}
+}
+
 // syncDiscoveredDevices sends the discovered device list (with probe data) to
 // Central Command via POST /api/devices/sync. This is what populates the
 // dashboard's device inventory with SSH/WinRM/AD status and OS fingerprints.
@@ -542,7 +563,7 @@ func (ns *netScanner) syncDiscoveredDevices(ctx context.Context, devices []disco
 			Hostname:         d.Hostname,
 			IPAddress:        d.IPAddress,
 			MACAddress:       d.MACAddress,
-			DeviceType:       "unknown",
+			DeviceType:       classifyDeviceType(d),
 			ComplianceStatus: "unknown",
 			DiscoverySource:  "arp",
 			FirstSeenAt:      now,
