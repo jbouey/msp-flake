@@ -180,7 +180,7 @@ async def get_oauth_state(state: str, pool) -> Optional[OAuthState]:
 # SESSION MANAGEMENT
 # =============================================================================
 
-async def create_partner_session(partner_id: str, request: Request, pool) -> str:
+async def create_partner_session(partner_id: str, request: Request, pool, partner_user_id=None) -> str:
     """Create a new session for a partner."""
     session_token = secrets.token_urlsafe(32)
     token_hash = hash_session_token(session_token)
@@ -192,9 +192,9 @@ async def create_partner_session(partner_id: str, request: Request, pool) -> str
 
     async with admin_connection(pool) as conn:
         await conn.execute("""
-            INSERT INTO partner_sessions (partner_id, session_token_hash, ip_address, user_agent, expires_at)
-            VALUES ($1, $2, $3, $4, $5)
-        """, partner_id, token_hash, ip_address, user_agent, expires_at)
+            INSERT INTO partner_sessions (partner_id, session_token_hash, ip_address, user_agent, expires_at, partner_user_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
+        """, partner_id, token_hash, ip_address, user_agent, expires_at, partner_user_id)
 
     return session_token
 
@@ -619,8 +619,18 @@ async def oauth_callback(
                 status_code=303
             )
 
+        # Look up partner_users row by email for RBAC
+        partner_user_id = None
+        async with admin_connection(pool) as conn:
+            pu_row = await conn.fetchrow(
+                "SELECT id FROM partner_users WHERE partner_id = $1 AND email = $2 AND status = 'active'",
+                partner["id"], user_info["email"]
+            )
+            if pu_row:
+                partner_user_id = pu_row["id"]
+
         # Create session
-        session_token = await create_partner_session(partner["id"], request, pool)
+        session_token = await create_partner_session(partner["id"], request, pool, partner_user_id=partner_user_id)
 
         # Redirect with session cookie
         response = RedirectResponse(url=redirect_after, status_code=303)
@@ -1049,8 +1059,17 @@ async def email_login(request: Request, body: EmailLoginRequest):
             partner["id"]
         )
 
+        # Look up partner_users row by email for RBAC
+        partner_user_id = None
+        pu_row = await conn.fetchrow(
+            "SELECT id FROM partner_users WHERE partner_id = $1 AND email = $2 AND status = 'active'",
+            partner["id"], email
+        )
+        if pu_row:
+            partner_user_id = pu_row["id"]
+
     # Create session (same as OAuth flow)
-    session_token = await create_partner_session(partner["id"], request, pool)
+    session_token = await create_partner_session(partner["id"], request, pool, partner_user_id=partner_user_id)
 
     await log_partner_login(
         partner_id=str(partner["id"]),
@@ -1136,7 +1155,16 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
             partner["id"]
         )
 
-    session_token = await create_partner_session(partner["id"], request, pool)
+        # Look up partner_users row by email for RBAC
+        partner_user_id = None
+        pu_row = await conn.fetchrow(
+            "SELECT id FROM partner_users WHERE partner_id = $1 AND email = $2 AND status = 'active'",
+            partner["id"], email
+        )
+        if pu_row:
+            partner_user_id = pu_row["id"]
+
+    session_token = await create_partner_session(partner["id"], request, pool, partner_user_id=partner_user_id)
 
     await log_partner_login(
         partner_id=str(partner["id"]),
@@ -1389,7 +1417,18 @@ async def partner_verify_totp(request: Request, body: PartnerVerifyTOTPRequest):
             partner_id
         )
 
-    session_token = await create_partner_session(partner_id, request, pool)
+        # Look up partner_users row by email for RBAC
+        partner_user_id = None
+        pending_email = pending.get("email")
+        if pending_email:
+            pu_row = await conn.fetchrow(
+                "SELECT id FROM partner_users WHERE partner_id = $1 AND email = $2 AND status = 'active'",
+                partner_id, pending_email
+            )
+            if pu_row:
+                partner_user_id = pu_row["id"]
+
+    session_token = await create_partner_session(partner_id, request, pool, partner_user_id=partner_user_id)
 
     await log_partner_login(
         partner_id=partner_id,

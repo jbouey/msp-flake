@@ -1211,6 +1211,12 @@ app.include_router(cve_watch_router)  # CVE Watch — progressive vulnerability 
 app.include_router(framework_sync_router)  # Framework Sync — live compliance library
 app.include_router(client_auth_router, prefix="/api")  # Client portal auth (magic link, login)
 app.include_router(client_portal_router, prefix="/api")  # Client portal endpoints
+try:
+    from dashboard_api.client_sso import sso_router as client_sso_router, config_router as client_sso_config_router
+    app.include_router(client_sso_router, prefix="/api")  # Client SSO (OIDC authorize/callback)
+    app.include_router(client_sso_config_router)  # Partner SSO config CRUD
+except ImportError:
+    pass  # client_sso module not yet deployed
 app.include_router(hipaa_modules_router, prefix="/api")  # HIPAA compliance modules
 app.include_router(companion_router, prefix="/api")  # Compliance Companion portal
 app.include_router(org_credentials_router)  # Organization-level shared credentials

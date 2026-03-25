@@ -184,7 +184,9 @@ async def require_partner(
     if x_api_key:
         partner = await get_partner_from_api_key(x_api_key)
         if partner:
-            return partner
+            result = dict(partner)
+            result["user_role"] = "admin"
+            return result
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
 
     # Try session cookie
@@ -193,9 +195,11 @@ async def require_partner(
 
         async with admin_connection(pool) as conn:
             session = await conn.fetchrow("""
-                SELECT ps.partner_id, p.id, p.name, p.slug, p.status
+                SELECT ps.partner_id, p.id, p.name, p.slug, p.status,
+                       pu.role AS user_role, pu.id AS partner_user_id
                 FROM partner_sessions ps
                 JOIN partners p ON p.id = ps.partner_id
+                LEFT JOIN partner_users pu ON pu.id = ps.partner_user_id
                 WHERE ps.session_token_hash = $1
                   AND ps.expires_at > NOW()
                   AND p.status = 'active'
@@ -203,14 +207,30 @@ async def require_partner(
             """, session_hash)
 
             if session:
-                return {
+                result = {
                     'id': session['id'],
                     'name': session['name'],
                     'slug': session['slug'],
-                    'status': session['status']
+                    'status': session['status'],
                 }
+                result["user_role"] = session.get("user_role") or "admin"  # NULL = legacy session = admin
+                result["partner_user_id"] = str(session["partner_user_id"]) if session.get("partner_user_id") else None
+                return result
 
     raise HTTPException(status_code=401, detail="Authentication required")
+
+
+def require_partner_role(*allowed_roles):
+    """Dependency factory that checks partner_users.role against allowed roles.
+    Returns 403 for unauthorized roles."""
+    async def _check(partner: dict = Depends(require_partner)):
+        if partner.get("user_role") not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail="Insufficient permissions for this action",
+            )
+        return partner
+    return Depends(_check)
 
 
 # =============================================================================
@@ -298,7 +318,7 @@ async def claim_provision_code(claim: ProvisionClaim):
 # =============================================================================
 
 @router.get("/me")
-async def get_my_partner(request: Request, partner=Depends(require_partner)):
+async def get_my_partner(request: Request, partner: dict = require_partner_role("admin", "tech", "billing")):
     """Get current partner's info (self-service)."""
     pool = await get_pool()
 
@@ -358,7 +378,7 @@ async def get_my_partner(request: Request, partner=Depends(require_partner)):
 
 
 @router.get("/me/sites")
-async def get_my_sites(request: Request, partner=Depends(require_partner)):
+async def get_my_sites(request: Request, partner: dict = require_partner_role("admin", "tech", "billing")):
     """Get sites belonging to this partner."""
     pool = await get_pool()
 
@@ -414,7 +434,7 @@ async def get_my_sites(request: Request, partner=Depends(require_partner)):
 
 
 @router.get("/me/orgs")
-async def get_my_orgs(request: Request, partner=Depends(require_partner)):
+async def get_my_orgs(request: Request, partner: dict = require_partner_role("admin", "tech", "billing")):
     """Get organizations managed by this partner with consolidated health."""
     pool = await get_pool()
 
@@ -479,7 +499,7 @@ async def get_my_orgs(request: Request, partner=Depends(require_partner)):
 @router.get("/me/orgs/{org_id}/drift-config")
 async def get_partner_org_drift_config(
     org_id: str,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin", "tech", "billing")
 ):
     """Get drift config for all sites in an org (org-level view)."""
     pool = await get_pool()
@@ -521,7 +541,7 @@ async def get_partner_org_drift_config(
 async def update_partner_org_drift_config(
     org_id: str,
     request: Request,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin", "tech")
 ):
     """Apply drift config to ALL sites in an org (bulk operation)."""
     pool = await get_pool()
@@ -581,7 +601,7 @@ async def update_partner_org_drift_config(
 async def create_provision_code(
     request: Request,
     provision: ProvisionCreate,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin")
 ):
     """Create a new provision code for appliance onboarding."""
     pool = await get_pool()
@@ -630,7 +650,7 @@ async def create_provision_code(
 @router.get("/me/provisions")
 async def list_provision_codes(
     status: Optional[str] = None,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin", "tech")
 ):
     """List provision codes for this partner."""
     pool = await get_pool()
@@ -675,7 +695,7 @@ async def list_provision_codes(
 async def revoke_provision_code(
     request: Request,
     provision_id: str,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin")
 ):
     """Revoke a provision code."""
     pool = await get_pool()
@@ -716,7 +736,7 @@ async def revoke_provision_code(
 async def get_provision_qr_code(
     provision_id: str,
     size: int = 200,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin", "tech")
 ):
     """Generate QR code image for a provision code.
 

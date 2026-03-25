@@ -242,7 +242,8 @@ async def request_magic_link(request: MagicLinkRequest):
     async with admin_connection(pool) as conn:
         # Find user
         user = await conn.fetchrow("""
-            SELECT cu.id, cu.name, cu.is_active, co.status as org_status
+            SELECT cu.id, cu.name, cu.is_active, cu.client_org_id,
+                   co.status as org_status
             FROM client_users cu
             JOIN client_orgs co ON co.id = cu.client_org_id
             WHERE cu.email = $1
@@ -252,6 +253,14 @@ async def request_magic_link(request: MagicLinkRequest):
         if not user or not user["is_active"] or user["org_status"] != "active":
             logger.info(f"Magic link requested for unknown/inactive email: {email}")
             return {"status": "sent", "message": "If that email exists, a login link was sent."}
+
+        # Check SSO enforcement
+        sso_row = await conn.fetchrow(
+            "SELECT sso_enforced FROM client_org_sso WHERE client_org_id = $1",
+            user["client_org_id"],
+        )
+        if sso_row and sso_row["sso_enforced"]:
+            raise HTTPException(status_code=403, detail="This organization requires SSO login")
 
         # Generate magic token
         magic_token = generate_token()
@@ -365,7 +374,8 @@ async def login_with_password(request: Request, body: PasswordLogin):
 
     async with admin_connection(pool) as conn:
         user = await conn.fetchrow("""
-            SELECT cu.id, cu.password_hash, cu.is_active, co.status as org_status
+            SELECT cu.id, cu.password_hash, cu.is_active, cu.client_org_id,
+                   co.status as org_status
             FROM client_users cu
             JOIN client_orgs co ON co.id = cu.client_org_id
             WHERE cu.email = $1
@@ -373,6 +383,14 @@ async def login_with_password(request: Request, body: PasswordLogin):
 
         if not user or not user["is_active"] or user["org_status"] != "active":
             raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # Check SSO enforcement
+        sso_row = await conn.fetchrow(
+            "SELECT sso_enforced FROM client_org_sso WHERE client_org_id = $1",
+            user["client_org_id"],
+        )
+        if sso_row and sso_row["sso_enforced"]:
+            raise HTTPException(status_code=403, detail="This organization requires SSO login")
 
         if not user["password_hash"]:
             # No password set - must use magic link
