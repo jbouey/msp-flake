@@ -69,9 +69,10 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
               <p className="text-label-secondary mt-1">{runbook.description}</p>
             </div>
             <button
-              onClick={onClose}
-              className="p-2 hover:bg-separator-light rounded-ios-sm transition-colors focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2"
+              onClick={(e) => { e.stopPropagation(); onClose(); }}
+              className="ml-4 p-2 hover:bg-separator-light rounded-ios-sm transition-colors focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2 flex-shrink-0 relative z-10"
               aria-label="Close details"
+              type="button"
             >
               <svg className="w-5 h-5 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
