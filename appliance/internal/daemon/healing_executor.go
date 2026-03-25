@@ -192,6 +192,21 @@ func (d *Daemon) executeRunbookCtx(ctx context.Context, params map[string]interf
 				results[phaseStr] = result.Output
 			}
 
+		case "macos":
+			// macOS uses SSH execution (same as remote linux targets)
+			target := d.buildHealingSSHTarget(hostID)
+			if target == nil {
+				return nil, fmt.Errorf("no SSH credentials for macOS host %s", hostID)
+			}
+			result := d.sshExec.Execute(ctx, target, script, runbookID, phaseStr, timeout, 1, 5.0, true, rb.HIPAAControls)
+			if !result.Success {
+				return map[string]interface{}{
+					"success": false, "phase": phaseStr, "error": result.Error,
+				}, fmt.Errorf("%s phase %s failed: %s", runbookID, phaseStr, result.Error)
+			}
+			d.healJournal.CompletePhase(journalID, phaseStr)
+			results[phaseStr] = result.Output
+
 		default:
 			return nil, fmt.Errorf("unknown platform: %s", platform)
 		}
@@ -371,7 +386,7 @@ func (d *Daemon) isKnownTarget(hostname, platform string) bool {
 		}
 		return false
 
-	case "linux":
+	case "linux", "macos":
 		for _, lt := range d.state.GetLinuxTargets() {
 			if lt.Hostname == hostname {
 				return true
@@ -382,6 +397,17 @@ func (d *Daemon) isKnownTarget(hostname, platform string) bool {
 	default:
 		return false
 	}
+}
+
+// inferPlatformFromCheckType determines the platform from the drift check type name.
+func (d *Daemon) inferPlatformFromCheckType(checkType string) string {
+	if len(checkType) > 6 && checkType[:6] == "macos_" {
+		return "macos"
+	}
+	if len(checkType) > 6 && checkType[:6] == "linux_" {
+		return "linux"
+	}
+	return "windows"
 }
 
 // executeHealingOrder processes a healing order from Central Command.
@@ -412,7 +438,7 @@ func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]inte
 		case len(runbookID) > 4 && (runbookID[:4] == "RB-L" || runbookID[:4] == "LIN-"):
 			platform = "linux"
 		case len(runbookID) > 4 && (runbookID[:4] == "MAC-" || runbookID[:8] == "ESC-MAC-"):
-			platform = "linux" // macOS uses SSH execution (same as linux)
+			platform = "macos"
 		default:
 			platform = "windows" // default for HIPAA compliance targets
 		}

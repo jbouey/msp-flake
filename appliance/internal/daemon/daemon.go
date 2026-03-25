@@ -904,7 +904,7 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 		"expected":       req.Expected,
 		"actual":         req.Actual,
 		"hipaa_control":  req.HIPAAControl,
-		"platform":       "windows", // gRPC drift events come from Windows agents
+		"platform":       d.inferPlatformFromCheckType(req.CheckType), // detect from check type prefix
 	}
 	for k, v := range req.Metadata {
 		data[k] = v
