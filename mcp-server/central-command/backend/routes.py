@@ -3727,6 +3727,9 @@ async def get_admin_compliance_health(
         else:
             overall = bundle_overall
 
+        # Trend: exclude network scan check types (net_*) — they're monitoring,
+        # not compliance. Including them tanks the score because netscan produces
+        # hundreds of "fail" bundles per day for unreachable hosts / unexpected ports.
         trend_rows = await conn.fetch("""
             SELECT
                 DATE(checked_at) as date,
@@ -3736,6 +3739,7 @@ async def get_admin_compliance_health(
             WHERE site_id = $1
               AND checked_at > NOW() - INTERVAL '30 days'
               AND check_result IS NOT NULL
+              AND check_type NOT LIKE 'net_%'
             GROUP BY DATE(checked_at)
             ORDER BY date ASC
         """, site_id)

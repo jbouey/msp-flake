@@ -898,6 +898,9 @@ CATEGORY_CHECKS = {
         "windows_network_profile", "windows_dns_config",
         "linux_network", "ntp_sync", "linux_time_sync",
         "windows_smb1_protocol",
+        # Network scan results (monitoring, not compliance)
+        "net_unexpected_ports", "net_expected_service",
+        "net_host_reachability",
     ],
     "system_integrity": [
         "disk_space", "linux_kernel", "linux_boot",
