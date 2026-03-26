@@ -3590,12 +3590,36 @@ async def get_admin_compliance_health(
             for ct in types:
                 reverse_map[ct] = cat
 
-        # --- Source 1: Compliance bundles (Windows drift scans) ---
+        # --- Source 1: Compliance bundles (drift scans) ---
+        # Deduplicate: latest result per (hostname, check_type) only.
+        # Old query grabbed latest 50 rows which could all be the same
+        # check looping every 3 minutes, inflating pass/fail counts.
         bundles = await conn.fetch("""
-            SELECT checks FROM compliance_bundles
-            WHERE site_id = $1
-            ORDER BY checked_at DESC LIMIT 50
+            SELECT DISTINCT ON (hostname, check_type) checks, check_type
+            FROM (
+                SELECT checks,
+                       check_type,
+                       COALESCE(
+                           checks->0->>'hostname',
+                           check_type
+                       ) as hostname,
+                       checked_at
+                FROM compliance_bundles
+                WHERE site_id = $1
+                  AND checked_at > NOW() - INTERVAL '24 hours'
+                ORDER BY checked_at DESC
+            ) sub
+            ORDER BY hostname, check_type, checked_at DESC
         """, site_id)
+
+        # Fallback: if no data in last 24h, use latest per check_type
+        if not bundles:
+            bundles = await conn.fetch("""
+                SELECT DISTINCT ON (check_type) checks, check_type
+                FROM compliance_bundles
+                WHERE site_id = $1
+                ORDER BY check_type, checked_at DESC
+            """, site_id)
 
         cat_pass: dict = {cat: 0 for cat in categories}
         cat_fail: dict = {cat: 0 for cat in categories}
@@ -3633,8 +3657,10 @@ async def get_admin_compliance_health(
                     if cat:
                         cat_fail[cat] += 1
 
-        # --- Source 2: Active incidents (ALL platforms: Linux, NixOS, Windows) ---
-        # Count distinct compliance issues (unique check_type per device), not raw alerts
+        # --- Source 2: Active incidents (informational only, NOT added to scores) ---
+        # Incidents reflect the same failures already captured in compliance bundles.
+        # Adding them to cat_fail would double-count, inflating failure rates.
+        # We query them here for the incident_count metric, not for scoring.
         incident_rows = await conn.fetch("""
             SELECT i.check_type, count(DISTINCT i.appliance_id) as devices_affected
             FROM incidents i
@@ -3648,13 +3674,7 @@ async def get_admin_compliance_health(
             ct = row["check_type"]
             if ct in disabled_set:
                 continue
-            cnt = row["devices_affected"]  # 1 fail per device with this issue
-            cat = reverse_map.get(ct)
-            if cat:
-                cat_fail[cat] += cnt
-                total_failed += cnt
-                incident_fails += cnt
-                incident_fails += cnt
+            incident_fails += row["devices_affected"]
 
         # --- Source 3: Go agent check results (workstation-level compliance) ---
         go_agent_rows = await conn.fetch("""
@@ -3706,22 +3726,21 @@ async def get_admin_compliance_health(
 
         trend_rows = await conn.fetch("""
             SELECT
-                DATE(cb.checked_at) as date,
-                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total,
-                COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant')) as passed
-            FROM compliance_bundles cb,
-                 jsonb_array_elements(cb.checks) as c
-            WHERE cb.site_id = $1
-              AND cb.checked_at > NOW() - INTERVAL '30 days'
-              AND jsonb_array_length(cb.checks) > 0
-            GROUP BY DATE(cb.checked_at)
+                DATE(checked_at) as date,
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE check_result IN ('pass', 'compliant')) as passed
+            FROM compliance_bundles
+            WHERE site_id = $1
+              AND checked_at > NOW() - INTERVAL '30 days'
+              AND check_result IS NOT NULL
+            GROUP BY DATE(checked_at)
             ORDER BY date ASC
         """, site_id)
 
         trend = [
             {
                 "date": r["date"].isoformat(),
-                "score": round((r["passed"] / r["total"]) * 100, 1) if r["total"] > 0 else 100.0
+                "score": round((r["passed"] / r["total"]) * 100, 1) if r["total"] > 0 else None
             }
             for r in trend_rows
         ]

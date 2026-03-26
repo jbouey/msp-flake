@@ -614,9 +614,12 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
             "has_data": False,
         }
     
-    # Collect scores by category using pre-computed lookup
-    # Also track per-check-type results for flap detection
-    category_scores = {cat: [] for cat in CATEGORY_CHECKS}
+    # Collect pass/warn/fail counts by category using pre-computed lookup.
+    # Uses the unified formula: score = (passes + 0.5 * warnings) / total * 100
+    # This matches the admin compliance-health endpoint for consistent scoring.
+    cat_pass: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
+    cat_warn: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
+    cat_fail: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
     check_sequences: Dict[str, list] = {}  # check_type -> [bool pass/fail]
 
     for bundle in bundles:
@@ -627,16 +630,21 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
                 continue
             status = check.get("status", "").lower()
 
-            # Map status to score
             if status in ("compliant", "pass"):
-                score = 100
                 passed = True
+                category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+                if category:
+                    cat_pass[category] += 1
             elif status == "warning":
-                score = 50
                 passed = True
+                category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+                if category:
+                    cat_warn[category] += 1
             elif status in ("non_compliant", "fail"):
-                score = 0
                 passed = False
+                category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+                if category:
+                    cat_fail[category] += 1
             else:
                 continue  # Skip unknown statuses
 
@@ -645,30 +653,24 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
                 check_sequences[check_type] = []
             check_sequences[check_type].append(passed)
 
-            # O(1) category lookup instead of nested loop
-            category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
-            if category:
-                category_scores[category].append(score)
-
     # Detect flapping check types and dampen their scores
     flapping_checks = set()
     for ct, seq in check_sequences.items():
         if len(seq) >= 4:
             pass_pct = (sum(1 for s in seq if s) / len(seq)) * 100
-            # Flapping = neither consistently passing nor failing
             if 20 < pass_pct < 80:
                 flapping_checks.add(ct)
 
-    # Calculate average for each category with flap dampening
+    # Unified formula: score = (passes + 0.5 * warnings) / total * 100
     result_scores = {}
     total_score = 0
     categories_with_data = 0
 
-    for category, scores in category_scores.items():
-        if scores:
-            avg = sum(scores) / len(scores)
-            # If any check in this category is flapping and score < 50,
-            # floor at 50 (warn level) to prevent flap noise from tanking score
+    for category in CATEGORY_CHECKS:
+        total = cat_pass[category] + cat_warn[category] + cat_fail[category]
+        if total > 0:
+            avg = ((cat_pass[category] + 0.5 * cat_warn[category]) / total) * 100
+            # Flap dampening: floor at 50 if any check in category is flapping
             cat_checks = CATEGORY_CHECKS.get(category, [])
             has_flapping = any(ct in flapping_checks for ct in cat_checks)
             if has_flapping and avg < 50:
@@ -678,15 +680,15 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
             categories_with_data += 1
         else:
             result_scores[category] = None
-    
-    # Calculate overall score
+
+    # Overall score = average of category scores
     if categories_with_data > 0:
         result_scores["score"] = round(total_score / categories_with_data, 1)
     else:
         result_scores["score"] = None
-    
+
     result_scores["has_data"] = categories_with_data > 0
-    
+
     return result_scores
 
 
@@ -1701,11 +1703,11 @@ async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]
 
         total_incidents = inc.total if inc else 0
         resolved = inc.resolved if inc else 0
-        healing_rate = (resolved / total_incidents * 100) if total_incidents > 0 else 100.0
+        healing_rate = (resolved / total_incidents * 100) if total_incidents > 0 else None
 
         total_orders = ord_.total if ord_ else 0
         completed = ord_.completed if ord_ else 0
-        order_rate = (completed / total_orders * 100) if total_orders > 0 else 100.0
+        order_rate = (completed / total_orders * 100) if total_orders > 0 else None
 
         results[site_id] = {
             "healing_success_rate": round(healing_rate, 1),
