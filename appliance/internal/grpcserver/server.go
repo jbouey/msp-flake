@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/peer"
 
 	"github.com/osiriscare/appliance/internal/ca"
 	pb "github.com/osiriscare/appliance/proto"
@@ -195,10 +196,18 @@ var healMap = map[string]struct {
 	"dns_service": {"restart", 30},
 }
 
-func (s *servicer) Register(_ context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+func (s *servicer) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
 	log.Printf("[gRPC] Agent registration: %s (needs_certs=%v)", req.Hostname, req.NeedsCertificates)
 
 	agentID := fmt.Sprintf("go-%s-%s", req.Hostname, randomHex(8))
+
+	// Extract peer IP from gRPC connection
+	var peerIP string
+	if p, ok := peer.FromContext(ctx); ok {
+		if tcpAddr, ok := p.Addr.(*net.TCPAddr); ok {
+			peerIP = tcpAddr.IP.String()
+		}
+	}
 
 	now := time.Now().UTC()
 	state := &AgentState{
@@ -209,6 +218,7 @@ func (s *servicer) Register(_ context.Context, req *pb.RegisterRequest) (*pb.Reg
 		ConnectedAt:   now,
 		LastHeartbeat: now,
 		OSVersion:     req.OsVersion,
+		IPAddress:     peerIP,
 	}
 	s.registry.Register(state)
 

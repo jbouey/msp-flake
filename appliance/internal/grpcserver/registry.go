@@ -139,6 +139,11 @@ func (r *AgentRegistry) Register(state *AgentState) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// Remove stale entry for same hostname (agent re-registered with new ID)
+	if oldID, exists := r.hostnameIndex[state.hostnameLower]; exists && oldID != state.AgentID {
+		delete(r.agents, oldID)
+	}
+
 	r.agents[state.AgentID] = state
 	r.hostnameIndex[state.hostnameLower] = state.AgentID
 	r.saveToDisk()
