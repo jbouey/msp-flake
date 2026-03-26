@@ -65,6 +65,44 @@ const CHECK_TYPE_LABELS: Record<string, string> = {
   macos_cert_expiry: 'Certificate Expiry',
 };
 
+const HIPAA_CONTROL_MAP: Record<string, string> = {
+  // Access Control
+  'windows_password_policy': '§164.312(d)',
+  'windows_screen_lock_policy': '§164.312(a)(2)(iii)',
+  'rogue_admin_users': '§164.312(a)(1)',
+  'linux_ssh_config': '§164.312(a)(1)',
+  'linux_accounts': '§164.312(a)(1)',
+  'linux_permissions': '§164.312(a)(2)(i)',
+  // Encryption
+  'bitlocker': '§164.312(a)(2)(iv)',
+  'windows_bitlocker_status': '§164.312(a)(2)(iv)',
+  'windows_smb_signing': '§164.312(e)(1)',
+  'linux_crypto': '§164.312(a)(2)(iv)',
+  // Audit/Logging
+  'audit_logging': '§164.312(b)',
+  'windows_audit_policy': '§164.312(b)',
+  'linux_audit': '§164.312(b)',
+  'linux_logging': '§164.312(b)',
+  // Firewall
+  'firewall': '§164.312(a)(1)',
+  'windows_firewall_status': '§164.312(a)(1)',
+  'firewall_status': '§164.312(a)(1)',
+  'linux_firewall': '§164.312(a)(1)',
+  // Patching
+  'windows_update': '§164.308(a)(1)',
+  'nixos_generation': '§164.308(a)(1)',
+  'linux_patching': '§164.308(a)(1)',
+  // Backup
+  'backup_status': '§164.308(a)(7)',
+  'windows_backup_status': '§164.308(a)(7)',
+  // Antivirus
+  'windows_defender': '§164.308(a)(5)',
+  'windows_defender_exclusions': '§164.308(a)(5)',
+  // Services
+  'critical_services': '§164.308(a)(1)(ii)(D)',
+  'linux_services': '§164.308(a)(1)(ii)(D)',
+};
+
 export const DriftConfig: React.FC = () => {
   const { siteId } = useParams<{ siteId: string }>();
   const [checks, setChecks] = useState<DriftCheckConfig[]>([]);
@@ -73,6 +111,7 @@ export const DriftConfig: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [disableAllWarning, setDisableAllWarning] = useState<string | null>(null);
 
   const loadConfig = useCallback(async () => {
     if (!siteId) return;
@@ -108,6 +147,12 @@ export const DriftConfig: React.FC = () => {
     platformChecks.forEach(c => { newDirty[c.check_type] = true; });
     setDirty(newDirty);
     setSaveMessage(null);
+    if (!enable) {
+      const label = PLATFORM_LABELS[platform] || platform;
+      setDisableAllWarning(`Warning: Disabling all checks removes HIPAA compliance monitoring for ${label}.`);
+    } else {
+      setDisableAllWarning(null);
+    }
   };
 
   const saveChanges = async () => {
@@ -181,6 +226,12 @@ export const DriftConfig: React.FC = () => {
           </div>
         )}
 
+        {disableAllWarning && (
+          <div className="mb-4 p-3 rounded-ios bg-health-warning/10 border border-health-warning/20 text-health-warning text-sm">
+            {disableAllWarning}
+          </div>
+        )}
+
         {loading && (
           <div className="text-center py-12">
             <Spinner size="lg" />
@@ -241,6 +292,11 @@ export const DriftConfig: React.FC = () => {
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-label-primary truncate">
                         {CHECK_TYPE_LABELS[check.check_type] || check.check_type}
+                        {HIPAA_CONTROL_MAP[check.check_type] && (
+                          <span className="ml-2 text-xs text-label-tertiary font-mono">
+                            {HIPAA_CONTROL_MAP[check.check_type]}
+                          </span>
+                        )}
                       </div>
                       {check.notes && (
                         <div className="text-xs text-label-tertiary truncate">{check.notes}</div>
