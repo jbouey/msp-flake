@@ -158,6 +158,24 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                     appliance_db_id,
                     device.device_id,
                 )
+                # Fallback: match by IP to avoid duplicates when device_id format changes
+                # (e.g., MAC-based → IP-based after bridge MAC filtering)
+                if not existing and device.ip_address:
+                    existing = await conn.fetchrow(
+                        """
+                        SELECT id FROM discovered_devices
+                        WHERE appliance_id = $1 AND ip_address = $2
+                        LIMIT 1
+                        """,
+                        appliance_db_id,
+                        device.ip_address,
+                    )
+                    if existing:
+                        # Update the local_device_id to the new format
+                        await conn.execute(
+                            "UPDATE discovered_devices SET local_device_id = $1 WHERE id = $2",
+                            device.device_id, existing["id"],
+                        )
 
                 if existing:
                     device_db_id = existing["id"]

@@ -150,7 +150,8 @@ async def test_sync_creates_new_device():
     conn = FakeConn()
     conn.fetchrow.side_effect = [
         _rec({"id": 42}),                     # appliance lookup
-        None,                                   # device not found -> create
+        None,                                   # device not found by device_id
+        None,                                   # IP fallback also not found -> create
         _rec({"device_status": None}),          # status check after insert
     ]
     conn.fetchval.return_value = 99  # INSERT RETURNING id
@@ -329,7 +330,8 @@ async def test_sync_runs_archive_sweep():
     conn = FakeConn()
     conn.fetchrow.side_effect = [
         _rec({"id": 42}),              # appliance
-        None,                           # device -> create
+        None,                           # device not found by id
+        None,                           # IP fallback not found -> create
         _rec({"device_status": None}),  # status
     ]
     conn.fetchval.return_value = 99
@@ -593,7 +595,8 @@ async def test_sync_device_with_minimal_fields():
     conn = FakeConn()
     conn.fetchrow.side_effect = [
         _rec({"id": 42}),  # appliance
-        None,               # create
+        None,               # not found by id
+        None,               # IP fallback not found
         _rec({"device_status": None}),
     ]
     conn.fetchval.return_value = 99
@@ -628,10 +631,12 @@ async def test_batch_sync_mixed_success_failure():
         if n["call"] == 1:
             return _rec({"id": 42})          # appliance
         if n["call"] == 2:
-            return None                       # dev-ok: create
+            return None                       # dev-ok: not found by id
         if n["call"] == 3:
-            return _rec({"device_status": None})
+            return None                       # dev-ok: IP fallback not found
         if n["call"] == 4:
+            return _rec({"device_status": None})  # dev-ok: status check
+        if n["call"] == 5:
             raise Exception("connection lost")  # dev-fail: blows up
         return None
 
@@ -666,7 +671,8 @@ async def test_device_status_ad_managed():
     conn = FakeConn()
     conn.fetchrow.side_effect = [
         _rec({"id": 42}),              # appliance
-        None,                           # create
+        None,                           # not found by id
+        None,                           # IP fallback not found
         _rec({"device_status": None}),  # not managed
     ]
     conn.fetchval.side_effect = [
@@ -699,7 +705,8 @@ async def test_device_status_take_over_from_ssh():
     conn = FakeConn()
     conn.fetchrow.side_effect = [
         _rec({"id": 42}),              # appliance
-        None,                           # create
+        None,                           # not found by id
+        None,                           # IP fallback not found
         _rec({"device_status": None}),  # not managed
     ]
     conn.fetchval.return_value = 99
@@ -761,7 +768,8 @@ async def test_compliance_details_upserted():
     conn = FakeConn()
     conn.fetchrow.side_effect = [
         _rec({"id": 42}),              # appliance
-        None,                           # create
+        None,                           # not found by id
+        None,                           # IP fallback not found
         _rec({"device_status": None}),
     ]
     conn.fetchval.return_value = 99
