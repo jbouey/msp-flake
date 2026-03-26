@@ -100,7 +100,12 @@ func (r *AgentRegistry) loadFromDisk() {
 		log.Printf("[registry] Failed to parse %s: %v", r.persistPath, err)
 		return
 	}
+	// Dedup: keep only the last entry per hostname (earlier entries are stale)
+	deduped := make(map[string]persistedAgent)
 	for _, a := range agents {
+		deduped[toLower(a.Hostname)] = a
+	}
+	for _, a := range deduped {
 		state := &AgentState{
 			AgentID:       a.AgentID,
 			Hostname:      a.Hostname,
@@ -109,7 +114,7 @@ func (r *AgentRegistry) loadFromDisk() {
 		r.agents[a.AgentID] = state
 		r.hostnameIndex[state.hostnameLower] = a.AgentID
 	}
-	log.Printf("[registry] Loaded %d known agents from disk", len(agents))
+	log.Printf("[registry] Loaded %d known agents from disk (%d deduped from %d)", len(deduped), len(agents)-len(deduped), len(agents))
 }
 
 // saveToDisk persists current agent IDs to disk. Called under write lock.
