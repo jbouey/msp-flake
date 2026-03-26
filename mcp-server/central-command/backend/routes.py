@@ -3547,14 +3547,14 @@ async def get_admin_compliance_health(
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
 
-        # Get disabled checks
+        # Get disabled checks (includes both disabled and not_applicable)
         disabled = await conn.fetch(
-            "SELECT check_type FROM site_drift_config WHERE site_id = $1 AND enabled = false", site_id
+            "SELECT check_type FROM site_drift_config WHERE site_id = $1 AND (enabled = false OR status = 'not_applicable')", site_id
         )
         disabled_set = {r["check_type"] for r in disabled}
         if not disabled:
             defaults = await conn.fetch(
-                "SELECT check_type FROM site_drift_config WHERE site_id = '__defaults__' AND enabled = false"
+                "SELECT check_type FROM site_drift_config WHERE site_id = '__defaults__' AND (enabled = false OR status = 'not_applicable')"
             )
             disabled_set = {r["check_type"] for r in defaults}
 
@@ -3969,7 +3969,10 @@ async def get_drift_config(
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
-            SELECT check_type, enabled, notes FROM site_drift_config
+            SELECT check_type, enabled, notes,
+                   COALESCE(status, CASE WHEN enabled THEN 'enabled' ELSE 'disabled' END) as status,
+                   exception_reason
+            FROM site_drift_config
             WHERE site_id = $1
             ORDER BY check_type
         """, site_id)
@@ -4010,13 +4013,18 @@ async def get_drift_config(
                 "enabled": override["enabled"],
                 "platform": _check_platform(ct),
                 "notes": override["notes"] or "",
+                "status": override["status"] or ("enabled" if override["enabled"] else "disabled"),
+                "exception_reason": override["exception_reason"] or "",
             })
         else:
+            default_enabled = ct not in DEFAULT_DISABLED
             checks.append({
                 "check_type": ct,
-                "enabled": ct not in DEFAULT_DISABLED,
+                "enabled": default_enabled,
                 "platform": _check_platform(ct),
                 "notes": "",
+                "status": "enabled" if default_enabled else "disabled",
+                "exception_reason": "",
             })
 
     # Include any site-specific checks not in the canonical list (custom checks)
@@ -4027,6 +4035,8 @@ async def get_drift_config(
                 "enabled": r["enabled"],
                 "platform": _check_platform(ct),
                 "notes": r["notes"] or "",
+                "status": r["status"] or ("enabled" if r["enabled"] else "disabled"),
+                "exception_reason": r["exception_reason"] or "",
             })
 
     return {"site_id": site_id, "checks": checks}
@@ -4040,8 +4050,9 @@ def _validate_drift_config_checks(checks):
     """Validate drift config safety bounds.
 
     Prevents partners/clients from:
-    1. Disabling ALL checks (at least 1 must remain enabled)
+    1. Disabling ALL checks (at least 1 must remain enabled or marked N/A)
     2. Disabling critical compliance checks (firewall, defender, audit, bitlocker)
+       — marking critical checks as N/A IS allowed (requires documented reason)
     """
     # Works with both DriftCheckItem objects and plain dicts
     enabled_count = 0
@@ -4049,17 +4060,20 @@ def _validate_drift_config_checks(checks):
     for item in checks:
         check_type = item.check_type if hasattr(item, "check_type") else item.get("check_type", "")
         enabled = item.enabled if hasattr(item, "enabled") else item.get("enabled", True)
+        status = (item.status if hasattr(item, "status") else item.get("status")) or ("enabled" if enabled else "disabled")
 
-        if enabled:
+        if enabled or status == "not_applicable":
             enabled_count += 1
         elif check_type in CRITICAL_DRIFT_CHECKS:
+            # Critical checks can be N/A (with reason) but cannot be simply disabled
             blocked_critical.append(check_type)
 
     if blocked_critical:
         raise HTTPException(
             status_code=400,
             detail=f"Cannot disable critical compliance checks: {', '.join(sorted(blocked_critical))}. "
-            f"These checks are required for HIPAA compliance monitoring.",
+            f"These checks are required for HIPAA compliance monitoring. "
+            f"Use 'Not Applicable' with a documented reason if this check does not apply.",
         )
 
     if enabled_count < 1:
@@ -4072,6 +4086,8 @@ def _validate_drift_config_checks(checks):
 class DriftCheckItem(BaseModel):
     check_type: str
     enabled: bool
+    status: Optional[str] = None  # 'enabled', 'disabled', 'not_applicable'
+    exception_reason: Optional[str] = None  # reason for N/A status
 
 
 class DriftConfigUpdate(BaseModel):
@@ -4095,12 +4111,26 @@ async def update_drift_config(
     async with admin_connection(pool) as conn:
         async with conn.transaction():
             for item in body.checks:
+                # Derive status from fields: explicit status takes priority,
+                # otherwise infer from enabled boolean
+                status = item.status or ("enabled" if item.enabled else "disabled")
+                if status not in ("enabled", "disabled", "not_applicable"):
+                    raise HTTPException(status_code=400, detail=f"Invalid status '{status}' for check {item.check_type}")
+                if status == "not_applicable" and not (item.exception_reason or "").strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Check {item.check_type}: exception_reason is required when status is not_applicable",
+                    )
+                # N/A checks are stored as enabled=false (so legacy queries exclude them)
+                # but status='not_applicable' distinguishes them from simple disables
+                effective_enabled = item.enabled if status != "not_applicable" else False
+                exception_reason = (item.exception_reason or "").strip() if status == "not_applicable" else None
                 await conn.execute("""
-                    INSERT INTO site_drift_config (site_id, check_type, enabled, modified_by, modified_at)
-                    VALUES ($1, $2, $3, $4, NOW())
+                    INSERT INTO site_drift_config (site_id, check_type, enabled, status, exception_reason, modified_by, modified_at)
+                    VALUES ($1, $2, $3, $5, $6, $4, NOW())
                     ON CONFLICT (site_id, check_type)
-                    DO UPDATE SET enabled = $3, modified_by = $4, modified_at = NOW()
-                """, site_id, item.check_type, item.enabled, user.get("username", "admin"))
+                    DO UPDATE SET enabled = $3, status = $5, exception_reason = $6, modified_by = $4, modified_at = NOW()
+                """, site_id, item.check_type, effective_enabled, user.get("username", "admin"), status, exception_reason)
     return {"status": "ok", "site_id": site_id, "updated": len(body.checks)}
 
 
@@ -4404,7 +4434,9 @@ async def export_site_data(
 
         # Drift config
         drift_rows = await conn.fetch("""
-            SELECT check_type, enabled, notes
+            SELECT check_type, enabled, notes,
+                   COALESCE(status, CASE WHEN enabled THEN 'enabled' ELSE 'disabled' END) as status,
+                   exception_reason
             FROM site_drift_config
             WHERE site_id = $1
             ORDER BY check_type
@@ -4461,6 +4493,106 @@ async def export_site_data(
         "drift_config": drift_config,
         "orders": orders,
         "orders_count": len(orders),
+    }
+
+
+# =============================================================================
+# CREDENTIAL HEALTH
+# =============================================================================
+
+@router.get("/sites/{site_id}/credential-health")
+async def get_credential_health(
+    site_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Get credential health for a site based on execution telemetry.
+
+    For each hostname the appliance has targeted, returns:
+    - recent_failures: failures in the last 24h
+    - consecutive_failures: consecutive failures (unbroken by a success)
+    - last_success: timestamp of last successful execution
+    - last_failure: timestamp of last failed execution
+    - status: 'healthy', 'degraded' (1-2 consecutive fails), or 'stale' (3+)
+    """
+    await check_site_access_pool(user, site_id)
+    from .fleet import get_pool
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # Per-hostname telemetry health for this site (last 7 days of activity)
+        rows = await conn.fetch("""
+            SELECT
+                hostname,
+                COUNT(*) FILTER (
+                    WHERE success = false AND created_at > NOW() - INTERVAL '24 hours'
+                ) AS recent_failures_24h,
+                COUNT(*) FILTER (
+                    WHERE success = true AND created_at > NOW() - INTERVAL '24 hours'
+                ) AS recent_successes_24h,
+                MAX(created_at) FILTER (WHERE success = true) AS last_success,
+                MAX(created_at) FILTER (WHERE success = false) AS last_failure,
+                COUNT(*) AS total_executions
+            FROM execution_telemetry
+            WHERE site_id = $1
+              AND hostname IS NOT NULL
+              AND hostname != ''
+              AND created_at > NOW() - INTERVAL '7 days'
+            GROUP BY hostname
+            ORDER BY hostname
+        """, site_id)
+
+        # For each host, compute consecutive failures (most recent unbroken streak)
+        hosts = []
+        for row in rows:
+            hostname = row["hostname"]
+            # Get the last N executions in order to count consecutive failures
+            recent = await conn.fetch("""
+                SELECT success, created_at
+                FROM execution_telemetry
+                WHERE site_id = $1 AND hostname = $2
+                ORDER BY created_at DESC
+                LIMIT 20
+            """, site_id, hostname)
+
+            consecutive_failures = 0
+            for r in recent:
+                if not r["success"]:
+                    consecutive_failures += 1
+                else:
+                    break
+
+            if consecutive_failures >= 3:
+                status = "stale"
+            elif consecutive_failures >= 1:
+                status = "degraded"
+            else:
+                status = "healthy"
+
+            hosts.append({
+                "hostname": hostname,
+                "recent_failures_24h": row["recent_failures_24h"],
+                "recent_successes_24h": row["recent_successes_24h"],
+                "last_success": row["last_success"].isoformat() if row["last_success"] else None,
+                "last_failure": row["last_failure"].isoformat() if row["last_failure"] else None,
+                "consecutive_failures": consecutive_failures,
+                "total_executions_7d": row["total_executions"],
+                "status": status,
+            })
+
+    # Summary counts
+    stale_count = sum(1 for h in hosts if h["status"] == "stale")
+    degraded_count = sum(1 for h in hosts if h["status"] == "degraded")
+    healthy_count = sum(1 for h in hosts if h["status"] == "healthy")
+
+    return {
+        "site_id": site_id,
+        "hosts": hosts,
+        "summary": {
+            "total_hosts": len(hosts),
+            "healthy": healthy_count,
+            "degraded": degraded_count,
+            "stale": stale_count,
+        },
     }
 
 

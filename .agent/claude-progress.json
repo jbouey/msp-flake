@@ -1,13 +1,13 @@
 {
-  "session": 186,
-  "updated": "2026-03-25T12:56:40.596229Z",
+  "session": 187,
+  "updated": "2026-03-26T17:14:17.853414Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "healthy_metrics_endpoint_structured_logging",
-    "physical_appliance": "go_daemon_v0.3.42_all_platforms_scanning_selfheal_safety_bounds_maintenance_mode",
+    "physical_appliance": "go_daemon_v0.3.49_enterprise_db_audit_unified_scoring_stable_agent_ids_net_filtering",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
@@ -17,7 +17,7 @@
     "evidence_pipeline": "end_to_end_live_heartbeats_site_appliances",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "v0.3.31_deployed_auto_recovery_pipeline_bulletproof",
+    "fleet_updates": "v0.3.49_deployed_stable_agent_ids_selfheal_guard_net_filtering",
     "log_pipeline": "operational_35k_plus_entries_csrf_gzip_auth_fixed",
     "prometheus_metrics": "live_at_slash_metrics_7_gauges_counters",
     "offline_alerting": "partner_email_on_15min_offline",
@@ -252,16 +252,31 @@
     "Agent binaries staged on appliance (linux-amd64 + darwin-amd64)",
     "Chaos lab VM snapshot fix in progress (replacing 4GB snapshots with 6GB+)"
   ],
-  "completed_this_session": [
-    "Daemon v0.3.27-v0.3.32 deployed (auto-discovery + selfheal + OS inference)",
-    "All Tier 3/4 hardening complete (OAuth health, concurrent tests)",
-    "WinRM selfheal: NVWS01 + NVDC01 auto-redeployed",
-    "Client portal OIDC SSO (spec + implementation + 12 tests)",
-    "Partner portal RBAC enforcement (6 tests, 9 routes protected)",
-    "Migration 100 applied to VPS",
-    "Escalate/suppress 500 fix deployed",
-    "Agent binaries staged on appliance for SSH selfheal",
-    "VPN status + onboarding stage fixes",
-    "Chaos lab snapshot fix (in progress)"
-  ]
+  "completed_this_session": [],
+  "session_187_changes": [
+    "DB audit: 28 missing FK indexes created, 30 duplicate indexes dropped (~200MB freed), 348MB unused tsvector dropped",
+    "DB audit: 33 SERIAL→BIGINT conversions (device_compliance_details was at 70% int overflow)",
+    "DB tuning: shared_buffers 128→512MB, random_page_cost 4→1.1, maintenance_work_mem 64→256MB, autovacuum tuned",
+    "Scoring: unified formula (pass + 0.5*warn)/total*100 in both db_queries.py and routes.py",
+    "Scoring: removed double-counting (incidents no longer added to category failures on top of bundles)",
+    "Scoring: HIPAA category weighting (encryption/access_control 18%, backup/logging/patching 14%, firewall 10%, antivirus/services 6%)",
+    "Scoring: trend defaults null not 100% when no data; healing_rate defaults null not 100%",
+    "Notifications: state-based dedup (71→25 unread), health_monitor offline dedup",
+    "Devices: bridge MAC filtering (daemon + backend), IP-based dedup fallback, Go agent metadata in checkin",
+    "Agents: registry dedup on disk load, stable agent_id reuse on re-register, selfheal heartbeat guard (no more redeploy loop)",
+    "Agents: gRPC peer IP extraction from connection context, zero-time heartbeat filtering (COALESCE)",
+    "Net monitoring: net_* bundles rejected from compliance_bundles (evidence_chain.py), excluded from all scoring queries",
+    "Frontend: HIPAA control badges on DriftConfig (28 check mappings), disable-all warning",
+    "Frontend: FrameworkConfig theme fix (17 slate→design tokens), unsaved changes detection",
+    "Frontend: null-safe .toFixed() on SiteDevices/ClientDashboard/RMMComparison (crash fix)",
+    "Credentials: ghost IP .244→.250 fixed, appliance SSH key generated + added to iMac authorized_keys",
+    "iMac: Go agent v0.4.1 deployed via launchd, --appliance flag, 12 macOS checks running",
+    "Skills: installed postgres-best-practices (Supabase 34 refs), postgres-table-design, sql-expert, grpc-go",
+    "Daemon versions: v0.3.45→v0.3.49 (5 iterative deploys)"
+  ],
+  "test_results_187": {
+    "python_backend": "1190 passed, 0 failures",
+    "go_daemon": "16 packages passed, 0 failures",
+    "frontend": "tsc 0 errors, eslint 0 warnings"
+  }
 }

@@ -50,6 +50,25 @@ logger = structlog.get_logger()
 
 router = APIRouter(tags=["agent"])
 
+# Check types that are monitoring-only — detect drift but don't attempt auto-remediation.
+# These checks either can't be auto-fixed (backup needs destination, BitLocker needs TPM)
+# or are informational (network reachability = host is offline, not a fixable drift).
+MONITORING_ONLY_CHECKS = {
+    # Network monitoring — host offline is not a remediable drift
+    "net_host_reachability",
+    "net_unexpected_ports",
+    "net_expected_service",
+    "net_dns_resolution",
+    # Backup — requires manual configuration of backup destination
+    "backup_not_configured",
+    "backup_status",
+    "backup_verification",
+    # Encryption — BitLocker needs TPM/Pro edition, FileVault needs user auth
+    "bitlocker_status",
+    # Credential staleness — informational, not auto-fixable
+    "credential_stale",
+}
+
 
 # ============================================================================
 # Pydantic Models
@@ -556,6 +575,32 @@ async def report_incident(
             "reported_at": now
         }
     )
+
+    # Monitoring-only checks: record the incident for dashboards but skip the entire
+    # L1 → L2 → L3 remediation cascade.  These check types detect drift that cannot
+    # be auto-fixed (e.g. host offline, backup not configured, BitLocker needs TPM).
+    check_key = incident.check_type or incident.incident_type
+    if incident.incident_type in MONITORING_ONLY_CHECKS or check_key in MONITORING_ONLY_CHECKS:
+        await db.execute(
+            text("""
+                UPDATE incidents SET resolution_tier = 'monitoring', status = 'open'
+                WHERE id = :incident_id
+            """),
+            {"incident_id": incident_id}
+        )
+        await db.commit()
+        logger.info("Monitoring-only check — skipping remediation pipeline",
+                     site_id=incident.site_id,
+                     incident_type=incident.incident_type,
+                     check_type=check_key)
+        return {
+            "status": "received",
+            "incident_id": incident_id,
+            "resolution_tier": "monitoring",
+            "order_id": None,
+            "runbook_id": None,
+            "timestamp": now.isoformat()
+        }
 
     # Try L1 rules
     runbook_id = None

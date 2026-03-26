@@ -751,16 +751,16 @@ async def get_site_compliance_health(
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
 
-        # Get disabled checks
+        # Get disabled checks (includes both disabled and not_applicable)
         disabled = await conn.fetch("""
             SELECT check_type FROM site_drift_config
-            WHERE site_id = $1 AND enabled = false
+            WHERE site_id = $1 AND (enabled = false OR status = 'not_applicable')
         """, site_id)
         disabled_set = {r["check_type"] for r in disabled}
         if not disabled:
             defaults = await conn.fetch("""
                 SELECT check_type FROM site_drift_config
-                WHERE site_id = '__defaults__' AND enabled = false
+                WHERE site_id = '__defaults__' AND (enabled = false OR status = 'not_applicable')
             """)
             disabled_set = {r["check_type"] for r in defaults}
 
@@ -1140,18 +1140,29 @@ async def get_client_drift_config(site_id: str, user: dict = Depends(require_cli
             raise HTTPException(status_code=404, detail="Site not found")
 
         rows = await conn.fetch(
-            "SELECT check_type, enabled, notes FROM site_drift_config WHERE site_id = $1 ORDER BY check_type",
+            """SELECT check_type, enabled, notes,
+                      COALESCE(status, CASE WHEN enabled THEN 'enabled' ELSE 'disabled' END) as status,
+                      exception_reason
+               FROM site_drift_config WHERE site_id = $1 ORDER BY check_type""",
             site_id)
         if not rows:
             rows = await conn.fetch(
-                "SELECT check_type, enabled, notes FROM site_drift_config WHERE site_id = '__defaults__' ORDER BY check_type")
+                """SELECT check_type, enabled, notes,
+                          COALESCE(status, CASE WHEN enabled THEN 'enabled' ELSE 'disabled' END) as status,
+                          exception_reason
+                   FROM site_drift_config WHERE site_id = '__defaults__' ORDER BY check_type""")
 
         def _platform(ct):
             if ct.startswith("macos_"): return "macos"
             if ct.startswith("linux_"): return "linux"
             return "windows"
 
-        checks = [{"check_type": r["check_type"], "enabled": r["enabled"], "platform": _platform(r["check_type"]), "notes": r["notes"] or ""} for r in rows]
+        checks = [{
+            "check_type": r["check_type"], "enabled": r["enabled"],
+            "platform": _platform(r["check_type"]), "notes": r["notes"] or "",
+            "status": r["status"] or ("enabled" if r["enabled"] else "disabled"),
+            "exception_reason": r["exception_reason"] or "",
+        } for r in rows]
     return {"site_id": site_id, "checks": checks}
 
 
@@ -1173,12 +1184,15 @@ async def update_client_drift_config(site_id: str, body: dict, user: dict = Depe
 
         async with conn.transaction():
             for item in checks:
+                status = item.get("status") or ("enabled" if item["enabled"] else "disabled")
+                effective_enabled = item["enabled"] if status != "not_applicable" else False
+                exception_reason = (item.get("exception_reason") or "").strip() if status == "not_applicable" else None
                 await conn.execute("""
-                    INSERT INTO site_drift_config (site_id, check_type, enabled, modified_by, modified_at)
-                    VALUES ($1, $2, $3, $4, NOW())
+                    INSERT INTO site_drift_config (site_id, check_type, enabled, status, exception_reason, modified_by, modified_at)
+                    VALUES ($1, $2, $3, $5, $6, $4, NOW())
                     ON CONFLICT (site_id, check_type)
-                    DO UPDATE SET enabled = $3, modified_by = $4, modified_at = NOW()
-                """, site_id, item["check_type"], item["enabled"], f"client:{user.get('email', user['id'])}")
+                    DO UPDATE SET enabled = $3, status = $5, exception_reason = $6, modified_by = $4, modified_at = NOW()
+                """, site_id, item["check_type"], effective_enabled, f"client:{user.get('email', user['id'])}", status, exception_reason)
     return {"status": "ok", "site_id": site_id, "updated": len(checks)}
 
 

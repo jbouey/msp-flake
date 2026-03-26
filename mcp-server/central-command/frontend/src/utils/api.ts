@@ -929,6 +929,8 @@ export interface DriftCheckConfig {
   enabled: boolean;
   platform: 'windows' | 'linux' | 'macos';
   notes: string;
+  status: 'enabled' | 'disabled' | 'not_applicable';
+  exception_reason: string;
 }
 
 export interface DriftConfigResponse {
@@ -940,7 +942,7 @@ export const driftConfigApi = {
   getConfig: (siteId: string) =>
     fetchApi<DriftConfigResponse>(`/sites/${siteId}/drift-config`),
 
-  updateConfig: (siteId: string, checks: Array<{ check_type: string; enabled: boolean }>) =>
+  updateConfig: (siteId: string, checks: Array<{ check_type: string; enabled: boolean; status?: string; exception_reason?: string }>) =>
     fetchApi<{ status: string; site_id: string; updated: number }>(`/sites/${siteId}/drift-config`, {
       method: 'PUT',
       body: JSON.stringify({ checks }),

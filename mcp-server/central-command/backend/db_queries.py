@@ -433,11 +433,12 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
     inc_row = inc_row.fetchone()
 
     # Fetch disabled drift checks per site for compliance score filtering
+    # Includes both disabled and not_applicable checks
     global_disabled_by_site: Dict[str, set] = {}
     global_default_disabled: set = set()
     try:
         dc_result = await db.execute(text(
-            "SELECT site_id, check_type FROM site_drift_config WHERE enabled = false"
+            "SELECT site_id, check_type FROM site_drift_config WHERE enabled = false OR status = 'not_applicable'"
         ))
         dc_rows = dc_result.fetchall()
         for r in dc_rows:
@@ -574,16 +575,16 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
     
     Scoring: compliant/pass=100, warning=50, non_compliant/fail=0
     """
-    # Fetch disabled drift checks for this site
+    # Fetch disabled drift checks for this site (includes disabled + not_applicable)
     disabled_checks = set()
     try:
         dc_result = await db.execute(text(
-            "SELECT check_type FROM site_drift_config WHERE site_id = :site_id AND enabled = false"
+            "SELECT check_type FROM site_drift_config WHERE site_id = :site_id AND (enabled = false OR status = 'not_applicable')"
         ), {"site_id": site_id})
         dc_rows = dc_result.fetchall()
         if not dc_rows:
             dc_result = await db.execute(text(
-                "SELECT check_type FROM site_drift_config WHERE site_id = '__defaults__' AND enabled = false"
+                "SELECT check_type FROM site_drift_config WHERE site_id = '__defaults__' AND (enabled = false OR status = 'not_applicable')"
             ))
             dc_rows = dc_result.fetchall()
         disabled_checks = {r.check_type for r in dc_rows}
@@ -706,11 +707,12 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
         return cached
 
     # Fetch all disabled drift checks in one query
+    # Includes both disabled and not_applicable checks
     disabled_by_site: Dict[str, set] = {}
     default_disabled: set = set()
     try:
         dc_result = await db.execute(text(
-            "SELECT site_id, check_type FROM site_drift_config WHERE enabled = false"
+            "SELECT site_id, check_type FROM site_drift_config WHERE enabled = false OR status = 'not_applicable'"
         ))
         dc_rows = dc_result.fetchall()
         for r in dc_rows:

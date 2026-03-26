@@ -2823,24 +2823,28 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
             logger.warning(f"Checkin {checkin.site_id}: runbook lookup failed: {e}")
 
         # === STEP 6b: Get drift scan config (disabled check types) ===
+        # Both disabled and not_applicable checks are sent to the daemon as disabled
+        # so the appliance skips scanning them entirely
         disabled_checks = []
         try:
             async with conn.transaction():
                 # Site-specific overrides take precedence over defaults
                 drift_rows = await conn.fetch("""
-                    SELECT check_type, enabled FROM site_drift_config
+                    SELECT check_type, enabled, COALESCE(status, CASE WHEN enabled THEN 'enabled' ELSE 'disabled' END) as status
+                    FROM site_drift_config
                     WHERE site_id = $1
                 """, checkin.site_id)
 
                 if drift_rows:
-                    disabled_checks = [r['check_type'] for r in drift_rows if not r['enabled']]
+                    disabled_checks = [r['check_type'] for r in drift_rows if not r['enabled'] or r['status'] == 'not_applicable']
                 else:
                     # Fall back to defaults
                     default_rows = await conn.fetch("""
-                        SELECT check_type, enabled FROM site_drift_config
+                        SELECT check_type, enabled, COALESCE(status, CASE WHEN enabled THEN 'enabled' ELSE 'disabled' END) as status
+                        FROM site_drift_config
                         WHERE site_id = '__defaults__'
                     """)
-                    disabled_checks = [r['check_type'] for r in default_rows if not r['enabled']]
+                    disabled_checks = [r['check_type'] for r in default_rows if not r['enabled'] or r['status'] == 'not_applicable']
         except Exception as e:
             logger.warning(f"Checkin {checkin.site_id}: drift config lookup failed: {e}")
 
