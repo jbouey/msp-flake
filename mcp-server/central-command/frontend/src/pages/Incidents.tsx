@@ -142,7 +142,7 @@ const IncidentDetailPanel: React.FC<{ incidentId: string; onClose: () => void }>
       </div>
 
       {/* HIPAA Controls */}
-      {detail.hipaa_controls.length > 0 && (
+      {detail.hipaa_controls && detail.hipaa_controls.length > 0 && (
         <div>
           <span className="text-xs text-label-tertiary">HIPAA Controls:</span>
           <div className="flex flex-wrap gap-1 mt-1">
