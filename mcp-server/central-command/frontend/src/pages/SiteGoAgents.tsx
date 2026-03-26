@@ -33,11 +33,23 @@ const statusColors: Record<string, string> = {
  * "Unknown" status with a heartbeat > 24h ago → "Offline"
  */
 function deriveAgentStatus(agent: GoAgent): { status: string; label: string } {
-  if (agent.status === 'active') return { status: 'active', label: 'Active' };
+  // Backend sends 'connected' for agents in the checkin — treat as active
+  if (agent.status === 'active' || agent.status === 'connected') {
+    // Even if status is 'connected', check heartbeat freshness
+    if (agent.last_heartbeat) {
+      const age = Date.now() - new Date(agent.last_heartbeat).getTime();
+      const mins = age / (1000 * 60);
+      if (mins < 10) return { status: 'active', label: 'Active' };
+      if (mins < 60) return { status: 'stale', label: 'Stale' };
+      return { status: 'offline', label: 'Offline' };
+    }
+    // Connected but never heartbeated — agent deployed but not yet reporting
+    return { status: 'pending', label: 'Pending' };
+  }
   if (agent.status === 'error') return { status: 'error', label: 'Error' };
   if (agent.status === 'pending') return { status: 'pending', label: 'Pending' };
 
-  // For offline/unknown, determine staleness from heartbeat
+  // For offline/disconnected, determine staleness from heartbeat
   if (agent.last_heartbeat) {
     const age = Date.now() - new Date(agent.last_heartbeat).getTime();
     const hours = age / (1000 * 60 * 60);
@@ -45,7 +57,7 @@ function deriveAgentStatus(agent: GoAgent): { status: string; label: string } {
     if (hours > 1) return { status: 'stale', label: 'Stale' };
   }
 
-  if (agent.status === 'offline') return { status: 'offline', label: 'Offline' };
+  if (agent.status === 'offline' || agent.status === 'disconnected') return { status: 'offline', label: 'Offline' };
   return { status: 'offline', label: 'No Contact' };
 }
 

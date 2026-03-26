@@ -544,7 +544,7 @@ export const WORKSTATION_CHECK_HIPAA: Record<string, string> = {
 // GO AGENT MODELS
 // =============================================================================
 
-export type GoAgentStatus = 'active' | 'offline' | 'error' | 'pending';
+export type GoAgentStatus = 'active' | 'connected' | 'disconnected' | 'offline' | 'error' | 'pending';
 export type GoAgentCapabilityTier = 'monitor_only' | 'self_heal' | 'full_remediation';
 
 export interface GoAgentCheckResult {
@@ -590,6 +590,8 @@ export interface SiteGoAgentSummary {
 
 export const GO_AGENT_STATUS_LABELS: Record<GoAgentStatus, string> = {
   active: 'Active',
+  connected: 'Active',
+  disconnected: 'Offline',
   offline: 'Offline',
   error: 'Error',
   pending: 'Pending',
@@ -597,6 +599,8 @@ export const GO_AGENT_STATUS_LABELS: Record<GoAgentStatus, string> = {
 
 export const GO_AGENT_STATUS_COLORS: Record<GoAgentStatus, string> = {
   active: 'green',
+  connected: 'green',
+  disconnected: 'gray',
   offline: 'gray',
   error: 'red',
   pending: 'yellow',
