@@ -2448,6 +2448,11 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                                 return datetime.utcnow()
                         connected_at_dt = _parse_ts(agent.connected_at)
                         last_heartbeat_dt = _parse_ts(agent.last_heartbeat)
+                        # Go zero time (0001-01-01) means "never heartbeated" — treat as None
+                        if last_heartbeat_dt and last_heartbeat_dt.year < 2000:
+                            last_heartbeat_dt = None
+                        if connected_at_dt and connected_at_dt.year < 2000:
+                            connected_at_dt = None
                         # Delete any existing row with same (site_id, hostname) but different agent_id
                         # This handles agent reinstalls that generate a new agent_id
                         await conn.execute("""
@@ -2476,7 +2481,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                                 checks_passed = EXCLUDED.checks_passed,
                                 checks_total = EXCLUDED.checks_total,
                                 compliance_percentage = EXCLUDED.compliance_percentage,
-                                last_heartbeat = EXCLUDED.last_heartbeat,
+                                last_heartbeat = COALESCE(EXCLUDED.last_heartbeat, go_agents.last_heartbeat),
                                 updated_at = NOW()
                         """,
                             agent.agent_id,
