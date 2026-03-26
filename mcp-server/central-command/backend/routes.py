@@ -4891,3 +4891,270 @@ async def rotate_vpn_key(site_id: str, user: dict = Depends(auth_module.require_
         )
 
     return {"status": "ordered", "order_id": order_id, "site_id": site_id}
+
+
+# =============================================================================
+# SOC 2 / MULTI-FRAMEWORK COMPLIANCE REPORT EXPORT
+# =============================================================================
+
+
+@router.get("/sites/{site_id}/compliance-report")
+async def get_compliance_report(
+    site_id: str,
+    framework: str = Query(default="hipaa", description="Framework to report on"),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Generate a structured compliance report for a given framework.
+
+    Fetches all framework_controls for the requested framework, maps each
+    control to the most recent compliance_bundles via check_control_mappings,
+    counts evidence_bundles, and returns an auditor-ready JSON report.
+    """
+    await check_site_access_pool(user, site_id)
+    from .fleet import get_pool
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # Verify site exists
+        site = await conn.fetchrow(
+            "SELECT site_id, clinic_name FROM sites WHERE site_id = $1", site_id
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # 1. Get all controls for this framework with their mapped check_ids
+        control_rows = await conn.fetch("""
+            SELECT fc.control_id, fc.control_name, fc.description, fc.category,
+                   ARRAY_AGG(ccm.check_id) FILTER (WHERE ccm.check_id IS NOT NULL) AS check_ids
+            FROM framework_controls fc
+            LEFT JOIN check_control_mappings ccm
+                ON ccm.framework = fc.framework AND ccm.control_id = fc.control_id
+            WHERE fc.framework = $1
+            GROUP BY fc.control_id, fc.control_name, fc.description, fc.category
+            ORDER BY fc.category, fc.control_id
+        """, framework)
+
+        if not control_rows:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No controls found for framework '{framework}'",
+            )
+
+        # 2. Get the latest compliance bundle result per check_type for this site
+        bundle_rows = await conn.fetch("""
+            SELECT DISTINCT ON (check_type)
+                   check_type, check_result, checked_at
+            FROM compliance_bundles
+            WHERE site_id = $1
+              AND checked_at > NOW() - INTERVAL '30 days'
+            ORDER BY check_type, checked_at DESC
+        """, site_id)
+        bundle_map = {
+            r["check_type"]: {
+                "result": r["check_result"],
+                "checked_at": r["checked_at"],
+            }
+            for r in bundle_rows
+        }
+
+        # 3. Count evidence bundles for this site
+        evidence_count_row = await conn.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM evidence_bundles WHERE site_id = $1", site_id
+        )
+        total_evidence = evidence_count_row["cnt"] if evidence_count_row else 0
+
+        # 4. Build per-control report
+        controls = []
+        passing = 0
+        failing = 0
+        not_tested = 0
+
+        for row in control_rows:
+            check_ids = row["check_ids"] or []
+            check_results = []
+            control_status = "not_tested"
+            latest_check = None
+            evidence_for_control = 0
+
+            for check_id in check_ids:
+                bundle = bundle_map.get(check_id)
+                if bundle:
+                    result = bundle["result"] or "unknown"
+                    checked_at = bundle["checked_at"]
+                    check_results.append({
+                        "check_type": check_id,
+                        "result": result,
+                        "checked_at": checked_at.isoformat() if checked_at else None,
+                    })
+                    if latest_check is None or (checked_at and checked_at > latest_check):
+                        latest_check = checked_at
+
+            # Determine control status from its check results
+            if check_results:
+                has_fail = any(r["result"] in ("fail", "critical") for r in check_results)
+                has_pass = any(r["result"] in ("pass", "compliant") for r in check_results)
+                if has_fail:
+                    control_status = "fail"
+                elif has_pass:
+                    control_status = "pass"
+
+            # Count evidence bundles that match any of this control's check_ids
+            if check_ids:
+                ev_row = await conn.fetchrow("""
+                    SELECT COUNT(*) AS cnt FROM evidence_bundles
+                    WHERE site_id = $1 AND manifest::text LIKE ANY($2)
+                """, site_id, [f"%{cid}%" for cid in check_ids])
+                evidence_for_control = ev_row["cnt"] if ev_row else 0
+
+            if control_status == "pass":
+                passing += 1
+            elif control_status == "fail":
+                failing += 1
+            else:
+                not_tested += 1
+
+            controls.append({
+                "control_id": row["control_id"],
+                "description": (row["control_name"] or row["description"] or ""),
+                "category": row["category"] or "",
+                "status": control_status,
+                "evidence_count": evidence_for_control,
+                "latest_check": latest_check.isoformat() if latest_check else None,
+                "check_results": check_results,
+            })
+
+        total_controls = len(controls)
+        overall_score = round(
+            (passing + 0.5 * not_tested) / total_controls * 100, 1
+        ) if total_controls > 0 else 0.0
+
+    return {
+        "framework": framework,
+        "site_id": site_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "overall_score": overall_score,
+        "controls": controls,
+        "summary": {
+            "total_controls": total_controls,
+            "passing": passing,
+            "failing": failing,
+            "not_tested": not_tested,
+        },
+    }
+
+
+# =============================================================================
+# INDUSTRY PRESET CONFIGURATION
+# =============================================================================
+
+INDUSTRY_PRESETS = {
+    "healthcare": {"primary": "hipaa", "additional": ["nist_csf", "cis"]},
+    "financial": {"primary": "soc2", "additional": ["pci_dss", "glba", "nist_csf"]},
+    "legal": {"primary": "soc2", "additional": ["gdpr", "nist_csf"]},
+    "government": {"primary": "cmmc", "additional": ["nist_800_53", "nist_800_171"]},
+    "general": {"primary": "nist_csf", "additional": ["cis"]},
+}
+
+
+class IndustryPresetRequest(BaseModel):
+    industry: str
+
+
+@router.post("/sites/{site_id}/apply-industry-preset")
+async def apply_industry_preset(
+    site_id: str,
+    body: IndustryPresetRequest,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Apply an industry preset to configure compliance frameworks for a site.
+
+    Looks up the preset for the given industry, then upserts
+    appliance_framework_configs for every appliance at the site so that
+    the correct frameworks are enabled and the primary framework is set.
+    """
+    await check_site_access_pool(user, site_id)
+
+    preset = INDUSTRY_PRESETS.get(body.industry)
+    if not preset:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown industry '{body.industry}'. "
+                   f"Valid options: {', '.join(sorted(INDUSTRY_PRESETS.keys()))}",
+        )
+
+    from .fleet import get_pool
+    pool = await get_pool()
+
+    primary = preset["primary"]
+    enabled = [primary] + preset["additional"]
+
+    async with admin_connection(pool) as conn:
+        # Verify site exists
+        site = await conn.fetchrow(
+            "SELECT site_id FROM sites WHERE site_id = $1", site_id
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Get all appliances for this site
+        appliances = await conn.fetch(
+            "SELECT appliance_id FROM site_appliances WHERE site_id = $1", site_id
+        )
+
+        updated_count = 0
+        for appliance in appliances:
+            await conn.execute("""
+                INSERT INTO appliance_framework_configs (
+                    appliance_id, site_id, enabled_frameworks,
+                    primary_framework, industry, framework_metadata,
+                    created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, NOW(), NOW())
+                ON CONFLICT (appliance_id) DO UPDATE SET
+                    enabled_frameworks = EXCLUDED.enabled_frameworks,
+                    primary_framework = EXCLUDED.primary_framework,
+                    industry = EXCLUDED.industry,
+                    updated_at = NOW()
+            """, appliance["appliance_id"], site_id, enabled, primary, body.industry)
+            updated_count += 1
+
+        # If no appliances exist yet, create a site-level config placeholder
+        if updated_count == 0:
+            await conn.execute("""
+                INSERT INTO appliance_framework_configs (
+                    appliance_id, site_id, enabled_frameworks,
+                    primary_framework, industry, framework_metadata,
+                    created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, NOW(), NOW())
+                ON CONFLICT (appliance_id) DO UPDATE SET
+                    enabled_frameworks = EXCLUDED.enabled_frameworks,
+                    primary_framework = EXCLUDED.primary_framework,
+                    industry = EXCLUDED.industry,
+                    updated_at = NOW()
+            """, f"__site__{site_id}", site_id, enabled, primary, body.industry)
+            updated_count = 1
+
+        # Audit trail
+        await conn.execute("""
+            INSERT INTO audit_log (event_type, actor, resource_type, resource_id, details)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+        """,
+            "industry_preset.applied",
+            user.get("username", "unknown"),
+            "site",
+            site_id,
+            json.dumps({
+                "industry": body.industry,
+                "primary_framework": primary,
+                "enabled_frameworks": enabled,
+                "appliances_updated": updated_count,
+            }),
+        )
+
+    return {
+        "status": "applied",
+        "site_id": site_id,
+        "industry": body.industry,
+        "primary_framework": primary,
+        "enabled_frameworks": enabled,
+        "appliances_updated": updated_count,
+    }
