@@ -36,8 +36,9 @@ const complianceColors: Record<string, string> = {
  * Device summary card
  */
 const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
-  const rateColor = summary.compliance_rate >= 80 ? 'text-health-healthy' :
-                    summary.compliance_rate >= 50 ? 'text-health-warning' : 'text-health-critical';
+  const rate = summary.compliance_rate ?? 0;
+  const rateColor = rate >= 80 ? 'text-health-healthy' :
+                    rate >= 50 ? 'text-health-warning' : 'text-health-critical';
 
   const coveragePct = summary.network_coverage_pct ?? 0;
   const coverageColor = coveragePct >= 90 ? 'text-emerald-400' :
@@ -52,7 +53,7 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
         {/* Overall compliance */}
         <div className="text-center">
           <div className={`text-3xl font-bold ${rateColor}`}>
-            {summary.compliance_rate.toFixed(0)}%
+            {rate.toFixed(0)}%
           </div>
           <div className="text-sm text-label-secondary">Compliance</div>
         </div>

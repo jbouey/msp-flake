@@ -110,7 +110,7 @@ const SummaryCard: React.FC<{ summary: RMMComparisonReport['summary'] }> = ({ su
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="text-center">
           <div className={`text-3xl font-bold ${coverageColor}`}>
-            {summary.coverage_rate.toFixed(0)}%
+            {(summary.coverage_rate ?? 0).toFixed(0)}%
           </div>
           <div className="text-sm text-label-secondary">Coverage</div>
         </div>

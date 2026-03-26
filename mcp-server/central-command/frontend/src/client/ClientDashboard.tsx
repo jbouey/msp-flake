@@ -354,7 +354,7 @@ export const ClientDashboard: React.FC = () => {
               <p className="text-sm font-medium text-slate-500">Compliance Score<InfoTip text="Percentage of automated security checks passing. A high score means your systems are configured as expected." /></p>
             </div>
             <span className={`text-4xl font-bold tabular-nums ${getScoreStatus(dashboard?.kpis.compliance_score || 0).color}`}>
-              {dashboard?.kpis.compliance_score.toFixed(1)}%
+              {(dashboard?.kpis.compliance_score ?? 0).toFixed(1)}%
             </span>
             <div className={`mt-4 h-2 rounded-full ${getScoreStatus(dashboard?.kpis.compliance_score || 0).bgColor}`}>
               <div
