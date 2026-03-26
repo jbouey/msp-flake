@@ -189,6 +189,8 @@ type ConnectedAgent struct {
 	AgentID       string `json:"agent_id"`
 	Hostname      string `json:"hostname"`
 	AgentVersion  string `json:"agent_version,omitempty"`
+	IPAddress     string `json:"ip_address,omitempty"`
+	OSVersion     string `json:"os_version,omitempty"`
 	Tier          int    `json:"capability_tier"`
 	ConnectedAt   string `json:"connected_at"`
 	LastHeartbeat string `json:"last_heartbeat"`

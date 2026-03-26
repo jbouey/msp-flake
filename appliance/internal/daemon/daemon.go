@@ -518,6 +518,8 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 				AgentID:       a.AgentID,
 				Hostname:      phiscrub.Scrub(a.Hostname),
 				AgentVersion:  a.AgentVersion,
+				IPAddress:     a.IPAddress,
+				OSVersion:     a.OSVersion,
 				Tier:          int(a.Tier),
 				ConnectedAt:   a.ConnectedAt.UTC().Format(time.RFC3339),
 				LastHeartbeat: a.LastHeartbeat.UTC().Format(time.RFC3339),

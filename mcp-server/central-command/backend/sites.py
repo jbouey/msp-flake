@@ -1787,6 +1787,8 @@ class ConnectedAgentInfo(BaseModel):
     agent_id: str
     hostname: str
     agent_version: Optional[str] = None
+    ip_address: Optional[str] = None
+    os_version: Optional[str] = None
     capability_tier: int = 0
     connected_at: Optional[str] = None
     last_heartbeat: Optional[str] = None
@@ -2459,13 +2461,16 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                         await conn.execute("""
                             INSERT INTO go_agents (
                                 agent_id, site_id, hostname, agent_version,
+                                ip_address, os_name,
                                 capability_tier, status, checks_passed, checks_total,
                                 compliance_percentage, connected_at, last_heartbeat,
                                 updated_at
-                            ) VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8, $9, $10, NOW())
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'connected', $8, $9, $10, $11, $12, NOW())
                             ON CONFLICT (agent_id) DO UPDATE SET
                                 hostname = EXCLUDED.hostname,
                                 agent_version = EXCLUDED.agent_version,
+                                ip_address = COALESCE(EXCLUDED.ip_address, go_agents.ip_address),
+                                os_name = COALESCE(EXCLUDED.os_name, go_agents.os_name),
                                 capability_tier = EXCLUDED.capability_tier,
                                 status = 'connected',
                                 checks_passed = EXCLUDED.checks_passed,
@@ -2478,6 +2483,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                             checkin.site_id,
                             agent.hostname,
                             agent.agent_version,
+                            agent.ip_address,
+                            agent.os_version,
                             agent.capability_tier,
                             agent.checks_passed,
                             agent.checks_total,

@@ -346,8 +346,8 @@ async def test_sync_runs_archive_sweep():
          patch("dashboard_api.device_sync.admin_connection", side_effect=counting_admin):
         await sync_devices(_report())
 
-    # 3 admin_connection calls: main sync, workstation linkage, archive sweep
-    assert admin_calls["n"] == 3
+    # 4 admin_connection calls: main sync, workstation linkage, archive sweep, credential IP update
+    assert admin_calls["n"] == 4
 
     archive_sql = [c for c in conn.execute.call_args_list if "archived" in str(c)]
     assert len(archive_sql) >= 1, "Expected archive sweep UPDATE"

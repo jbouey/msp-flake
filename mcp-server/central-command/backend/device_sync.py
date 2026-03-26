@@ -130,6 +130,22 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
 
         appliance_db_id = appliance_row["id"]
 
+        # Detect bridge MACs: same MAC on 3+ devices means WiFi bridge/gateway.
+        # Clear the MAC on those devices to prevent phantom duplicates.
+        from collections import Counter
+        mac_counts = Counter(
+            d.mac_address for d in report.devices if d.mac_address
+        )
+        bridge_macs = {m for m, c in mac_counts.items() if c >= 3}
+        if bridge_macs:
+            logger.info(
+                "Bridge MAC(s) detected on %d+ devices, clearing: %s",
+                3, bridge_macs,
+            )
+            for device in report.devices:
+                if device.mac_address in bridge_macs:
+                    device.mac_address = None
+
         # Process each device
         for device in report.devices:
             try:

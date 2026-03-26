@@ -568,19 +568,36 @@ func (ns *netScanner) syncDiscoveredDevices(ctx context.Context, devices []disco
 	cfg := ns.svc.Config
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	// Detect bridge MACs: same MAC appearing on 3+ different IPs means it's
+	// a WiFi bridge or gateway — not the real device MAC. Use IP as device ID
+	// for those devices and clear the MAC to avoid phantom duplicates.
+	bridgeMACs := make(map[string]int)
+	for _, d := range devices {
+		if d.MACAddress != "" {
+			bridgeMACs[d.MACAddress]++
+		}
+	}
+
 	entries := make([]deviceSyncEntry, 0, len(devices))
 	for _, d := range devices {
-		// Use MAC as the stable device ID (unique per device on the LAN)
-		deviceID := d.MACAddress
-		if deviceID == "" {
-			deviceID = d.IPAddress // fallback for devices without MAC
+		mac := d.MACAddress
+		isBridgeMAC := mac != "" && bridgeMACs[mac] >= 3
+
+		// Use MAC as the stable device ID (unique per device on the LAN),
+		// but fall back to IP for bridge MACs or missing MACs.
+		deviceID := mac
+		if deviceID == "" || isBridgeMAC {
+			deviceID = d.IPAddress
+		}
+		if isBridgeMAC {
+			mac = "" // don't store the bridge MAC on individual devices
 		}
 
 		entry := deviceSyncEntry{
 			DeviceID:         deviceID,
 			Hostname:         d.Hostname,
 			IPAddress:        d.IPAddress,
-			MACAddress:       d.MACAddress,
+			MACAddress:       mac,
 			DeviceType:       classifyDeviceType(d),
 			ComplianceStatus: "unknown",
 			DiscoverySource:  "arp",
