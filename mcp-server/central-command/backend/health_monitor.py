@@ -230,10 +230,25 @@ async def _send_offline_notification(
         "agent_version": agent_version,
     })
 
-    await conn.execute("""
-        INSERT INTO notifications (site_id, appliance_id, severity, category, title, message, metadata)
-        VALUES ($1, $2, $3, 'appliance_offline', $4, $5, $6::jsonb)
-    """, site_id, appliance_id, severity, title, message, metadata)
+    # State-based dedup: update existing unread notification instead of creating duplicates
+    existing = await conn.fetchval("""
+        SELECT id FROM notifications
+        WHERE site_id = $1 AND category = 'appliance_offline'
+        AND is_read = false AND is_dismissed = false
+        LIMIT 1
+    """, site_id)
+
+    if existing:
+        await conn.execute("""
+            UPDATE notifications
+            SET message = $2, metadata = $3::jsonb, severity = $4, created_at = NOW()
+            WHERE id = $1
+        """, existing, message, metadata, severity)
+    else:
+        await conn.execute("""
+            INSERT INTO notifications (site_id, appliance_id, severity, category, title, message, metadata)
+            VALUES ($1, $2, $3, 'appliance_offline', $4, $5, $6::jsonb)
+        """, site_id, appliance_id, severity, title, message, metadata)
 
     logger.info(f"[{severity}] {title}")
 

@@ -847,26 +847,47 @@ async def report_incident(
         try:
             from dashboard_api.email_alerts import create_notification_with_email
 
-            dedup_hours = 24 if resolution_tier == "L3" else 4
             notification_category = "escalation" if resolution_tier == "L3" else "incident"
 
+            # State-based dedup: if an UNREAD notification already exists for this
+            # incident type on this site, bump its count instead of creating a new one.
+            # This prevents alert fatigue from repeated observations of the same condition.
             dedup_check = await db.execute(
                 text("""
-                    SELECT id FROM notifications
+                    SELECT id, metadata FROM notifications
                     WHERE site_id = :site_id
                     AND category = :category
                     AND title LIKE :title_pattern
-                    AND created_at > NOW() - :dedup_hours * INTERVAL '1 hour'
+                    AND is_read = false
+                    AND is_dismissed = false
                     LIMIT 1
                 """),
                 {
                     "site_id": incident.site_id,
                     "category": notification_category,
                     "title_pattern": f"%{incident.incident_type}%",
-                    "dedup_hours": dedup_hours,
                 }
             )
             existing = dedup_check.fetchone()
+
+            # If an unread notification exists, update its observation count + timestamp
+            if existing:
+                import json as _json
+                try:
+                    meta = _json.loads(existing.metadata) if existing.metadata else {}
+                except (TypeError, _json.JSONDecodeError):
+                    meta = {}
+                meta["repeat_count"] = meta.get("repeat_count", 1) + 1
+                meta["last_observed"] = datetime.now(timezone.utc).isoformat()
+                await db.execute(
+                    text("""
+                        UPDATE notifications
+                        SET metadata = :metadata, created_at = NOW()
+                        WHERE id = :id
+                    """),
+                    {"metadata": _json.dumps(meta), "id": str(existing.id)},
+                )
+                await db.commit()
 
             if not existing:
                 if resolution_tier == "L3":
