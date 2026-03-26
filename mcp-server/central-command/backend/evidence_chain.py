@@ -897,7 +897,11 @@ async def submit_evidence(
         return {
             "status": "accepted",
             "bundle_id": bundle.bundle_id,
-            "note": "Network monitoring bundle — not stored as compliance evidence",
+            "chain_position": 0,
+            "prev_hash": "",
+            "current_hash": "",
+            "ots_status": "skipped",
+            "ots_submitted": False,
         }
 
     # Derive check_result from checks if not provided

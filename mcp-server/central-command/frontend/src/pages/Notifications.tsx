@@ -121,7 +121,7 @@ const PatternCard: React.FC<{ pattern: PatternGroup }> = ({ pattern }) => {
             </span>
           </div>
           <p className="text-sm font-medium text-label-primary">{pattern.title}</p>
-          {pattern.sites.length > 0 && (
+          {pattern.sites && pattern.sites.length > 0 && (
             <p className="text-xs text-label-tertiary mt-1">
               Across {pattern.sites.length} site{pattern.sites.length !== 1 ? 's' : ''}
               {pattern.sites.length <= 3 && (
