@@ -2469,8 +2469,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
                             ON CONFLICT (agent_id) DO UPDATE SET
                                 hostname = EXCLUDED.hostname,
                                 agent_version = EXCLUDED.agent_version,
-                                ip_address = COALESCE(EXCLUDED.ip_address, go_agents.ip_address),
-                                os_name = COALESCE(EXCLUDED.os_name, go_agents.os_name),
+                                ip_address = COALESCE(NULLIF(EXCLUDED.ip_address, ''), go_agents.ip_address),
+                                os_name = COALESCE(NULLIF(EXCLUDED.os_name, ''), go_agents.os_name),
                                 capability_tier = EXCLUDED.capability_tier,
                                 status = 'connected',
                                 checks_passed = EXCLUDED.checks_passed,

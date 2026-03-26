@@ -435,6 +435,22 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
             report.site_id,
         )
 
+    # Deduplicate: when bridge MAC filtering switches device_id from MAC to IP,
+    # old MAC-based records become orphans. Remove discovered_devices that share
+    # an IP with a newer record but have a different local_device_id.
+    try:
+        async with admin_connection(pool) as dedup_conn:
+            await dedup_conn.execute("""
+                DELETE FROM discovered_devices a
+                USING discovered_devices b
+                WHERE a.appliance_id = b.appliance_id
+                  AND a.ip_address = b.ip_address
+                  AND a.id < b.id
+                  AND a.local_device_id != b.local_device_id
+            """)
+    except Exception as e:
+        logger.warning(f"Device dedup failed for {report.site_id}: {e}")
+
     # Auto-populate workstations table from discovered workstation/server devices
     try:
         async with admin_connection(pool) as link_conn:
