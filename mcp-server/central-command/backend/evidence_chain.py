@@ -888,6 +888,18 @@ async def submit_evidence(
     elif not bundle.check_type:
         bundle.check_type = "drift"
 
+    # Skip network monitoring bundles — these are operational monitoring (port scans,
+    # host reachability, DNS checks), NOT compliance attestation. Storing them as
+    # compliance_bundles produces 400+ "fail" entries/day that tank the score to 0%.
+    # Network findings still flow through the healing pipeline via reportNetDrift().
+    if bundle.check_type.startswith("net_"):
+        logger.info(f"Skipping network monitoring bundle ({bundle.check_type}) for site={site_id} — not compliance")
+        return {
+            "status": "accepted",
+            "bundle_id": bundle.bundle_id,
+            "note": "Network monitoring bundle — not stored as compliance evidence",
+        }
+
     # Derive check_result from checks if not provided
     if not bundle.check_result and bundle.checks:
         statuses = [c.get("status", "unknown") for c in bundle.checks]

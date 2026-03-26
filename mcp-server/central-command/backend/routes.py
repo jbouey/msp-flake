@@ -3569,7 +3569,7 @@ async def get_admin_compliance_health(
                        "linux_logging", "security_audit", "audit_policy",
                        "linux_log_forwarding"],
             "firewall": ["firewall", "windows_firewall_status", "firewall_status",
-                        "linux_firewall", "network_profile", "net_unexpected_ports"],
+                        "linux_firewall", "network_profile"],
             "encryption": ["bitlocker", "windows_bitlocker_status", "linux_crypto",
                           "windows_smb_signing", "bitlocker_status", "smb_signing",
                           "smb1_protocol"],
@@ -3582,8 +3582,7 @@ async def get_admin_compliance_health(
                         "windows_service_w32time", "windows_service_wuauserv", "agent_status",
                         "service_dns", "service_netlogon", "service_status",
                         "spooler_service", "linux_failed_services", "ntp_sync",
-                        "winrm", "dns_config", "net_dns_resolution",
-                        "net_expected_service", "net_host_reachability"],
+                        "winrm", "dns_config"],
         }
         reverse_map = {}
         for cat, types in categories.items():
@@ -3607,6 +3606,7 @@ async def get_admin_compliance_health(
                 FROM compliance_bundles
                 WHERE site_id = $1
                   AND checked_at > NOW() - INTERVAL '24 hours'
+                  AND check_type NOT LIKE 'net_%'
                 ORDER BY checked_at DESC
             ) sub
             ORDER BY hostname, check_type, checked_at DESC
@@ -3618,6 +3618,7 @@ async def get_admin_compliance_health(
                 SELECT DISTINCT ON (check_type) checks, check_type
                 FROM compliance_bundles
                 WHERE site_id = $1
+                  AND check_type NOT LIKE 'net_%'
                 ORDER BY check_type, checked_at DESC
             """, site_id)
 
@@ -3641,6 +3642,9 @@ async def get_admin_compliance_health(
                     continue
                 ct = check.get("check", "")
                 if ct in disabled_set:
+                    continue
+                # Skip network monitoring checks — not compliance attestation
+                if ct.startswith("net_"):
                     continue
                 status = (check.get("status") or "").lower()
                 cat = reverse_map.get(ct)

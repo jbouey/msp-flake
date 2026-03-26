@@ -186,6 +186,16 @@ func (r *AgentRegistry) GetAgentByHostname(hostname string) *AgentState {
 	return r.agents[agentID]
 }
 
+// AgentIDForHostname returns the existing agent_id for a hostname, or empty if not found.
+func (r *AgentRegistry) AgentIDForHostname(hostname string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if id, ok := r.hostnameIndex[toLower(hostname)]; ok {
+		return id
+	}
+	return ""
+}
+
 // HasAgentForHost checks if a Go agent is connected for the given hostname.
 func (r *AgentRegistry) HasAgentForHost(hostname string) bool {
 	r.mu.RLock()

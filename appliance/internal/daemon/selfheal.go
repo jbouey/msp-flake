@@ -84,6 +84,12 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 			continue // already escalated, don't retry
 		}
 
+		// Skip redeploy if agent heartbeated recently (avoids redeploy loop
+		// where agent re-registers with new ID but disk-loaded entry is stale)
+		if !entry.LastHeartbeat.IsZero() && time.Since(entry.LastHeartbeat) < 5*time.Minute {
+			continue
+		}
+
 		// Guard against zero-time heartbeats (never heartbeated)
 		if entry.LastHeartbeat.IsZero() {
 			log.Printf("[selfheal] Agent %s has never heartbeated — treating as stale", hostname)

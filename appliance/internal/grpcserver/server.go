@@ -199,7 +199,12 @@ var healMap = map[string]struct {
 func (s *servicer) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
 	log.Printf("[gRPC] Agent registration: %s (needs_certs=%v)", req.Hostname, req.NeedsCertificates)
 
-	agentID := fmt.Sprintf("go-%s-%s", req.Hostname, randomHex(8))
+	// Reuse existing agent_id for the same hostname to prevent registry churn.
+	// New ID only generated for genuinely new agents (first-time registration).
+	agentID := s.registry.AgentIDForHostname(req.Hostname)
+	if agentID == "" {
+		agentID = fmt.Sprintf("go-%s-%s", req.Hostname, randomHex(8))
+	}
 
 	// Extract peer IP from gRPC connection
 	var peerIP string
