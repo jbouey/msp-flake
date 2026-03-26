@@ -662,9 +662,10 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
                 flapping_checks.add(ct)
 
     # Unified formula: score = (passes + 0.5 * warnings) / total * 100
+    # Overall uses HIPAA-weighted average (encryption/access_control weighted higher)
     result_scores = {}
-    total_score = 0
-    categories_with_data = 0
+    weighted_sum = 0.0
+    weight_sum = 0.0
 
     for category in CATEGORY_CHECKS:
         total = cat_pass[category] + cat_warn[category] + cat_fail[category]
@@ -676,14 +677,15 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
             if has_flapping and avg < 50:
                 avg = 50.0
             result_scores[category] = round(avg)
-            total_score += avg
-            categories_with_data += 1
+            weight = HIPAA_CATEGORY_WEIGHTS.get(category, 0.06)
+            weighted_sum += avg * weight
+            weight_sum += weight
         else:
             result_scores[category] = None
 
-    # Overall score = average of category scores
-    if categories_with_data > 0:
-        result_scores["score"] = round(total_score / categories_with_data, 1)
+    # Overall score = HIPAA-weighted average of category scores
+    if weight_sum > 0:
+        result_scores["score"] = round(weighted_sum / weight_sum, 1)
     else:
         result_scores["score"] = None
 
@@ -841,6 +843,22 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
 # =============================================================================
 
 # Category mappings for compliance checks
+# HIPAA-weighted category importance for overall score calculation.
+# Encryption and access control carry the most weight per HIPAA Security Rule:
+#   §164.312(a)(2)(iv) encryption, §164.312(a)(1) access control,
+#   §164.308(a)(7) backup/DR, §164.312(b) audit logging.
+HIPAA_CATEGORY_WEIGHTS = {
+    "encryption":      0.18,  # PHI protection at rest/transit
+    "access_control":  0.18,  # Authentication, RBAC, screen lock
+    "backup":          0.14,  # Disaster recovery, business continuity
+    "logging":         0.14,  # Audit controls, log forwarding
+    "patching":        0.14,  # Vulnerability management
+    "firewall":        0.10,  # Network perimeter security
+    "antivirus":       0.06,  # Endpoint protection
+    "services":        0.06,  # Service hardening
+}
+# Sum = 1.0
+
 CATEGORY_CHECKS = {
     "patching": [
         "nixos_generation", "windows_update", "linux_patching",

@@ -3690,22 +3690,25 @@ async def get_admin_compliance_health(
             go_agent_checks_passed += ga_row["checks_passed"] or 0
             go_agent_checks_total += ga_row["checks_total"] or 0
 
-        # --- Compute per-category scores from total basket ---
+        # --- Compute per-category scores with HIPAA weighting ---
+        from dashboard_api.db_queries import HIPAA_CATEGORY_WEIGHTS
+
         breakdown = {}
-        overall_sum = 0
-        cats_with_data = 0
+        weighted_sum = 0.0
+        weight_sum = 0.0
         for cat in categories:
             total = cat_pass[cat] + cat_fail[cat] + cat_warn[cat]
             if total > 0:
                 # Score = (passes + 0.5*warnings) / total * 100
                 score = round(((cat_pass[cat] + 0.5 * cat_warn[cat]) / total) * 100)
                 breakdown[cat] = score
-                overall_sum += score
-                cats_with_data += 1
+                w = HIPAA_CATEGORY_WEIGHTS.get(cat, 0.06)
+                weighted_sum += score * w
+                weight_sum += w
             else:
                 breakdown[cat] = None
 
-        bundle_overall = round(overall_sum / cats_with_data, 1) if cats_with_data > 0 else None
+        bundle_overall = round(weighted_sum / weight_sum, 1) if weight_sum > 0 else None
 
         # Blend bundle compliance with Go agent compliance, weighted by check count
         if go_agent_checks_total > 0:
