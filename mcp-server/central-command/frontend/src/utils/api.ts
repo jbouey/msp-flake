@@ -670,6 +670,17 @@ export interface OrgHealth {
   }>;
 }
 
+export const appliancesApi = {
+  getUnclaimed: () =>
+    fetchApi<{ unclaimed: Array<{ id: number; mac_address: string; notes: string; registered_at: string | null }>; count: number }>('/appliances/unclaimed'),
+
+  claim: (mac_address: string, site_id: string) =>
+    fetchApi<{ status: string; mac_address: string; site_id: string }>('/appliances/claim', {
+      method: 'POST',
+      body: JSON.stringify({ mac_address, site_id }),
+    }),
+};
+
 export const organizationsApi = {
   getOrganizations: () =>
     fetchApi<{ organizations: Organization[]; count: number }>('/organizations'),

@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { StatusBadge } from '../components/composed';
 import { useSites, useCreateSite } from '../hooks';
 import type { Site } from '../utils/api';
+import { appliancesApi } from '../utils/api';
 import { formatTimeAgo } from '../constants';
 
 // Alias for backward compatibility within this file
@@ -230,6 +232,32 @@ export const Sites: React.FC = () => {
     return orgIds.size;
   }, [sites]);
 
+  // Unclaimed appliances (drop-ship provisioning)
+  const queryClient = useQueryClient();
+  const { data: unclaimedData } = useQuery({
+    queryKey: ['appliances', 'unclaimed'],
+    queryFn: appliancesApi.getUnclaimed,
+    refetchInterval: 15000,
+  });
+  const unclaimed = unclaimedData?.unclaimed || [];
+  const [claimingSite, setClaimingSite] = useState<Record<string, string>>({});
+  const [claimingLoading, setClaimingLoading] = useState<string | null>(null);
+
+  const handleClaim = async (mac: string) => {
+    const siteId = claimingSite[mac];
+    if (!siteId) return;
+    setClaimingLoading(mac);
+    try {
+      await appliancesApi.claim(mac, siteId);
+      queryClient.invalidateQueries({ queryKey: ['appliances', 'unclaimed'] });
+      queryClient.invalidateQueries({ queryKey: ['sites'] });
+    } catch {
+      // error handled silently
+    } finally {
+      setClaimingLoading(null);
+    }
+  };
+
   const handleSort = (col: string) => {
     if (sortBy === col) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -309,6 +337,43 @@ export const Sites: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Unclaimed Appliances Banner */}
+      {unclaimed.length > 0 && (
+        <GlassCard className="p-4 border border-accent-primary/30 bg-accent-primary/5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-2 h-2 rounded-full bg-accent-primary animate-pulse" />
+            <h3 className="text-sm font-semibold text-accent-primary">
+              {unclaimed.length} Unclaimed Appliance{unclaimed.length > 1 ? 's' : ''} — Ready to Assign
+            </h3>
+          </div>
+          <div className="space-y-2">
+            {unclaimed.map((a) => (
+              <div key={a.mac_address} className="flex items-center gap-3 p-2 rounded-ios bg-fill-secondary">
+                <span className="text-sm font-mono text-label-primary">{a.mac_address}</span>
+                <span className="text-xs text-label-tertiary">{a.registered_at ? formatRelativeTime(a.registered_at) : 'Just now'}</span>
+                <select
+                  value={claimingSite[a.mac_address] || ''}
+                  onChange={(e) => setClaimingSite(prev => ({ ...prev, [a.mac_address]: e.target.value }))}
+                  className="ml-auto px-2 py-1 text-sm rounded-ios bg-fill-primary border border-separator-light text-label-primary"
+                >
+                  <option value="">Select site...</option>
+                  {sites.map((s) => (
+                    <option key={s.site_id} value={s.site_id}>{s.clinic_name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => handleClaim(a.mac_address)}
+                  disabled={!claimingSite[a.mac_address] || claimingLoading === a.mac_address}
+                  className="px-3 py-1 text-sm font-medium rounded-ios bg-accent-primary text-white hover:bg-accent-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {claimingLoading === a.mac_address ? 'Claiming...' : 'Claim'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
 
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
