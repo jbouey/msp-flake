@@ -124,7 +124,7 @@ async def create_site_api(request: Request):
             await conn.execute("""
                 INSERT INTO sites (site_id, clinic_name, contact_name, contact_email,
                                    tier, status, onboarding_stage, client_org_id, lead_at, created_at)
-                VALUES ($1, $2, $3, $4, $5, 'active', 'lead', $6, NOW(), NOW())
+                VALUES ($1, $2, $3, $4, $5, 'pending', 'lead', $6, NOW(), NOW())
             """, site_id, clinic_name, contact_name, contact_email, tier, client_org_id)
         except Exception as e:
             if "duplicate" in str(e).lower() or "unique" in str(e).lower():
