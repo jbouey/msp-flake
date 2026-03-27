@@ -259,7 +259,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
 
             <form onSubmit={handleTotpVerify} className="space-y-4">
               <div>
-                <label htmlFor="totpCode" className="block text-sm font-medium text-label-secondary mb-1">
+                <label htmlFor="totpCode" className="block text-sm font-medium text-slate-700 mb-1">
                   Verification Code
                 </label>
                 <input
@@ -293,7 +293,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
               </button>
             </form>
 
-            <p className="text-center text-sm text-label-tertiary mt-4">
+            <p className="text-center text-sm text-slate-400 mt-4">
               Or use a backup code
             </p>
 
@@ -332,7 +332,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
             <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center animate-pulse-soft" style={{ background: buttonBg }}>
               <OsirisCareLeaf className="w-7 h-7" color="white" />
             </div>
-            <p className="text-label-tertiary">Loading...</p>
+            <p className="text-slate-400">Loading...</p>
           </div>
         </div>
       </div>
@@ -397,11 +397,11 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
         </div>
 
         {/* Login Card */}
-        <div className="p-8" style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.5)' }}>
-          <h2 className="text-xl font-semibold text-label-primary mb-2 text-center">
+        <div className="p-8" style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.5)' }}>
+          <h2 className="text-xl font-semibold text-slate-900 mb-2 text-center">
             Sign In
           </h2>
-          <p className="text-label-secondary text-center mb-6">
+          <p className="text-slate-500 text-center mb-6">
             Access your HIPAA monitoring dashboard.
           </p>
 
@@ -418,7 +418,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                 <p className="text-accent-primary text-sm">{SSO_LABELS.sso_enforced_message}</p>
               </div>
               <div>
-                <label htmlFor="ssoEmail" className="block text-sm font-medium text-label-secondary mb-1">
+                <label htmlFor="ssoEmail" className="block text-sm font-medium text-slate-700 mb-1">
                   Email Address
                 </label>
                 <input
@@ -471,7 +471,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
                     loginMode === 'password'
                       ? 'bg-white text-label-primary shadow-sm'
-                      : 'text-label-tertiary hover:text-label-secondary'
+                      : 'text-slate-400 hover:text-slate-600'
                   }`}
                 >
                   Email &amp; Password
@@ -482,7 +482,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
                     loginMode === 'magic'
                       ? 'bg-white text-label-primary shadow-sm'
-                      : 'text-label-tertiary hover:text-label-secondary'
+                      : 'text-slate-400 hover:text-slate-600'
                   }`}
                 >
                   Magic Link
@@ -492,7 +492,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
               {loginMode === 'password' ? (
                 <form onSubmit={handlePasswordLogin} className="space-y-4">
                   <div>
-                    <label htmlFor="email" className="block text-sm font-medium text-label-secondary mb-1">
+                    <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
                       Email Address
                     </label>
                     <input
@@ -507,7 +507,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                     />
                   </div>
                   <div>
-                    <label htmlFor="password" className="block text-sm font-medium text-label-secondary mb-1">
+                    <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1">
                       Password
                     </label>
                     <input
@@ -539,7 +539,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
               ) : (
                 <form onSubmit={handleMagicLink} className="space-y-4">
                   <div>
-                    <label htmlFor="magicEmail" className="block text-sm font-medium text-label-secondary mb-1">
+                    <label htmlFor="magicEmail" className="block text-sm font-medium text-slate-700 mb-1">
                       Email Address
                     </label>
                     <input
@@ -580,7 +580,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   <div className="w-full border-t border-separator-light" />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-label-tertiary">or</span>
+                  <span className="px-2 bg-white text-slate-400">or</span>
                 </div>
               </div>
 
@@ -590,7 +590,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                 disabled={ssoLoading}
                 className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-fill-secondary/80 border border-separator-light rounded-xl hover:bg-accent-primary/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <svg className="w-5 h-5 text-label-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                 </svg>
                 <span className="font-medium text-label-primary">
