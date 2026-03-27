@@ -524,12 +524,15 @@ async def get_provision_by_mac(mac_address: str):
         # MAC not found — register as unclaimed appliance for drop-ship workflow.
         # The appliance will poll periodically. Once an admin claims it to a site
         # in the dashboard, the next poll returns the full config.
-        await conn.execute("""
-            INSERT INTO appliance_provisioning (mac_address, notes, registered_at)
-            VALUES ($1, 'Auto-registered (unclaimed — awaiting site assignment)', NOW())
-            ON CONFLICT (mac_address) DO NOTHING
-        """, mac)
-        logger.info(f"[provision] Unclaimed appliance registered: MAC={mac}")
+        try:
+            await conn.execute("""
+                INSERT INTO appliance_provisioning (mac_address, notes, registered_at)
+                VALUES ($1, 'Auto-registered (unclaimed — awaiting site assignment)', NOW())
+                ON CONFLICT (mac_address) DO UPDATE SET registered_at = NOW()
+            """, mac)
+            logger.info(f"[provision] Unclaimed appliance registered: MAC={mac}")
+        except Exception as e:
+            logger.warning(f"[provision] Failed to register unclaimed appliance {mac}: {e}")
 
         return {
             "status": "unclaimed",
