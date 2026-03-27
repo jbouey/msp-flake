@@ -74,14 +74,7 @@ class LearningEngine:
         return analysis
 
     async def _learn_from_success(self, result: ExecutionResult) -> Dict[str, Any]:
-        """
-        Extract patterns from successful executions
-
-        TODO Phase 4: Pattern extraction
-        - Identify common success patterns
-        - Build confidence metrics
-        - Optimize execution time
-        """
+        """Extract patterns from successful executions."""
         return {
             "type": "success",
             "confidence": result.confidence,

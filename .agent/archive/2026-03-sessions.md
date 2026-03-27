@@ -1377,3 +1377,1023 @@ Major frontend design pass covering glassmorphism, dark mode fixes, new shared c
 1.
 
 ---
+
+## 2026-03-10-session-165-L4-escalation-infographic-clickthrough-incident-filters.md
+
+# Session 165 — L4 Escalation, Infographic Click-through, Incident Category Filters
+
+**Date:** 2026-03-10
+**Focus:** Escalation pipeline L4, infographic drill-down, admin compliance view
+
+## Completed
+
+### 1. Admin Compliance Health Infographic
+- Added `GET /api/dashboard/sites/{site_id}/compliance-health` endpoint in `routes.py` (admin auth)
+- Same data as client portal endpoint (8 categories, trend, healing stats)
+- Added `ComplianceHealthInfographic` to `SiteDetail.tsx` (admin site drill-down view)
+- Added `apiPrefix` prop to component — supports `/api/client` (client portal) and `/api/dashboard` (admin)
+
+### 2. Infographic Click-through to Incidents
+- Added `onCategoryClick` callback prop to `ComplianceHealthInfographic`
+- `CategoryCard` now supports `onClick` — clickable with cursor pointer, ARIA role
+- Admin SiteDetail wires click → `navigate('/incidents?site_id=X&category=Y')`
+- Client portal remains display-only (no onCategoryClick passed)
+
+### 3. Incident Category Filtering
+- `Incidents.tsx` reads `site_id` + `category` from URL search params
+- New category filter pills (8 HIPAA categories: patching, antivirus, backup, logging, firewall, encryption, access_control, services)
+- `CATEGORY_CHECK_TYPES` mapping matches backend compliance-health endpoint categories
+- Client-side filtering of incidents by check_type → category mapping
+- URL params update on filter change (deep-linkable)
+
+### 4. L4 Escalation Pipeline
+- **Migration 077**: `escalated_to_l4`, `l4_escalated_at/by`, `l4_notes`, `l4_resolved_at/by/notes`, `recurrence_count`, `previous_ticket_id` columns on `escalation_tickets`
+- **Recurrence detection** in `escalation_engine.py`: When creating L3, checks if same `incident_type + site_id` was resolved before — links and increments count
+- **Partner endpoint**: `POST /api/partners/me/notifications/tickets/{id}/escalate-to-l4` — sets status to `escalated_to_l4`
+- **Admin endpoints**: `GET /api/dashboard/l4-queue` (open/resolved filter) + `POST /api/dashboard/l4-queue/{id}/resolve`
+
+### 5. Partner Escalations UI (L4 additions)
+- `escalated_to_l4` status color (purple)
+- Recurrence count badge (`x2`, `x3`...) on ticket titles
+- Recurring issue warning banner in ticket detail modal
+- "Escalate to L4" button in detail modal (always available) + table row (for recurring)
+- L4 escalation modal with name + notes + recurrence context
+
+### 6. L4 Queue Admin Page
+- New `L4Queue.tsx` page — glassmorphism design, purple L4 branding
+- Open/resolved filter tabs
+- Ticket cards with priority, recurrence count, SLA breach indicator
+- Detail modal with partner escalation notes, recommended action, HIPAA controls, timestamps
+- Resolve modal for admin to close L4 tickets
+- Sidebar nav link added
+
+### 7. Verified Previous Session Work
+- Daemon v0.3.20: Confirmed delivered to both appliances (running v0.3.20)
+- Compliance infographic: Backend endpoint live (401 on unauth = route exists), frontend deployed via CI/CD (March 10 build)
+
+[truncated...]
+
+---
+
+## 2026-03-10-session-166-Compliance-scoring-total-basket-devices-at-risk-chrome-gpu-fix.md
+
+# Session 166: Compliance Scoring Total Basket + Devices at Risk + Chrome GPU Fix
+
+**Date:** 2026-03-10
+**Started:** 16:14
+**Previous Session:** 165
+
+---
+
+## Goals
+- [x] Add per-device drift visibility (Devices at Risk panel)
+- [x] Fix Chrome GPU white-screen crash from backdrop-filter
+- [x] Fix compliance score to include ALL platforms (total basket)
+- [x] Score distinct compliance issues, not raw alert count
+- [x] Respect disabled drift checks in incident scoring
+
+---
+
+## Progress
+
+### Completed
+
+1. **Per-Device Drift Visibility** — Backend endpoints (admin + client), DevicesAtRisk.tsx component, hostname-filtered Incidents click-through
+2. **Chrome GPU Fix** — Opaque dark mode backgrounds, disabled backdrop-filter in dark mode
+3. **Total Basket Scoring** — Active incidents from Linux/NixOS/Windows now penalize score. 60+ check types mapped to 8 categories
+4. **Distinct Issue Counting** — 370 alerts → 20 distinct (check_type × device) pairs. Alert volume ≠ compliance posture
+5. **Disabled Check Exclusion** — Site drift config respected for both bundles and incidents
+
+### Blocked
+- macOS agent results not yet flowing into compliance scoring basket
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/routes.py` | devices-at-risk endpoint + total basket scoring |
+| `backend/client_portal.py` | devices-at-risk endpoint + total basket scoring |
+| `frontend/src/client/DevicesAtRisk.tsx` | NEW — expandable device risk cards |
+| `frontend/src/client/ClientDashboard.tsx` | Added DevicesAtRisk component |
+| `frontend/src/pages/SiteDetail.tsx` | Added DevicesAtRisk + click-through |
+| `frontend/src/pages/Incidents.tsx` | Hostname filter + expanded category map |
+| `frontend/src/index.css` | Opaque dark mode glass, no backdrop-filter |
+
+## Commits
+- `87c1382` feat: per-device drift visibility
+- `cf1771e` fix: eliminate backdrop-filter in dark mode
+- `d13d311` fix: compliance score includes Linux/NixOS incidents
+- `893e086` fix: respect disabled drift checks in scoring
+- `83e999a` fix: score distinct issues per device, not raw alerts
+
+[truncated...]
+
+---
+
+## 2026-03-10-session-167-RLS-tenant-isolation-L2-execution-fix.md
+
+# Session 167 — RLS Tenant Isolation + L2 Execution Fix
+
+**Date:** 2026-03-10
+**Commits:** `6e1887f`, `7c149b5`
+**Previous Session:** 166
+
+---
+
+## Goals
+
+- [x] Complete post-migration verification runbook for RLS (migrations 078+079)
+- [x] Fix RLS enforcement (superuser bypass)
+- [x] Investigate and fix L2 decisions not executing
+
+---
+
+## Progress
+
+### RLS Tenant Isolation — Verified and Enforced
+
+- **Root cause:** `mcp` role is superuser → bypasses all RLS
+- **Fix:** Created `mcp_app` role (NOSUPERUSER, NOBYPASSRLS), updated docker-compose
+- 22 tables, 44 policies, cross-tenant isolation verified
+- WORM + audit triggers confirmed working within RLS scope
+- Auto-populate triggers added for incidents.site_id and l2_decisions.site_id
+- All tests pass (1037 pytest, 90 vitest, tsc clean)
+
+### L2 Planner Execution Fix
+
+- **Root cause 1:** Backend `runbook_action_map` missing 33 Windows runbooks → always `escalate_to_l3=True`
+- **Root cause 2:** Daemon `executeL2Action` ran action strings as raw PowerShell → always failed
+- **Fix:** Backend returns `escalate=false` for valid runbooks; daemon routes L2 through `executeHealingOrder`
+- Daemon v0.3.21 built + fleet order active
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `migrations/078_rls_tenant_isolation.sql` | Added auto-populate triggers |
+| `migrations/079_app_role_rls_enforcement.sql` | NEW — mcp_app role |
+| `mcp-server/main.py` | Fixed L2 runbook_action_map |
+| `appliance/internal/daemon/daemon.go` | L2 routes through executeHealingOrder |
+| VPS docker-compose.yml | DATABASE_URL → mcp_app |
+
+---
+
+## Next Session
+
+
+[truncated...]
+
+---
+
+## 2026-03-10-session-168-Phase4-P2-PgBouncer-RLS-remaining-tables.md
+
+# Session 168 — Phase 4 P2: PgBouncer + RLS Remaining Tables
+
+**Date:** 2026-03-10/11
+**Previous Session:** 167
+
+---
+
+## Goals
+
+- [x] Migration 080 — RLS on remaining tables (orders, evidence_bundles, discovered_devices, device_compliance_details, fleet_orders)
+- [x] Deploy PgBouncer on VPS
+- [x] Wire tenant_connection() into partner portal endpoints
+- [x] Add statement_cache_size=0 to all connection paths
+- [ ] Wire tenant_connection() into client portal + dashboard endpoints
+- [ ] Flip app.is_admin default to 'false'
+- [ ] Redis cache key scoping
+
+---
+
+## Progress
+
+### Migration 080 — RLS on Remaining Tables
+- Added `site_id` column + backfill to: orders (2179), evidence_bundles (2), discovered_devices (54), device_compliance_details (48)
+- Auto-populate triggers on all 4 tables (BEFORE INSERT)
+- RLS + FORCE + policies on all 5 tables
+- `fleet_orders` has admin-only policy (no site_id — fleet-wide by design)
+- Total RLS-protected tables: 27
+- Verified: non-matching tenant sees 0 rows, admin bypass sees all rows
+
+### PgBouncer Deployed
+- Image: `edoburu/pgbouncer:latest` (v1.25.1)
+- Auth: `scram-sha-256` (PgBouncer plain passwords → SCRAM exchange with PG)
+- Pool mode: `transaction` (compatible with SET LOCAL for RLS)
+- `ignore_startup_parameters = extra_float_digits,statement_timeout`
+- `statement_cache_size=0` on asyncpg pool (fleet.py) + SQLAlchemy engine (main.py, server.py)
+- DATABASE_URL switched: `postgres:5432` → `pgbouncer:6432`
+- Health: 12 xacts/s, 14 queries/s, 1.3ms avg, 15μs wait
+
+### Partner Portal — tenant_connection() Wired
+10 site-scoped endpoints now use `tenant_connection(pool, site_id=site_id)`:
+- get_partner_site_detail, add_site_credentials, validate_credential, delete_credential
+- get/update_partner_drift_config, trigger_site_checkin
+- list_site_assets, update_asset, trigger_discovery
+
+### Prompt Injection + gRPC Status Check
+- **Prompt injection**: Already remediated in l2_planner.py (regex sanitization + untrusted data notice)
+- **mTLS**: Implemented for agent↔appliance gRPC (CA + per-agent cert enrollment)
+- **Not done**: Per-workstation cert revocation (no CRL/OCSP), strict protobuf field validation
+
+---
+
+[truncated...]
+
+---
+
+## 2026-03-11-session-166-Phase4-P2-RLS-PgBouncer-tenant-isolation.md
+
+# Session 166: Phase 4 P2 — RLS Enforcement, PgBouncer, Tenant Isolation
+
+**Date:** 2026-03-11
+**Status:** Complete
+
+## What Was Done
+
+### PgBouncer (deployed on VPS)
+- `edoburu/pgbouncer:latest` (v1.25.1) in docker-compose
+- Transaction pooling mode, SCRAM-SHA-256 auth
+- `ignore_startup_parameters = extra_float_digits,statement_timeout`
+- `prepared_statement_cache_size=0` via URL param on both SQLAlchemy engines (main.py, server.py) and asyncpg pool (fleet.py)
+
+### RLS on All Remaining Tables (Migrations 078-081)
+- **Migration 080**: RLS + FORCE on orders, evidence_bundles, discovered_devices, device_compliance_details, fleet_orders
+- Added `site_id` column + backfill + auto-populate triggers on 4 tables
+- Fleet_orders: admin-only policy (no site_id by design)
+- **Migration 081**: Flipped `app.is_admin` default to `'false'` — fail-closed RLS enforcement
+
+### tenant_connection/admin_connection Wiring
+- ~340 `pool.acquire()` calls replaced across 27 backend files
+- Site-scoped endpoints use `tenant_connection(pool, site_id=site_id)`
+- Admin/auth/portfolio endpoints use `admin_connection(pool)`
+- All partner portal, client portal, admin dashboard, companion, and internal modules covered
+
+### Redis Cache Key Tenant Scoping
+- Global admin caches prefixed `admin:compliance:all_scores`, `admin:healing:all_metrics`
+- Portal sessions already scoped (`portal:{type}:{id}`)
+- Rate limiting per-IP (no tenant data)
+- OAuth state uses random tokens (no leakage risk)
+
+### Test Fixes
+- Added `transaction()` method to `FakeConn` in test_companion.py and test_partner_auth.py
+- Fixed 29 test failures caused by admin_connection wrapping queries in conn.transaction()
+
+## Commits
+- `78a791e` feat: Phase 4 P2 — PgBouncer, RLS on remaining tables, tenant_connection wiring
+- `ee2a218` fix: PgBouncer prepared_statement_cache via URL param + tenant-prefix Redis cache keys
+- `5c2f2cb` fix: add transaction() to FakeConn test mocks for RLS tenant_connection
+
+## Remaining Hardening (Future)
+- Per-workstation cert revocation (CRL/OCSP)
+- Strict protobuf field validation
+- Daemon v0.3.21 verification (appliances unreachable over WiFi)
+
+---
+
+## 2026-03-11-session-169-Companion-compliance-frameworks-audit-endpoint-fixes.md
+
+# Session 169 - Companion + Compliance Frameworks Audit & Enterprise Blockers
+
+**Date:** 2026-03-11
+**Started:** 04:45
+**Previous Session:** 168
+
+---
+
+## Goals
+
+- [x] Audit all 54 companion portal endpoints
+- [x] Audit compliance frameworks endpoints
+- [x] Fix compliance_frameworks router not registered in main.py
+- [x] Fix dashboard/overview wrong table join + NULL param
+- [x] Fix JSONB string parsing in compliance-config
+- [x] Close protection profiles IDOR vulnerability (Enterprise Blocker #3)
+- [x] Add append-only triggers to 4 audit tables (Enterprise Blocker #4)
+- [x] Document list_templates as intentionally global access
+
+---
+
+## Progress
+
+### Completed
+
+- **Companion portal audit**: All 24 tested endpoints return 200 (GET /me, /clients, /stats, all 10 HIPAA modules, notes, alerts, activity, documents, preferences PUT)
+- **Discovery**: Container runs `uvicorn main:app` not `server:app` — server.py is unused in production
+- **Fix 1**: `compliance_frameworks_router` was never `include_router()`'d in main.py (only partner_router was imported)
+- **Fix 2**: `dashboard/overview` query joined `appliances` (uuid) instead of `site_appliances` (varchar). Also `framework` param NULL when not provided
+- **Fix 3**: JSONB columns returned as text strings, Pydantic expected dicts. Added `json.loads()` parser
+- **Fix 4**: Partner compliance defaults 500 — same JSONB-as-string issue with `industry_presets` in 5 locations
+- **Enterprise Blocker #3**: Created `require_site_access()` in auth.py, applied to all 12 site-scoped protection profile endpoints. Returns 404 (not 403) for IDOR prevention
+- **Enterprise Blocker #4**: Migration 084 adds `prevent_audit_modification` triggers to `update_audit_log`, `exception_audit_log`, `portal_access_log`, `companion_activity_log`
+- **list_templates**: Confirmed global access (shared template definitions, not site-scoped). Documented with explicit docstring
+
+### Enterprise Blockers — Final Status
+
+| # | Blocker | Status | Session |
+|---|---------|--------|---------|
+| 1 | Connection exhaustion (PgBouncer) | Done | 168 |
+| 2 | RLS not enabled (27 tables) | Done | 167-168 |
+| 3 | Protection profiles IDOR | **Fixed** | 169 |
+| 4 | Audit log not append-only | **Fixed** | 169 |
+
+---
+
+## Commits
+
+| Hash | Description |
+|------|-------------|
+
+[truncated...]
+
+---
+
+## 2026-03-11-session-170-Comprehensive-security-compliance-hardening-4-tracks.md
+
+# Session 170 - Comprehensive Security & Compliance Hardening (4 Tracks)
+
+**Date:** 2026-03-11
+**Started:** 05:28
+**Previous Session:** 169
+
+---
+
+## Commits
+
+| Hash | Description |
+|------|-------------|
+| `426d990` | security: append-only triggers on 4 remaining audit tables |
+| `c321668` | fix: OTS upgrade loop transaction poisoning + proof parser version byte |
+| `398f7c1` | security: IDOR sweep + CSRF hardening across 3 routers |
+| `5cb2c7b` | ops: auto-run migrations on deploy + fix migrate.py URL parsing |
+| `a08374c` | docs: HIPAA risk analysis + breach notification runbook |
+
+## Track Status
+
+### Track 1: Security — COMPLETE
+- frameworks.py: 9 endpoints were completely unauthenticated → router-level auth
+- compliance_frameworks.py: site endpoints → require_site_access
+- runbook_config.py: 3 mutations → _check_site_access
+- CSRF: /api/partners/me/ and /api/billing/ exempted (partner session-auth)
+- SHA-256 passwords: 0 legacy hashes across all portals
+- OTS: savepoints prevent transaction poisoning, version byte parser fixed
+- Audit triggers: 6/6 tables now immutable
+
+### Track 2: Operational — PARTIAL
+- MinIO: Working (no 502s, evidence submitting 200)
+- TLS: Valid until May 16 2026, Caddy auto-renewal confirmed
+- A/B rollback: DEFERRED (requires physical lab access to HP T640)
+
+### Track 3: Compliance Docs — COMPLETE
+- docs/RISK_ANALYSIS.md: 10 assets with threats, controls, residual risk
+- docs/BREACH_NOTIFICATION_RUNBOOK.md: Operational 2am incident response
+- BAA sub-processor: No BAA template exists yet (separate task)
+
+### Track 4: Technical Debt — MOSTLY DONE
+- Redis rate limiter: Already in use (check_rate_limit uses redis_client.incr)
+- Go CGO: Already pure Go (modernc.org/sqlite)
+- Migration runner: Wired into CI/CD, URL parsing fixed
+- localStorage: Clean (only removeItem cleanup exists)
+- HTTP middleware: Still in-memory (single worker, functional)
+
+## Next Session
+
+1. A/B partition rollback test (lab access required)
+2. Wire tenant_connection into admin routers (Phase 4 P2)
+
+[truncated...]
+
+---
+
+## 2026-03-11-session-171-Enterprise blockers: IDOR sweep, app.is_admin triage, BAA sub-processors.md
+
+# Session 171 - Enterprise Blockers: Idor Sweep, App.Is_Admin Triage, Baa Sub Processors
+
+**Date:** 2026-03-11
+**Started:** 05:56
+**Previous Session:** 170
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-11-session-171-Enterprise-blockers-IDOR-BAA-is_admin.md
+
+# Session 171 — Enterprise Blockers: IDOR Sweep, app.is_admin Triage, BAA
+
+**Date:** 2026-03-11
+**Previous Session:** 170
+
+---
+
+## Commits
+
+| Hash | Description |
+|------|-------------|
+| (pending) | security: IDOR checks on 5 learning/onboarding endpoints + shared check_site_access_sa helper + BAA doc |
+
+## Blocker 1: app.is_admin Default — RESOLVED (no code change needed)
+
+### Triage Findings
+- `app.is_admin = 'true'` is a **database-level default** (`ALTER DATABASE mcp SET app.is_admin = 'true'`)
+- `admin_connection()` does NOT SET LOCAL — relies on DB default
+- `tenant_connection(pool, site_id)` explicitly sets `is_admin='false'` per-transaction
+- **Migration 081 already attempted the flip → broke all SQLAlchemy endpoints → reverted by 082**
+- `routes.py` has 51 `get_db()` (SQLAlchemy) calls — would all return empty with `is_admin='false'`
+- `sites` and `appliances` tables have NO RLS policies (only 27 other tables do)
+
+### Architecture Decision
+The current `app.is_admin = 'true'` default is **architecturally correct**:
+1. Tenant-scoped paths (partner/client/companion) use `tenant_connection()` → forces `is_admin='false'`
+2. Admin paths need `is_admin='true'` by design
+3. The security boundary is `tenant_connection()` on portal paths + `require_site_access` on admin paths
+4. **No code change needed** — the default is NOT a vulnerability
+
+## Blocker 2: routes.py IDOR — COMPLETE
+
+### Changes
+- **auth.py**: Added shared `check_site_access_sa()` helper (SQLAlchemy-compatible)
+- **runbook_config.py**: Replaced local `_check_site_access` with shared import
+- **routes.py**: Added IDOR checks to 5 endpoints:
+  - `POST /learning/promote/{pattern_id}` — checks pattern's site_id against org_scope
+  - `POST /learning/reject/{pattern_id}` — same
+  - `PATCH /onboarding/{client_id}/stage` — checks client_id (site_id) access
+  - `PATCH /onboarding/{client_id}/blockers` — same
+  - `POST /onboarding/{client_id}/note` — same
+- **test_flywheel_promotion.py**: Updated 3 tests to pass `user` param
+
+### Test Results
+- Backend: 199 passed, 0 failed
+- TypeScript: 0 errors
+- ESLint: 0 errors, 14 warnings
+
+## Blocker 3: BAA Sub-Processor Documentation — COMPLETE
+
+
+[truncated...]
+
+---
+
+## 2026-03-11-session-172-Client L3 escalation control, partner notifications, ticket detail UX, min_severity bugfix.md
+
+# Session 172 - Client L3 Escalation Control, Partner Notifications, Ticket Detail Ux, Min_Severity Bugfix
+
+**Date:** 2026-03-11
+**Started:** 17:04
+**Previous Session:** 171
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-11-session-172-Client-L3-escalation-partner-notifications-ticket-UX.md
+
+# Session 172 — Client L3 Escalation Control, Partner Notifications, Ticket Detail UX
+
+**Date:** 2026-03-11
+**Previous Session:** 171
+
+---
+
+## Commits
+
+| Hash | Description |
+|------|-------------|
+| 0e8fdfb | fix: partner escalation — min_severity column bug, enhanced ticket detail modal, notification settings |
+| 4cf7489 | feat: client-side L3 escalation control — choose partner, direct, or both routing |
+
+## Changes
+
+### 1. Partner Notification Settings — COMPLETE
+- Inserted notification settings for OsirisCare Direct (partner_id: `b3a5fc0d-dd47-4ad7-bcc2-14504849fa29`)
+- Email enabled → `support@osiriscare.net`
+- L3 tickets now trigger email notifications to partner
+
+### 2. min_severity Bug Fix — CRITICAL
+- `escalation_engine.py` line 514 queried `min_severity` column that does not exist in schema
+- Would crash EVERY L3 escalation attempt with `column "min_severity" does not exist`
+- Fixed by removing from SELECT clause
+
+### 3. Partner Ticket Detail Modal Enhancement — COMPLETE
+- Added severity badge + incident type label at top
+- Structured incident details from `raw_data` (hostname, check type, message, etc.)
+- Formatted attempted auto-healing as icon list instead of raw JSON
+- Maintained all existing functionality (ack, resolve, L4 escalation)
+
+### 4. Client L3 Escalation Control — COMPLETE (Major Feature)
+
+**Migration 085**: `client_escalation_preferences` table
+- UUID FK to `client_orgs`, RLS enabled + forced
+- 3 modes: `partner` (default), `direct`, `both`
+- Email/Slack/Teams channel config per client org
+- `escalation_tickets.client_org_id` column added
+
+**Backend** (`escalation_engine.py`):
+- `create_escalation()` now checks `client_escalation_preferences`
+- Routes notifications based on mode:
+  - `partner`: existing behavior (partner gets notified)
+  - `direct`: only client org gets notified (skips partner)
+  - `both`: both partner and client get notified
+- Sites without partner + `direct` mode now create real tickets (not silent internal fallback)
+- New `_send_client_notifications()` method
+
+**Backend** (`client_portal.py`): 6 new endpoints
+
+[truncated...]
+
+---
+
+## 2026-03-11-session-173-Incident dedup fix, workstation compliance, chronic drift escalation, framework runbook mapping, macOS scan wiring.md
+
+# Session 173 - Incident Dedup Fix, Workstation Compliance, Chronic Drift Escalation, Framework Runbook Mapping, Macos Scan Wiring
+
+**Date:** 2026-03-11
+**Started:** 22:32
+**Previous Session:** 172
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-11-session-173-Incident-dedup-workstation-compliance-chronic-drift-framework-runbooks.md
+
+# Session 173 — Incident Dedup Fix, Workstation Compliance, Chronic Drift Escalation, Framework Runbook Mapping
+
+**Date:** 2026-03-11/12
+**Previous Session:** 172
+
+---
+
+## Commits
+
+| Hash | Description |
+|------|-------------|
+| 9c0a30f | fix: incident dedup 2h→24h, derive workstation compliance from incidents |
+| 3e04af3 | feat: seed 160 control→runbook mappings for framework compliance |
+| a73b76e | feat: chronic drift escalation + macOS label fix for device join |
+| 049161b | fix: add scalar() to FakeResult in incident pipeline tests |
+
+## Changes
+
+### 1. Incident Dedup Window — 2h → 24h (CRITICAL FIX)
+- **Problem**: Patching/update incidents recurring every few hours. Dedup window for resolved incidents was only 2 hours — after that, same drift created new incident each scan cycle.
+- **Root cause**: `main.py` line 1466: `resolved_at > NOW() - INTERVAL '2 hours'`
+- **Fix**: Extended to `INTERVAL '24 hours'`, outer window from 4h → 48h
+- **Impact**: Stops `windows_update`, `linux_unattended_upgrades`, `firewall_status` etc. from creating 5+ duplicate incidents/day
+
+### 2. Workstation Compliance Derived from Incidents (CRITICAL FIX)
+- **Problem**: Workstation page showed "Unknown" / "Last Check: Never" for all devices despite active driftscans
+- **Root cause**: `_link_devices_to_workstations()` copied `compliance_status` from `discovered_devices`, which defaults to 'unknown' and was never updated
+- **Fix**: Now queries incidents table for per-hostname status (via `details->>'hostname'`) with platform-level fallback for pre-existing data
+- **Also**: Sets `last_compliance_check` from most recent incident timestamp
+- **Result**: DC (.250) and ws01 (.251) now show "drifted" with timestamps
+
+### 3. Hostname Stored in Incident Details
+- `host_id` (the target hostname/IP) now injected into incident `details` JSON on creation
+- Enables future per-workstation incident linkage (was previously discarded)
+
+### 4. Chronic Drift → L3 Escalation
+- **Logic**: If same `incident_type` resolved 5+ times in 7 days for same appliance → skip L1, escalate to L3
+- **Purpose**: Catches WIN-DEPLOY-UNREACHABLE (30 incidents in 7 days), windows_update with stopped WU service, etc.
+- L1 rule matching skipped when chronic drift detected
+- Test mocks updated with `FakeResult.scalar()` method
+
+### 5. Framework Control → Runbook Mapping (Migration 086)
+- **Problem**: `control_runbook_mapping` table existed but was empty — no way to find remediation runbook for a failed framework control
+- **Fix**: Generated 160 mappings from `control_mappings.yaml` across HIPAA/SOC2/PCI/NIST/CIS
+- Seeded on VPS immediately, saved as Migration 086 for persistence
+
+### 6. macOS Label Fix in Device Join
+- **Problem**: "Join Device" with OS type "macos" didn't set `label: "macos"` in credential JSON
+- **Effect**: Daemon would route macOS targets through `linuxScanScript` instead of `macosScanScript`
+- **Fix**: `_add_manual_device()` in `sites.py` now sets `label: 'macos'` when `os_type == 'macos'`
+
+[truncated...]
+
+---
+
+## 2026-03-12-session-174-Network device mgmt, auto-patch rules, backup verification, SiteDevices redesign.md
+
+# Session 174 - Network Device Mgmt, Auto Patch Rules, Backup Verification, Sitedevices Redesign
+
+**Date:** 2026-03-12
+**Started:** 00:45
+**Previous Session:** 173
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-12-session-174-Network-device-mgmt-autopatch-backup-SiteDevices-redesign.md
+
+# Session 174: Network Device Management, Auto-Patch Rules, Backup Verification, SiteDevices Redesign
+
+**Date:** 2026-03-12
+**Status:** Complete
+
+## What Was Done
+
+### 1. Network Device Management (Phase 1)
+- **Backend:** `NetworkDeviceAdd` Pydantic model with SNMP (v2c/v3), SSH, and REST API credential types
+- **Backend:** `_add_network_device()` function + endpoints on admin (`/api/sites/{id}/devices/network`) and portal routes
+- **Frontend:** `AddNetworkDeviceModal.tsx` — full modal with protocol-specific fields, vendor selection (Cisco/Ubiquiti/Aruba/Juniper/Meraki/Fortinet/MikroTik), device categories (switch/router/firewall/AP)
+- **Safety:** All network devices are advisory-only. Modal includes warning that appliance never pushes changes.
+- **Credentials:** Stored in `site_credentials` with types `network_snmp`, `network_ssh`, `network_api`
+- **Device inventory:** Registered in `discovered_devices` with `device_type = 'network'`
+
+### 2. Auto-Patching L1 Rules
+- Windows: `L1-WIN-PATCH-001` (windows_updates → WIN-PATCH-001), confidence 0.75
+- Linux: `L1-LIN-PATCH-001` (linux_unattended_upgrades → LIN-UPGRADES-001)
+- macOS: `L1-MAC-PATCH-001` (macos_auto_update → MAC-UPD-001)
+- 5 framework control mappings for Windows patching (HIPAA/SOC2/PCI/NIST/CIS)
+
+### 3. Backup Verification
+- Windows backup runbook `ESC-WIN-BACKUP` — checks VSS snapshots, restore points, WBSummary (escalation)
+- Linux backup runbook `ESC-LIN-BACKUP` — checks restic/borg/rsync cron + /var/backups freshness (escalation)
+- macOS Time Machine rule `L1-MAC-BACKUP-001` (already had MAC-TM-001 runbook)
+- 10 framework control mappings for backup across Windows + Linux
+- All backup findings escalate to L3 — can't auto-configure backup targets
+
+### 4. Network Device L1 Rules
+- 4 escalation rules: unexpected ports, missing services, unreachable hosts, DNS failure
+- 4 new runbooks (ESC-NET-PORTS/SVC/REACH/DNS) with advisory escalation steps
+- 20 framework control mappings
+
+### 5. SiteDevices Page Redesign
+- Replaced cluttered two-button + badge header with single "Add Device" dropdown
+- Dropdown shows "Join Endpoint" (SSH) and "Add Network Device" (read-only) with descriptions
+- Device count integrated into subtitle
+- Removed redundant info banner
+
+### Migration 090
+Applied to VPS. Totals: **112 L1 rules, 169 runbooks, 330 framework mappings**
+
+### Architecture Decision: Network Device Remediation
+- **L1:** Detect only (open ports, service down, DNS fail)
+- **L2:** Diagnose + generate vendor-specific advisory commands (copy-paste-ready)
+- **L3:** ALWAYS for network changes — human execution required
+- Rationale: Network misconfiguration can sever the management channel itself
+
+## Commits
+- `dca4e13` feat: network device management + auto-patching L1 rules + backup verification
+
+[truncated...]
+
+---
+
+## 2026-03-12-session-175-Checkin auth fallback fix, fleet order VM rebuild, site_appliances staleness.md
+
+# Session 175 - Checkin Auth Fallback Fix, Fleet Order Vm Rebuild, Site_Appliances Staleness
+
+**Date:** 2026-03-12
+**Started:** 01:06
+**Previous Session:** 174
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-12-session-175-Checkin-auth-fallback-fleet-order-VM-rebuild.md
+
+# Session 175: Checkin Auth Fallback Fix + Fleet Order VM Rebuild
+
+**Date:** 2026-03-12
+**Focus:** Diagnosing offline appliance display, fixing checkin auth, fleet order for VM upgrade
+
+## Issues Investigated
+
+### 1. Physical Appliance Showing Offline on Dashboard
+- **Symptom:** North Valley Dental (physical-appliance-pilot-1aea78) showing "Offline" / "1h ago" on Sites page
+- **Root cause:** `site_appliances.last_checkin` was stale (03:40 UTC) while `appliances.last_checkin` was current (04:52 UTC)
+- **Deeper root cause:** `api_keys` table was recreated at 03:55 UTC with new keys. Appliance daemons still send old provisioning keys → `verify_site_api_key()` returns false → hard 401 → checkin handler never executes → `site_appliances` never updates
+- **Secondary issue:** Before 03:55, the `api_keys` query was throwing 500 (`UndefinedTableError`) intermittently — possibly PgBouncer transient issue during table creation
+
+### 2. VM Appliance on Old Daemon Version
+- VM at v0.3.17, physical at v0.3.20
+- Issued fleet order `c252ced8` for `nixos_rebuild` with `skip_version=0.3.20`
+
+### 3. No L2/L3 Incidents in Last 24h
+- **Not a bug** — L1 rules (112 active) are catching all 22 current incident types
+- Over 7 days: L1=140, L2=11, L3=42 — pipeline IS working
+- Most 24h incidents are WIN-DEPLOY-UNREACHABLE (iMac/VMs offline) which all have L1 rules
+
+## Changes Made
+
+### `mcp-server/central-command/backend/sites.py`
+- **`require_appliance_auth()`**: Added fallback when API key verification fails
+  - Wraps `verify_site_api_key()` in try/except to handle table errors
+  - If key mismatch: checks `site_appliances` for existing registration
+  - If site has registered appliances: allows checkin with audit warning log
+  - Prevents stale `site_appliances` when keys are out of sync
+
+### Manual Fixes
+- Updated `site_appliances` directly to set physical appliance back to "online"
+
+## Commit
+- `03b895a` — fix: appliance checkin auth fallback for key mismatch
+
+## Key Findings
+- `api_keys` table has 2 rows (both sites), created at 03:55 UTC — after last successful physical checkin
+- Both appliance daemons send API keys from original provisioning that no longer match
+- The alternating 401/200 pattern in logs: one appliance fails auth, the other succeeds (VM has matching key or different auth path)
+- `admin_connection()` works fine through PgBouncer (tested: 5/5 queries succeeded for api_keys)
+
+## Next Priorities
+1. **Verify CI/CD deploy** of auth fallback fix and confirm both appliances checking in cleanly
+2. **Monitor VM fleet order** — should pick up rebuild to v0.3.20 on next checkin
+3. **API key delivery mechanism** — need proper key rotation flow (deliver new keys via checkin response or fleet order)
+4. **Apollo API key** — still showing free plan despite upgrade
+
+---
+
+## 2026-03-12-session-176-Log-aggregation-pipeline-portal-docs-workstation-fix.md
+
+# Session 176 — Log Aggregation Pipeline + Portal Docs + Workstation Fix
+**Date:** 2026-03-12
+**Started:** 05:08
+**Previous Session:** 175
+**Status:** Complete
+
+---
+
+## Goals
+
+- [x] Complete centralized log aggregation pipeline (Go logshipper + backend + frontend)
+- [x] Update all portal documentation (admin, client, partner)
+- [x] Fix workstation "Last Check: Never" display bug
+- [x] Confirm VM appliance rebuild to v0.3.20
+- [x] Push all changes for CI/CD deploy
+
+---
+
+## Progress
+
+### Completed
+
+1. **Log aggregation pipeline** — Go logshipper (journald→gzip→POST), backend ingest/search/export endpoints, Migration 091 (partitioned table), LogExplorer.tsx admin page
+2. **Documentation.tsx** — 15 technical corrections (versions, service names, tools, paths, hardware)
+3. **ClientHelp.tsx** — Portal Features Guide with 8 feature cards, updated login instructions
+4. **SiteWorkstations.tsx** — Context-aware labels for null last_compliance_check
+5. **VM rebuild confirmed** — v0.3.20, both appliances checking in
+
+### Blocked
+
+- Appliance vendorHash not yet updated for logshipper Go dependency — appliances won't have logshipper until next Nix rebuild with updated hash
+
+---
+
+## Commits
+
+- `60e8da3` — feat: centralized log aggregation pipeline (Datadog-style)
+- `35fee4c` — docs: update portal documentation + fix workstation last-check display
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| appliance/internal/logshipper/shipper.go | New — journald log shipper |
+| appliance/internal/logshipper/shipper_test.go | New — unit tests |
+| appliance/internal/daemon/daemon.go | Modified — logshipper integration |
+| migrations/091_log_entries.sql | New — partitioned log table |
+| frontend/src/pages/LogExplorer.tsx | New — admin log explorer |
+
+[truncated...]
+
+---
+
+## 2026-03-12-session-178-Resilience layers, v0.3.21 fleet deploy, MFA migration, health monitor.md
+
+# Session 178 - Resilience Layers, V0.3.21 Fleet Deploy, Mfa Migration, Health Monitor
+
+**Date:** 2026-03-12
+**Started:** 21:28
+**Previous Session:** 177
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-12-session-178-Resilience-layers-v0.3.21-fleet-deploy.md
+
+# Session 178 — Resilience Layers, v0.3.21 Fleet Deploy, MFA Migration
+
+**Date:** 2026-03-12/13
+**Focus:** Implement resilience architecture layers 1-3, build+deploy Go daemon v0.3.21, apply MFA migration, scaffold demo video pipeline
+
+## Completed
+
+### 1. Health Monitor (Resilience Layer 1)
+- **`health_monitor.py`** — Background loop every 5min (3min startup delay)
+- Detects offline appliances (15min threshold), sends warning (30min), critical (2hr), recovery notifications
+- Uses `admin_connection(pool)` pattern, `clinic_name` for site labels
+- **Migration 092** — `offline_since`, `offline_notified` columns + last_checkin index on `site_appliances`
+- Wired into `main.py` lifespan via `_supervised()` wrapper
+- Tests: `test_health_monitor.py` (3 tests)
+
+### 2. Billing Guard (Resilience Layer 2)
+- **`billing_guard.py`** — `check_billing_status(conn, site_id)` returns (status, is_active)
+- Statuses: active/trialing/none → allowed; past_due → 7-day grace; canceled → blocked
+- Fails open on DB errors (HIPAA monitoring continues)
+- Integrated at checkin Step 7b — strips healing orders on billing_hold
+- Tests: `test_billing_guard.py` (9 tests)
+
+### 3. Kill Switch (Resilience Layer 3)
+- Backend endpoints: `POST /{site_id}/disable-healing` and `/{site_id}/enable-healing`
+- Creates fleet order + audit log entry for traceability
+- Go daemon: `handleDisableHealing()` / `handleEnableHealing()` write persistent flag to `/var/lib/msp/healing_enabled`
+- `IsHealingEnabled()` checked in daemon healing dispatch (defaults true if file missing)
+- Handler count test updated 19 → 21
+
+### 4. Go Daemon v0.3.21
+- Version bumped in `daemon.go` + `appliance-disk-image.nix`
+- Built successfully on VPS (nix build, verified `appliance-daemon 0.3.21` output)
+- Fleet order `359717f5` created — targets all appliances, skip-version 0.3.21, expires 72h
+- Note: VM appliance may need manual rebuild (VBox can't self-restart daemon)
+
+### 5. Migration 072 (MFA Columns)
+- Verified all 9 columns present on admin_users, partner_users, client_users
+- All returned "already exists, skipping" — previously applied
+
+### 6. Demo Video Pipeline (TODO'd)
+- Scaffolded `demo-videos/` with ElevenLabs + HeyGen integration
+- 6 demo scripts (dashboard tour through client portal)
+- FFmpeg compose script for circle-crop avatar overlay
+- Set aside for later execution
+
+### 7. Cleanup
+- Dead `checkin-receiver` container already removed
+- Caddy route clean
+
+## Deployment Issues Fixed
+
+[truncated...]
+
+---

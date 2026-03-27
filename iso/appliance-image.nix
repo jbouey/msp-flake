@@ -103,7 +103,7 @@ let
     pname = "local-portal-frontend";
     version = "0.1.0";
     src = ../packages/local-portal/frontend;
-    npmDepsHash = "sha256-JbeTjY0oNJsh6xlmjQFif45WAojjW/9Q+9YObtN/AfM=";  # TODO: Update after first build
+    npmDepsHash = "sha256-JbeTjY0oNJsh6xlmjQFif45WAojjW/9Q+9YObtN/AfM=";
     buildPhase = "npm run build";
     installPhase = ''
       mkdir -p $out

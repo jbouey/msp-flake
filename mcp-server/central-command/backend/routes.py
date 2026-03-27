@@ -1484,6 +1484,49 @@ async def get_onboarding_detail(client_id: int, db: AsyncSession = Depends(get_d
     raise HTTPException(status_code=404, detail=f"Client {client_id} not found")
 
 
+@router.post("/sites")
+async def create_site(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Create a new site from the admin dashboard."""
+    body = await request.json()
+    clinic_name = body.get("clinic_name", "").strip()
+    if not clinic_name:
+        raise HTTPException(status_code=400, detail="clinic_name is required")
+
+    import re
+    site_id = body.get("site_id") or re.sub(r'[^a-z0-9-]', '', clinic_name.lower().replace(" ", "-"))
+    contact_name = body.get("contact_name", "")
+    contact_email = body.get("contact_email", "")
+    tier = body.get("tier", "mid")
+    now = datetime.now(timezone.utc)
+
+    try:
+        await db.execute(text("""
+            INSERT INTO sites (site_id, clinic_name, contact_name, contact_email,
+                               tier, status, onboarding_stage, lead_at, created_at)
+            VALUES (:site_id, :clinic_name, :contact_name, :contact_email,
+                    :tier, 'active', 'lead', :now, :now)
+        """), {
+            "site_id": site_id,
+            "clinic_name": clinic_name,
+            "contact_name": contact_name,
+            "contact_email": contact_email,
+            "tier": tier,
+            "now": now,
+        })
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        if "duplicate" in str(e).lower() or "unique" in str(e).lower():
+            raise HTTPException(status_code=409, detail=f"Site '{site_id}' already exists")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "created", "site_id": site_id, "clinic_name": clinic_name}
+
+
 @router.post("/onboarding", response_model=OnboardingClient)
 async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(get_db)):
     """Create new prospect (Lead stage)."""

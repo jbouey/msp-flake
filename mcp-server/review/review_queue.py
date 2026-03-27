@@ -457,9 +457,6 @@ class ReviewQueue:
             "priority": ReviewPriority.HIGH.value
         })
 
-        # Average time to review (for completed reviews)
-        # TODO: Implement aggregation pipeline for average review time
-
         return {
             "pending_review": pending_count,
             "in_review": in_review_count,

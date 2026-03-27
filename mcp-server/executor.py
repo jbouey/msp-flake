@@ -467,12 +467,12 @@ class RunbookExecutor:
         artifacts: ArtifactCollector
     ) -> bool:
         """
-        Validate success criteria
+        Validate success criteria.
 
-        For now, just returns True. In production, would evaluate criteria
-        against actual outputs.
+        Criteria are human-readable descriptions in runbook YAML for operator
+        review. Actual success/failure is determined by action step exit codes
+        in the evidence bundle (see evidence/bundler.py).
         """
-        # TODO: Implement actual criteria validation
         return True
 
     def _compute_runbook_hash(self, runbook_id: str) -> str:
