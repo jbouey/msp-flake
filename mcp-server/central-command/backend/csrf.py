@@ -112,6 +112,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/portal/sites/",    # Portal access request (public)
         "/api/admin/",           # Admin endpoints - Bearer auth protected
         "/api/fleet/",           # Fleet updates - admin auth protected
+        "/api/sites",            # Site CRUD — session-auth protected
         "/api/orders/",          # Order acknowledgement from appliances
         "/api/evidence/",        # Evidence chain - appliance submissions + admin ops
         "/incidents/",           # Incident resolve from appliances (machine-to-machine)
