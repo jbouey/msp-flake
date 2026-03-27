@@ -5,25 +5,49 @@ import { GlassCard, Spinner, Badge } from '../components/shared';
 import { StatusBadge } from '../components/composed';
 import { useSites, useCreateSite } from '../hooks';
 import type { Site } from '../utils/api';
-import { appliancesApi } from '../utils/api';
+import { appliancesApi, organizationsApi, decommissionApi, sitesApi } from '../utils/api';
 import { formatTimeAgo } from '../constants';
 
 // Alias for backward compatibility within this file
 const formatRelativeTime = formatTimeAgo;
 
 /**
- * Site row component
+ * Site row component with hover-reveal edit/delete icons (matches Organizations page pattern)
  */
-const SiteRow: React.FC<{ site: Site; onClick: () => void; showOrg?: boolean }> = ({ site, onClick, showOrg }) => {
+const SiteRow: React.FC<{
+  site: Site;
+  onClick: () => void;
+  showOrg?: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}> = ({ site, onClick, showOrg, onEdit, onDelete }) => {
   return (
     <tr
       onClick={onClick}
-      className="hover:bg-fill-quaternary cursor-pointer transition-colors"
+      className="group hover:bg-fill-quaternary cursor-pointer transition-colors"
     >
       <td className="px-4 py-3">
-        <div>
-          <p className="font-medium text-label-primary">{site.clinic_name}</p>
-          <p className="text-xs text-label-tertiary">{site.site_id}</p>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <p className="font-medium text-label-primary">{site.clinic_name}</p>
+            <p className="text-xs text-label-tertiary">{site.site_id}</p>
+          </div>
+          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={e => { e.stopPropagation(); onEdit(); }}
+              className="p-1.5 rounded-ios-sm text-label-tertiary hover:text-accent-primary hover:bg-fill-secondary"
+              title="Edit"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); onDelete(); }}
+              className="p-1.5 rounded-ios-sm text-label-tertiary hover:text-health-critical hover:bg-health-critical/10"
+              title="Decommission"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            </button>
+          </div>
         </div>
       </td>
       {showOrg && (
@@ -63,18 +87,26 @@ const SiteRow: React.FC<{ site: Site; onClick: () => void; showOrg?: boolean }> 
 };
 
 /**
- * New Site Modal
+ * New Site Modal — includes org selector
  */
 const NewSiteModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (data: { clinic_name: string; contact_name?: string; contact_email?: string; tier?: string }) => void;
+  onSubmit: (data: { clinic_name: string; contact_name?: string; contact_email?: string; tier?: string; client_org_id?: string }) => void;
   isLoading: boolean;
 }> = ({ isOpen, onClose, onSubmit, isLoading }) => {
   const [clinicName, setClinicName] = useState('');
   const [contactName, setContactName] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [tier, setTier] = useState('mid');
+  const [orgId, setOrgId] = useState('');
+
+  const { data: orgsData } = useQuery({
+    queryKey: ['organizations'],
+    queryFn: () => organizationsApi.getOrganizations(),
+    enabled: isOpen,
+  });
+  const orgs = orgsData?.organizations || [];
 
   if (!isOpen) return null;
 
@@ -85,6 +117,7 @@ const NewSiteModal: React.FC<{
       contact_name: contactName || undefined,
       contact_email: contactEmail || undefined,
       tier,
+      client_org_id: orgId || undefined,
     });
   };
 
@@ -129,6 +162,21 @@ const NewSiteModal: React.FC<{
           </div>
           <div>
             <label className="block text-sm font-medium text-label-secondary mb-1">
+              Organization
+            </label>
+            <select
+              value={orgId}
+              onChange={(e) => setOrgId(e.target.value)}
+              className="w-full px-3 py-2 rounded-ios bg-fill-quaternary text-label-primary border border-separator-light focus:border-accent-primary focus:outline-none"
+            >
+              <option value="">None (unassigned)</option>
+              {orgs.map((org) => (
+                <option key={org.id} value={org.id}>{org.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-label-secondary mb-1">
               Tier
             </label>
             <select
@@ -164,11 +212,166 @@ const NewSiteModal: React.FC<{
 };
 
 /**
+ * Edit Site Modal
+ */
+const EditSiteModal: React.FC<{
+  site: Site;
+  onClose: () => void;
+  onSaved: () => void;
+}> = ({ site, onClose, onSaved }) => {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // eslint-disable-next-line no-undef
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    setSaving(true);
+    setError('');
+    try {
+      await sitesApi.updateSite(site.site_id, {
+        clinic_name: formData.get('clinic_name') as string,
+        contact_name: formData.get('contact_name') as string,
+        contact_email: formData.get('contact_email') as string,
+        tier: formData.get('tier') as string,
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update site');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-fill-primary rounded-ios-lg shadow-xl w-full max-w-md p-6">
+        <h2 className="text-lg font-semibold text-label-primary mb-4">Edit Site</h2>
+        {error && (
+          <div className="mb-3 p-2 rounded-ios bg-health-critical/10 text-health-critical text-sm">{error}</div>
+        )}
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="block text-sm text-label-secondary mb-1">Clinic Name</label>
+            <input
+              name="clinic_name"
+              defaultValue={site.clinic_name}
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-label-secondary mb-1">Contact Name</label>
+            <input
+              name="contact_name"
+              defaultValue={site.contact_name || ''}
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-label-secondary mb-1">Contact Email</label>
+            <input
+              name="contact_email"
+              defaultValue={site.contact_email || ''}
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-label-secondary mb-1">Tier</label>
+            <select
+              name="tier"
+              defaultValue={site.tier}
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary"
+            >
+              <option value="small">Small (1-5 providers)</option>
+              <option value="mid">Mid (6-15 providers)</option>
+              <option value="large">Large (15-50 providers)</option>
+            </select>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2 text-sm rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 px-4 py-2 text-sm rounded-ios bg-accent-primary text-white hover:bg-accent-primary/90 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Delete (Decommission) Confirmation Modal
+ */
+const DeleteSiteModal: React.FC<{
+  site: Site;
+  onClose: () => void;
+  onDeleted: () => void;
+}> = ({ site, onClose, onDeleted }) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleDecommission = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      await decommissionApi.decommissionSite(site.site_id);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to decommission site');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-fill-primary rounded-ios-lg shadow-xl w-full max-w-sm p-6">
+        <h2 className="text-lg font-semibold text-label-primary mb-2">Decommission Site</h2>
+        <p className="text-sm text-label-secondary mb-4">
+          Are you sure you want to decommission <strong>{site.clinic_name}</strong>? This will archive the site and disconnect its appliances.
+        </p>
+        {error && (
+          <div className="mb-3 p-2 rounded-ios bg-health-critical/10 text-health-critical text-sm">{error}</div>
+        )}
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 text-sm rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleDecommission}
+            disabled={loading}
+            className="flex-1 px-4 py-2 text-sm rounded-ios bg-health-critical text-white hover:bg-health-critical/90 disabled:opacity-50"
+          >
+            {loading ? 'Decommissioning...' : 'Decommission'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
  * Sites page - View all client sites with real-time status
  */
 export const Sites: React.FC = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [showNewSiteModal, setShowNewSiteModal] = useState(false);
+  const [editSite, setEditSite] = useState<Site | null>(null);
+  const [deleteSite, setDeleteSite] = useState<Site | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [groupByOrg, setGroupByOrg] = useState(false);
   const [search, setSearch] = useState('');
@@ -233,7 +436,6 @@ export const Sites: React.FC = () => {
   }, [sites]);
 
   // Unclaimed appliances (drop-ship provisioning)
-  const queryClient = useQueryClient();
   const { data: unclaimedData } = useQuery({
     queryKey: ['appliances', 'unclaimed'],
     queryFn: appliancesApi.getUnclaimed,
@@ -269,8 +471,8 @@ export const Sites: React.FC = () => {
   };
 
   const SortIcon: React.FC<{ col: string }> = ({ col }) => {
-    if (sortBy !== col) return <span className="text-label-quaternary ml-1">↕</span>;
-    return <span className="text-accent-primary ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
+    if (sortBy !== col) return <span className="text-label-quaternary ml-1">&#x21D5;</span>;
+    return <span className="text-accent-primary ml-1">{sortDir === 'asc' ? '\u2191' : '\u2193'}</span>;
   };
 
   const handleCreateSite = async (siteData: Parameters<typeof createSite.mutate>[0]) => {
@@ -499,6 +701,8 @@ export const Sites: React.FC = () => {
                         key={site.site_id}
                         site={site}
                         onClick={() => navigate(`/sites/${site.site_id}`)}
+                        onEdit={() => setEditSite(site)}
+                        onDelete={() => setDeleteSite(site)}
                       />
                     ))}
                   </tbody>
@@ -519,6 +723,8 @@ export const Sites: React.FC = () => {
                     key={site.site_id}
                     site={site}
                     onClick={() => navigate(`/sites/${site.site_id}`)}
+                    onEdit={() => setEditSite(site)}
+                    onDelete={() => setDeleteSite(site)}
                     showOrg
                   />
                 ))}
@@ -573,6 +779,30 @@ export const Sites: React.FC = () => {
         onSubmit={handleCreateSite}
         isLoading={createSite.isPending}
       />
+
+      {/* Edit Site Modal */}
+      {editSite && (
+        <EditSiteModal
+          site={editSite}
+          onClose={() => setEditSite(null)}
+          onSaved={() => {
+            setEditSite(null);
+            queryClient.invalidateQueries({ queryKey: ['sites'] });
+          }}
+        />
+      )}
+
+      {/* Delete (Decommission) Confirmation Modal */}
+      {deleteSite && (
+        <DeleteSiteModal
+          site={deleteSite}
+          onClose={() => setDeleteSite(null)}
+          onDeleted={() => {
+            setDeleteSite(null);
+            queryClient.invalidateQueries({ queryKey: ['sites'] });
+          }}
+        />
+      )}
     </div>
   );
 };

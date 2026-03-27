@@ -523,6 +523,7 @@ export const sitesApi = {
     contact_phone?: string;
     address?: string;
     tier?: string;
+    client_org_id?: string;
   }) =>
     fetchSitesApi<{ status: string; site_id: string; clinic_name: string }>('/sites', {
       method: 'POST',
