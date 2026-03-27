@@ -244,22 +244,22 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
           </div>
 
           <div className="p-8" style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.5)' }}>
-            <h2 className="text-xl font-semibold text-slate-900 mb-2 text-center">
+            <h2 className="text-xl font-semibold text-label-primary mb-2 text-center">
               Enter Verification Code
             </h2>
-            <p className="text-slate-600 text-center mb-6">
+            <p className="text-label-secondary text-center mb-6">
               Enter the 6-digit code from your authenticator app.
             </p>
 
             {mfaError && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-red-700 text-sm">{mfaError}</p>
+              <div className="mb-6 p-4 bg-health-critical/10 border border-health-critical/30 rounded-lg">
+                <p className="text-health-critical text-sm">{mfaError}</p>
               </div>
             )}
 
             <form onSubmit={handleTotpVerify} className="space-y-4">
               <div>
-                <label htmlFor="totpCode" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="totpCode" className="block text-sm font-medium text-label-secondary mb-1">
                   Verification Code
                 </label>
                 <input
@@ -273,7 +273,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   autoComplete="one-time-code"
                   autoFocus
                   required
-                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition text-center text-2xl font-mono tracking-[0.3em]"
+                  className="w-full px-4 py-3 bg-fill-secondary/80 border border-separator-light rounded-xl focus:ring-2 focus:ring-accent-primary/40 focus:border-accent-primary outline-none transition text-center text-2xl font-mono tracking-[0.3em]"
                 />
               </div>
               <button
@@ -293,11 +293,11 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
               </button>
             </form>
 
-            <p className="text-center text-sm text-slate-500 mt-4">
+            <p className="text-center text-sm text-label-tertiary mt-4">
               Or use a backup code
             </p>
 
-            <div className="mt-4 pt-4 border-t border-slate-200">
+            <div className="mt-4 pt-4 border-t border-separator-light">
               <button
                 type="button"
                 onClick={() => {
@@ -307,7 +307,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   setMfaError(null);
                   setStatus('idle');
                 }}
-                className="w-full text-center text-sm text-teal-600 hover:text-teal-800 font-medium"
+                className="w-full text-center text-sm text-accent-primary hover:text-accent-primary/80 font-medium"
               >
                 Back to login
               </button>
@@ -332,7 +332,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
             <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center animate-pulse-soft" style={{ background: buttonBg }}>
               <OsirisCareLeaf className="w-7 h-7" color="white" />
             </div>
-            <p className="text-slate-500">Loading...</p>
+            <p className="text-label-tertiary">Loading...</p>
           </div>
         </div>
       </div>
@@ -345,7 +345,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
         <div className="max-w-md w-full">
           <div className="text-center mb-8">
             <div className="w-16 h-16 bg-white rounded-2xl shadow-lg mx-auto mb-4 flex items-center justify-center">
-              <svg className="w-10 h-10 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-10 h-10 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
             </div>
@@ -353,18 +353,18 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
           </div>
 
           <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
-            <div className="w-16 h-16 bg-teal-100 rounded-full mx-auto mb-4 flex items-center justify-center">
-              <svg className="w-8 h-8 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-16 h-16 bg-accent-primary/10 rounded-full mx-auto mb-4 flex items-center justify-center">
+              <svg className="w-8 h-8 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className="text-xl font-semibold text-slate-900 mb-2">
+            <h2 className="text-xl font-semibold text-label-primary mb-2">
               Login Link Sent
             </h2>
-            <p className="text-slate-600 mb-6">
+            <p className="text-label-secondary mb-6">
               If <strong>{email}</strong> is registered, you&apos;ll receive a login link shortly.
             </p>
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-label-tertiary">
               The link expires in 60 minutes. Check your spam folder if you don&apos;t see it.
             </p>
             <button
@@ -372,7 +372,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                 setStatus('idle');
                 setEmail('');
               }}
-              className="mt-6 text-teal-600 hover:underline text-sm"
+              className="mt-6 text-accent-primary hover:underline text-sm"
             >
               Use a different email
             </button>
@@ -398,27 +398,27 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
 
         {/* Login Card */}
         <div className="p-8" style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)', borderRadius: '20px', boxShadow: '0 8px 32px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.5)' }}>
-          <h2 className="text-xl font-semibold text-slate-900 mb-2 text-center">
+          <h2 className="text-xl font-semibold text-label-primary mb-2 text-center">
             Sign In
           </h2>
-          <p className="text-slate-600 text-center mb-6">
+          <p className="text-label-secondary text-center mb-6">
             Access your HIPAA monitoring dashboard.
           </p>
 
           {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-red-700 text-sm">{error}</p>
+            <div className="mb-6 p-4 bg-health-critical/10 border border-health-critical/30 rounded-lg">
+              <p className="text-health-critical text-sm">{error}</p>
             </div>
           )}
 
           {ssoEnforced ? (
             /* SSO-enforced mode: only show email + SSO button */
             <div className="space-y-4">
-              <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg">
-                <p className="text-teal-800 text-sm">{SSO_LABELS.sso_enforced_message}</p>
+              <div className="p-3 bg-accent-primary/10 border border-accent-primary/30 rounded-lg">
+                <p className="text-accent-primary text-sm">{SSO_LABELS.sso_enforced_message}</p>
               </div>
               <div>
-                <label htmlFor="ssoEmail" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="ssoEmail" className="block text-sm font-medium text-label-secondary mb-1">
                   Email Address
                 </label>
                 <input
@@ -428,7 +428,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   onChange={(e) => { setEmail(e.target.value); setError(null); }}
                   placeholder="you@yourpractice.com"
                   required
-                  className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                  className="w-full px-4 py-3 bg-fill-secondary/80 border border-separator-light rounded-xl focus:ring-2 focus:ring-accent-primary/40 focus:border-accent-primary outline-none transition"
                 />
               </div>
               <button
@@ -455,7 +455,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
               <button
                 type="button"
                 onClick={() => { setSsoEnforced(false); setError(null); }}
-                className="w-full text-center text-sm text-teal-600 hover:text-teal-800 font-medium"
+                className="w-full text-center text-sm text-accent-primary hover:text-accent-primary/80 font-medium"
               >
                 Use a different email
               </button>
@@ -464,14 +464,14 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
             /* Normal mode: tabs + SSO button */
             <>
               {/* Login mode tabs */}
-              <div className="flex rounded-lg bg-slate-100 p-1 mb-4">
+              <div className="flex rounded-lg bg-fill-secondary p-1 mb-4">
                 <button
                   type="button"
                   onClick={() => { setLoginMode('password'); setError(null); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
                     loginMode === 'password'
-                      ? 'bg-white text-slate-900 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-700'
+                      ? 'bg-white text-label-primary shadow-sm'
+                      : 'text-label-tertiary hover:text-label-secondary'
                   }`}
                 >
                   Email &amp; Password
@@ -481,8 +481,8 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   onClick={() => { setLoginMode('magic'); setError(null); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
                     loginMode === 'magic'
-                      ? 'bg-white text-slate-900 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-700'
+                      ? 'bg-white text-label-primary shadow-sm'
+                      : 'text-label-tertiary hover:text-label-secondary'
                   }`}
                 >
                   Magic Link
@@ -492,7 +492,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
               {loginMode === 'password' ? (
                 <form onSubmit={handlePasswordLogin} className="space-y-4">
                   <div>
-                    <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
+                    <label htmlFor="email" className="block text-sm font-medium text-label-secondary mb-1">
                       Email Address
                     </label>
                     <input
@@ -503,11 +503,11 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                       onBlur={handleEmailBlur}
                       placeholder="you@yourpractice.com"
                       required
-                      className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                      className="w-full px-4 py-3 bg-fill-secondary/80 border border-separator-light rounded-xl focus:ring-2 focus:ring-accent-primary/40 focus:border-accent-primary outline-none transition"
                     />
                   </div>
                   <div>
-                    <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1">
+                    <label htmlFor="password" className="block text-sm font-medium text-label-secondary mb-1">
                       Password
                     </label>
                     <input
@@ -517,7 +517,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Enter your password"
                       required
-                      className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                      className="w-full px-4 py-3 bg-fill-secondary/80 border border-separator-light rounded-xl focus:ring-2 focus:ring-accent-primary/40 focus:border-accent-primary outline-none transition"
                     />
                   </div>
                   <button
@@ -539,7 +539,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
               ) : (
                 <form onSubmit={handleMagicLink} className="space-y-4">
                   <div>
-                    <label htmlFor="magicEmail" className="block text-sm font-medium text-slate-700 mb-1">
+                    <label htmlFor="magicEmail" className="block text-sm font-medium text-label-secondary mb-1">
                       Email Address
                     </label>
                     <input
@@ -550,7 +550,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                       onBlur={handleEmailBlur}
                       placeholder="you@yourpractice.com"
                       required
-                      className="w-full px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500/40 focus:border-teal-300 outline-none transition"
+                      className="w-full px-4 py-3 bg-fill-secondary/80 border border-separator-light rounded-xl focus:ring-2 focus:ring-accent-primary/40 focus:border-accent-primary outline-none transition"
                     />
                   </div>
                   <button
@@ -568,7 +568,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                       'Send Login Link'
                     )}
                   </button>
-                  <p className="text-center text-sm text-slate-500">
+                  <p className="text-center text-sm text-label-tertiary">
                     No password required. We&apos;ll send you a secure link.
                   </p>
                 </form>
@@ -577,10 +577,10 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
               {/* SSO Divider + Button */}
               <div className="relative my-5">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-slate-200" />
+                  <div className="w-full border-t border-separator-light" />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-slate-500">or</span>
+                  <span className="px-2 bg-white text-label-tertiary">or</span>
                 </div>
               </div>
 
@@ -588,12 +588,12 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                 type="button"
                 onClick={handleSsoLogin}
                 disabled={ssoLoading}
-                className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-50/80 border border-slate-200 rounded-xl hover:bg-teal-50/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-fill-secondary/80 border border-separator-light rounded-xl hover:bg-accent-primary/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 text-label-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                 </svg>
-                <span className="font-medium text-slate-900">
+                <span className="font-medium text-label-primary">
                   {ssoLoading ? 'Redirecting...' : SSO_LABELS.sign_in_with_sso}
                 </span>
               </button>

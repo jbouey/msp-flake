@@ -405,7 +405,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <p className="text-sm font-medium text-label-primary truncate">
               {user?.displayName || 'User'}
             </p>
-            {/* TODO: verify contrast ratio — text-label-tertiary on glass sidebar bg in dark mode */}
             <p className="text-[11px] text-label-tertiary capitalize">{user?.role || 'Guest'}</p>
           </div>
           {onLogout && (
