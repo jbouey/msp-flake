@@ -758,14 +758,57 @@ EOF
 
       if [ -z "$MAC_ADDR" ]; then
         log "ERROR: Could not determine MAC address"
-      else
-        MAC_ENCODED=$(echo "$MAC_ADDR" | sed 's/:/%3A/g')
-        PROVISION_URL="$API_URL/api/provision/$MAC_ENCODED"
+        log "Auto-provisioning failed - manual configuration required"
+        log "Options: 1) Insert USB with config.yaml  2) Register MAC in dashboard"
+        exit 1
+      fi
 
-        MAX_RETRIES=6
-        RETRY_DELAY=10
-        for attempt in $(seq 1 $MAX_RETRIES); do
-          log "Attempt $attempt/$MAX_RETRIES: Fetching config..."
+      MAC_ENCODED=$(echo "$MAC_ADDR" | sed 's/:/%3A/g')
+      PROVISION_URL="$API_URL/api/provision/$MAC_ENCODED"
+
+      # Phase 1: Initial connectivity retries (6 attempts, 10s apart)
+      # Handles network not ready yet after boot.
+      INITIAL_RETRIES=6
+      RETRY_DELAY=10
+      REGISTERED=false
+
+      for attempt in $(seq 1 $INITIAL_RETRIES); do
+        log "Attempt $attempt/$INITIAL_RETRIES: Fetching config..."
+        HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
+          --connect-timeout 15 --max-time 45 "$PROVISION_URL" 2>/dev/null || echo "000")
+
+        if [ "$HTTP_CODE" = "200" ]; then
+          if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
+            ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
+            chmod 600 "$CONFIG_PATH"
+            log "SUCCESS: Provisioning complete via MAC lookup"
+            rm -f /tmp/provision-response.json
+            exit 0
+          fi
+          # 200 but no site_id means unclaimed — MAC registered, awaiting claim
+          REGISTERED=true
+          log "Appliance registered but unclaimed — entering polling mode"
+          break
+        elif [ "$HTTP_CODE" = "404" ]; then
+          log "MAC not registered (HTTP 404). Register: $MAC_ADDR"
+          break
+        fi
+        rm -f /tmp/provision-response.json
+        sleep $RETRY_DELAY
+      done
+
+      # Phase 2: Drop-ship polling (unclaimed appliance waits for admin to claim it).
+      # Polls every 60s indefinitely. Once claimed, Central Command returns site_id + api_key.
+      if [ "$REGISTERED" = true ] || [ "$HTTP_CODE" = "200" ]; then
+        POLL_DELAY=60
+        POLL_COUNT=0
+        log "Drop-ship mode: polling every ''${POLL_DELAY}s for site assignment..."
+        log "Claim this appliance in Central Command dashboard: MAC=$MAC_ADDR"
+
+        while true; do
+          POLL_COUNT=$((POLL_COUNT + 1))
+          sleep $POLL_DELAY
+
           HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
             --connect-timeout 15 --max-time 45 "$PROVISION_URL" 2>/dev/null || echo "000")
 
@@ -773,16 +816,16 @@ EOF
             if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
               ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
               chmod 600 "$CONFIG_PATH"
-              log "SUCCESS: Provisioning complete via MAC lookup"
+              log "SUCCESS: Provisioning complete via MAC lookup (poll #$POLL_COUNT)"
               rm -f /tmp/provision-response.json
               exit 0
             fi
-          elif [ "$HTTP_CODE" = "404" ]; then
-            log "MAC not registered (HTTP 404). Register: $MAC_ADDR"
-            break
           fi
           rm -f /tmp/provision-response.json
-          sleep $RETRY_DELAY
+
+          if [ $((POLL_COUNT % 10)) -eq 0 ]; then
+            log "Still waiting for site assignment (poll #$POLL_COUNT)... MAC=$MAC_ADDR"
+          fi
         done
       fi
 

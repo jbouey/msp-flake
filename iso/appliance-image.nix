@@ -1020,69 +1020,134 @@ in
 
       if [ -z "$MAC_ADDR" ]; then
         log "ERROR: Could not determine MAC address"
-      else
-        log "MAC Address: $MAC_ADDR"
+        log "Auto-provisioning failed - provision code entry available"
+        log "Options:"
+        log "  1. Run: compliance-provision (enter code from partner dashboard)"
+        log "  2. Insert USB with config.yaml and reboot"
 
-        # URL-encode the MAC (replace : with %3A)
-        MAC_ENCODED=$(echo "$MAC_ADDR" | sed 's/:/%3A/g')
-        PROVISION_URL="$API_URL/api/provision/$MAC_ENCODED"
+        cat > /etc/issue.d/90-msp-provision.issue << 'ISSUE'
 
-        # Wait for network connectivity with retries
-        MAX_RETRIES=6
-        RETRY_DELAY=10
-        PROVISIONED=false
+  ╔═══════════════════════════════════════════════════════════════════╗
+  ║  PROVISIONING REQUIRED                                            ║
+  ╠═══════════════════════════════════════════════════════════════════╣
+  ║  No configuration found. Options:                                 ║
+  ║                                                                   ║
+  ║  1. Run: compliance-provision                                     ║
+  ║     Enter 16-character code from partner dashboard                ║
+  ║                                                                   ║
+  ║  2. Insert USB with config.yaml and reboot                        ║
+  ║                                                                   ║
+  ║  MAC: Run 'compliance-provision --mac' to display                 ║
+  ║  See: https://docs.osiriscare.net/appliance-setup                 ║
+  ╚═══════════════════════════════════════════════════════════════════╝
 
-        for attempt in $(seq 1 $MAX_RETRIES); do
-          log "Attempt $attempt/$MAX_RETRIES: Checking network connectivity..."
+ISSUE
+        exit 1
+      fi
 
-          # Test DNS resolution first
-          if ! ${pkgs.coreutils}/bin/timeout 5 ${pkgs.bash}/bin/bash -c "echo >/dev/tcp/1.1.1.1/53" 2>/dev/null; then
-            log "Network not ready (no DNS), waiting ''${RETRY_DELAY}s..."
-            sleep $RETRY_DELAY
-            continue
+      log "MAC Address: $MAC_ADDR"
+
+      # URL-encode the MAC (replace : with %3A)
+      MAC_ENCODED=$(echo "$MAC_ADDR" | sed 's/:/%3A/g')
+      PROVISION_URL="$API_URL/api/provision/$MAC_ENCODED"
+
+      # Phase 1: Initial connectivity retries (6 attempts, 10s apart)
+      # Handles network not ready yet after boot.
+      INITIAL_RETRIES=6
+      RETRY_DELAY=10
+      REGISTERED=false
+
+      for attempt in $(seq 1 $INITIAL_RETRIES); do
+        log "Attempt $attempt/$INITIAL_RETRIES: Checking network connectivity..."
+
+        # Test DNS resolution first
+        if ! ${pkgs.coreutils}/bin/timeout 5 ${pkgs.bash}/bin/bash -c "echo >/dev/tcp/1.1.1.1/53" 2>/dev/null; then
+          log "Network not ready (no DNS), waiting ''${RETRY_DELAY}s..."
+          sleep $RETRY_DELAY
+          continue
+        fi
+
+        log "Network ready, fetching config from $PROVISION_URL"
+
+        HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
+          --connect-timeout 15 --max-time 45 \
+          "$PROVISION_URL" 2>/dev/null || echo "000")
+
+        if [ "$HTTP_CODE" = "200" ]; then
+          # Check if response contains valid config (site_id is non-null)
+          if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
+            ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
+            chmod 600 "$CONFIG_PATH"
+            log "SUCCESS: Provisioning complete via MAC lookup"
+            rm -f /tmp/provision-response.json
+            exit 0
           fi
+          # 200 but no site_id means unclaimed — MAC registered, awaiting claim
+          REGISTERED=true
+          log "Appliance registered but unclaimed — entering polling mode"
+          break
+        elif [ "$HTTP_CODE" = "404" ]; then
+          log "MAC not registered in Central Command (HTTP 404)"
+          log "Register this MAC in the dashboard: $MAC_ADDR"
+          break
+        elif [ "$HTTP_CODE" = "000" ]; then
+          log "Connection failed (HTTP 000), retrying in ''${RETRY_DELAY}s..."
+        else
+          log "Unexpected HTTP $HTTP_CODE, retrying in ''${RETRY_DELAY}s..."
+        fi
 
-          log "Network ready, fetching config from $PROVISION_URL"
+        rm -f /tmp/provision-response.json
+        sleep $RETRY_DELAY
+      done
+
+      # Phase 2: Drop-ship polling (unclaimed appliance waits for admin to claim it).
+      # Polls every 60s indefinitely. Once claimed, Central Command returns site_id + api_key.
+      if [ "$REGISTERED" = true ] || [ "$HTTP_CODE" = "200" ]; then
+        POLL_DELAY=60
+        POLL_COUNT=0
+        log "Drop-ship mode: polling every ''${POLL_DELAY}s for site assignment..."
+        log "Claim this appliance in Central Command dashboard: MAC=$MAC_ADDR"
+
+        # Write instructions to console showing MAC for easy claiming
+        cat > /etc/issue.d/90-msp-provision.issue << ISSUE
+
+  ╔═══════════════════════════════════════════════════════════════════╗
+  ║  AWAITING SITE ASSIGNMENT                                         ║
+  ╠═══════════════════════════════════════════════════════════════════╣
+  ║  Appliance registered. Waiting for admin to claim it.             ║
+  ║  MAC: $MAC_ADDR                                                   ║
+  ║                                                                   ║
+  ║  Claim in Central Command > Appliances > Unclaimed                ║
+  ║  Polling every 60s — will auto-configure when claimed.            ║
+  ╚═══════════════════════════════════════════════════════════════════╝
+
+ISSUE
+
+        while true; do
+          POLL_COUNT=$((POLL_COUNT + 1))
+          sleep $POLL_DELAY
 
           HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
             --connect-timeout 15 --max-time 45 \
             "$PROVISION_URL" 2>/dev/null || echo "000")
 
           if [ "$HTTP_CODE" = "200" ]; then
-            # Check if response contains valid config
             if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
               ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
               chmod 600 "$CONFIG_PATH"
-              log "SUCCESS: Provisioning complete via MAC lookup"
+              log "SUCCESS: Provisioning complete via MAC lookup (poll #$POLL_COUNT)"
               rm -f /tmp/provision-response.json
-              # Note: compliance-agent starts after this service via systemd ordering
-              PROVISIONED=true
               exit 0
-            else
-              log "ERROR: Response missing site_id"
             fi
-          elif [ "$HTTP_CODE" = "404" ]; then
-            log "MAC not registered in Central Command (HTTP 404)"
-            log "Register this MAC in the dashboard: $MAC_ADDR"
-            break
-          elif [ "$HTTP_CODE" = "000" ]; then
-            log "Connection failed (HTTP 000), retrying in ''${RETRY_DELAY}s..."
-          else
-            log "Unexpected HTTP $HTTP_CODE, retrying in ''${RETRY_DELAY}s..."
           fi
-
           rm -f /tmp/provision-response.json
-          sleep $RETRY_DELAY
-        done
 
-        if [ "$PROVISIONED" = false ]; then
-          log "MAC provisioning failed after $MAX_RETRIES attempts"
-        fi
+          if [ $((POLL_COUNT % 10)) -eq 0 ]; then
+            log "Still waiting for site assignment (poll #$POLL_COUNT)... MAC=$MAC_ADDR"
+          fi
+        done
       fi
 
-      # ========================================
-      # Neither method worked - offer provision code CLI
-      # ========================================
       log "Auto-provisioning failed - provision code entry available"
       log ""
       log "Options:"

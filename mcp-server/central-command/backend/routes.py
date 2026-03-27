@@ -1574,6 +1574,7 @@ async def claim_appliance_to_site(
 
     # Generate API key for the appliance
     import secrets
+    import hashlib
     api_key = secrets.token_urlsafe(32)
 
     result = await db.execute(text("""
@@ -1586,6 +1587,19 @@ async def claim_appliance_to_site(
     row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Appliance not found in provisioning table")
+
+    # Register the API key in api_keys table so checkin auth (require_appliance_bearer) works.
+    # Without this, the appliance gets a 401 on every checkin because the key_hash doesn't exist.
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    await db.execute(text("""
+        INSERT INTO api_keys (site_id, key_hash, key_prefix, description, active, created_at)
+        VALUES (:site_id, :key_hash, :key_prefix, 'Auto-generated during drop-ship claim', true, NOW())
+        ON CONFLICT DO NOTHING
+    """), {
+        "site_id": site_id,
+        "key_hash": key_hash,
+        "key_prefix": api_key[:8],
+    })
     await db.commit()
 
     return {

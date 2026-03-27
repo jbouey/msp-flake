@@ -500,8 +500,8 @@ async def get_provision_by_mac(mac_address: str):
             WHERE UPPER(ap.mac_address) = $1
         """, mac)
 
-        if provision:
-            # Mark as provisioned if not already
+        if provision and provision['site_id']:
+            # MAC is registered AND claimed to a site — return full config
             await conn.execute("""
                 UPDATE appliance_provisioning
                 SET provisioned_at = COALESCE(provisioned_at, NOW())
@@ -521,6 +521,17 @@ async def get_provision_by_mac(mac_address: str):
                 "ssh_authorized_keys": ssh_keys
             }
 
+        if provision:
+            # MAC is registered but NOT yet claimed to a site.
+            # Return unclaimed status with retry hint so the appliance keeps polling.
+            logger.info(f"[provision] Unclaimed appliance polling: MAC={mac}")
+            return {
+                "status": "unclaimed",
+                "mac_address": mac,
+                "retry_seconds": 60,
+                "message": "Appliance registered. Waiting for site assignment in the dashboard.",
+            }
+
         # MAC not found — register as unclaimed appliance for drop-ship workflow.
         # The appliance will poll periodically. Once an admin claims it to a site
         # in the dashboard, the next poll returns the full config.
@@ -537,6 +548,7 @@ async def get_provision_by_mac(mac_address: str):
         return {
             "status": "unclaimed",
             "mac_address": mac,
+            "retry_seconds": 60,
             "message": "Appliance registered. Waiting for site assignment in the dashboard.",
         }
 
