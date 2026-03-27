@@ -673,9 +673,14 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
             ORDER BY hostname
         """, site_id)
         
+        # Verify site exists even if no appliances yet
         if not appliance_rows:
-            raise HTTPException(status_code=404, detail=f"Site {site_id} not found")
-        
+            site_exists = await conn.fetchval(
+                "SELECT 1 FROM sites WHERE site_id = $1", site_id
+            )
+            if not site_exists:
+                raise HTTPException(status_code=404, detail=f"Site {site_id} not found")
+
         # Process appliances
         appliances = []
         latest_checkin = None
