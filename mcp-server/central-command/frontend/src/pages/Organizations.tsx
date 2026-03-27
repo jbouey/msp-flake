@@ -273,10 +273,10 @@ export const Organizations: React.FC = () => {
             {actionError && (
               <div className="mb-3 p-2 rounded-ios bg-health-critical/10 text-health-critical text-sm">{actionError}</div>
             )}
-            <form onSubmit={async (e) => {
+            {/* eslint-disable-next-line no-undef */}
+            <form onSubmit={async (e: React.FormEvent<HTMLFormElement>) => {
               e.preventDefault();
-              const form = e.target as HTMLFormElement;
-              const formData = new FormData(form);
+              const formData = new FormData(e.currentTarget);
               setActionLoading(true);
               setActionError('');
               try {
@@ -304,7 +304,7 @@ export const Organizations: React.FC = () => {
               </div>
               <div>
                 <label className="block text-sm text-label-secondary mb-1">Phone</label>
-                <input name="phone" defaultValue={(editOrg as any).primary_phone || ''} className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary" />
+                <input name="phone" defaultValue={'primary_phone' in editOrg ? (editOrg as Organization & { primary_phone?: string }).primary_phone || '' : ''} className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary" />
               </div>
               <div>
                 <label className="block text-sm text-label-secondary mb-1">Practice Type</label>
