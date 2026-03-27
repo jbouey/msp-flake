@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OsirisCare Demo Video Production Guide</title>
+<style>
+  @page { size: letter; margin: 0.75in; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+    color: #1a1a2e;
+    line-height: 1.55;
+    font-size: 11pt;
+    background: #fff;
+    padding: 0.75in;
+  }
+  h1 {
+    font-size: 22pt;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+    color: #0a0a1a;
+  }
+  .subtitle {
+    font-size: 11pt;
+    color: #666;
+    margin-bottom: 28px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid #e8e8f0;
+  }
+  h2 {
+    font-size: 15pt;
+    font-weight: 700;
+    color: #0a0a1a;
+    margin-top: 28px;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1.5px solid #e0e0ee;
+  }
+  h3 {
+    font-size: 12pt;
+    font-weight: 600;
+    color: #2a2a4a;
+    margin-top: 18px;
+    margin-bottom: 6px;
+  }
+  p, li { margin-bottom: 6px; }
+  ul, ol { padding-left: 20px; }
+  .step-grid {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 8px 12px;
+    margin: 12px 0;
+  }
+  .step-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #1a1a2e;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13pt;
+    flex-shrink: 0;
+  }
+  .step-body {
+    padding-top: 4px;
+  }
+  .step-body strong { color: #0a0a1a; }
+  code {
+    font-family: 'SF Mono', 'Menlo', monospace;
+    font-size: 9.5pt;
+    background: #f4f4f8;
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: #333;
+  }
+  pre {
+    font-family: 'SF Mono', 'Menlo', monospace;
+    font-size: 9pt;
+    background: #1a1a2e;
+    color: #e0e0f0;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin: 8px 0 12px;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  .card {
+    background: #f8f8fc;
+    border: 1px solid #e0e0ee;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 10px 0;
+  }
+  .card-title {
+    font-weight: 700;
+    font-size: 10pt;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #888;
+    margin-bottom: 6px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 10pt;
+  }
+  th {
+    text-align: left;
+    padding: 8px 10px;
+    background: #1a1a2e;
+    color: #fff;
+    font-weight: 600;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  th:first-child { border-radius: 6px 0 0 0; }
+  th:last-child { border-radius: 0 6px 0 0; }
+  td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #e8e8f0;
+  }
+  tr:nth-child(even) { background: #fafaff; }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding: 4px 0 4px 28px;
+    position: relative;
+  }
+  .checklist li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 7px;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #ccc;
+    border-radius: 4px;
+  }
+  .tip {
+    background: #eef6ff;
+    border-left: 3px solid #3b82f6;
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    margin: 10px 0;
+    font-size: 10pt;
+  }
+  .tip strong { color: #1d4ed8; }
+  .warn {
+    background: #fff8ee;
+    border-left: 3px solid #f59e0b;
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    margin: 10px 0;
+    font-size: 10pt;
+  }
+  .warn strong { color: #b45309; }
+  .page-break { page-break-before: always; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .badge {
+    display: inline-block;
+    font-size: 8pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: #fff;
+  }
+  .badge-free { background: #22c55e; }
+  .badge-paid { background: #8b5cf6; }
+  .badge-time { background: #64748b; }
+  .flow-arrow { text-align: center; font-size: 18pt; color: #aaa; margin: 6px 0; }
+</style>
+</head>
+<body>
+
+<h1>OsirisCare Demo Video Production Guide</h1>
+<p class="subtitle">Step-by-step playbook for creating AI-narrated product demo videos with avatar overlay</p>
+
+<!-- ============================================ -->
+<h2>1. Overview — What You're Building</h2>
+
+<p>Each demo video has three layers composited together:</p>
+
+<div class="two-col">
+  <div class="card">
+    <div class="card-title">Layer 1: Screen Recording</div>
+    <p>You record your screen (mouse movements, clicks, navigation through the OsirisCare dashboard). This is the main visual content.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Layer 2: AI Voice Narration</div>
+    <p>ElevenLabs generates studio-quality voice from the script text. Sounds natural, not robotic.</p>
+  </div>
+</div>
+<div class="card" style="margin-top: 0;">
+  <div class="card-title">Layer 3: AI Avatar (Circle Bubble)</div>
+  <p>HeyGen generates a talking-head video synced to the narration audio. FFmpeg composites it as a circular overlay in the corner of your screen recording.</p>
+</div>
+
+<div class="flow-arrow">Screen Recording + AI Voice + AI Avatar = Final Video</div>
+
+<div class="tip">
+  <strong>Tip:</strong> You can start with voice-only (no avatar) — the pipeline supports <code>--voice-only</code> mode. Add the avatar later when you're happy with the narration.
+</div>
+
+<!-- ============================================ -->
+<h2>2. Accounts & API Keys</h2>
+
+<table>
+  <tr>
+    <th>Service</th>
+    <th>What For</th>
+    <th>Plan Needed</th>
+    <th>Setup Steps</th>
+  </tr>
+  <tr>
+    <td><strong>ElevenLabs</strong></td>
+    <td>AI Voice Generation</td>
+    <td><span class="badge badge-free">Free tier</span> 10k chars/mo<br><span class="badge badge-paid">Starter $5/mo</span> 30k chars</td>
+    <td>
+      1. Sign up at <code>elevenlabs.io</code><br>
+      2. Settings &rarr; API Keys &rarr; copy key<br>
+      3. Voice Library &rarr; pick a voice &rarr; copy Voice ID
+    </td>
+  </tr>
+  <tr>
+    <td><strong>HeyGen</strong></td>
+    <td>AI Avatar Video</td>
+    <td><span class="badge badge-paid">Creator $24/mo</span> 15min/mo video</td>
+    <td>
+      1. Sign up at <code>heygen.com</code><br>
+      2. Settings &rarr; API &rarr; copy key<br>
+      3. Avatars &rarr; pick one (or use Instant Avatar) &rarr; copy Avatar ID
+    </td>
+  </tr>
+  <tr>
+    <td><strong>FFmpeg</strong></td>
+    <td>Video Compositing</td>
+    <td><span class="badge badge-free">Free / Open Source</span></td>
+    <td><code>brew install ffmpeg</code></td>
+  </tr>
+</table>
+
+<h3>Save your keys</h3>
+<pre><code>cd demo-videos
+cp .env.example .env
+# Edit .env with your real keys:
+nano .env</code></pre>
+
+<pre><code># .env
+ELEVENLABS_API_KEY=sk_xxxxxxxxxxxxxxxxxxxxxxxx
+ELEVENLABS_VOICE_ID=pNInz6obpgDQGcFmaJgB    # "Adam" or your pick
+HEYGEN_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+HEYGEN_AVATAR_ID=Wayne_20240426             # or your Instant Avatar
+AVATAR_SIZE=200
+AVATAR_POSITION=bottom-right</code></pre>
+
+<!-- ============================================ -->
+<h2 class="page-break">3. Production Workflow — Per Video</h2>
+
+<p>Repeat these steps for each of the 7 demo videos. Total time: ~30-45 min per video.</p>
+
+<div class="step-grid">
+  <div><div class="step-num">1</div></div>
+  <div class="step-body">
+    <strong>Review the script</strong> <span class="badge badge-time">5 min</span><br>
+    Open the script in <code>demo-videos/scripts/</code>. Read through it. The <code>[SCREEN: ...]</code> lines are stage directions — they tell you what to show on screen. The plain text is what the AI voice will say.<br>
+    Edit the narration if you want to customize anything.
+  </div>
+
+  <div><div class="step-num">2</div></div>
+  <div class="step-body">
+    <strong>Record your screen</strong> <span class="badge badge-time">10-15 min</span><br>
+    Open <code>dashboard.osiriscare.net</code> in Safari/Chrome. Use macOS screen recording (<code>Cmd+Shift+5</code>) or OBS.<br>
+    <ul>
+      <li>Follow the <code>[SCREEN: ...]</code> directions in the script</li>
+      <li>Move the mouse deliberately and smoothly — no rushing</li>
+      <li>Pause 2-3 seconds between scenes (you'll trim later)</li>
+      <li>Record at 1920x1080 (or your native resolution)</li>
+      <li>Don't worry about audio — the AI does the talking</li>
+    </ul>
+    Save to: <code>demo-videos/recordings/01-dashboard-tour.mov</code>
+  </div>
+
+  <div><div class="step-num">3</div></div>
+  <div class="step-body">
+    <strong>Generate AI voice</strong> <span class="badge badge-time">1-2 min</span><br>
+    <pre><code>cd demo-videos
+python generate.py scripts/01-dashboard-tour.md --voice-only</code></pre>
+    This extracts the narration text, sends it to ElevenLabs, and saves the audio to <code>avatars/01-dashboard-tour-audio.mp3</code>.<br>
+    <strong>Listen to it.</strong> Re-run with edits if the pacing or pronunciation is off.
+  </div>
+
+  <div><div class="step-num">4</div></div>
+  <div class="step-body">
+    <strong>Generate AI avatar video</strong> <span class="badge badge-time">3-5 min</span><br>
+    <pre><code>python generate.py scripts/01-dashboard-tour.md --avatar-only</code></pre>
+    This uploads the audio to HeyGen, generates a talking-head video with green screen background, and saves to <code>avatars/01-dashboard-tour-avatar.mp4</code>.<br>
+    HeyGen rendering takes 2-4 min — the script polls until done.
+  </div>
+
+  <div><div class="step-num">5</div></div>
+  <div class="step-body">
+    <strong>Composite the final video</strong> <span class="badge badge-time">1-2 min</span><br>
+    <pre><code>./compose.sh recordings/01-dashboard-tour.mov avatars/01-dashboard-tour-avatar.mp4</code></pre>
+    FFmpeg composites the avatar as a circle bubble (bottom-right, 200px, with drop shadow) over your screen recording, mixing the avatar voice audio with quiet screen audio.<br>
+    Output: <code>output/01-dashboard-tour-final.mp4</code>
+  </div>
+
+  <div><div class="step-num">6</div></div>
+  <div class="step-body">
+    <strong>Review & adjust</strong> <span class="badge badge-time">5 min</span><br>
+    Watch the output. Common tweaks:
+    <ul>
+      <li>Avatar too small? <code>--size 250</code></li>
+      <li>Wrong corner? <code>--position bottom-left</code></li>
+      <li>Screen recording too long? Trim in iMovie/QuickTime first</li>
+      <li>Voice too fast? Edit the script to add pauses (add "..." or shorter sentences)</li>
+    </ul>
+  </div>
+</div>
+
+<div class="warn">
+  <strong>Important:</strong> Match the screen recording length to the audio length. If your recording is 90 seconds but the narration is 75 seconds, the avatar will disappear early. Trim your recording or pad with a still frame.
+</div>
+
+<!-- ============================================ -->
+<h2 class="page-break">4. The 6 Demo Videos — Director's Notes</h2>
+
+<p>Videos are grouped by recording complexity. Record the <strong>easy 4 first</strong>, then the <strong>live-trigger 2</strong> in one session with the chaos lab.</p>
+
+<h3 style="color: #22c55e; margin-top: 16px;">GROUP A: Dashboard-Only (no chaos lab needed)</h3>
+<p style="margin-bottom: 8px; color: #666;">These use existing data already in the database. Just navigate and record.</p>
+
+<div class="card">
+  <div class="card-title">Video 01 — Dashboard Tour <span class="badge badge-time">~90s</span></div>
+  <p><strong>What to show:</strong> Login &rarr; dashboard &rarr; compliance score &rarr; incidents &rarr; evidence &rarr; fleet</p>
+  <p><strong>Key selling point:</strong> Live system, not a mockup</p>
+  <p><strong>Director's notes:</strong></p>
+  <ul>
+    <li>Start on the login screen, type credentials slowly (the login itself shows polish)</li>
+    <li>Once on the dashboard, let the page fully load &mdash; the stat cards animate on entry</li>
+    <li>Hover over the compliance gauge for 2 seconds (shows the tooltip)</li>
+    <li>Scroll smoothly through the incident list &mdash; don't click into details yet (save that for #02)</li>
+    <li>Navigate to Sites &rarr; click into a site &rarr; briefly show the evidence tab</li>
+    <li>End back on the main dashboard with all cards visible</li>
+  </ul>
+  <div class="tip"><strong>Prep:</strong> Just login to <code>dashboard.osiriscare.net</code> and confirm the numbers look presentable. No setup needed.<br><strong>Current state (Mar 26):</strong> Score ~64, 121 Pass / 12 Fail, 13 notifications, 0 active incidents. The 30-day trend may show a dip from historical data — this will normalize within 2 weeks.</div>
+</div>
+
+<div class="card">
+  <div class="card-title">Video 03 — Compliance Packet <span class="badge badge-time">~90s</span></div>
+  <p><strong>What to show:</strong> Evidence page &rarr; packet download &rarr; show PDF contents &rarr; blockchain anchor</p>
+  <p><strong>Key selling point:</strong> Audit-ready evidence in one click</p>
+  <p><strong>Director's notes:</strong></p>
+  <ul>
+    <li>Navigate to Sites &rarr; pick the physical appliance site &rarr; Evidence tab</li>
+    <li>Scroll the evidence bundles list slowly &mdash; show there are hundreds of entries</li>
+    <li>Click "Download Compliance Packet" &mdash; show the download happening</li>
+    <li>Open the PDF in Preview &mdash; scroll through showing the HIPAA control mapping, check results, timestamps</li>
+    <li>If visible, show a blockchain anchor timestamp (the OTS proof section in the packet)</li>
+    <li>Key moment: hold on the "Cryptographically Signed" badge for 2 seconds</li>
+  </ul>
+  <div class="tip"><strong>Prep:</strong> Pre-download one compliance packet and have it ready in Preview in case the live download is slow. You can cut between the dashboard and the PDF.</div>
+</div>
+
+<div class="card">
+  <div class="card-title">Video 04 — Fleet Deployment <span class="badge badge-time">~60s</span></div>
+  <p><strong>What to show:</strong> Fleet Updates page &rarr; create order &rarr; watch propagate &rarr; version bump</p>
+  <p><strong>Key selling point:</strong> One command, every site</p>
+  <p><strong>Director's notes:</strong></p>
+  <ul>
+    <li>Navigate to Fleet Updates page &mdash; show the existing fleet orders list (completed ones prove it's real)</li>
+    <li>Show both appliances in the site list with their current versions</li>
+    <li>You do NOT need to create a live order for this recording &mdash; show the existing completed orders and their propagation stats (2/2 completed)</li>
+    <li>The fleet orders page now shows many completed orders (v0.3.45 through v0.3.49) from the March 26 enterprise audit session &mdash; these prove real iterative deployment</li>
+    <li>End on the sites list showing the appliance at v0.3.49</li>
+  </ul>
+  <div class="tip"><strong>Prep:</strong> The fleet orders page has 10+ completed orders showing real daemon version progression. The latest is v0.3.49. Single appliance site, so show "1/1 completed".</div>
+</div>
+
+<div class="card">
+  <div class="card-title">Video 06 — Client Portal <span class="badge badge-time">~60s</span></div>
+  <p><strong>What to show:</strong> Client login &rarr; client dashboard &rarr; compliance score &rarr; tickets &rarr; documents</p>
+  <p><strong>Key selling point:</strong> Transparency builds trust</p>
+  <p><strong>Director's notes:</strong></p>
+  <ul>
+    <li>Open the client portal URL in a <strong>separate browser window</strong> (or incognito) so it looks distinct from the admin dashboard</li>
+    <li>Login with a client account &mdash; show the simpler, cleaner client-facing UI</li>
+    <li>Highlight: the client sees their compliance score but NOT the technical details of how remediation works</li>
+    <li>Show the tickets/escalation section &mdash; this is where clients see L3 escalations addressed to them</li>
+    <li>Show the compliance documents section if populated</li>
+    <li>Key contrast: "This is what your client sees" vs the admin view from video #01</li>
+  </ul>
+  <div class="tip"><strong>Prep:</strong> Make sure a client account exists with access to a site that has data. Login URL: <code>dashboard.osiriscare.net/client/login</code>. Client portal colors were updated to match the design system on Mar 26.</div>
+</div>
+
+<div class="card">
+  <div class="card-title">Video 07 — Multi-Framework Compliance <span class="badge badge-time">~60s</span> <span class="badge badge-free">NEW</span></div>
+  <p><strong>What to show:</strong> Frameworks tab &rarr; enable SOC2 + PCI-DSS &rarr; industry preset &rarr; compliance report export</p>
+  <p><strong>Key selling point:</strong> Not just HIPAA &mdash; 13 frameworks, one platform</p>
+  <p><strong>Director's notes:</strong></p>
+  <ul>
+    <li>Navigate to Sites &rarr; site detail &rarr; Frameworks tab</li>
+    <li>Show the framework cards (HIPAA, SOC2, PCI-DSS, NIST CSF, CIS, etc.)</li>
+    <li>Enable SOC2 and PCI-DSS &mdash; show the compliance scores populate</li>
+    <li>Mention: "We just added GLBA and FFIEC for financial services clients"</li>
+    <li>Show the industry preset selector if available &mdash; one click to configure for healthcare vs financial vs legal</li>
+    <li>End by showing: "Same drift checks, same healing pipeline, multiple compliance frameworks"</li>
+  </ul>
+  <div class="tip"><strong>Prep:</strong> The platform now has 13 frameworks including GLBA and FFIEC (added Mar 26). Industry presets are available via API: healthcare, financial, legal, government, general.</div>
+</div>
+
+<h3 style="color: #f59e0b; margin-top: 24px;">GROUP B: Live Trigger (need iMac + appliance running)</h3>
+<p style="margin-bottom: 8px; color: #666;">These need you to trigger a real drift event and record the detection + healing cycle. <strong>Do both back-to-back</strong> in one session &mdash; you only need the chaos lab powered on for ~20 minutes.</p>
+
+<div class="warn">
+  <strong>Before starting Group B:</strong> Make sure the iMac is on and the appliance is checking in (verify at Sites page &mdash; should show "Online"). You can now SSH directly to the appliance: <code>ssh jrelly@192.168.88.50</code> then <code>ssh root@192.168.88.241</code>, or via VPS: <code>ssh root@178.156.162.116</code> then <code>ssh root@10.100.0.2</code>.<br><strong>Note:</strong> The VM appliance was decommissioned in Session 183. Only the physical appliance is active.
+</div>
+
+<div class="card">
+  <div class="card-title">Video 02 — Incident Healing <span class="badge badge-time">~120s</span></div>
+  <p><strong>What to show:</strong> Active incident &rarr; L1 auto-heal &rarr; L2 LLM &rarr; L3 escalation &rarr; evidence trail</p>
+  <p><strong>Key selling point:</strong> Three-tier auto-healing pipeline</p>
+  <p><strong>Director's notes:</strong></p>
+  <ul>
+    <li><strong>BEFORE you hit record:</strong> Open a terminal to the physical appliance</li>
+    <li><strong>Trigger the drift:</strong> Run <code>systemctl stop firewall</code> on the appliance via SSH (NixOS uses <code>firewall</code>, not <code>firewalld</code>) &mdash; this creates a firewall drift that L1 will auto-heal</li>
+    <li>Switch to the browser, navigate to Incidents page</li>
+    <li>Wait ~2-3 minutes for the next scan cycle to detect the drift</li>
+    <li>Record the moment the incident appears &mdash; show it go from "active" to "resolved" as L1 heals it</li>
+    <li>Click into the incident to show the full detail: detection timestamp, resolution method (L1 Deterministic), runbook used, evidence hash</li>
+    <li>For the L3 escalation portion: the existing WIN-DEPLOY-UNREACHABLE incidents in your dashboard are real L3s &mdash; click into one to show the escalation chain</li>
+    <li>End on the evidence trail showing the cryptographic proof of remediation</li>
+  </ul>
+  <p><strong>Recording strategy (two takes, stitched):</strong></p>
+  <ol>
+    <li><strong>Take A:</strong> Start recording. SSH in, run <code>systemctl stop firewall</code>. Switch to browser. Navigate to Incidents. Wait. Capture the incident appearing + auto-healing. (~3-4 min raw, trim to ~60s)</li>
+    <li><strong>Take B:</strong> Click into the healed incident for detail view. Also click into an existing L3 escalation. Show evidence trail. (~2 min raw, trim to ~60s)</li>
+    <li>FFmpeg stitches both takes under continuous AI narration</li>
+  </ol>
+  <div class="warn"><strong>Timing tip:</strong> The daemon scans every ~10 minutes. To avoid waiting on camera, trigger the drift, then start recording ~8 minutes later when the scan is about to fire. Check the appliance's last checkin time on the Sites page to estimate the next scan. Or: trigger, wait for the incident to appear, THEN start recording and scroll through the just-resolved incident as if it just happened.</div>
+</div>
+
+<div class="card">
+  <div class="card-title">Video 05 — Drift Detection <span class="badge badge-time">~90s</span></div>
+  <p><strong>What to show:</strong> Site detail &rarr; drift config &rarr; show scan results &rarr; auto-remediation</p>
+  <p><strong>Key selling point:</strong> Catch it before the auditor</p>
+  <p><strong>Director's notes:</strong></p>
+  <ul>
+    <li>Navigate to Sites &rarr; pick the physical appliance site &rarr; Drift Config tab</li>
+    <li>Show the toggle switches for all the drift checks (firewall, patching, backup, encryption, etc.) &mdash; each now shows its <strong>HIPAA control reference</strong> (e.g., §164.312(a)(1)) next to the label</li>
+    <li>Demo the new <strong>N/A exception</strong> feature: click the "N/A" button on Time Machine, enter "Cloud backup via BAA with EHR vendor" as the reason &mdash; shows practices can document exceptions</li>
+    <li>Navigate to the site detail &rarr; Compliance tab or Incidents tab filtered to drift events</li>
+    <li>Show the scan history &mdash; regular 10-minute intervals, each producing compliance data</li>
+    <li><strong>If you already recorded #02</strong>, you have fresh drift data from the firewall stop. Reuse that same incident as the "drift detected and remediated" example</li>
+    <li>If you want a different drift: <code>ssh root@192.168.88.241</code> then <code>echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && systemctl restart sshd</code> &mdash; the SSH config drift check will catch this</li>
+    <li>Key moment: show the timeline of "drift detected &rarr; incident created &rarr; L1 auto-healed &rarr; next scan shows compliant again"</li>
+  </ul>
+  <div class="tip"><strong>Shortcut:</strong> If you did Video #02 first, you already have a fresh heal cycle in the data. Just navigate to it from the site detail view &mdash; no need to trigger another drift.</div>
+</div>
+
+<!-- ============================================ -->
+<h2>Recording Session Plan</h2>
+
+<p>Here's the optimal order to record everything in one sitting:</p>
+
+<div class="step-grid">
+  <div><div class="step-num">1</div></div>
+  <div class="step-body">
+    <strong>Record #01 Dashboard Tour</strong> <span class="badge badge-time">10 min</span><br>
+    Warmup. Just navigate the dashboard. No prep needed.
+  </div>
+
+  <div><div class="step-num">2</div></div>
+  <div class="step-body">
+    <strong>Record #03 Compliance Packet</strong> <span class="badge badge-time">10 min</span><br>
+    Navigate to evidence, download packet, show PDF. Pre-download the PDF first.
+  </div>
+
+  <div><div class="step-num">3</div></div>
+  <div class="step-body">
+    <strong>Record #06 Client Portal</strong> <span class="badge badge-time">10 min</span><br>
+    Open incognito window, login as client, navigate portal.
+  </div>
+
+  <div><div class="step-num">4</div></div>
+  <div class="step-body">
+    <strong>Record #04 Fleet Deployment</strong> <span class="badge badge-time">5 min</span><br>
+    Show fleet orders page and completion stats (v0.3.45&ndash;v0.3.49 progression).
+  </div>
+
+  <div><div class="step-num">5</div></div>
+  <div class="step-body">
+    <strong>Record #07 Multi-Framework Compliance</strong> <span class="badge badge-time">5 min</span><br>
+    Show Frameworks tab, enable SOC2 + PCI-DSS, mention GLBA/FFIEC for financial clients. Show HIPAA control badges on Drift Config.
+  </div>
+
+  <div><div class="step-num">7</div></div>
+  <div class="step-body">
+    <strong>Trigger chaos drift</strong> <span class="badge badge-time">2 min + 10 min wait</span><br>
+    SSH to appliance: <code>ssh jrelly@192.168.88.50</code> then <code>ssh root@192.168.88.241</code><br>
+    Run: <code>systemctl stop firewall</code> (NixOS uses <code>firewall</code>, not <code>firewalld</code>)<br>
+    Wait for next scan cycle (~10 min). Monitor the Incidents page.
+  </div>
+
+  <div><div class="step-num">8</div></div>
+  <div class="step-body">
+    <strong>Record #02 Incident Healing</strong> <span class="badge badge-time">15 min</span><br>
+    Capture the incident appearing, auto-healing, and evidence trail. This is the money shot.
+  </div>
+
+  <div><div class="step-num">9</div></div>
+  <div class="step-body">
+    <strong>Record #05 Drift Detection</strong> <span class="badge badge-time">10 min</span><br>
+    Show drift config toggles, then navigate to the incident you just created in #02. Reuse the same data &mdash; no need to trigger another event.
+  </div>
+</div>
+
+<div class="card" style="background: #f0fdf4; border-color: #bbf7d0;">
+  <div class="card-title" style="color: #16a34a;">Total recording session</div>
+  <p><strong>~70-85 minutes</strong> for all 7 screen recordings. The 10-minute wait for the scan cycle is the only downtime &mdash; use it to review your earlier recordings or prep the next script.</p>
+  <p>After all recordings are done, the AI voice + avatar generation is automated (<code>generate.py</code>) and can run overnight.</p>
+</div>
+
+<!-- ============================================ -->
+<h2>5. Voice Selection Guide</h2>
+
+<p>Run this to browse available ElevenLabs voices:</p>
+<pre><code>python generate.py --list-voices</code></pre>
+
+<div class="card">
+  <div class="card-title">Recommended voices for product demos</div>
+  <ul>
+    <li><strong>Adam</strong> — Deep, authoritative, professional. Great for B2B SaaS.</li>
+    <li><strong>Josh</strong> — Warm, conversational. Good for walkthroughs.</li>
+    <li><strong>Rachel</strong> — Clear, energetic. Good for faster-paced demos.</li>
+    <li><strong>Antoni</strong> — Calm, measured. Good for compliance/security topics.</li>
+  </ul>
+  <p>Pick one voice and use it consistently across all 6 videos for brand cohesion.</p>
+</div>
+
+<h3>Voice settings (in generate.py)</h3>
+<table>
+  <tr><th>Setting</th><th>Value</th><th>Why</th></tr>
+  <tr><td>Model</td><td><code>eleven_multilingual_v2</code></td><td>Best quality, natural prosody</td></tr>
+  <tr><td>Stability</td><td><code>0.5</code></td><td>Balanced — not robotic, not too variable</td></tr>
+  <tr><td>Similarity</td><td><code>0.75</code></td><td>Stays close to the voice sample</td></tr>
+  <tr><td>Style</td><td><code>0.0</code></td><td>Neutral — let the script carry the emotion</td></tr>
+</table>
+
+<!-- ============================================ -->
+<h2 class="page-break">6. Avatar Setup</h2>
+
+<h3>Option A: Stock Avatar (quickest)</h3>
+<ol>
+  <li>Go to <code>heygen.com</code> &rarr; Avatars &rarr; browse stock avatars</li>
+  <li>Pick a professional-looking presenter (suit/business casual)</li>
+  <li>Copy the Avatar ID from the URL or API settings</li>
+  <li>Paste into your <code>.env</code> as <code>HEYGEN_AVATAR_ID</code></li>
+</ol>
+
+<h3>Option B: Instant Avatar (best — uses your face)</h3>
+<ol>
+  <li>HeyGen &rarr; Avatars &rarr; Create Instant Avatar</li>
+  <li>Record a 2-minute video of yourself talking (follow their prompts)</li>
+  <li>Wait ~5 min for processing</li>
+  <li>Copy the Avatar ID</li>
+</ol>
+
+<div class="tip">
+  <strong>Tip:</strong> Instant Avatar is the most seamless result. It lip-syncs to any audio you provide and looks like a real video call. Stock avatars are good but viewers may recognize them from other HeyGen content.
+</div>
+
+<h3>Avatar output settings</h3>
+<table>
+  <tr><th>Setting</th><th>Value</th><th>Notes</th></tr>
+  <tr><td>Background</td><td>Green screen</td><td>Required for chroma keying in compose.sh</td></tr>
+  <tr><td>Resolution</td><td>720p or 1080p</td><td>Gets scaled down to 200px circle anyway</td></tr>
+  <tr><td>Aspect ratio</td><td>1:1 (square)</td><td>Best for circle crop; 16:9 works but wastes rendering</td></tr>
+</table>
+
+<!-- ============================================ -->
+<h2>7. Screen Recording Tips</h2>
+
+<ul class="checklist">
+  <li>Use Safari or Chrome at 1920x1080 (or retina equivalent)</li>
+  <li>Dark mode ON — the dashboard looks best in dark mode</li>
+  <li>Close all other tabs, hide bookmarks bar</li>
+  <li>Turn off macOS notifications (<code>Focus &rarr; Do Not Disturb</code>)</li>
+  <li>Move mouse smoothly — pretend you're giving a live demo</li>
+  <li>Hover over elements for 1-2 seconds before clicking (gives viewer time to read)</li>
+  <li>Pause 3 seconds at the start and end (trim margin)</li>
+  <li>Use <code>Cmd+Shift+5</code> &rarr; "Record Selected Portion" to crop to just the browser</li>
+  <li>Keep recordings under 2 minutes (matching script duration)</li>
+  <li>No need to record audio — mute your mic</li>
+</ul>
+
+<div class="warn">
+  <strong>Before recording:</strong> Make sure the dashboard has real data showing (incidents, compliance scores, evidence bundles). Login to <code>dashboard.osiriscare.net</code> and verify the numbers look good. Empty dashboards kill the demo.
+</div>
+
+<!-- ============================================ -->
+<h2 class="page-break">8. Quick Reference — Commands</h2>
+
+<div class="card">
+  <div class="card-title">Setup (one time)</div>
+<pre><code>cd demo-videos
+cp .env.example .env       # add your API keys
+pip install httpx python-dotenv  # or: pip3 install httpx python-dotenv
+brew install ffmpeg        # if not installed</code></pre>
+</div>
+
+<div class="card">
+  <div class="card-title">Per-video workflow</div>
+<pre><code># 1. Record screen → save to recordings/
+#    recordings/01-dashboard-tour.mov
+
+# 2. Generate voice narration
+python generate.py scripts/01-dashboard-tour.md --voice-only
+
+# 3. Listen, tweak script if needed, regenerate
+
+# 4. Generate avatar video (needs voice from step 2)
+python generate.py scripts/01-dashboard-tour.md --avatar-only
+
+# 5. Composite final video
+./compose.sh recordings/01-dashboard-tour.mov avatars/01-dashboard-tour-avatar.mp4
+
+# 6. Watch output/01-dashboard-tour-final.mp4</code></pre>
+</div>
+
+<div class="card">
+  <div class="card-title">Useful options</div>
+<pre><code># Generate both voice + avatar in one go
+python generate.py scripts/01-dashboard-tour.md
+
+# List available voices
+python generate.py --list-voices
+
+# List available avatars
+python generate.py --list-avatars
+
+# Change avatar position/size
+./compose.sh recordings/01.mov avatars/01-avatar.mp4 --position bottom-left --size 250
+
+# Available positions: bottom-right, bottom-left, top-right, top-left</code></pre>
+</div>
+
+<!-- ============================================ -->
+<h2>9. Checklist — First Video</h2>
+
+<ul class="checklist">
+  <li>ElevenLabs account created, API key saved to .env</li>
+  <li>Picked a voice, Voice ID saved to .env</li>
+  <li>HeyGen account created, API key saved to .env</li>
+  <li>Avatar selected (stock or Instant Avatar), ID saved to .env</li>
+  <li>FFmpeg installed (<code>ffmpeg -version</code> works)</li>
+  <li>Python deps installed (<code>httpx</code>, <code>python-dotenv</code>)</li>
+  <li>Reviewed script 01-dashboard-tour.md</li>
+  <li>Dashboard has live data (login and check first)</li>
+  <li>Screen recorded, saved to recordings/</li>
+  <li>Voice generated, listened and approved</li>
+  <li>Avatar generated, checked lip sync</li>
+  <li>Final video composited and reviewed</li>
+  <li>Uploaded to YouTube/Vimeo/website</li>
+</ul>
+
+<!-- ============================================ -->
+<h2>10. Cost Estimate</h2>
+
+<table>
+  <tr><th>Item</th><th>Cost</th><th>Covers</th></tr>
+  <tr><td>ElevenLabs Starter</td><td>$5/mo</td><td>~30,000 characters (~40 min of audio). All 6 scripts = ~4,000 chars. Plenty of room for re-takes.</td></tr>
+  <tr><td>HeyGen Creator</td><td>$24/mo</td><td>15 min of avatar video/mo. All 6 videos = ~9 min total. Room for re-takes.</td></tr>
+  <tr><td>FFmpeg</td><td>Free</td><td>Unlimited compositing</td></tr>
+  <tr><td><strong>Total</strong></td><td><strong>$29/mo</strong></td><td><strong>Cancel after first month if all 6 videos are done</strong></td></tr>
+</table>
+
+<div class="tip">
+  <strong>Budget tip:</strong> You can do all 6 videos in one weekend. Sign up for both services, produce everything, then cancel before the next billing cycle. Total cost: $29 one-time.
+</div>
+
+<br>
+<div style="text-align: center; color: #999; font-size: 9pt; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
+  OsirisCare Demo Video Guide &mdash; Updated 2026-03-26 (v2: 7 videos, HIPAA badges, N/A exceptions, multi-framework) &mdash; Files in <code>demo-videos/</code>
+</div>
+
+</body>
+</html>
