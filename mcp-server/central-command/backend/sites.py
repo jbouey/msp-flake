@@ -93,6 +93,41 @@ orders_router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 
 # =============================================================================
+# CREATE SITE (called by frontend at POST /api/sites)
+# =============================================================================
+
+@router.post("")
+async def create_site_api(request: Request):
+    """Create a new site from the admin dashboard."""
+    import re
+    import secrets
+    body = await request.json()
+    clinic_name = body.get("clinic_name", "").strip()
+    if not clinic_name:
+        raise HTTPException(status_code=400, detail="clinic_name is required")
+
+    site_id = body.get("site_id") or re.sub(r'[^a-z0-9-]', '', clinic_name.lower().replace(" ", "-"))
+    contact_name = body.get("contact_name", "")
+    contact_email = body.get("contact_email", "")
+    tier = body.get("tier", "mid")
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        try:
+            await conn.execute("""
+                INSERT INTO sites (site_id, clinic_name, contact_name, contact_email,
+                                   tier, status, onboarding_stage, lead_at, created_at)
+                VALUES ($1, $2, $3, $4, $5, 'active', 'lead', NOW(), NOW())
+            """, site_id, clinic_name, contact_name, contact_email, tier)
+        except Exception as e:
+            if "duplicate" in str(e).lower() or "unique" in str(e).lower():
+                raise HTTPException(status_code=409, detail=f"Site '{site_id}' already exists")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "created", "site_id": site_id, "clinic_name": clinic_name}
+
+
+# =============================================================================
 # MODELS
 # =============================================================================
 
