@@ -111,14 +111,21 @@ async def create_site_api(request: Request):
     contact_email = body.get("contact_email", "")
     tier = body.get("tier", "mid")
 
+    client_org_id = body.get("client_org_id")
+
     pool = await get_pool()
     async with admin_connection(pool) as conn:
+        # If no org specified, use the first org (single-tenant shortcut)
+        if not client_org_id:
+            row = await conn.fetchrow("SELECT id FROM client_orgs ORDER BY created_at LIMIT 1")
+            client_org_id = str(row["id"]) if row else None
+
         try:
             await conn.execute("""
                 INSERT INTO sites (site_id, clinic_name, contact_name, contact_email,
-                                   tier, status, onboarding_stage, lead_at, created_at)
-                VALUES ($1, $2, $3, $4, $5, 'active', 'lead', NOW(), NOW())
-            """, site_id, clinic_name, contact_name, contact_email, tier)
+                                   tier, status, onboarding_stage, client_org_id, lead_at, created_at)
+                VALUES ($1, $2, $3, $4, $5, 'active', 'lead', $6, NOW(), NOW())
+            """, site_id, clinic_name, contact_name, contact_email, tier, client_org_id)
         except Exception as e:
             if "duplicate" in str(e).lower() or "unique" in str(e).lower():
                 raise HTTPException(status_code=409, detail=f"Site '{site_id}' already exists")
