@@ -13,16 +13,39 @@ const ComplianceBadge: React.FC<{ score: number }> = ({ score }) => {
   return <Badge variant={variant}>{score > 0 ? `${score}%` : 'N/A'}</Badge>;
 };
 
-const OrgRow: React.FC<{ org: Organization; onClick: () => void }> = ({ org, onClick }) => {
+const OrgRow: React.FC<{
+  org: Organization;
+  onClick: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}> = ({ org, onClick, onEdit, onDelete }) => {
   return (
     <tr
       onClick={onClick}
-      className="hover:bg-fill-quaternary cursor-pointer transition-colors"
+      className="group hover:bg-fill-quaternary cursor-pointer transition-colors"
     >
       <td className="px-4 py-3">
-        <div>
-          <p className="font-medium text-label-primary">{org.name}</p>
-          <p className="text-xs text-label-tertiary">{org.primary_email}</p>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <p className="font-medium text-label-primary">{org.name}</p>
+            <p className="text-xs text-label-tertiary">{org.primary_email}</p>
+          </div>
+          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={e => { e.stopPropagation(); onEdit(); }}
+              className="p-1.5 rounded-ios-sm text-label-tertiary hover:text-accent-primary hover:bg-fill-secondary"
+              title="Edit"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); onDelete(); }}
+              className="p-1.5 rounded-ios-sm text-label-tertiary hover:text-health-critical hover:bg-health-critical/10"
+              title="Delete"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            </button>
+          </div>
         </div>
       </td>
       <td className="px-4 py-3 text-sm text-label-secondary">
@@ -173,6 +196,10 @@ export const Organizations: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const [editOrg, setEditOrg] = useState<Organization | null>(null);
+  const [deleteOrg, setDeleteOrg] = useState<Organization | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['organizations'],
@@ -198,6 +225,98 @@ export const Organizations: React.FC = () => {
             queryClient.invalidateQueries({ queryKey: ['organizations'] });
           }}
         />
+      )}
+
+      {/* Delete Confirmation */}
+      {deleteOrg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-fill-primary rounded-ios-lg shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-lg font-semibold text-label-primary mb-2">Delete Organization</h2>
+            <p className="text-sm text-label-secondary mb-4">
+              Are you sure you want to delete <strong>{deleteOrg.name}</strong>? This cannot be undone.
+            </p>
+            {actionError && (
+              <div className="mb-3 p-2 rounded-ios bg-health-critical/10 text-health-critical text-sm">{actionError}</div>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setDeleteOrg(null); setActionError(''); }}
+                className="flex-1 px-4 py-2 text-sm rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary"
+              >Cancel</button>
+              <button
+                onClick={async () => {
+                  setActionLoading(true);
+                  setActionError('');
+                  try {
+                    await organizationsApi.deleteOrganization(deleteOrg.id);
+                    setDeleteOrg(null);
+                    queryClient.invalidateQueries({ queryKey: ['organizations'] });
+                  } catch (err) {
+                    setActionError(err instanceof Error ? err.message : 'Failed to delete');
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
+                disabled={actionLoading}
+                className="flex-1 px-4 py-2 text-sm rounded-ios bg-health-critical text-white hover:bg-health-critical/90"
+              >{actionLoading ? 'Deleting...' : 'Delete'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {editOrg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-fill-primary rounded-ios-lg shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-label-primary mb-4">Edit Organization</h2>
+            {actionError && (
+              <div className="mb-3 p-2 rounded-ios bg-health-critical/10 text-health-critical text-sm">{actionError}</div>
+            )}
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const form = e.target as HTMLFormElement;
+              const formData = new FormData(form);
+              setActionLoading(true);
+              setActionError('');
+              try {
+                await organizationsApi.updateOrganization(editOrg.id, {
+                  name: formData.get('name') as string,
+                  primary_email: formData.get('email') as string,
+                  primary_phone: formData.get('phone') as string,
+                  practice_type: formData.get('practice_type') as string,
+                });
+                setEditOrg(null);
+                queryClient.invalidateQueries({ queryKey: ['organizations'] });
+              } catch (err) {
+                setActionError(err instanceof Error ? err.message : 'Failed to update');
+              } finally {
+                setActionLoading(false);
+              }
+            }} className="space-y-3">
+              <div>
+                <label className="block text-sm text-label-secondary mb-1">Name</label>
+                <input name="name" defaultValue={editOrg.name} className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary" />
+              </div>
+              <div>
+                <label className="block text-sm text-label-secondary mb-1">Email</label>
+                <input name="email" defaultValue={editOrg.primary_email} className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary" />
+              </div>
+              <div>
+                <label className="block text-sm text-label-secondary mb-1">Phone</label>
+                <input name="phone" defaultValue={(editOrg as any).primary_phone || ''} className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary" />
+              </div>
+              <div>
+                <label className="block text-sm text-label-secondary mb-1">Practice Type</label>
+                <input name="practice_type" defaultValue={editOrg.practice_type || ''} className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary" />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => { setEditOrg(null); setActionError(''); }} className="flex-1 px-4 py-2 text-sm rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary">Cancel</button>
+                <button type="submit" disabled={actionLoading} className="flex-1 px-4 py-2 text-sm rounded-ios bg-accent-primary text-white hover:bg-accent-primary/90">{actionLoading ? 'Saving...' : 'Save'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Header */}
@@ -287,6 +406,8 @@ export const Organizations: React.FC = () => {
                   key={org.id}
                   org={org}
                   onClick={() => navigate(`/organizations/${org.id}`)}
+                  onEdit={() => setEditOrg(org)}
+                  onDelete={() => setDeleteOrg(org)}
                 />
               ))}
             </tbody>

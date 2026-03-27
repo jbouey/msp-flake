@@ -689,6 +689,17 @@ export const organizationsApi = {
       body: JSON.stringify(data),
     }),
 
+  updateOrganization: (orgId: string, data: Record<string, unknown>) =>
+    fetchApi<{ status: string; id: string; name: string }>(`/organizations/${orgId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  deleteOrganization: (orgId: string) =>
+    fetchApi<{ status: string; id: string; name: string }>(`/organizations/${orgId}`, {
+      method: 'DELETE',
+    }),
+
   getCredentials: (orgId: string) =>
     fetchSitesApi<{ credentials: OrgCredential[]; count: number }>(`/organizations/${orgId}/credentials`),
 

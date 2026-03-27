@@ -3119,6 +3119,59 @@ async def create_organization(
     }
 
 
+@router.put("/organizations/{org_id}")
+async def update_organization(
+    org_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Update an organization's details."""
+    body = await request.json()
+    fields = []
+    params: dict = {"org_id": org_id}
+    for key in ("name", "primary_email", "primary_phone", "practice_type", "provider_count", "status"):
+        if key in body:
+            fields.append(f"{key} = :{key}")
+            params[key] = body[key]
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    sql = f"UPDATE client_orgs SET {', '.join(fields)}, updated_at = NOW() WHERE id = :org_id RETURNING id, name"
+    result = await db.execute(text(sql), params)
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    await db.commit()
+    return {"status": "updated", "id": str(row.id), "name": row.name}
+
+
+@router.delete("/organizations/{org_id}")
+async def delete_organization(
+    org_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Delete an organization. Fails if it has sites assigned."""
+    # Check for assigned sites
+    sites = await db.execute(text(
+        "SELECT COUNT(*) FROM sites WHERE client_org_id = :org_id"
+    ), {"org_id": org_id})
+    count = sites.scalar()
+    if count and count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete organization with {count} assigned site(s). Unassign sites first."
+        )
+    result = await db.execute(text(
+        "DELETE FROM client_orgs WHERE id = :org_id RETURNING id, name"
+    ), {"org_id": org_id})
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    await db.commit()
+    return {"status": "deleted", "id": str(row.id), "name": row.name}
+
+
 @router.get("/organizations/{org_id}")
 async def get_organization_detail(
     org_id: str,
