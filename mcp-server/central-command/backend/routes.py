@@ -1527,6 +1527,75 @@ async def create_site(
     return {"status": "created", "site_id": site_id, "clinic_name": clinic_name}
 
 
+@router.get("/appliances/unclaimed")
+async def list_unclaimed_appliances(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """List appliances that have called home but aren't assigned to a site."""
+    result = await db.execute(text("""
+        SELECT id, mac_address, notes, registered_at, provisioned_at
+        FROM appliance_provisioning
+        WHERE site_id IS NULL
+        ORDER BY registered_at DESC
+    """))
+    rows = result.fetchall()
+    return {
+        "unclaimed": [
+            {
+                "id": row.id,
+                "mac_address": row.mac_address,
+                "notes": row.notes,
+                "registered_at": row.registered_at.isoformat() if row.registered_at else None,
+            }
+            for row in rows
+        ],
+        "count": len(rows),
+    }
+
+
+@router.post("/appliances/claim")
+async def claim_appliance_to_site(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Assign an unclaimed appliance to a site."""
+    body = await request.json()
+    mac_address = body.get("mac_address", "").strip().upper()
+    site_id = body.get("site_id", "").strip()
+    if not mac_address or not site_id:
+        raise HTTPException(status_code=400, detail="mac_address and site_id are required")
+
+    # Verify site exists
+    site = await db.execute(text("SELECT site_id FROM sites WHERE site_id = :s"), {"s": site_id})
+    if not site.fetchone():
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    # Generate API key for the appliance
+    import secrets
+    api_key = secrets.token_urlsafe(32)
+
+    result = await db.execute(text("""
+        UPDATE appliance_provisioning
+        SET site_id = :site_id, api_key = :api_key, provisioned_at = NOW(),
+            notes = COALESCE(notes, '') || ' | Claimed via dashboard'
+        WHERE UPPER(mac_address) = :mac
+        RETURNING id, mac_address, site_id
+    """), {"site_id": site_id, "api_key": api_key, "mac": mac_address})
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Appliance not found in provisioning table")
+    await db.commit()
+
+    return {
+        "status": "claimed",
+        "mac_address": row.mac_address,
+        "site_id": row.site_id,
+        "message": "Appliance will receive config on next check-in.",
+    }
+
+
 @router.post("/onboarding", response_model=OnboardingClient)
 async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(get_db)):
     """Create new prospect (Lead stage)."""

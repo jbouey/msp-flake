@@ -521,11 +521,21 @@ async def get_provision_by_mac(mac_address: str):
                 "ssh_authorized_keys": ssh_keys
             }
 
-        # MAC not found
-        raise HTTPException(
-            status_code=404,
-            detail=f"MAC address {mac} not registered. Use provision code or register in dashboard."
-        )
+        # MAC not found — register as unclaimed appliance for drop-ship workflow.
+        # The appliance will poll periodically. Once an admin claims it to a site
+        # in the dashboard, the next poll returns the full config.
+        await conn.execute("""
+            INSERT INTO appliance_provisioning (mac_address, notes, registered_at)
+            VALUES ($1, 'Auto-registered (unclaimed — awaiting site assignment)', NOW())
+            ON CONFLICT (mac_address) DO NOTHING
+        """, mac)
+        logger.info(f"[provision] Unclaimed appliance registered: MAC={mac}")
+
+        return {
+            "status": "unclaimed",
+            "mac_address": mac,
+            "message": "Appliance registered. Waiting for site assignment in the dashboard.",
+        }
 
 
 @router.get("/config/{appliance_id}")
