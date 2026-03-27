@@ -622,6 +622,32 @@ export const decommissionApi = {
 };
 
 // =============================================================================
+// APPLIANCE TRANSFER API
+// =============================================================================
+
+export interface ApplianceTransferResult {
+  status: string;
+  mac_address: string;
+  from_site_id: string;
+  from_site_name: string;
+  to_site_id: string;
+  to_site_name: string;
+  message: string;
+}
+
+export const applianceApi = {
+  transfer: (macAddress: string, fromSiteId: string, toSiteId: string) =>
+    fetchApi<ApplianceTransferResult>('/appliances/transfer', {
+      method: 'POST',
+      body: JSON.stringify({
+        mac_address: macAddress,
+        from_site_id: fromSiteId,
+        to_site_id: toSiteId,
+      }),
+    }),
+};
+
+// =============================================================================
 // ORGANIZATIONS API
 // =============================================================================
 

@@ -1596,6 +1596,94 @@ async def claim_appliance_to_site(
     }
 
 
+@router.post("/appliances/transfer")
+async def transfer_appliance(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Transfer an appliance from one site to another by MAC address.
+
+    Updates appliance_provisioning, appliances, and site_appliances tables
+    to reflect the new site assignment. The appliance picks up its new
+    config on the next check-in.
+    """
+    body = await request.json()
+    mac_address = body.get("mac_address", "").strip().upper()
+    from_site_id = body.get("from_site_id", "").strip()
+    to_site_id = body.get("to_site_id", "").strip()
+
+    if not mac_address or not from_site_id or not to_site_id:
+        raise HTTPException(status_code=400, detail="mac_address, from_site_id, and to_site_id are required")
+
+    if from_site_id == to_site_id:
+        raise HTTPException(status_code=400, detail="Source and destination sites must be different")
+
+    # Verify both sites exist
+    from_site = await db.execute(
+        text("SELECT site_id, clinic_name FROM sites WHERE site_id = :s"), {"s": from_site_id}
+    )
+    from_row = from_site.fetchone()
+    if not from_row:
+        raise HTTPException(status_code=404, detail=f"Source site '{from_site_id}' not found")
+
+    to_site = await db.execute(
+        text("SELECT site_id, clinic_name FROM sites WHERE site_id = :s"), {"s": to_site_id}
+    )
+    to_row = to_site.fetchone()
+    if not to_row:
+        raise HTTPException(status_code=404, detail=f"Destination site '{to_site_id}' not found")
+
+    # 1. Update appliance_provisioning
+    prov_result = await db.execute(text("""
+        UPDATE appliance_provisioning
+        SET site_id = :to_site_id,
+            notes = COALESCE(notes, '') || :transfer_note
+        WHERE UPPER(mac_address) = :mac AND site_id = :from_site_id
+        RETURNING id, mac_address
+    """), {
+        "to_site_id": to_site_id,
+        "mac": mac_address,
+        "from_site_id": from_site_id,
+        "transfer_note": f" | Transferred {from_site_id} -> {to_site_id} via dashboard",
+    })
+    prov_row = prov_result.fetchone()
+
+    # 2. Update appliances table (match by mac_address and from_site_id)
+    await db.execute(text("""
+        UPDATE appliances
+        SET site_id = :to_site_id
+        WHERE UPPER(mac_address) = :mac AND site_id = :from_site_id
+    """), {"to_site_id": to_site_id, "mac": mac_address, "from_site_id": from_site_id})
+
+    # 3. Update site_appliances (match by mac in appliance_id or by site)
+    await db.execute(text("""
+        UPDATE site_appliances
+        SET site_id = :to_site_id
+        WHERE site_id = :from_site_id
+          AND appliance_id IN (
+              SELECT appliance_id FROM appliances WHERE UPPER(mac_address) = :mac
+          )
+    """), {"to_site_id": to_site_id, "mac": mac_address, "from_site_id": from_site_id})
+
+    await db.commit()
+
+    if not prov_row:
+        logger.warning(f"Appliance transfer: no provisioning row for MAC {mac_address} at site {from_site_id}")
+
+    logger.info(f"Appliance {mac_address} transferred from {from_site_id} to {to_site_id} by {user.get('username', 'unknown')}")
+
+    return {
+        "status": "transferred",
+        "mac_address": mac_address,
+        "from_site_id": from_site_id,
+        "from_site_name": from_row.clinic_name,
+        "to_site_id": to_site_id,
+        "to_site_name": to_row.clinic_name,
+        "message": "Appliance will receive new site config on next check-in.",
+    }
+
+
 @router.post("/onboarding", response_model=OnboardingClient)
 async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(get_db)):
     """Create new prospect (Lead stage)."""

@@ -1276,6 +1276,24 @@ async def move_appliance(
             body.target_site_id, appliance_id,
         )
 
+        # Update appliance_provisioning by MAC address
+        mac_row = await conn.fetchrow(
+            "SELECT mac_address FROM appliances WHERE appliance_id = $1",
+            appliance_id,
+        )
+        if mac_row and mac_row["mac_address"]:
+            await conn.execute(
+                """UPDATE appliance_provisioning
+                   SET site_id = $1,
+                       notes = COALESCE(notes, '') || $3
+                   WHERE UPPER(mac_address) = UPPER($2) AND site_id = $4""",
+                body.target_site_id, mac_row["mac_address"],
+                f" | Moved {site_id} -> {body.target_site_id} via dashboard",
+                site_id,
+            )
+
+    logger.info(f"Appliance {appliance_id} moved from {site_id} to {body.target_site_id}")
+
     return {
         "status": "moved",
         "appliance_id": appliance_id,
