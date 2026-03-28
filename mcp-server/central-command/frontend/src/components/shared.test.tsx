@@ -85,32 +85,32 @@ describe('Badge', () => {
   it('applies default variant classes', () => {
     const { container } = render(<Badge>Default</Badge>);
     const span = container.firstElementChild!;
-    expect(span.className).toContain('bg-blue-50');
+    expect(span.className).toContain('bg-fill-secondary');
     expect(span.className).toContain('text-label-secondary');
   });
 
   it('applies success variant classes', () => {
     const { container } = render(<Badge variant="success">OK</Badge>);
     const span = container.firstElementChild!;
-    expect(span.className).toContain('bg-green-100');
+    expect(span.className).toContain('bg-health-healthy/15');
   });
 
   it('applies error variant classes', () => {
     const { container } = render(<Badge variant="error">Fail</Badge>);
     const span = container.firstElementChild!;
-    expect(span.className).toContain('bg-red-100');
+    expect(span.className).toContain('bg-health-critical/15');
   });
 
   it('applies warning variant classes', () => {
     const { container } = render(<Badge variant="warning">Warn</Badge>);
     const span = container.firstElementChild!;
-    expect(span.className).toContain('bg-orange-100');
+    expect(span.className).toContain('bg-health-warning/15');
   });
 
   it('applies info variant classes', () => {
     const { container } = render(<Badge variant="info">Info</Badge>);
     const span = container.firstElementChild!;
-    expect(span.className).toContain('bg-blue-100');
+    expect(span.className).toContain('bg-ios-blue/15');
   });
 
   it('applies custom className', () => {
