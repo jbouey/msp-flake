@@ -13,22 +13,22 @@ interface BadgeProps {
 }
 
 const healthClasses: Record<HealthStatus, string> = {
-  critical: 'bg-red-100 text-health-critical',
-  warning: 'bg-orange-100 text-health-warning',
-  healthy: 'bg-green-100 text-health-healthy',
+  critical: 'bg-health-critical/15 text-health-critical',
+  warning: 'bg-health-warning/15 text-health-warning',
+  healthy: 'bg-health-healthy/15 text-health-healthy',
 };
 
 const levelClasses: Record<ResolutionLevel, string> = {
-  L1: 'bg-blue-100 text-ios-blue',
-  L2: 'bg-purple-100 text-ios-purple',
-  L3: 'bg-orange-100 text-ios-orange',
+  L1: 'bg-ios-blue/15 text-ios-blue',
+  L2: 'bg-ios-purple/15 text-ios-purple',
+  L3: 'bg-ios-orange/15 text-ios-orange',
 };
 
 const severityClasses: Record<Severity, string> = {
-  critical: 'bg-red-100 text-health-critical',
-  high: 'bg-orange-100 text-health-warning',
-  medium: 'bg-yellow-100 text-yellow-700',
-  low: 'bg-blue-50 text-label-tertiary',
+  critical: 'bg-health-critical/15 text-health-critical',
+  high: 'bg-health-warning/15 text-health-warning',
+  medium: 'bg-yellow-500/15 text-yellow-500',
+  low: 'bg-fill-secondary text-label-tertiary',
 };
 
 export const Badge: React.FC<BadgeProps> = ({
@@ -39,7 +39,7 @@ export const Badge: React.FC<BadgeProps> = ({
   severity,
   className = '',
 }) => {
-  let variantClasses = 'bg-blue-50 text-label-secondary';
+  let variantClasses = 'bg-fill-secondary text-label-secondary';
 
   if (variant === 'health' && status) {
     variantClasses = healthClasses[status];
@@ -48,13 +48,13 @@ export const Badge: React.FC<BadgeProps> = ({
   } else if (variant === 'severity' && severity) {
     variantClasses = severityClasses[severity];
   } else if (variant === 'success') {
-    variantClasses = 'bg-green-100 text-health-healthy';
+    variantClasses = 'bg-health-healthy/15 text-health-healthy';
   } else if (variant === 'info') {
-    variantClasses = 'bg-blue-100 text-ios-blue';
+    variantClasses = 'bg-ios-blue/15 text-ios-blue';
   } else if (variant === 'warning') {
-    variantClasses = 'bg-orange-100 text-health-warning';
+    variantClasses = 'bg-health-warning/15 text-health-warning';
   } else if (variant === 'error') {
-    variantClasses = 'bg-red-100 text-health-critical';
+    variantClasses = 'bg-health-critical/15 text-health-critical';
   }
 
   return (

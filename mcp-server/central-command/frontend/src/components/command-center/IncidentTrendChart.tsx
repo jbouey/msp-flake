@@ -140,7 +140,7 @@ export const IncidentTrendChart: React.FC<{
         </div>
       )}
 
-      <div style={{ height: 220 }}>
+      <div style={{ height: 160 }}>
         {isLoading ? (
           <div className="w-full h-full flex items-center justify-center">
             <div className="w-5 h-5 border-2 border-accent-primary/30 border-t-accent-primary rounded-full animate-spin" />
