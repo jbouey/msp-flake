@@ -129,12 +129,18 @@ MONITORING_ONLY_CHECKS = {
     "net_unexpected_ports",
     "net_expected_service",
     "net_dns_resolution",
+    # Device reachability — host offline/unreachable, not auto-fixable
+    "device_unreachable",
     # Backup — requires manual configuration of backup destination
     "backup_not_configured",
     "backup_status",
     "backup_verification",
     # Encryption — BitLocker needs TPM/Pro edition, FileVault needs user auth
     "bitlocker_status",
+    "bitlocker",
+    # Screen lock — requires local GPO or user config, not remotely fixable
+    "screen_lock",
+    "screen_lock_policy",
     # Credential staleness — informational, not auto-fixable
     "credential_stale",
 }

@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// Sonnet 4 pricing (per million tokens)
+// Haiku 4.5 pricing (per million tokens)
 const (
-	SonnetInputPricePerMTok  = 3.00  // $3.00 per 1M input tokens
-	SonnetOutputPricePerMTok = 15.00 // $15.00 per 1M output tokens
+	HaikuInputPricePerMTok  = 0.80 // $0.80 per 1M input tokens
+	HaikuOutputPricePerMTok = 4.00 // $4.00 per 1M output tokens
 )
 
 // BudgetTracker enforces spending and rate limits for L2 LLM calls.
@@ -123,8 +123,8 @@ func (b *BudgetTracker) RecordCost(inputTokens, outputTokens int) float64 {
 
 // CalculateCost computes the cost for a given number of tokens.
 func CalculateCost(inputTokens, outputTokens int) float64 {
-	inputCost := float64(inputTokens) / 1_000_000 * SonnetInputPricePerMTok
-	outputCost := float64(outputTokens) / 1_000_000 * SonnetOutputPricePerMTok
+	inputCost := float64(inputTokens) / 1_000_000 * HaikuInputPricePerMTok
+	outputCost := float64(outputTokens) / 1_000_000 * HaikuOutputPricePerMTok
 	return inputCost + outputCost
 }
 

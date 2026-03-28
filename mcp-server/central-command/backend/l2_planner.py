@@ -447,7 +447,7 @@ async def call_anthropic(system_prompt: str, user_prompt: str) -> tuple[str, int
                 "Content-Type": "application/json",
             },
             json={
-                "model": "claude-sonnet-4-20250514",
+                "model": "claude-haiku-4-5-20251001",
                 "max_tokens": LLM_MAX_TOKENS,
                 "system": system_prompt,
                 "messages": [
@@ -541,7 +541,7 @@ async def analyze_incident(
             llm_model = LLM_MODEL
         elif ANTHROPIC_API_KEY:
             llm_response, latency_ms = await call_anthropic(system_prompt, user_prompt)
-            llm_model = "claude-sonnet-4-20250514"
+            llm_model = "claude-haiku-4-5-20251001"
         else:
             raise ValueError("No LLM API key configured (AZURE_OPENAI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY)")
 
@@ -741,7 +741,7 @@ def get_l2_config() -> Dict[str, Any]:
         model = LLM_MODEL
     elif ANTHROPIC_API_KEY:
         provider = "anthropic"
-        model = "claude-sonnet-4-20250514"
+        model = "claude-haiku-4-5-20251001"
     else:
         provider = None
         model = "none"
