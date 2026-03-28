@@ -69,8 +69,8 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
               <p className="text-label-secondary mt-1">{runbook.description}</p>
             </div>
             <button
-              onClick={(e) => { e.stopPropagation(); onClose(); }}
-              className="ml-4 p-2 hover:bg-separator-light rounded-ios-sm transition-colors focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2 flex-shrink-0 relative z-10"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
+              className="ml-4 p-3 hover:bg-fill-tertiary rounded-ios-sm transition-colors flex-shrink-0 relative z-50 cursor-pointer"
               aria-label="Close details"
               type="button"
             >

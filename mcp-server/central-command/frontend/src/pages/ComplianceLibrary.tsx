@@ -368,10 +368,12 @@ const ComplianceLibrary: React.FC = () => {
                     </p>
                   </div>
                   <button
-                    onClick={() => setSelectedFramework(null)}
-                    className="p-1.5 hover:bg-fill-tertiary rounded-ios-sm transition-colors"
+                    onClick={(e) => { e.stopPropagation(); setSelectedFramework(null); }}
+                    className="p-2 hover:bg-fill-tertiary rounded-ios-sm transition-colors relative z-10"
+                    type="button"
+                    aria-label="Close"
                   >
-                    <svg className="w-5 h-5 text-label-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-5 h-5 text-label-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
