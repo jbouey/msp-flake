@@ -231,79 +231,19 @@ async def generate_cve_runbook(conn, cve_id: str, fleet_match_id: str) -> Option
 async def auto_remediate_cve(conn, cve_id: str, site_id: str, runbook_id: str) -> Dict:
     """Create an L1 rule for auto-remediation of a CVE at a site.
 
-    Only creates the rule if the site has full_coverage healing tier.
-    Idempotent: does not duplicate rules.
+    DISABLED: L1 rule creation is paused because the daemon reports drift-typed
+    incidents (e.g. 'patching', 'backup_not_configured'), not CVE-typed incidents
+    (e.g. 'cve_cve_2025_49708'). The generated rules never match any real incident.
+    Runbook generation still works — only the L1 rule step is skipped.
 
-    Args:
-        conn: asyncpg connection
-        cve_id: The CVE identifier
-        site_id: Site to remediate
-        runbook_id: The generated runbook ID
-
-    Returns:
-        Dict with keys: action, rule_id, reason
+    TODO: Wire CVE→L1 when the daemon maps CVE matches to drift check types
+    with cve_id in the incident details JSON.
     """
-    # Check site healing tier
-    tier_row = await conn.fetchrow(
-        "SELECT healing_tier FROM sites WHERE site_id = $1", site_id
-    )
-    healing_tier = (tier_row["healing_tier"] if tier_row else None) or "standard"
-
-    if healing_tier != "full_coverage":
-        logger.info(f"Skipping auto-remediation for {cve_id} at {site_id}: tier={healing_tier}")
-        return {
-            "action": "skipped",
-            "rule_id": None,
-            "reason": f"Site healing tier is '{healing_tier}', not 'full_coverage'",
-        }
-
-    rule_id = _make_l1_rule_id(cve_id)
-
-    # Check if L1 rule already exists (idempotent)
-    existing = await conn.fetchval(
-        "SELECT rule_id FROM l1_rules WHERE rule_id = $1", rule_id
-    )
-    if existing:
-        logger.info(f"CVE L1 rule already exists: {rule_id} for {cve_id} at {site_id}")
-        return {
-            "action": "already_exists",
-            "rule_id": rule_id,
-            "reason": "L1 rule already created for this CVE",
-        }
-
-    # Derive incident_type from CVE ID for pattern matching
-    incident_pattern = json.dumps({
-        "incident_type": f"cve_{cve_id.lower().replace('-', '_')}",
-        "cve_id": cve_id,
-    })
-
-    try:
-        await conn.execute("""
-            INSERT INTO l1_rules (
-                rule_id, incident_pattern, runbook_id,
-                confidence, promoted_from_l2, enabled, source
-            ) VALUES ($1, $2::jsonb, $3, 0.95, false, true, 'cve_watch')
-            ON CONFLICT (rule_id) DO NOTHING
-        """,
-            rule_id,
-            incident_pattern,
-            runbook_id,
-        )
-
-        logger.info(f"CVE auto-remediation L1 rule created: {rule_id} -> {runbook_id} for {cve_id} at {site_id}")
-        return {
-            "action": "created",
-            "rule_id": rule_id,
-            "reason": "L1 auto-remediation rule created for full_coverage site",
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to create CVE L1 rule {rule_id} for {cve_id}: {e}")
-        return {
-            "action": "failed",
-            "rule_id": None,
-            "reason": str(e),
-        }
+    return {
+        "action": "skipped",
+        "rule_id": None,
+        "reason": "L1 rule creation paused — daemon does not report CVE-typed incidents yet. Runbook generated successfully.",
+    }
 
 
 async def process_new_cve_matches(conn) -> Dict:

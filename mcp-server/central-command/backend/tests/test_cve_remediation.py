@@ -242,82 +242,27 @@ class TestGenerateCveRunbook:
 # ---------------------------------------------------------------------------
 
 class TestAutoRemediateCve:
-    @pytest.mark.asyncio
-    async def test_full_coverage_creates_rule(self):
-        conn = make_mock_conn()
-        conn.fetchrow = AsyncMock(return_value={"healing_tier": "full_coverage"})
-        conn.fetchval = AsyncMock(return_value=None)  # No existing rule
+    """auto_remediate_cve is currently disabled — always returns skipped.
+    L1 rule creation paused because daemon doesn't report CVE-typed incidents.
+    """
 
+    @pytest.mark.asyncio
+    async def test_always_skipped_regardless_of_tier(self):
+        conn = make_mock_conn()
         result = await auto_remediate_cve(
             conn, "CVE-2024-12345", "site-001", "RB-CVE-2024-12345"
         )
-
-        assert result["action"] == "created"
-        assert result["rule_id"] == "L1-CVE-2024-12345"
-        conn.execute.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_standard_tier_skipped(self):
-        conn = make_mock_conn()
-        conn.fetchrow = AsyncMock(return_value={"healing_tier": "standard"})
-
-        result = await auto_remediate_cve(
-            conn, "CVE-2024-12345", "site-001", "RB-CVE-2024-12345"
-        )
-
         assert result["action"] == "skipped"
-        assert "standard" in result["reason"]
+        assert result["rule_id"] is None
         conn.execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_null_tier_defaults_to_standard(self):
+    async def test_skipped_reason_explains_why(self):
         conn = make_mock_conn()
-        conn.fetchrow = AsyncMock(return_value={"healing_tier": None})
-
         result = await auto_remediate_cve(
             conn, "CVE-2024-12345", "site-001", "RB-CVE-2024-12345"
         )
-
-        assert result["action"] == "skipped"
-
-    @pytest.mark.asyncio
-    async def test_site_not_found_skipped(self):
-        conn = make_mock_conn()
-        conn.fetchrow = AsyncMock(return_value=None)  # Site not found
-
-        result = await auto_remediate_cve(
-            conn, "CVE-2024-12345", "site-nonexistent", "RB-CVE-2024-12345"
-        )
-
-        assert result["action"] == "skipped"
-
-    @pytest.mark.asyncio
-    async def test_idempotent_existing_rule(self):
-        conn = make_mock_conn()
-        conn.fetchrow = AsyncMock(return_value={"healing_tier": "full_coverage"})
-        conn.fetchval = AsyncMock(return_value="L1-CVE-2024-12345")  # Already exists
-
-        result = await auto_remediate_cve(
-            conn, "CVE-2024-12345", "site-001", "RB-CVE-2024-12345"
-        )
-
-        assert result["action"] == "already_exists"
-        assert result["rule_id"] == "L1-CVE-2024-12345"
-        conn.execute.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_db_error_returns_failed(self):
-        conn = make_mock_conn()
-        conn.fetchrow = AsyncMock(return_value={"healing_tier": "full_coverage"})
-        conn.fetchval = AsyncMock(return_value=None)
-        conn.execute = AsyncMock(side_effect=Exception("Connection refused"))
-
-        result = await auto_remediate_cve(
-            conn, "CVE-2024-12345", "site-001", "RB-CVE-2024-12345"
-        )
-
-        assert result["action"] == "failed"
-        assert "Connection refused" in result["reason"]
+        assert "paused" in result["reason"].lower() or "daemon" in result["reason"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +364,8 @@ class TestProcessNewCveMatches:
 
         assert stats["processed"] == 1
         assert stats["runbooks_generated"] == 1
-        assert stats["auto_remediated"] == 1
+        # auto_remediate_cve is disabled — always skips
+        assert stats["skipped"] == 1
 
     @pytest.mark.asyncio
     async def test_failed_runbook_generation_recorded(self):
