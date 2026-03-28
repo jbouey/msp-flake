@@ -411,7 +411,7 @@ const DeviceRow: React.FC<{
                 <div className="flex items-center gap-2 text-label-tertiary text-sm">
                   <Spinner size="sm" /> Loading checks...
                 </div>
-              ) : complianceData && complianceData.checks.length > 0 ? (
+              ) : complianceData && complianceData.checks && complianceData.checks.length > 0 ? (
                 <div className="space-y-2">
                   <div className="flex gap-4 text-xs text-label-tertiary mb-2">
                     <span className="text-health-healthy">{complianceData.passed} passed</span>
