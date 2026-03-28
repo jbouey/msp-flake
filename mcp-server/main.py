@@ -143,6 +143,9 @@ MONITORING_ONLY_CHECKS = {
 # Logging Setup
 # ============================================================================
 
+import logging
+logging.basicConfig(format="%(message)s", level=getattr(logging, LOG_LEVEL, logging.INFO))
+
 structlog.configure(
     processors=[
         structlog.stdlib.filter_by_level,
