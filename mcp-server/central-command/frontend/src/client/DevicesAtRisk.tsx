@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CATEGORY_LABELS } from '../constants';
+import { CATEGORY_LABELS, getScoreStatus } from '../constants';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -52,10 +52,15 @@ function severityColor(severity: string): string {
 }
 
 function healthColor(score: number): string {
-  if (score >= 90) return '#34C759';
-  if (score >= 75) return '#14A89E';
-  if (score >= 50) return '#FF9500';
-  return '#FF3B30';
+  const status = getScoreStatus(score);
+  const hexMap: Record<string, string> = {
+    'text-health-healthy': '#34C759',
+    'text-health-warning': '#FF9500',
+    'text-ios-orange': '#FF9500',
+    'text-health-critical': '#FF3B30',
+    'text-label-tertiary': '#8E8E93',
+  };
+  return hexMap[status.color] || '#8E8E93';
 }
 
 const CHECK_TYPE_LABELS: Record<string, string> = {

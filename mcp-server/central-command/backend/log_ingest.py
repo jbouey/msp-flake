@@ -170,6 +170,8 @@ async def search_logs(
             idx += 1
 
         if unit:
+            if not re.match(r'^[\w@.\-:]+$', unit) or len(unit) > 256:
+                raise HTTPException(status_code=400, detail="Invalid unit name")
             conditions.append(f"unit = ${idx}")
             params.append(unit)
             idx += 1
@@ -180,6 +182,8 @@ async def search_logs(
             idx += 1
 
         if q:
+            if len(q) > 1000:
+                raise HTTPException(status_code=400, detail="Search query too long")
             conditions.append(f"to_tsvector('english', message) @@ plainto_tsquery('english', ${idx})")
             params.append(q)
             idx += 1

@@ -12,7 +12,7 @@ import {
   GO_AGENT_CHECK_LABELS,
   GO_AGENT_CHECK_HIPAA,
 } from '../types';
-import { formatTimeAgo } from '../constants';
+import { formatTimeAgo, getScoreStatus } from '../constants';
 
 const formatRelativeTime = formatTimeAgo;
 
@@ -72,8 +72,7 @@ const tierColors: Record<GoAgentCapabilityTier, string> = {
  */
 const SummaryCard: React.FC<{ summary: SiteGoAgentSummary }> = ({ summary }) => {
   const complianceRate = summary.overall_compliance_rate || 0;
-  const rateColor = complianceRate >= 80 ? 'text-health-healthy' :
-                    complianceRate >= 50 ? 'text-health-warning' : 'text-health-critical';
+  const rateColor = getScoreStatus(complianceRate).color;
 
   return (
     <GlassCard className="p-6 mb-6">

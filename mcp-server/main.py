@@ -1061,6 +1061,7 @@ async def lifespan(app: FastAPI):
                 logger.error(f"bg_task_crashed", task=name, error=str(e))
                 if not restart or _bg_shutdown.is_set():
                     break
+                logger.warning("bg_task_restarting", task=name, after_s=30)
                 await asyncio.sleep(30)  # Back off before restart
 
     from dashboard_api.companion import companion_alert_check_loop
@@ -1074,7 +1075,7 @@ async def lifespan(app: FastAPI):
                 async with pool.acquire() as conn:
                     updated = await conn.execute("""
                         UPDATE fleet_orders SET status = 'expired'
-                        WHERE status = 'active' AND expires_at < NOW()
+                        WHERE status IN ('active', 'pending') AND expires_at < NOW()
                     """)
                     if updated and 'UPDATE' in updated:
                         count = int(updated.split()[-1])

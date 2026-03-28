@@ -4,7 +4,7 @@ import { GlassCard, Spinner } from '../components/shared';
 import { HealthGauge } from '../components/fleet';
 import { IncidentRow } from '../components/incidents/IncidentRow';
 import { useClient, useIncidents } from '../hooks';
-import { formatTimeAgo } from '../constants';
+import { formatTimeAgo, getScoreStatus } from '../constants';
 import type { CheckType, Appliance } from '../types';
 
 /**
@@ -23,9 +23,8 @@ export const ClientDetail: React.FC = () => {
   };
 
   const getCheckStatus = (score: number): { text: string; color: string } => {
-    if (score >= 100) return { text: 'PASS', color: 'text-health-healthy' };
-    if (score >= 50) return { text: 'WARN', color: 'text-health-warning' };
-    return { text: 'FAIL', color: 'text-health-critical' };
+    const status = getScoreStatus(score);
+    return { text: status.label, color: status.color };
   };
 
 

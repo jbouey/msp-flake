@@ -2550,8 +2550,14 @@ async def get_org_evidence_bundle(
                 ("hipaa_contingency_plans", "Contingency Plans"),
             ]
 
+            ALLOWED_HIPAA_TABLES = {
+                "hipaa_sra_assessments", "hipaa_policies", "hipaa_training_records",
+                "hipaa_baas", "hipaa_ir_plans", "hipaa_contingency_plans",
+            }
             hipaa_lines = ["\n# HIPAA Module Completion", ""]
             for table, label in hipaa_modules:
+                if table not in ALLOWED_HIPAA_TABLES:
+                    raise ValueError(f"Invalid HIPAA table name: {table}")
                 try:
                     count_result = await db.execute(
                         text(f"SELECT COUNT(*) FROM {table} WHERE org_id = :org_id"),

@@ -7,7 +7,7 @@ Supports HIPAA 164.308(a)(1) risk analysis requirements.
 
 import asyncio
 import json
-import logging
+import structlog
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from uuid import UUID
@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from .fleet import get_pool
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/cve-watch", tags=["cve-watch"])
 
@@ -392,7 +392,7 @@ async def _run_sync():
         pool = await get_pool()
         await _sync_nvd_cves(pool)
     except Exception as e:
-        logger.error(f"CVE sync failed: {e}")
+        logger.error("CVE sync failed", error=str(e), exc_info=True)
 
 
 async def _sync_nvd_cves(pool):
@@ -425,7 +425,7 @@ async def _sync_nvd_cves(pool):
     delay = 0.6 if api_key else 6.0
 
     total_synced = 0
-    logger.info(f"Starting CVE sync for {len(watched_cpes)} CPEs (delay={delay}s)...")
+    logger.info("Starting CVE sync", cpe_count=len(watched_cpes), delay_s=delay)
 
     for i, cpe in enumerate(watched_cpes):
         try:
@@ -433,9 +433,9 @@ async def _sync_nvd_cves(pool):
                 await asyncio.sleep(delay)  # Rate limit between CPEs
             count = await _sync_cpe(pool, cpe, headers, last_sync, min_severity, delay)
             total_synced += count
-            logger.info(f"  CPE {cpe}: {count} CVEs synced")
+            logger.info("CPE sync complete", cpe=cpe, cve_count=count)
         except Exception as e:
-            logger.error(f"  CPE {cpe} sync failed: {e}")
+            logger.error("CPE sync failed", cpe=cpe, error=str(e), exc_info=True)
 
     # Match CVEs to fleet after sync
     matched = await _match_cves_to_fleet(pool)
@@ -446,7 +446,7 @@ async def _sync_nvd_cves(pool):
         SET last_sync_at = NOW(), last_sync_cve_count = $1, updated_at = NOW()
     """, total_synced)
 
-    logger.info(f"CVE sync complete: {total_synced} CVEs synced, {matched} fleet matches")
+    logger.info("CVE sync complete", total_synced=total_synced, fleet_matches=matched)
 
 
 async def _sync_cpe(pool, cpe: str, headers: dict, last_sync, min_severity: str, delay: float) -> int:
@@ -486,13 +486,13 @@ async def _sync_cpe(pool, cpe: str, headers: dict, last_sync, min_severity: str,
                 resp = await client.get(NVD_API_URL, params=params, headers=headers)
                 if resp.status_code == 403 or resp.status_code == 429:
                     wait = 30 * (attempt + 1)
-                    logger.warning(f"NVD API rate limited ({resp.status_code}), waiting {wait}s...")
+                    logger.warning("NVD API rate limited", status_code=resp.status_code, wait_s=wait)
                     await asyncio.sleep(wait)
                     continue
                 resp.raise_for_status()
                 break
         else:
-            logger.error(f"NVD API rate limit exceeded after {max_retries} retries")
+            logger.error("NVD API rate limit exceeded", max_retries=max_retries)
             return count
 
         data = resp.json()
@@ -664,8 +664,8 @@ async def _match_cves_to_fleet(pool) -> int:
                         "CPE version match",
                     )
                     matched += 1
-                except Exception:
-                    pass  # Duplicate or constraint violation
+                except Exception as match_err:
+                    logger.debug("CVE fleet match insert skipped", cve_id=str(cve["id"]), error=str(match_err))
 
     return matched
 
@@ -872,6 +872,8 @@ async def cve_sync_loop():
     """Periodic CVE sync background task. Call via asyncio.create_task() on startup."""
     await asyncio.sleep(120)  # Wait 2 min after startup
     while True:
+        new_cves = 0
+        total = 0
         try:
             pool = await get_pool()
             config = await pool.fetchrow(
@@ -879,11 +881,17 @@ async def cve_sync_loop():
             )
             if config and config["enabled"]:
                 await _sync_nvd_cves(pool)
+                # Read back counts for heartbeat
+                row = await pool.fetchrow("SELECT COUNT(*) as cnt FROM cve_entries")
+                total = row["cnt"] if row else 0
+                cfg = await pool.fetchrow("SELECT last_sync_cve_count FROM cve_watch_config LIMIT 1")
+                new_cves = cfg["last_sync_cve_count"] if cfg and cfg["last_sync_cve_count"] else 0
                 interval = config["sync_interval_hours"] * 3600
             else:
                 interval = 3600  # Check again in 1 hour if disabled
         except Exception as e:
-            logger.error(f"CVE sync loop error: {e}")
+            logger.error("CVE sync loop error", error=str(e), exc_info=True)
             interval = 3600
 
+        logger.info("CVE sync cycle complete", new_cves=new_cves, total=total)
         await asyncio.sleep(interval)

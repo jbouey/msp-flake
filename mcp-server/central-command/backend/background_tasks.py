@@ -545,7 +545,7 @@ async def expire_fleet_orders_loop():
             async with pool.acquire() as conn:
                 updated = await conn.execute("""
                     UPDATE fleet_orders SET status = 'expired'
-                    WHERE status = 'active' AND expires_at < NOW()
+                    WHERE status IN ('active', 'pending') AND expires_at < NOW()
                 """)
                 if updated and 'UPDATE' in updated:
                     count = int(updated.split()[-1])

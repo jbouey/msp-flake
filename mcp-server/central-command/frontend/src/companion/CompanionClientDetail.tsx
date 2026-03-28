@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useCompanionClientOverview, useCompanionNotes, useClientActivity, useCompanionAlerts, useUpdateAlert } from './useCompanionApi';
 import { companionColors, MODULE_DEFS } from './companion-tokens';
 import { Spinner } from '../components/shared';
+import { getScoreStatus } from '../constants';
 import { protectionProfilesApi } from '../utils/api';
 
 interface CompanionAlert {
@@ -130,6 +131,17 @@ function getModuleStatusFromOverview(overview: ClientOverview): Record<string, {
   return m;
 }
 
+function readinessColors(readiness: number): { bg: string; fg: string } {
+  const status = getScoreStatus(readiness);
+  const colorMap: Record<string, { bg: string; fg: string }> = {
+    success: { bg: companionColors.completeLight, fg: companionColors.complete },
+    warning: { bg: companionColors.amberLight, fg: companionColors.amber },
+    critical: { bg: companionColors.notStartedLight, fg: companionColors.notStarted },
+    neutral: { bg: companionColors.notStartedLight, fg: companionColors.notStarted },
+  };
+  return colorMap[status.type] || colorMap.neutral;
+}
+
 const statusStyles: Record<string, { bg: string; color: string; label: string }> = {
   complete: { bg: companionColors.completeLight, color: companionColors.complete, label: 'Complete' },
   in_progress: { bg: companionColors.inProgressLight, color: companionColors.inProgress, label: 'In Progress' },
@@ -227,12 +239,8 @@ export const CompanionClientDetail: React.FC = () => {
             <div
               className="w-16 h-16 rounded-full flex items-center justify-center text-lg font-bold"
               style={{
-                background: readiness >= 70 ? companionColors.completeLight
-                  : readiness >= 40 ? companionColors.amberLight
-                  : companionColors.notStartedLight,
-                color: readiness >= 70 ? companionColors.complete
-                  : readiness >= 40 ? companionColors.amber
-                  : companionColors.notStarted,
+                background: readinessColors(readiness).bg,
+                color: readinessColors(readiness).fg,
               }}
             >
               {Math.round(readiness)}%
@@ -245,9 +253,7 @@ export const CompanionClientDetail: React.FC = () => {
               className="h-full rounded-full transition-all"
               style={{
                 width: `${Math.min(readiness, 100)}%`,
-                background: readiness >= 70 ? companionColors.complete
-                  : readiness >= 40 ? companionColors.amber
-                  : companionColors.inProgress,
+                background: readinessColors(readiness).fg,
               }}
             />
           </div>

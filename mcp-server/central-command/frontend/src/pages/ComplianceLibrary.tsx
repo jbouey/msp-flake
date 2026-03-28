@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { GlassCard, Spinner } from '../components/shared';
+import { getScoreStatus } from '../constants';
 import {
   useFrameworkSyncStatus,
   useFrameworkControls,
@@ -24,7 +25,7 @@ function formatDate(iso: string | null): string {
 }
 
 function CoverageBar({ pct }: { pct: number }) {
-  const color = pct >= 80 ? 'bg-health-healthy' : pct >= 50 ? 'bg-health-warning' : 'bg-health-critical';
+  const color = getScoreStatus(pct).dotColor;
   return (
     <div className="w-full h-2 bg-fill-quaternary rounded-full overflow-hidden">
       <div className={`h-full ${color} rounded-full transition-all duration-500`} style={{ width: `${Math.min(pct, 100)}%` }} />

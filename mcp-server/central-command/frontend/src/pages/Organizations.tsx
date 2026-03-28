@@ -4,12 +4,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { organizationsApi } from '../utils/api';
 import type { Organization } from '../utils/api';
-import { formatTimeAgo } from '../constants';
+import { formatTimeAgo, getScoreStatus } from '../constants';
+import type { BadgeVariant } from '../components/shared/Badge';
 
 const formatRelativeTime = formatTimeAgo;
 
 const ComplianceBadge: React.FC<{ score: number }> = ({ score }) => {
-  const variant = score >= 80 ? 'success' : score >= 50 ? 'warning' : score > 0 ? 'error' : 'default';
+  const status = getScoreStatus(score > 0 ? score : null);
+  const variantMap: Record<string, BadgeVariant> = { success: 'success', warning: 'warning', critical: 'error', neutral: 'default' };
+  const variant: BadgeVariant = variantMap[status.type] || 'default';
   return <Badge variant={variant}>{score > 0 ? `${score}%` : 'N/A'}</Badge>;
 };
 
@@ -353,7 +356,7 @@ export const Organizations: React.FC = () => {
           <p className="text-xs text-label-tertiary">Total Appliances</p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
-          <p className={`text-2xl font-bold ${avgCompliance >= 80 ? 'text-health-healthy' : avgCompliance >= 50 ? 'text-health-warning' : 'text-label-primary'}`}>
+          <p className={`text-2xl font-bold ${avgCompliance > 0 ? getScoreStatus(avgCompliance).color : 'text-label-primary'}`}>
             {avgCompliance > 0 ? `${avgCompliance}%` : 'N/A'}
           </p>
           <p className="text-xs text-label-tertiary">Avg Compliance</p>

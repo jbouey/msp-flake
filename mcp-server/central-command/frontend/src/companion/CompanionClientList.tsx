@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useCompanionClients, useCompanionAlertSummary } from './useCompanionApi';
 import { companionColors, MODULE_DEFS } from './companion-tokens';
 import { Spinner } from '../components/shared';
+import { getScoreStatus } from '../constants';
 
 interface ClientOverview {
   sra?: { status: string };
@@ -70,6 +71,17 @@ const statusColor: Record<string, string> = {
   not_started: companionColors.notStarted,
   action_needed: companionColors.actionNeeded,
 };
+
+function readinessColors(readiness: number): { bg: string; fg: string } {
+  const status = getScoreStatus(readiness);
+  const colorMap: Record<string, { bg: string; fg: string }> = {
+    success: { bg: companionColors.completeLight, fg: companionColors.complete },
+    warning: { bg: companionColors.amberLight, fg: companionColors.amber },
+    critical: { bg: companionColors.notStartedLight, fg: companionColors.notStarted },
+    neutral: { bg: companionColors.notStartedLight, fg: companionColors.notStarted },
+  };
+  return colorMap[status.type] || colorMap.neutral;
+}
 
 export const CompanionClientList: React.FC = () => {
   const { data, isLoading } = useCompanionClients();
@@ -161,12 +173,8 @@ export const CompanionClientList: React.FC = () => {
                   <div
                     className="flex items-center justify-center w-12 h-12 rounded-full text-sm font-bold"
                     style={{
-                      background: readiness >= 70 ? companionColors.completeLight
-                        : readiness >= 40 ? companionColors.amberLight
-                        : companionColors.notStartedLight,
-                      color: readiness >= 70 ? companionColors.complete
-                        : readiness >= 40 ? companionColors.amber
-                        : companionColors.notStarted,
+                      background: readinessColors(readiness).bg,
+                      color: readinessColors(readiness).fg,
                     }}
                   >
                     {Math.round(readiness)}%

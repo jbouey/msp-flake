@@ -1143,7 +1143,10 @@ async def list_partners(
         params: list = []
         idx = 1
 
+        ALLOWED_STATUSES = {"active", "suspended", "inactive", "pending"}
         if status:
+            if status not in ALLOWED_STATUSES:
+                raise HTTPException(status_code=400, detail=f"Invalid status filter: {status}")
             conditions.append(f"p.status = ${idx}")
             params.append(status)
             idx += 1

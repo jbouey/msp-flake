@@ -16,6 +16,7 @@ from enum import Enum
 
 from .fleet import get_pool
 from .auth import require_auth, require_operator, require_admin
+from .shared import require_appliance_bearer
 from .tenant_middleware import tenant_connection, admin_connection
 from .credential_crypto import encrypt_credential, decrypt_credential
 from .websocket_manager import broadcast_event
@@ -97,7 +98,7 @@ orders_router = APIRouter(prefix="/api/orders", tags=["orders"])
 # =============================================================================
 
 @router.post("")
-async def create_site_api(request: Request):
+async def create_site_api(request: Request, user: dict = Depends(require_auth)):
     """Create a new site from the admin dashboard."""
     import re
     import secrets
@@ -1451,17 +1452,13 @@ class OrderCompleteRequest(BaseModel):
 
 
 @orders_router.post("/{order_id}/acknowledge")
-async def acknowledge_order(order_id: str, request: Request):
+async def acknowledge_order(order_id: str, request: Request, auth_site_id: str = Depends(require_appliance_bearer)):
     """Acknowledge that an order has been received and is being executed.
 
     Called by the appliance agent when it picks up a pending order.
     Updates status from 'pending' to 'acknowledged'.
     Handles fleet-wide orders (prefixed with 'fleet-') by recording in fleet_order_completions.
     """
-    # Authenticate appliance — extract API key from Bearer header
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
 
     pool = await get_pool()
     now = datetime.now(timezone.utc)
@@ -1539,18 +1536,13 @@ async def acknowledge_order(order_id: str, request: Request):
 
 
 @orders_router.post("/{order_id}/complete")
-async def complete_order(order_id: str, request: OrderCompleteRequest, raw_request: Request = None):
+async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site_id: str = Depends(require_appliance_bearer)):
     """Mark an order as completed (success or failure).
 
     Called by the appliance agent after executing an order.
     Updates status to 'completed' or 'failed' based on success flag.
     Handles fleet-wide orders (prefixed with 'fleet-') by recording in fleet_order_completions.
     """
-    # Authenticate appliance — extract API key from Bearer header
-    if raw_request:
-        auth_header = raw_request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
 
     pool = await get_pool()
     now = datetime.now(timezone.utc)
@@ -1900,7 +1892,7 @@ class DiscoveredDomainReport(BaseModel):
 
 
 @appliances_router.post("/domain-discovered")
-async def report_discovered_domain(report: DiscoveredDomainReport):
+async def report_discovered_domain(report: DiscoveredDomainReport, auth_site_id: str = Depends(require_appliance_bearer)):
     """
     Receive domain discovery report from appliance.
     
@@ -1992,7 +1984,7 @@ class EnumerationResultsReport(BaseModel):
 
 
 @appliances_router.post("/enumeration-results")
-async def report_enumeration_results(report: EnumerationResultsReport):
+async def report_enumeration_results(report: EnumerationResultsReport, auth_site_id: str = Depends(require_appliance_bearer)):
     """
     Receive AD enumeration results from appliance.
     
@@ -2257,7 +2249,7 @@ class AgentDeploymentReport(BaseModel):
 
 
 @appliances_router.post("/agent-deployments")
-async def report_agent_deployments(report: AgentDeploymentReport):
+async def report_agent_deployments(report: AgentDeploymentReport, auth_site_id: str = Depends(require_appliance_bearer)):
     """
     Receive Go agent deployment results from appliance.
     
@@ -2299,7 +2291,7 @@ async def report_agent_deployments(report: AgentDeploymentReport):
 
 
 @appliances_router.post("/checkin")
-async def appliance_checkin(checkin: ApplianceCheckin, request: Request):
+async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_site_id: str = Depends(require_appliance_bearer)):
     """Smart check-in with automatic deduplication.
 
     This endpoint implements smart deduplication logic to prevent duplicate

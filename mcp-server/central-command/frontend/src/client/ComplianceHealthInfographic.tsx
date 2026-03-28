@@ -74,11 +74,7 @@ function scoreColor(score: number | null): string {
 }
 
 function scoreLabel(score: number | null): string {
-  if (score === null) return 'No Data';
-  if (score >= 90) return 'Excellent';
-  if (score >= 75) return 'Good';
-  if (score >= 50) return 'Needs Attention';
-  return 'Critical';
+  return getScoreStatus(score).label;
 }
 
 // ─── Animated Circular Gauge (SVG) ─────────────────────────────────────────
