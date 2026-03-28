@@ -71,6 +71,7 @@ from dashboard_api.companion import router as companion_router
 from dashboard_api.protection_profiles import router as protection_profiles_router
 from dashboard_api.notifications import router as notifications_router
 from dashboard_api.cve_watch import router as cve_watch_router, cve_sync_loop
+from dashboard_api.cve_remediation import cve_remediation_loop
 from dashboard_api.framework_sync import router as framework_sync_router, framework_sync_loop
 from dashboard_api.prometheus_metrics import router as metrics_router
 from dashboard_api.websocket_manager import ws_manager
@@ -1112,6 +1113,7 @@ async def lifespan(app: FastAPI):
         ("ots_upgrade", _ots_upgrade_loop),
         ("ots_resubmit", _ots_resubmit_expired_loop),
         ("cve_watch", cve_sync_loop),
+        ("cve_remediation", cve_remediation_loop),
         ("framework_sync", framework_sync_loop),
         ("flywheel", _flywheel_promotion_loop),
         ("companion_alerts", companion_alert_check_loop),

@@ -266,6 +266,37 @@ async def trigger_sync(background_tasks: BackgroundTasks):
     return {"status": "sync_started"}
 
 
+@router.post("/cves/{cve_id}/generate-runbook")
+async def generate_runbook_for_cve(cve_id: str):
+    """Manually trigger runbook generation for a specific CVE.
+
+    Generates a preventative runbook from the CVE details and optionally
+    creates L1 auto-remediation rules for full-coverage sites.
+    Idempotent: safe to call multiple times.
+    """
+    from .cve_remediation import trigger_cve_runbook_generation
+
+    result = await trigger_cve_runbook_generation(cve_id)
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail=result.get("error", f"CVE {cve_id} not found"))
+    return result
+
+
+@router.get("/cves/{cve_id}/remediation-status")
+async def get_remediation_status(cve_id: str):
+    """Check remediation status for a CVE across the fleet.
+
+    Returns runbook existence, auto-remediation status per match,
+    and aggregate counts.
+    """
+    from .cve_remediation import get_cve_remediation_status
+
+    result = await get_cve_remediation_status(cve_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"CVE {cve_id} not found")
+    return result
+
+
 @router.get("/config")
 async def get_config():
     """Get CVE Watch configuration."""
