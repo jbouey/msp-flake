@@ -51,7 +51,7 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden bg-background-secondary rounded-ios-lg shadow-2xl border border-separator-light">
+      <div className="relative w-full max-w-2xl max-h-[90vh] bg-background-secondary rounded-ios-lg shadow-2xl border border-separator-light flex flex-col">
         {/* Header */}
         <div className="p-6 border-b border-separator-light">
           <div className="flex items-start justify-between">
@@ -60,7 +60,7 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
                 <span className="text-sm font-mono text-label-tertiary">{runbook.id}</span>
                 <LevelBadge level={runbook.level} showLabel />
                 {runbook.is_disruptive && (
-                  <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded-full">
+                  <span className="px-2 py-0.5 text-xs bg-health-warning/15 text-health-warning rounded-full">
                     Disruptive
                   </span>
                 )}
