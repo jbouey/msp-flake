@@ -1110,6 +1110,60 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Reconciliation loop error: {e}")
             await asyncio.sleep(300)  # 5 minutes
 
+    async def _evidence_chain_check_loop():
+        """Daily verification of evidence hash chain integrity per site."""
+        await asyncio.sleep(600)  # 10-minute startup delay
+        while True:
+            try:
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    site_ids = await conn.fetch(
+                        "SELECT id FROM sites WHERE status = 'active'"
+                    )
+                    for row in site_ids:
+                        site_id = row["id"]
+                        breaks = await conn.fetch("""
+                            SELECT a.id, a.chain_position, a.bundle_hash, b.prev_hash
+                            FROM compliance_bundles a
+                            JOIN compliance_bundles b
+                              ON b.chain_position = a.chain_position + 1
+                             AND b.site_id = a.site_id
+                            WHERE a.bundle_hash != b.prev_hash
+                              AND a.site_id = $1
+                            LIMIT 10
+                        """, site_id)
+                        if breaks:
+                            positions = ", ".join(
+                                str(b["chain_position"]) for b in breaks
+                            )
+                            await conn.execute("""
+                                INSERT INTO notifications
+                                  (id, type, title, message, severity, category, site_id, created_at)
+                                VALUES (gen_random_uuid(), 'system',
+                                        'Evidence Chain Break Detected',
+                                        $1, 'critical', 'security', $2, NOW())
+                            """,
+                                f"Site {site_id} has {len(breaks)} hash chain breaks at positions: {positions}",
+                                site_id,
+                            )
+                            logger.error(
+                                "Evidence chain breaks detected",
+                                site_id=str(site_id),
+                                break_count=len(breaks),
+                                positions=positions,
+                            )
+                        else:
+                            logger.info(
+                                "Evidence chain check complete",
+                                site_id=str(site_id),
+                                breaks=0,
+                            )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Evidence chain check failed: {e}")
+            await asyncio.sleep(86400)  # Once per day
+
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
         ("ots_resubmit", _ots_resubmit_expired_loop),
@@ -1121,6 +1175,7 @@ async def lifespan(app: FastAPI):
         ("fleet_order_expiry", expire_fleet_orders_loop),
         ("health_monitor", health_monitor_loop),
         ("reconciliation", _reconciliation_loop),
+        ("evidence_chain_check", _evidence_chain_check_loop),
     ]
 
     for name, fn in task_defs:

@@ -22,11 +22,12 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 import aiohttp
+import asyncpg
 
 # Ed25519 signature verification
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -2580,3 +2581,310 @@ async def get_org_evidence_bundle(
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
+
+
+# =============================================================================
+# Evidence Verification & Chain Health (admin endpoints)
+# =============================================================================
+
+async def _get_admin_pool():
+    """Get asyncpg pool + admin_connection for verification endpoints."""
+    from .fleet import get_pool
+    from .tenant_middleware import admin_connection
+    pool = await get_pool()
+    return pool, admin_connection
+
+
+async def check_chain_integrity(
+    conn: asyncpg.Connection,
+    site_id: str,
+    limit: int = 100,
+) -> list:
+    """Detect chain breaks: bundles whose prev_hash doesn't match the previous bundle's hash.
+
+    Returns a list of dicts describing each broken link.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT a.id, a.chain_position, a.bundle_hash, b.prev_hash,
+               a.bundle_id AS a_bundle_id, b.bundle_id AS b_bundle_id
+        FROM compliance_bundles a
+        JOIN compliance_bundles b
+            ON b.chain_position = a.chain_position + 1
+            AND b.site_id = a.site_id
+        WHERE a.bundle_hash != b.prev_hash
+            AND a.site_id = $1
+        LIMIT $2
+        """,
+        site_id,
+        limit,
+    )
+    return [
+        {
+            "position": r["chain_position"],
+            "bundle_id": r["a_bundle_id"],
+            "next_bundle_id": r["b_bundle_id"],
+            "expected_prev_hash": r["bundle_hash"],
+            "actual_prev_hash": r["prev_hash"],
+        }
+        for r in rows
+    ]
+
+
+@router.get("/{bundle_id}/verify")
+async def verify_bundle_full(
+    bundle_id: str,
+    request: Request,
+):
+    """Comprehensive evidence bundle verification.
+
+    Performs hash verification, forward+backward chain link verification,
+    Ed25519 signature verification, and OTS blockchain anchor lookup.
+    Returns a structured report suitable for auditors and legal.
+
+    Auth: admin (require_auth).
+    """
+    from .auth import require_auth
+    await require_auth(request)
+
+    pool, admin_connection = await _get_admin_pool()
+    async with admin_connection(pool) as conn:
+        # 1. Fetch the bundle
+        bundle = await conn.fetchrow(
+            """
+            SELECT cb.*,
+                   op.status AS ots_proof_status,
+                   op.bitcoin_txid AS ots_txid,
+                   op.bitcoin_block AS ots_block,
+                   op.anchored_at AS ots_anchored_at
+            FROM compliance_bundles cb
+            LEFT JOIN ots_proofs op ON op.bundle_id = cb.bundle_id
+            WHERE cb.bundle_id = $1
+            """,
+            bundle_id,
+        )
+        if not bundle:
+            raise HTTPException(status_code=404, detail=f"Bundle not found: {bundle_id}")
+
+        site_id = bundle["site_id"]
+
+        # ------------------------------------------------------------------
+        # 2. Hash verification: recompute SHA-256 of bundle data
+        # ------------------------------------------------------------------
+        checks = bundle["checks"]
+        if isinstance(checks, str):
+            checks = json.loads(checks)
+        summary = bundle["summary"]
+        if isinstance(summary, str):
+            summary = json.loads(summary)
+
+        hash_content = json.dumps(
+            {
+                "site_id": site_id,
+                "checked_at": bundle["checked_at"].isoformat() if bundle["checked_at"] else None,
+                "checks": checks if checks else [],
+                "summary": summary if summary else {},
+            },
+            sort_keys=True,
+        )
+        computed_hash = hashlib.sha256(hash_content.encode()).hexdigest()
+        hash_valid = hmac.compare_digest(bundle["bundle_hash"] or "", computed_hash)
+
+        # ------------------------------------------------------------------
+        # 3. Chain verification (backward + forward)
+        # ------------------------------------------------------------------
+        GENESIS_HASH = "0" * 64
+
+        # Previous bundle check
+        chain_prev_valid = None
+        if bundle["chain_position"] == 1:
+            # Genesis bundle should have prev_hash = all-zeros
+            chain_prev_valid = hmac.compare_digest(bundle["prev_hash"] or "", GENESIS_HASH)
+        else:
+            prev_bundle = await conn.fetchrow(
+                """
+                SELECT bundle_hash
+                FROM compliance_bundles
+                WHERE site_id = $1 AND chain_position = $2
+                """,
+                site_id,
+                bundle["chain_position"] - 1,
+            )
+            if prev_bundle:
+                chain_prev_valid = hmac.compare_digest(
+                    bundle["prev_hash"] or "", prev_bundle["bundle_hash"] or ""
+                )
+            else:
+                chain_prev_valid = False  # predecessor missing
+
+        # Next bundle check
+        chain_next_valid = None  # null if this is the latest bundle
+        next_bundle = await conn.fetchrow(
+            """
+            SELECT prev_hash
+            FROM compliance_bundles
+            WHERE site_id = $1 AND chain_position = $2
+            """,
+            site_id,
+            bundle["chain_position"] + 1,
+        )
+        if next_bundle:
+            chain_next_valid = hmac.compare_digest(
+                next_bundle["prev_hash"] or "", bundle["bundle_hash"] or ""
+            )
+
+        # Overall chain_valid = chain_hash self-check
+        chain_data = f"{bundle['bundle_hash']}:{bundle['prev_hash'] or 'genesis'}:{bundle['chain_position']}"
+        expected_chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
+        chain_valid = hmac.compare_digest(bundle["chain_hash"] or "", expected_chain_hash)
+
+        # ------------------------------------------------------------------
+        # 4. Signature verification
+        # ------------------------------------------------------------------
+        signature_valid = None
+        signature_key_id = None
+        if bundle["agent_signature"]:
+            # Get the registered public key for the site
+            key_row = await conn.fetchrow(
+                "SELECT agent_public_key FROM sites WHERE site_id = $1", site_id
+            )
+            agent_public_key = key_row["agent_public_key"] if key_row else None
+            if agent_public_key:
+                signature_key_id = f"{agent_public_key[:12]}...{agent_public_key[-8:]}"
+                stored_signed_data = bundle.get("signed_data")
+                if stored_signed_data:
+                    sign_bytes = stored_signed_data.encode("utf-8")
+                else:
+                    sign_bytes = hash_content.encode("utf-8")
+
+                signature_valid = verify_ed25519_signature(
+                    data=sign_bytes,
+                    signature_hex=bundle["agent_signature"],
+                    public_key_hex=agent_public_key,
+                )
+
+        # ------------------------------------------------------------------
+        # 5. OTS / blockchain anchor info
+        # ------------------------------------------------------------------
+        ots_status = bundle.get("ots_proof_status") or bundle.get("ots_status") or "none"
+        bitcoin_txid = bundle.get("ots_txid") or bundle.get("ots_bitcoin_txid")
+        block_height = bundle.get("ots_block") or bundle.get("ots_bitcoin_block")
+        anchored_at = bundle.get("ots_anchored_at") or bundle.get("ots_anchored_at")
+
+        blockchain_info = {
+            "status": ots_status,
+            "bitcoin_txid": bitcoin_txid,
+            "block_height": block_height,
+            "anchored_at": anchored_at.isoformat() if anchored_at else None,
+            "explorer_url": f"https://mempool.space/tx/{bitcoin_txid}" if bitcoin_txid else (
+                f"https://mempool.space/block/{block_height}" if block_height else None
+            ),
+        }
+
+        # ------------------------------------------------------------------
+        # 6. Bundle summary info
+        # ------------------------------------------------------------------
+        check_count = len(checks) if checks else 0
+
+        return {
+            "bundle_id": bundle_id,
+            "site_id": site_id,
+            "chain_position": bundle["chain_position"],
+            "created_at": bundle["created_at"].isoformat() if bundle["created_at"] else None,
+            "verification": {
+                "hash_valid": hash_valid,
+                "chain_valid": chain_valid,
+                "chain_prev_valid": chain_prev_valid,
+                "chain_next_valid": chain_next_valid,
+                "signature_valid": signature_valid,
+                "signature_key_id": signature_key_id,
+            },
+            "blockchain": blockchain_info,
+            "bundle_summary": {
+                "check_count": check_count,
+                "bundle_type": bundle.get("check_type") or "compliance",
+                "has_signature": bundle["agent_signature"] is not None,
+            },
+        }
+
+
+@router.get("/chain-health")
+async def get_chain_health(
+    request: Request,
+):
+    """Chain integrity and evidence health across all sites.
+
+    Returns per-site statistics: total bundles, signed count, OTS anchored count,
+    chain break count, and latest timestamps.
+
+    Auth: admin (require_auth).
+    """
+    from .auth import require_auth
+    await require_auth(request)
+
+    pool, admin_connection = await _get_admin_pool()
+    async with admin_connection(pool) as conn:
+        # Per-site bundle + signature stats
+        site_rows = await conn.fetch(
+            """
+            SELECT
+                cb.site_id,
+                COUNT(*) AS total_bundles,
+                COUNT(*) FILTER (WHERE cb.agent_signature IS NOT NULL) AS signed_bundles,
+                MAX(cb.created_at) AS latest_bundle
+            FROM compliance_bundles cb
+            GROUP BY cb.site_id
+            ORDER BY cb.site_id
+            """
+        )
+
+        sites = []
+        for row in site_rows:
+            sid = row["site_id"]
+
+            # OTS anchor count for this site
+            ots_row = await conn.fetchrow(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE status IN ('anchored', 'verified')) AS ots_anchored,
+                    MAX(anchored_at) AS latest_ots_anchor
+                FROM ots_proofs
+                WHERE site_id = $1
+                """,
+                sid,
+            )
+
+            # Chain breaks for this site
+            breaks = await check_chain_integrity(conn, sid, limit=1)
+
+            # Count total breaks (separate fast query)
+            break_count_row = await conn.fetchrow(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM compliance_bundles a
+                JOIN compliance_bundles b
+                    ON b.chain_position = a.chain_position + 1
+                    AND b.site_id = a.site_id
+                WHERE a.bundle_hash != b.prev_hash
+                    AND a.site_id = $1
+                """,
+                sid,
+            )
+
+            sites.append(
+                {
+                    "site_id": sid,
+                    "total_bundles": row["total_bundles"],
+                    "signed_bundles": row["signed_bundles"],
+                    "ots_anchored": ots_row["ots_anchored"] if ots_row else 0,
+                    "chain_breaks": break_count_row["cnt"] if break_count_row else 0,
+                    "latest_bundle": row["latest_bundle"].isoformat() if row["latest_bundle"] else None,
+                    "latest_ots_anchor": (
+                        ots_row["latest_ots_anchor"].isoformat()
+                        if ots_row and ots_row["latest_ots_anchor"]
+                        else None
+                    ),
+                }
+            )
+
+        return {"sites": sites}
