@@ -199,7 +199,7 @@ export const Dashboard: React.FC = () => {
             )}
           </GlassCard>
         </div>
-        <IncidentTrendChart className="lg:col-span-3" />
+        <IncidentTrendChart className="lg:col-span-3 self-start" />
       </div>
 
       {/* Recent incidents feed */}
