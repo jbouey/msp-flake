@@ -5,7 +5,7 @@ import { MetricCard } from '../components/composed';
 import { HealthGauge } from '../components/fleet';
 import { IncidentTrendChart, FleetHealthMatrix, AttentionPanel, ResolutionBreakdown, TopIncidentTypes } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
-import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFleetPosture } from '../hooks';
+import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents } from '../hooks';
 import { METRIC_TOOLTIPS, getScoreStatus } from '../constants';
 
 export const Dashboard: React.FC = () => {
@@ -15,17 +15,9 @@ export const Dashboard: React.FC = () => {
   const { data: deltas } = useStatsDeltas();
   const { data: learning, isLoading: learningLoading } = useLearningStatus();
   const { data: incidents, isLoading: incidentsLoading, error: incidentsError } = useIncidents({ limit: 10 });
-  const { data: fleetPosture, isLoading: fleetLoading } = useFleetPosture();
-
-  // Worst 3 sites by compliance score (fleet-posture is already sorted by needs-attention)
-  const worstSites = React.useMemo(() => {
-    if (!fleetPosture || fleetPosture.length === 0) return [];
-    return [...fleetPosture]
-      .sort((a, b) => a.compliance_score - b.compliance_score)
-      .slice(0, 3);
-  }, [fleetPosture]);
-
   const activeThreats = stats?.active_threats ?? 0;
+  const complianceScore = stats?.avg_compliance_score ?? 0;
+  const scoreStatus = getScoreStatus(statsLoading ? null : complianceScore);
 
   return (
     <div className="space-y-5 page-enter">
@@ -45,161 +37,90 @@ export const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* KPI row -- uses MetricCard with auto-resolved tooltips from METRIC_TOOLTIPS */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 stagger-list">
-        <MetricCard
-          metric="clients"
-          label="Clients"
-          value={stats?.total_clients ?? 0}
-          loading={statsLoading}
-          delta={deltas?.clients_delta}
-          icon={
-            <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-            </svg>
-          }
-          iconColor="text-ios-blue"
-        />
+      {/* Hero compliance score + 3 secondary KPIs */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 stagger-list">
+        {/* Hero compliance gauge */}
+        <GlassCard className="lg:col-span-1 flex flex-col items-center justify-center py-6">
+          {statsLoading ? (
+            <div className="skeleton w-[128px] h-[128px] rounded-full" />
+          ) : (
+            <>
+              <HealthGauge score={complianceScore} size="xl" showLabel={false} showPercentage={false} />
+              <p className={`text-3xl font-bold mt-3 tabular-nums ${scoreStatus.color}`}>
+                {complianceScore}%
+              </p>
+              <p className="text-xs text-label-tertiary mt-1">Fleet Compliance</p>
+              {deltas?.compliance_delta !== undefined && deltas?.compliance_delta !== null && deltas.compliance_delta !== 0 && (
+                <div className={`flex items-center gap-1 mt-2 text-xs font-medium ${
+                  deltas.compliance_delta > 0 ? 'text-health-healthy' : 'text-health-critical'
+                }`}>
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d={
+                      deltas.compliance_delta > 0 ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'
+                    } />
+                  </svg>
+                  <span className="tabular-nums">{deltas.compliance_delta > 0 ? '+' : ''}{deltas.compliance_delta}%</span>
+                  <span className="text-label-tertiary font-normal">vs 24h ago</span>
+                </div>
+              )}
+            </>
+          )}
+        </GlassCard>
 
-        <MetricCard
-          metric="compliance_score"
-          label="Compliance"
-          value={stats?.avg_compliance_score ?? 0}
-          suffix="%"
-          loading={statsLoading}
-          delta={deltas?.compliance_delta}
-          deltaSuffix="%"
-          valueColor="text-health-healthy"
-        >
-          <HealthGauge score={stats?.avg_compliance_score ?? 0} size="sm" showLabel={false} />
-        </MetricCard>
+        {/* 3 secondary KPIs */}
+        <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <MetricCard
+            metric="incidents_24h"
+            label="Incidents 24h"
+            value={stats?.incidents_24h ?? 0}
+            loading={statsLoading}
+            delta={deltas?.incidents_24h_delta}
+            deltaInvert
+            icon={
+              <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            }
+            iconColor="text-ios-orange"
+          />
 
-        <MetricCard
-          metric="incidents_24h"
-          label="Incidents 24h"
-          value={stats?.incidents_24h ?? 0}
-          loading={statsLoading}
-          delta={deltas?.incidents_24h_delta}
-          deltaInvert
-          icon={
-            <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          }
-          iconColor="text-ios-orange"
-        />
+          <MetricCard
+            metric="l1_rate"
+            label="L1 Auto-Heal"
+            value={stats?.l1_resolution_rate ?? 0}
+            suffix="%"
+            loading={statsLoading}
+            delta={deltas?.l1_rate_delta}
+            deltaSuffix="%"
+            valueColor="text-ios-blue"
+            icon={
+              <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            }
+            iconColor="text-ios-blue"
+          />
 
-        <MetricCard
-          metric="l1_rate"
-          label="L1 Auto-Heal"
-          value={stats?.l1_resolution_rate ?? 0}
-          suffix="%"
-          loading={statsLoading}
-          delta={deltas?.l1_rate_delta}
-          deltaSuffix="%"
-          valueColor="text-ios-blue"
-          icon={
-            <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-          iconColor="text-ios-blue"
-        />
-
-        <MetricCard
-          metric="drift_checks"
-          label="Drift Checks"
-          value={statsLoading ? null : `${stats?.active_drift_checks ?? 47} Active`}
-          loading={statsLoading}
-          icon={
-            <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-            </svg>
-          }
-          iconColor="text-health-healthy"
-          valueColor="text-health-healthy"
-        />
+          <MetricCard
+            metric="clients"
+            label="Clients"
+            value={stats?.total_clients ?? 0}
+            loading={statsLoading}
+            delta={deltas?.clients_delta}
+            icon={
+              <svg className="w-[18px] h-[18px]" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+              </svg>
+            }
+            iconColor="text-ios-blue"
+          />
+        </div>
       </div>
 
-      {/* Attention + Worst Sites + Incident trend */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        <div className="lg:col-span-2 space-y-4">
-          <AttentionPanel />
-
-          {/* Worst-performing sites panel */}
-          <GlassCard>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-base font-semibold text-label-primary">Needs Attention</h3>
-              <button
-                onClick={() => navigate('/fleet')}
-                className="text-xs text-accent-primary font-medium hover:underline"
-              >
-                View Fleet
-              </button>
-            </div>
-            {fleetLoading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="skeleton h-14 rounded-ios-md" />
-                ))}
-              </div>
-            ) : worstSites.length === 0 ? (
-              <p className="text-sm text-label-tertiary py-4 text-center">All sites healthy -- nothing needs attention</p>
-            ) : (
-              <div className="space-y-1">
-                {worstSites.map((site) => {
-                  const siteStatus = getScoreStatus(site.compliance_score);
-                  const trendIcon =
-                    site.trend === 'improving' ? (
-                      <svg className="w-3 h-3 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-                      </svg>
-                    ) : site.trend === 'declining' ? (
-                      <svg className="w-3 h-3 text-health-critical" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
-                    ) : null;
-
-                  return (
-                    <button
-                      key={site.site_id}
-                      onClick={() => navigate(`/sites/${site.site_id}`)}
-                      className="w-full flex items-center gap-3 p-3 rounded-ios-md text-left transition-all hover:bg-fill-secondary"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-label-primary truncate">
-                            {site.clinic_name}
-                          </p>
-                          {trendIcon}
-                        </div>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <div className="flex-1 h-1.5 bg-fill-secondary rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all ${siteStatus.dotColor}`}
-                              style={{ width: `${Math.min(site.compliance_score, 100)}%` }}
-                            />
-                          </div>
-                          <span className={`text-xs font-semibold tabular-nums ${siteStatus.color}`}>
-                            {site.compliance_score}%
-                          </span>
-                        </div>
-                        {(site.unresolved > 0 || site.incidents_24h > 0) && (
-                          <p className="text-[10px] text-label-tertiary mt-1">
-                            {site.unresolved > 0 && <span>{site.unresolved} unresolved</span>}
-                            {site.unresolved > 0 && site.incidents_24h > 0 && <span> / </span>}
-                            {site.incidents_24h > 0 && <span>{site.incidents_24h} in 24h</span>}
-                          </p>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </GlassCard>
-        </div>
-        <IncidentTrendChart className="lg:col-span-3 self-start" />
+      {/* Attention + Incident trend (unified row, no worst-sites panel) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <AttentionPanel className="lg:col-span-2" />
+        <IncidentTrendChart className="self-start" />
       </div>
 
       {/* Recent incidents feed */}

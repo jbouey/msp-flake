@@ -25,12 +25,14 @@ interface NavItem {
   label: string;
   icon: React.ReactNode;
   adminOnly?: boolean;
+  section: 'operations' | 'admin';
 }
 
 const navItems: NavItem[] = [
   {
     path: '/',
     label: 'Dashboard',
+    section: 'operations',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
@@ -40,6 +42,7 @@ const navItems: NavItem[] = [
   {
     path: '/sites',
     label: 'Sites',
+    section: 'operations',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
@@ -49,6 +52,7 @@ const navItems: NavItem[] = [
   {
     path: '/organizations',
     label: 'Organizations',
+    section: 'operations',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
@@ -58,6 +62,7 @@ const navItems: NavItem[] = [
   {
     path: '/notifications',
     label: 'Notifications',
+    section: 'operations',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
@@ -67,6 +72,7 @@ const navItems: NavItem[] = [
   {
     path: '/incidents',
     label: 'Incidents',
+    section: 'operations',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -76,6 +82,7 @@ const navItems: NavItem[] = [
   {
     path: '/l4-queue',
     label: 'L4 Queue',
+    section: 'operations',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
@@ -85,6 +92,7 @@ const navItems: NavItem[] = [
   {
     path: '/onboarding',
     label: 'Onboarding',
+    section: 'operations',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
@@ -94,6 +102,7 @@ const navItems: NavItem[] = [
   {
     path: '/partners',
     label: 'Partners',
+    section: 'admin',
     adminOnly: true,
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -104,6 +113,7 @@ const navItems: NavItem[] = [
   {
     path: '/users',
     label: 'Users',
+    section: 'admin',
     adminOnly: true,
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -114,6 +124,7 @@ const navItems: NavItem[] = [
   {
     path: '/runbooks',
     label: 'Runbooks',
+    section: 'admin',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
@@ -123,6 +134,7 @@ const navItems: NavItem[] = [
   {
     path: '/runbook-config',
     label: 'Runbook Config',
+    section: 'admin',
     adminOnly: true,
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -134,6 +146,7 @@ const navItems: NavItem[] = [
   {
     path: '/learning',
     label: 'Learning',
+    section: 'admin',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
@@ -143,6 +156,7 @@ const navItems: NavItem[] = [
   {
     path: '/cve-watch',
     label: 'CVE Watch',
+    section: 'admin',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -152,6 +166,7 @@ const navItems: NavItem[] = [
   {
     path: '/compliance-library',
     label: 'Compliance Library',
+    section: 'admin',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
@@ -161,6 +176,7 @@ const navItems: NavItem[] = [
   {
     path: '/fleet-updates',
     label: 'Fleet Updates',
+    section: 'admin',
     adminOnly: true,
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -171,6 +187,7 @@ const navItems: NavItem[] = [
   {
     path: '/vpn',
     label: 'VPN',
+    section: 'admin',
     adminOnly: true,
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -181,6 +198,7 @@ const navItems: NavItem[] = [
   {
     path: '/reports',
     label: 'Reports',
+    section: 'admin',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -190,6 +208,7 @@ const navItems: NavItem[] = [
   {
     path: '/audit-logs',
     label: 'Audit Logs',
+    section: 'admin',
     adminOnly: true,
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -200,6 +219,7 @@ const navItems: NavItem[] = [
   {
     path: '/docs',
     label: 'Documentation',
+    section: 'admin',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
@@ -209,6 +229,7 @@ const navItems: NavItem[] = [
   {
     path: '/logs',
     label: 'Logs',
+    section: 'admin',
     adminOnly: true,
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -219,6 +240,7 @@ const navItems: NavItem[] = [
   {
     path: '/settings',
     label: 'Settings',
+    section: 'admin',
     adminOnly: true,
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -248,12 +270,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isOpen = false,
   onClose,
 }) => {
+  const [adminOpen, setAdminOpen] = React.useState(false);
   const { data: notificationSummary } = useNotificationSummary();
   const unreadCount = notificationSummary?.unread || 0;
 
   const filteredNavItems = navItems.filter(
     (item) => !item.adminOnly || user?.role === 'admin'
   );
+  const operationsItems = filteredNavItems.filter((item) => item.section === 'operations');
+  const adminItems = filteredNavItems.filter((item) => item.section === 'admin');
 
   const userInitials = user?.displayName
     ? user.displayName
@@ -364,11 +389,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Navigation */}
       <nav className="flex-1 px-3 pt-3 pb-2 overflow-y-auto border-t border-separator-medium">
+        {/* Operations section */}
         <h2 className="text-[10px] font-semibold text-label-tertiary uppercase tracking-wider mb-2 px-2">
-          Navigation
+          Operations
         </h2>
         <div className="space-y-0.5">
-          {filteredNavItems.map((item) => (
+          {operationsItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -388,6 +414,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </NavLink>
           ))}
         </div>
+
+        {/* Admin section (collapsible) */}
+        {adminItems.length > 0 && (
+          <div className="mt-4">
+            <h2
+              className="text-[10px] font-semibold text-label-tertiary uppercase tracking-wider mb-2 px-2 flex items-center justify-between cursor-pointer"
+              onClick={() => setAdminOpen(!adminOpen)}
+            >
+              Admin
+              <svg
+                className={`w-3 h-3 transition-transform ${adminOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </h2>
+            {adminOpen && (
+              <div className="space-y-0.5">
+                {adminItems.map((item) => (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    end={item.path === '/'}
+                    onClick={onClose}
+                    className={({ isActive }) =>
+                      `nav-item ${isActive ? 'nav-item-active' : 'text-label-secondary'}`
+                    }
+                  >
+                    {item.icon}
+                    <span className="text-sm font-medium flex-1">{item.label}</span>
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </nav>
 
       {/* Bottom section - User info */}
