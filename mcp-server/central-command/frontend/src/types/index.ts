@@ -659,6 +659,21 @@ export interface CVEWatchConfig {
   last_sync_at: string | null;
 }
 
+export interface RemediateResponse {
+  status: string;
+  cve_id: string;
+  runbook_id: string;
+  orders_created: number;
+  orders_skipped: number;
+  orders: Array<{ order_id: string; site_id: string; status: string }>;
+}
+
+export interface RunbookSummary {
+  runbook_id: string;
+  name: string;
+  category: string;
+}
+
 export const GO_AGENT_CHECK_LABELS: Record<string, string> = {
   bitlocker: 'BitLocker',
   defender: 'Defender',

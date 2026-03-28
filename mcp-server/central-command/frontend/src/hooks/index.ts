@@ -67,6 +67,9 @@ export {
   useTriggerCVESync,
   useUpdateCVEStatus,
   useCVEWatchConfig,
+  useRemediateCVE,
+  useSuggestRunbook,
+  useCVERunbooks,
   // Framework Sync hooks (Compliance Library)
   useFrameworkSyncStatus,
   useFrameworkControls,

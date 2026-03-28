@@ -5,7 +5,7 @@
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
 import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderStatus, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice, VPNStatus } from '../utils/api';
-import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, StatsDeltas, LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, IncidentBreakdownResponse, AttentionRequiredResponse } from '../types';
+import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, StatsDeltas, LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, RunbookSummary, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, IncidentBreakdownResponse, AttentionRequiredResponse } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
 
 // Polling intervals
@@ -970,6 +970,39 @@ export function useCVEWatchConfig() {
     queryKey: ['cve-config'],
     queryFn: cveApi.getConfig,
     ...defaults,
+  });
+}
+
+export function useRemediateCVE() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { cveId: string; siteIds: string[]; runbookId: string; expiresHours?: number; reason?: string }) =>
+      cveApi.remediateCve(args.cveId, args.siteIds, args.runbookId, args.expiresHours, args.reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cves'] });
+      queryClient.invalidateQueries({ queryKey: ['cve-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['cve'] });
+    },
+  });
+}
+
+export function useSuggestRunbook(cveId: string | null) {
+  const defaults = useQueryDefaults();
+  return useQuery<{ suggested_runbook_id: string | null }>({
+    queryKey: ['cve-suggest-runbook', cveId],
+    queryFn: () => cveApi.suggestRunbook(cveId!),
+    enabled: !!cveId,
+    ...defaults,
+  });
+}
+
+export function useCVERunbooks() {
+  const defaults = useQueryDefaults();
+  return useQuery<RunbookSummary[]>({
+    queryKey: ['cve-runbooks'],
+    queryFn: cveApi.listRunbooks,
+    ...defaults,
+    staleTime: 5 * 60 * 1000, // 5 min cache
   });
 }
 

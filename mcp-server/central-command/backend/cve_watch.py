@@ -13,10 +13,13 @@ from typing import Optional, List, Dict, Any
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
+from .auth import require_auth
+from .tenant_middleware import admin_connection
+from .order_signing import sign_fleet_order
 
 logger = structlog.get_logger(__name__)
 
@@ -43,6 +46,13 @@ class CVEWatchConfigUpdate(BaseModel):
     min_severity: Optional[str] = Field(None, pattern="^(critical|high|medium|low)$")
     enabled: Optional[bool] = None
     nvd_api_key: Optional[str] = None
+
+
+class CVERemediateRequest(BaseModel):
+    site_ids: List[str]
+    runbook_id: str
+    expires_hours: int = 24
+    reason: Optional[str] = None
 
 
 # =============================================================================
@@ -295,6 +305,157 @@ async def get_remediation_status(cve_id: str):
     if result is None:
         raise HTTPException(status_code=404, detail=f"CVE {cve_id} not found")
     return result
+
+
+@router.post("/cves/{cve_id}/remediate")
+async def remediate_cve(cve_id: str, body: CVERemediateRequest, user: dict = Depends(require_auth)):
+    """Dispatch fleet healing orders for a CVE across specified sites."""
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # 1. Validate CVE exists
+        cve = await conn.fetchrow(
+            "SELECT id FROM cve_entries WHERE cve_id = $1", cve_id
+        )
+        if not cve:
+            raise HTTPException(status_code=404, detail=f"CVE {cve_id} not found")
+
+        # 2. Validate runbook exists
+        rb = await conn.fetchrow(
+            "SELECT runbook_id FROM runbooks WHERE runbook_id = $1", body.runbook_id
+        )
+        if not rb:
+            raise HTTPException(status_code=404, detail=f"Runbook {body.runbook_id} not found")
+
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=body.expires_hours)
+        created_by = user.get("username") or user.get("email") or "admin"
+
+        dispatched = []
+        skipped = []
+
+        for site_id in body.site_ids:
+            # 3a. Idempotency check
+            existing = await conn.fetchval("""
+                SELECT id FROM fleet_orders
+                WHERE order_type = 'healing'
+                  AND status IN ('active', 'pending')
+                  AND expires_at > NOW()
+                  AND parameters->>'cve_id' = $1
+                  AND parameters->>'site_id' = $2
+            """, cve_id, site_id)
+
+            if existing:
+                skipped.append(site_id)
+                continue
+
+            # 3c. Build parameters
+            parameters = {
+                "runbook_id": body.runbook_id,
+                "site_id": site_id,
+                "cve_id": cve_id,
+                "reason": body.reason,
+            }
+
+            # 3d-e. Sign and insert fleet order
+            nonce, signature, signed_payload = sign_fleet_order(
+                0, "healing", parameters, now, expires_at
+            )
+
+            row = await conn.fetchrow("""
+                INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
+                                          nonce, signature, signed_payload)
+                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+                RETURNING id, created_at
+            """,
+                "healing",
+                json.dumps(parameters),
+                expires_at,
+                created_by,
+                nonce,
+                signature,
+                signed_payload,
+            )
+
+            order_id = row["id"]
+
+            # 3f. Update cve_fleet_matches remediation status
+            await conn.execute("""
+                UPDATE cve_fleet_matches
+                SET remediation_status = 'order_dispatched',
+                    remediation_runbook_id = $1,
+                    remediation_order_id = $2,
+                    remediation_attempted_at = NOW(),
+                    updated_at = NOW()
+                WHERE cve_id = $3 AND site_id = $4
+            """, body.runbook_id, order_id, cve["id"], site_id)
+
+            dispatched.append({"site_id": site_id, "order_id": str(order_id)})
+
+    return {
+        "cve_id": cve_id,
+        "runbook_id": body.runbook_id,
+        "dispatched": dispatched,
+        "skipped": skipped,
+        "total_dispatched": len(dispatched),
+        "total_skipped": len(skipped),
+    }
+
+
+@router.get("/cves/{cve_id}/suggest-runbook")
+async def suggest_runbook(cve_id: str, user: dict = Depends(require_auth)):
+    """Suggest a runbook for a CVE based on keyword matching."""
+    pool = await get_pool()
+
+    cve = await pool.fetchrow(
+        "SELECT description FROM cve_entries WHERE cve_id = $1", cve_id
+    )
+    if not cve:
+        raise HTTPException(status_code=404, detail=f"CVE {cve_id} not found")
+
+    description = (cve["description"] or "").lower()
+
+    # Keyword-based suggestion rules
+    keyword_map = [
+        (["update", "patch", "upgrade", "version"], "RB-PATCH-001"),
+        (["config", "configuration", "misconfigur", "setting"], "RB-DRIFT-001"),
+        (["service", "daemon", "process", "restart"], "RB-SERVICE-001"),
+        (["firewall", "port", "network", "listen"], "RB-FIREWALL-001"),
+        (["permission", "privilege", "access", "auth"], "RB-ACCESS-001"),
+        (["encrypt", "tls", "ssl", "certificate"], "RB-ENCRYPT-001"),
+    ]
+
+    for keywords, runbook_id in keyword_map:
+        if any(kw in description for kw in keywords):
+            # Verify the runbook exists
+            exists = await pool.fetchval(
+                "SELECT runbook_id FROM runbooks WHERE runbook_id = $1", runbook_id
+            )
+            if exists:
+                return {"cve_id": cve_id, "suggested_runbook_id": runbook_id}
+
+    return {"cve_id": cve_id, "suggested_runbook_id": None}
+
+
+@router.get("/runbooks")
+async def list_runbooks(user: dict = Depends(require_auth)):
+    """List all enabled runbooks for CVE remediation selection."""
+    pool = await get_pool()
+
+    rows = await pool.fetch("""
+        SELECT runbook_id, name, category
+        FROM runbooks
+        WHERE enabled = true
+        ORDER BY runbook_id
+    """)
+
+    return [
+        {
+            "runbook_id": row["runbook_id"],
+            "name": row["name"],
+            "category": row["category"],
+        }
+        for row in rows
+    ]
 
 
 @router.get("/config")

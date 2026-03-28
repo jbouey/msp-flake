@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { GlassCard } from '../components/shared';
 import { useCVESummary, useCVEs, useCVEDetail, useTriggerCVESync, useUpdateCVEStatus } from '../hooks';
+import { RemediateModal } from '../components/cve/RemediateModal';
 import type { CVEEntry } from '../types';
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -32,6 +33,7 @@ export const CVEWatch: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [search, setSearch] = useState('');
   const [selectedCve, setSelectedCve] = useState<string | null>(null);
+  const [remediateTarget, setRemediateTarget] = useState<string | null>(null);
 
   const { data: summary, isLoading: summaryLoading } = useCVESummary();
   const { data: cves = [], isLoading: cvesLoading, error } = useCVEs({
@@ -293,8 +295,24 @@ export const CVEWatch: React.FC = () => {
                 {STATUS_LABELS[status]}
               </button>
             ))}
+            {cveDetail.affected_appliances.some((a) => a.status === 'open') && (
+              <button
+                onClick={() => setRemediateTarget(cveDetail.cve_id)}
+                className="ml-auto px-3 py-1 text-xs font-medium rounded-ios-sm bg-accent-primary text-white hover:bg-accent-primary/90 transition-colors"
+              >
+                Remediate
+              </button>
+            )}
           </div>
         </GlassCard>
+      )}
+      {/* Remediate Modal */}
+      {remediateTarget && cveDetail && remediateTarget === cveDetail.cve_id && (
+        <RemediateModal
+          cveDetail={cveDetail}
+          onClose={() => setRemediateTarget(null)}
+          onSuccess={() => setRemediateTarget(null)}
+        />
       )}
     </div>
   );

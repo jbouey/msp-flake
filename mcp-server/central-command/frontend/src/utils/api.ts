@@ -1754,7 +1754,7 @@ export const devicesApi = {
 // CVE WATCH API
 // =============================================================================
 
-import type { CVESummary, CVEEntry, CVEDetail, CVEWatchConfig } from '../types';
+import type { CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, RemediateResponse, RunbookSummary } from '../types';
 
 const CVE_BASE = '/api/cve-watch';
 
@@ -1795,6 +1795,18 @@ export const cveApi = {
       body: JSON.stringify(config),
       headers: { 'Content-Type': 'application/json' },
     }),
+
+  remediateCve: (cveId: string, siteIds: string[], runbookId: string, expiresHours?: number, reason?: string) =>
+    fetchCveApi<RemediateResponse>(`/cves/${cveId}/remediate`, {
+      method: 'POST',
+      body: JSON.stringify({ site_ids: siteIds, runbook_id: runbookId, expires_hours: expiresHours ?? 24, reason }),
+    }),
+
+  suggestRunbook: (cveId: string) =>
+    fetchCveApi<{ suggested_runbook_id: string | null }>(`/cves/${cveId}/suggest-runbook`),
+
+  listRunbooks: () =>
+    fetchCveApi<RunbookSummary[]>('/runbooks'),
 };
 
 // =============================================================================
