@@ -152,7 +152,10 @@ export const IncidentTrendChart: React.FC<{
         </div>
       )}
 
-      <div style={{ height: showCompactSummary ? 'auto' : 160 }}>
+      {showCompactSummary && (
+        <p className="text-xs text-label-tertiary mb-2">{compactSummaryText}</p>
+      )}
+      <div style={{ height: 160 }}>
         {isLoading ? (
           <div className="w-full flex items-center justify-center" style={{ height: 160 }}>
             <div className="w-5 h-5 border-2 border-accent-primary/30 border-t-accent-primary rounded-full animate-spin" />
@@ -160,15 +163,6 @@ export const IncidentTrendChart: React.FC<{
         ) : chartData.length === 0 ? (
           <div className="w-full flex items-center justify-center text-sm text-label-tertiary" style={{ height: 160 }}>
             No incident data for this period
-          </div>
-        ) : showCompactSummary ? (
-          <div className="flex items-center gap-3 py-6 px-2">
-            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-health-healthy/10 flex items-center justify-center">
-              <svg className="w-5 h-5 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <p className="text-sm text-label-secondary leading-relaxed">{compactSummaryText}</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">

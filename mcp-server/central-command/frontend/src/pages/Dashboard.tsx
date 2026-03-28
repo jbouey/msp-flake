@@ -40,7 +40,7 @@ export const Dashboard: React.FC = () => {
       {/* Hero compliance score + 3 secondary KPIs */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 stagger-list">
         {/* Hero compliance gauge */}
-        <GlassCard className="lg:col-span-1 flex flex-col items-center justify-center py-6">
+        <GlassCard className="lg:col-span-1 flex flex-col items-center justify-center py-3">
           {statsLoading ? (
             <div className="skeleton w-[128px] h-[128px] rounded-full" />
           ) : (
