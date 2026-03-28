@@ -82,7 +82,7 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
         {/* Compliant */}
         <div className="text-center">
           <div className="text-3xl font-bold text-health-healthy">
-            {summary.by_compliance.compliant}
+            {summary.by_compliance?.compliant ?? 0}
           </div>
           <div className="text-sm text-label-secondary">Compliant</div>
         </div>
@@ -90,7 +90,7 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
         {/* Drifted */}
         <div className="text-center">
           <div className="text-3xl font-bold text-health-critical">
-            {summary.by_compliance.drifted}
+            {summary.by_compliance?.drifted ?? 0}
           </div>
           <div className="text-sm text-label-secondary">Drifted</div>
         </div>
@@ -98,7 +98,7 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
         {/* Unknown */}
         <div className="text-center">
           <div className="text-3xl font-bold text-slate-400">
-            {summary.by_compliance.unknown}
+            {summary.by_compliance?.unknown ?? 0}
           </div>
           <div className="text-sm text-label-secondary">Unknown</div>
         </div>
@@ -106,7 +106,7 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
         {/* Medical */}
         <div className="text-center">
           <div className="text-3xl font-bold text-red-400">
-            {summary.medical_devices.total}
+            {summary.medical_devices?.total ?? 0}
           </div>
           <div className="text-sm text-label-secondary">Medical</div>
         </div>
@@ -128,31 +128,31 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="rounded-lg p-3 bg-blue-500/10 border border-blue-500/30 text-center">
             <div className="text-sm font-medium text-blue-400">Workstations</div>
-            <div className="text-2xl font-bold text-label-primary">{summary.by_type.workstations}</div>
+            <div className="text-2xl font-bold text-label-primary">{summary.by_type?.workstations ?? 0}</div>
           </div>
           <div className="rounded-lg p-3 bg-purple-500/10 border border-purple-500/30 text-center">
             <div className="text-sm font-medium text-purple-400">Servers</div>
-            <div className="text-2xl font-bold text-label-primary">{summary.by_type.servers}</div>
+            <div className="text-2xl font-bold text-label-primary">{summary.by_type?.servers ?? 0}</div>
           </div>
           <div className="rounded-lg p-3 bg-orange-500/10 border border-orange-500/30 text-center">
             <div className="text-sm font-medium text-orange-400">Network</div>
-            <div className="text-2xl font-bold text-label-primary">{summary.by_type.network}</div>
+            <div className="text-2xl font-bold text-label-primary">{summary.by_type?.network ?? 0}</div>
           </div>
           <div className="rounded-lg p-3 bg-slate-500/10 border border-slate-500/30 text-center">
             <div className="text-sm font-medium text-slate-400">Printers</div>
-            <div className="text-2xl font-bold text-label-primary">{summary.by_type.printers}</div>
+            <div className="text-2xl font-bold text-label-primary">{summary.by_type?.printers ?? 0}</div>
           </div>
         </div>
       </div>
 
       {/* Medical device notice */}
-      {summary.medical_devices.total > 0 && (
+      {(summary.medical_devices?.total ?? 0) > 0 && (
         <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
           <div className="flex items-center gap-2">
             <span className="text-lg">⚠️</span>
             <div className="text-sm text-red-400">
-              <strong>{summary.medical_devices.total} medical device(s) detected</strong> - Excluded from compliance scanning by default for patient safety.
-              {summary.medical_devices.excluded_by_default && ' Manual opt-in required for monitoring.'}
+              <strong>{summary.medical_devices?.total ?? 0} medical device(s) detected</strong> - Excluded from compliance scanning by default for patient safety.
+              {summary.medical_devices?.excluded_by_default && ' Manual opt-in required for monitoring.'}
             </div>
           </div>
         </div>

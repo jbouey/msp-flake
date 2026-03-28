@@ -115,13 +115,13 @@ const SummaryCard: React.FC<{ summary: SiteWorkstationSummary }> = ({ summary })
                   {WORKSTATION_CHECK_LABELS[checkType] || checkType}
                 </div>
                 <div className={`text-xl font-bold ${
-                  data.rate >= 80 ? 'text-health-healthy' :
-                  data.rate >= 50 ? 'text-health-warning' : 'text-health-critical'
+                  (data.rate ?? 0) >= 80 ? 'text-health-healthy' :
+                  (data.rate ?? 0) >= 50 ? 'text-health-warning' : 'text-health-critical'
                 }`}>
-                  {data.rate.toFixed(0)}%
+                  {(data.rate ?? 0).toFixed(0)}%
                 </div>
                 <div className="text-xs text-label-tertiary">
-                  {data.compliant}/{data.compliant + data.drifted + data.error}
+                  {data.compliant ?? 0}/{(data.compliant ?? 0) + (data.drifted ?? 0) + (data.error ?? 0)}
                 </div>
               </div>
             ))}
