@@ -1118,10 +1118,10 @@ async def lifespan(app: FastAPI):
                 pool = await get_pool()
                 async with pool.acquire() as conn:
                     site_ids = await conn.fetch(
-                        "SELECT id FROM sites WHERE status = 'active'"
+                        "SELECT DISTINCT site_id FROM compliance_bundles"
                     )
                     for row in site_ids:
-                        site_id = row["id"]
+                        site_id = row["site_id"]
                         breaks = await conn.fetch("""
                             SELECT a.id, a.chain_position, a.bundle_hash, b.prev_hash
                             FROM compliance_bundles a
