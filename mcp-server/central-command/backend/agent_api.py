@@ -65,8 +65,14 @@ MONITORING_ONLY_CHECKS = {
     "backup_verification",
     # Encryption — BitLocker needs TPM/Pro edition, FileVault needs user auth
     "bitlocker_status",
+    "bitlocker",
     # Credential staleness — informational, not auto-fixable
     "credential_stale",
+    # Device reachability — host offline, nothing to remediate
+    "device_unreachable",
+    # Screen lock — policy enforcement, not auto-fixable remotely
+    "screen_lock",
+    "screen_lock_policy",
 }
 
 
@@ -780,7 +786,7 @@ async def report_incident(
                 )
 
                 try:
-                    await record_l2_decision(db, incident_id, decision)
+                    await record_l2_decision(db, incident_id, decision, incident_type=incident.incident_type)
                 except Exception as e:
                     logger.error(f"Failed to record L2 decision: {e}")
 
@@ -1642,8 +1648,10 @@ async def report_execution_telemetry(
         hostname = exec_data.get("hostname", "unknown")
         runbook_id = exec_data.get("runbook_id", "unknown")
         pattern_sig = exec_data.get("pattern_signature")
-        if not pattern_sig and incident_type and hostname:
-            pattern_sig = f"{incident_type}:{runbook_id}:{hostname}"
+        if not pattern_sig and incident_type and runbook_id:
+            from dashboard_api.l2_planner import generate_pattern_signature
+            check_type = exec_data.get("check_type", "unknown")
+            pattern_sig = generate_pattern_signature(incident_type, check_type, runbook_id)
 
         await db.execute(text("""
             INSERT INTO execution_telemetry (
@@ -1736,7 +1744,75 @@ async def agent_l2_plan(
     if not is_l2_available():
         raise HTTPException(status_code=503, detail="L2 LLM not configured (no API key)")
 
+    # Monitoring-only guard: reject checks that can't be auto-remediated.
+    # Return an escalate response without burning an LLM call.
+    check_type = request.raw_data.get("check_type", request.incident_type)
+    if request.incident_type in MONITORING_ONLY_CHECKS or check_type in MONITORING_ONLY_CHECKS:
+        logger.info(f"L2 skip (monitoring-only): type={request.incident_type} check={check_type}")
+        return {
+            "incident_id": request.incident_id,
+            "recommended_action": "escalate",
+            "action_params": {},
+            "confidence": 0.0,
+            "reasoning": f"Check type '{check_type}' is monitoring-only and cannot be auto-remediated.",
+            "runbook_id": "",
+            "requires_approval": False,
+            "escalate_to_l3": True,
+            "context_used": {
+                "llm_model": "none",
+                "llm_latency_ms": 0,
+                "pattern_signature": "",
+                "alternative_runbooks": [],
+                "skipped_reason": "monitoring_only",
+            },
+        }
+
     logger.info(f"L2 plan request: site={request.site_id} host={request.host_id} type={request.incident_type}")
+
+    # L2 decision cache: reuse recent decisions for the same pattern_signature
+    cached = None
+    if request.pattern_signature:
+        from dashboard_api.l2_planner import lookup_cached_l2_decision
+        try:
+            cached = await lookup_cached_l2_decision(db, request.pattern_signature)
+        except Exception as e:
+            logger.warning(f"L2 cache lookup failed (proceeding to LLM): {e}")
+        if cached:
+            logger.info(f"L2 cache hit: pattern={request.pattern_signature} runbook={cached.runbook_id}")
+            action = "escalate"
+            action_params = {}
+            escalate = True
+            if cached.runbook_id and cached.confidence >= 0.6:
+                escalation_only_runbooks = {"RB-CERT-001", "RB-DISK-001"}
+                is_escalation = (
+                    cached.runbook_id in escalation_only_runbooks
+                    or cached.runbook_id.startswith("ESC-")
+                )
+                if is_escalation:
+                    action = "escalate"
+                    escalate = True
+                else:
+                    action = "execute_runbook"
+                    escalate = False
+                action_params = {"runbook_id": cached.runbook_id}
+
+            return {
+                "incident_id": request.incident_id,
+                "recommended_action": action,
+                "action_params": action_params,
+                "confidence": cached.confidence,
+                "reasoning": cached.reasoning,
+                "runbook_id": cached.runbook_id or "",
+                "requires_approval": cached.requires_human_review,
+                "escalate_to_l3": escalate,
+                "context_used": {
+                    "llm_model": cached.llm_model,
+                    "llm_latency_ms": 0,
+                    "pattern_signature": cached.pattern_signature,
+                    "alternative_runbooks": cached.alternative_runbooks,
+                    "cache_status": "cached_24h",
+                },
+            }
 
     hipaa_controls = None
     hipaa_ctrl = request.raw_data.get("hipaa_control")
@@ -1753,7 +1829,7 @@ async def agent_l2_plan(
     )
 
     try:
-        await record_l2_decision(db, request.incident_id, decision)
+        await record_l2_decision(db, request.incident_id, decision, incident_type=request.incident_type)
         await db.commit()
     except Exception as e:
         logger.error(f"Failed to record L2 decision: {e}")

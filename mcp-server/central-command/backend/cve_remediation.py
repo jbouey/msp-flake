@@ -15,13 +15,14 @@ for runbook/L1 rule creation.
 """
 
 import json
-import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict
 
+import structlog
+
 from .fleet import get_pool
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # =============================================================================
@@ -325,11 +326,13 @@ async def process_new_cve_matches(conn) -> Dict:
     }
 
     # Find unprocessed matches (remediation_status IS NULL)
+    # Skip inactive/deprecated sites to avoid clogging the queue
     matches = await conn.fetch("""
         SELECT fm.id, fm.cve_id, fm.site_id, fm.appliance_id,
                ce.cve_id AS cve_id_str, ce.severity
         FROM cve_fleet_matches fm
         JOIN cve_entries ce ON ce.id = fm.cve_id
+        JOIN sites s ON s.site_id = fm.site_id AND s.status != 'inactive'
         WHERE fm.remediation_status IS NULL
         ORDER BY
             CASE ce.severity
@@ -340,14 +343,14 @@ async def process_new_cve_matches(conn) -> Dict:
                 ELSE 4
             END,
             fm.created_at ASC
-        LIMIT 100
+        LIMIT 500
     """)
 
     if not matches:
-        logger.info("No unprocessed CVE fleet matches found")
+        logger.debug("CVE remediation: no unprocessed matches")
         return stats
 
-    logger.info(f"Processing {len(matches)} CVE fleet matches")
+    logger.info("CVE remediation processing", batch_size=len(matches))
 
     for match in matches:
         match_id = match["id"]
@@ -443,11 +446,18 @@ async def cve_remediation_loop():
             async with pool.acquire() as conn:
                 stats = await process_new_cve_matches(conn)
                 if stats["processed"] > 0:
-                    logger.info(f"CVE remediation loop completed: {stats}")
+                    logger.info("CVE remediation loop completed",
+                                processed=stats["processed"],
+                                runbooks=stats["runbooks_generated"],
+                                auto_remediated=stats["auto_remediated"],
+                                skipped=stats["skipped"],
+                                errors=stats["errors"])
         except Exception as e:
-            logger.error(f"CVE remediation loop error: {e}")
+            logger.error("CVE remediation loop error", error=str(e))
 
-        await asyncio.sleep(1800)  # Every 30 minutes
+        # Drain backlog faster (5 min), then steady-state (30 min)
+        interval = 300 if stats.get("processed", 0) > 0 else 1800
+        await asyncio.sleep(interval)
 
 
 # =============================================================================

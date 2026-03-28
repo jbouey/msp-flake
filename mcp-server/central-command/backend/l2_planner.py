@@ -11,7 +11,7 @@ import os
 import re
 import json
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 import structlog
@@ -21,8 +21,72 @@ logger = structlog.get_logger()
 
 # --- Daily L2 cost circuit breaker ---
 MAX_DAILY_L2_CALLS = int(os.getenv("MAX_DAILY_L2_CALLS", "500"))
+# In-memory fallback (used only when Redis is unavailable)
 _daily_l2_calls = 0
 _daily_l2_reset = datetime.now(timezone.utc).date()
+
+
+async def _get_and_increment_daily_l2_calls() -> int:
+    """Get current daily L2 call count and increment it atomically.
+
+    Uses Redis INCR for multi-process safety. Falls back to in-memory
+    counter if Redis is unavailable (per-process, not shared).
+
+    Returns the count AFTER incrementing (1-based).
+    """
+    global _daily_l2_calls, _daily_l2_reset
+
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    redis_key = f"l2:daily_calls:{today_str}"
+
+    # Try Redis first (shared across all workers)
+    try:
+        from dashboard_api.shared import get_redis_client
+        rc = get_redis_client()
+        if rc is not None:
+            count = await rc.incr(redis_key)
+            if count == 1:
+                # First call today — set TTL so key auto-expires
+                await rc.expire(redis_key, 86400)
+            return count
+    except Exception as e:
+        logger.warning("L2 circuit breaker Redis error, using in-memory fallback", error=str(e))
+
+    # In-memory fallback (per-process only)
+    today = datetime.now(timezone.utc).date()
+    if today != _daily_l2_reset:
+        _daily_l2_calls = 0
+        _daily_l2_reset = today
+
+    _daily_l2_calls += 1
+    return _daily_l2_calls
+
+
+async def _get_daily_l2_call_count() -> int:
+    """Get current daily L2 call count WITHOUT incrementing.
+
+    Used for limit-check before deciding to proceed.
+    """
+    global _daily_l2_calls, _daily_l2_reset
+
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    redis_key = f"l2:daily_calls:{today_str}"
+
+    try:
+        from dashboard_api.shared import get_redis_client
+        rc = get_redis_client()
+        if rc is not None:
+            val = await rc.get(redis_key)
+            return int(val) if val else 0
+    except Exception as e:
+        logger.warning("L2 circuit breaker Redis read error, using in-memory fallback", error=str(e))
+
+    today = datetime.now(timezone.utc).date()
+    if today != _daily_l2_reset:
+        _daily_l2_calls = 0
+        _daily_l2_reset = today
+
+    return _daily_l2_calls
 
 # --- Prompt injection mitigation ---
 # Patterns that look like instruction injection attempts
@@ -435,16 +499,11 @@ async def analyze_incident(
     details = details or {}
     pre_state = pre_state or {}
 
-    # --- Daily cost circuit breaker ---
-    global _daily_l2_calls, _daily_l2_reset
-    today = datetime.now(timezone.utc).date()
-    if today != _daily_l2_reset:
-        _daily_l2_calls = 0
-        _daily_l2_reset = today
-
-    if _daily_l2_calls >= MAX_DAILY_L2_CALLS:
+    # --- Daily cost circuit breaker (Redis-backed, multi-worker safe) ---
+    current_count = await _get_daily_l2_call_count()
+    if current_count >= MAX_DAILY_L2_CALLS:
         logger.warning("L2 daily call limit reached, escalating to L3",
-                        daily_calls=_daily_l2_calls, limit=MAX_DAILY_L2_CALLS)
+                        daily_calls=current_count, limit=MAX_DAILY_L2_CALLS)
         return L2Decision(
             runbook_id=None,
             reasoning=f"L2 daily call limit ({MAX_DAILY_L2_CALLS}) exceeded. Escalating to L3 human review.",
@@ -457,7 +516,7 @@ async def analyze_incident(
             error="daily_limit_exceeded",
         )
 
-    _daily_l2_calls += 1
+    await _get_and_increment_daily_l2_calls()
 
     # Load all runbooks (static + DB-backed)
     all_runbooks = await _load_dynamic_runbooks()
@@ -568,8 +627,14 @@ async def record_l2_decision(
     db,
     incident_id: str,
     decision: L2Decision,
+    incident_type: str = "unknown",
 ) -> None:
-    """Record L2 decision for data flywheel analysis."""
+    """Record L2 decision for data flywheel analysis.
+
+    Args:
+        incident_type: The actual incident type (e.g. 'backup_verification').
+            Critical for flywheel pattern tracking — do NOT pass 'unknown'.
+    """
     from sqlalchemy import text
 
     await db.execute(text("""
@@ -610,10 +675,50 @@ async def record_l2_decision(
         """), {
             "pattern_id": decision.pattern_signature,
             "pattern_signature": decision.pattern_signature,
-            "incident_type": "unknown",  # Would be passed from incident
+            "incident_type": incident_type,
             "runbook_id": decision.runbook_id,
             "now": datetime.now(timezone.utc),
         })
+
+
+async def lookup_cached_l2_decision(db, pattern_signature: str, max_age_hours: int = 24) -> Optional["L2Decision"]:
+    """Look up a recent L2 decision with the same pattern_signature.
+
+    Returns an L2Decision if a cached decision exists within max_age_hours,
+    or None if no cache hit. This avoids redundant LLM calls for identical
+    incident patterns.
+    """
+    if not pattern_signature:
+        return None
+
+    from sqlalchemy import text
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    result = await db.execute(text("""
+        SELECT runbook_id, reasoning, confidence, pattern_signature,
+               llm_model, llm_latency_ms, requires_human_review
+        FROM l2_decisions
+        WHERE pattern_signature = :sig
+          AND created_at >= :cutoff
+          AND confidence > 0
+        ORDER BY created_at DESC
+        LIMIT 1
+    """), {"sig": pattern_signature, "cutoff": cutoff})
+
+    row = result.fetchone()
+    if row is None:
+        return None
+
+    return L2Decision(
+        runbook_id=row[0],
+        reasoning=row[1],
+        confidence=row[2],
+        alternative_runbooks=[],
+        requires_human_review=row[6],
+        pattern_signature=row[3],
+        llm_model=row[4] or "cached",
+        llm_latency_ms=row[5] or 0,
+    )
 
 
 def is_l2_available() -> bool:

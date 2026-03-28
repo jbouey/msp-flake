@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// Haiku 4.5 pricing (per million tokens)
+// Sonnet 4 pricing (per million tokens)
 const (
-	HaikuInputPricePerMTok  = 0.80 // $0.80 per 1M input tokens
-	HaikuOutputPricePerMTok = 4.00 // $4.00 per 1M output tokens
+	SonnetInputPricePerMTok  = 3.00  // $3.00 per 1M input tokens
+	SonnetOutputPricePerMTok = 15.00 // $15.00 per 1M output tokens
 )
 
 // BudgetTracker enforces spending and rate limits for L2 LLM calls.
@@ -41,8 +41,8 @@ type BudgetConfig struct {
 // DefaultBudgetConfig returns sane defaults.
 func DefaultBudgetConfig() BudgetConfig {
 	return BudgetConfig{
-		DailyBudgetUSD:     10.00,
-		MaxCallsPerHour:    60,
+		DailyBudgetUSD:     5.00,
+		MaxCallsPerHour:    30,
 		MaxConcurrentCalls: 3,
 	}
 }
@@ -50,10 +50,10 @@ func DefaultBudgetConfig() BudgetConfig {
 // NewBudgetTracker creates a new budget tracker.
 func NewBudgetTracker(cfg BudgetConfig) *BudgetTracker {
 	if cfg.DailyBudgetUSD <= 0 {
-		cfg.DailyBudgetUSD = 10.00
+		cfg.DailyBudgetUSD = 5.00
 	}
 	if cfg.MaxCallsPerHour <= 0 {
-		cfg.MaxCallsPerHour = 60
+		cfg.MaxCallsPerHour = 30
 	}
 	if cfg.MaxConcurrentCalls <= 0 {
 		cfg.MaxConcurrentCalls = 3
@@ -123,8 +123,8 @@ func (b *BudgetTracker) RecordCost(inputTokens, outputTokens int) float64 {
 
 // CalculateCost computes the cost for a given number of tokens.
 func CalculateCost(inputTokens, outputTokens int) float64 {
-	inputCost := float64(inputTokens) / 1_000_000 * HaikuInputPricePerMTok
-	outputCost := float64(outputTokens) / 1_000_000 * HaikuOutputPricePerMTok
+	inputCost := float64(inputTokens) / 1_000_000 * SonnetInputPricePerMTok
+	outputCost := float64(outputTokens) / 1_000_000 * SonnetOutputPricePerMTok
 	return inputCost + outputCost
 }
 

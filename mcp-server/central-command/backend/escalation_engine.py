@@ -601,6 +601,7 @@ class EscalationEngine:
                 prev = await conn.fetchrow("""
                     SELECT id, recurrence_count FROM escalation_tickets
                     WHERE site_id = $1 AND incident_type = $2 AND status = 'resolved'
+                    AND resolved_at > NOW() - INTERVAL '30 days'
                     ORDER BY resolved_at DESC LIMIT 1
                 """, site_id, incident_type)
                 if prev:
@@ -678,13 +679,7 @@ class EscalationEngine:
     ) -> List[Dict[str, Any]]:
         """Send notifications to all appropriate channels based on priority."""
         channels = self._get_channels_for_priority(settings, priority)
-        results = []
-
-        for channel in channels:
-            result = await self._send_and_log(conn, ticket_id, channel, settings, payload)
-            results.append(result)
-
-        return results
+        return await self._send_and_log_bulk(conn, ticket_id, channels, settings, payload)
 
     async def _send_client_notifications(
         self,
@@ -695,7 +690,6 @@ class EscalationEngine:
         priority: str
     ) -> List[Dict[str, Any]]:
         """Send notifications directly to client org based on their preferences."""
-        results = []
         channels = []
 
         if client_prefs.get('email_enabled') and client_prefs.get('email_recipients'):
@@ -705,17 +699,14 @@ class EscalationEngine:
         if client_prefs.get('teams_enabled') and client_prefs.get('teams_webhook_url'):
             channels.append('teams')
 
-        # Build settings dict compatible with _send_and_log
-        settings = dict(client_prefs)
-
-        for channel in channels:
-            result = await self._send_and_log(conn, ticket_id, channel, settings, payload)
-            results.append(result)
-
         if not channels:
             logger.warning(f"Client direct escalation for {ticket_id} but no channels configured")
+            return []
 
-        return results
+        # Build settings dict compatible with send functions
+        settings = dict(client_prefs)
+
+        return await self._send_and_log_bulk(conn, ticket_id, channels, settings, payload)
 
     def _get_channels_for_priority(self, settings: Dict[str, Any], priority: str) -> List[str]:
         """Determine which channels to notify based on priority."""
@@ -763,15 +754,20 @@ class EscalationEngine:
 
         return channels
 
-    async def _send_and_log(
+    async def _send_and_log_bulk(
         self,
         conn,
         ticket_id: str,
-        channel: str,
+        channels: List[str],
         settings: Dict[str, Any],
         payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Send notification to a channel and log the attempt."""
+    ) -> List[Dict[str, Any]]:
+        """Send notifications to all channels and bulk-log delivery attempts.
+
+        Replaces the previous N+1 pattern where each channel triggered a
+        separate INSERT into notification_deliveries. Now collects all results
+        and writes them in a single executemany() call.
+        """
         send_funcs = {
             'slack': send_slack_notification,
             'pagerduty': send_pagerduty_notification,
@@ -780,32 +776,41 @@ class EscalationEngine:
             'webhook': send_webhook_notification
         }
 
-        send_func = send_funcs.get(channel)
-        if not send_func:
-            return {"channel": channel, "status": "error", "error": "Unknown channel"}
+        results = []
+        delivery_rows = []
 
-        try:
-            result = await send_func(settings, payload)
-        except Exception as e:
-            result = {"status": "error", "error": str(e)}
+        for channel in channels:
+            send_func = send_funcs.get(channel)
+            if not send_func:
+                results.append({"channel": channel, "status": "error", "error": "Unknown channel"})
+                continue
 
-        # Log delivery attempt
-        recipient = self._get_recipient_for_channel(settings, channel)
-        await conn.execute("""
-            INSERT INTO notification_deliveries (
-                ticket_id, channel, recipient, status,
-                response_code, error_message, sent_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
-        """,
-            ticket_id,
-            channel,
-            recipient,
-            result.get('status', 'unknown'),
-            result.get('code'),
-            result.get('error')
-        )
+            try:
+                result = await send_func(settings, payload)
+            except Exception as e:
+                result = {"status": "error", "error": str(e)}
 
-        return {"channel": channel, **result}
+            recipient = self._get_recipient_for_channel(settings, channel)
+            delivery_rows.append((
+                ticket_id,
+                channel,
+                recipient,
+                result.get('status', 'unknown'),
+                result.get('code'),
+                result.get('error'),
+            ))
+            results.append({"channel": channel, **result})
+
+        # Bulk INSERT all delivery logs in one round-trip
+        if delivery_rows:
+            await conn.executemany("""
+                INSERT INTO notification_deliveries (
+                    ticket_id, channel, recipient, status,
+                    response_code, error_message, sent_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            """, delivery_rows)
+
+        return results
 
     def _get_recipient_for_channel(self, settings: Dict[str, Any], channel: str) -> str:
         """Get a display-friendly recipient string for logging."""
