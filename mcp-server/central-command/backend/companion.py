@@ -1616,8 +1616,10 @@ async def companion_upload_document(
     try:
         mc = _get_minio_client()
         _ensure_bucket(mc)
-        mc.put_object(DOCUMENTS_BUCKET, minio_key, io.BytesIO(file_bytes),
-                       length=len(file_bytes), content_type=content_type)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: mc.put_object(
+            DOCUMENTS_BUCKET, minio_key, io.BytesIO(file_bytes),
+            length=len(file_bytes), content_type=content_type))
     except Exception as e:
         logger.error(f"MinIO upload failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to store file")

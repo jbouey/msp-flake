@@ -95,14 +95,15 @@ func (s *Server) Serve() error {
 		grpc.MaxSendMsgSize(maxMsgSize),
 	}
 
-	// Load TLS credentials
+	// Load TLS credentials — fail-closed if TLS is unavailable
 	tlsCreds, err := s.loadTLS()
 	if err != nil {
-		log.Printf("[gRPC] No TLS configured (%v), starting insecure", err)
-	} else if tlsCreds != nil {
-		opts = append(opts, grpc.Creds(tlsCreds))
-		log.Printf("[gRPC] TLS enabled")
+		log.Printf("[gRPC] FATAL: TLS failed to load (%v) — refusing to start insecure", err)
+		lis.Close()
+		return fmt.Errorf("gRPC TLS required but unavailable: %w", err)
 	}
+	opts = append(opts, grpc.Creds(tlsCreds))
+	log.Printf("[gRPC] TLS enabled")
 
 	if s.agentCA == nil {
 		log.Println("[gRPC] WARNING: starting without agent_ca — certificate enrollment disabled")

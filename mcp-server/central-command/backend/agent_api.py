@@ -6,6 +6,7 @@ and Go daemons call to report incidents, submit evidence, sync rules,
 report telemetry, and check in.
 """
 
+import asyncio
 import hashlib
 import json
 import os
@@ -1239,20 +1240,21 @@ async def submit_evidence(
 
         data = BytesIO(evidence_json.encode())
 
-        minio_client.put_object(
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: minio_client.put_object(
             MINIO_BUCKET,
             object_name,
             data,
             length=len(evidence_json),
             content_type="application/json"
-        )
+        ))
 
         s3_uri = f"s3://{MINIO_BUCKET}/{object_name}"
 
         try:
             retention_until = now + timedelta(days=WORM_RETENTION_DAYS)
             retention = Retention(COMPLIANCE, retention_until)
-            minio_client.set_object_retention(MINIO_BUCKET, object_name, retention)
+            await loop.run_in_executor(None, lambda: minio_client.set_object_retention(MINIO_BUCKET, object_name, retention))
             logger.info("Set WORM retention on evidence",
                        bundle_id=evidence.bundle_id,
                        retention_until=retention_until.isoformat())
@@ -1945,9 +1947,10 @@ async def upload_evidence_worm(
     bundle_uri = None
     sig_uri = None
     minio_client = get_minio_client()
+    loop = asyncio.get_event_loop()
 
     try:
-        minio_client.put_object(
+        await loop.run_in_executor(None, lambda: minio_client.put_object(
             MINIO_BUCKET,
             bundle_key,
             BytesIO(bundle_content),
@@ -1959,12 +1962,12 @@ async def upload_evidence_worm(
                 "uploaded_at": now.isoformat(),
                 "bundle_hash": actual_hash
             }
-        )
+        ))
         bundle_uri = f"s3://{MINIO_BUCKET}/{bundle_key}"
 
         try:
             retention = Retention(COMPLIANCE, retention_until)
-            minio_client.set_object_retention(MINIO_BUCKET, bundle_key, retention)
+            await loop.run_in_executor(None, lambda: minio_client.set_object_retention(MINIO_BUCKET, bundle_key, retention))
             logger.info("Set WORM retention on bundle",
                        bundle_id=x_bundle_id,
                        retention_until=retention_until.isoformat())
@@ -1974,7 +1977,7 @@ async def upload_evidence_worm(
                           error=str(e))
 
         if sig_content:
-            minio_client.put_object(
+            await loop.run_in_executor(None, lambda: minio_client.put_object(
                 MINIO_BUCKET,
                 sig_key,
                 BytesIO(sig_content),
@@ -1984,11 +1987,11 @@ async def upload_evidence_worm(
                     "bundle_id": x_bundle_id,
                     "client_id": x_client_id
                 }
-            )
+            ))
             sig_uri = f"s3://{MINIO_BUCKET}/{sig_key}"
 
             try:
-                minio_client.set_object_retention(MINIO_BUCKET, sig_key, retention)
+                await loop.run_in_executor(None, lambda: minio_client.set_object_retention(MINIO_BUCKET, sig_key, retention))
             except Exception as e:
                 logger.warning("Could not set Object Lock on signature", error=str(e))
 

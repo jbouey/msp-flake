@@ -126,6 +126,13 @@ in
     neededForBoot = false;
   };
 
+  # Hardened /tmp — noexec prevents execution of dropped payloads
+  fileSystems."/tmp" = {
+    device = "tmpfs";
+    fsType = "tmpfs";
+    options = [ "noexec" "nosuid" "nodev" "mode=1777" "size=512M" ];
+  };
+
   # ============================================================================
   # Boot configuration for installed system (not live ISO)
   # ============================================================================
@@ -480,12 +487,12 @@ EOF
   };
 
   services.avahi = {
-    enable = true;
+    enable = true;  # Keep for mDNS resolution
     nssmdns4 = true;
     publish = {
-      enable = true;
-      addresses = true;
-      workstation = true;
+      enable = false;  # Don't advertise this appliance
+      addresses = false;
+      workstation = false;
     };
   };
 

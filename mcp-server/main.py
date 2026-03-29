@@ -1139,6 +1139,7 @@ async def lifespan(app: FastAPI):
                              AND b.site_id = a.site_id
                             WHERE a.bundle_hash != b.prev_hash
                               AND a.site_id = $1
+                              AND a.created_at > NOW() - INTERVAL '24 hours'
                             LIMIT 10
                         """, site_id)
                         if breaks:

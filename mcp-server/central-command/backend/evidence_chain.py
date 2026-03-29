@@ -12,6 +12,7 @@ HIPAA Controls:
 - §164.312(c)(1) - Integrity Controls (provable evidence authenticity)
 """
 
+import asyncio
 import os
 import json
 import hashlib
@@ -1163,8 +1164,9 @@ async def upload_to_worm_background(
         )
 
         # Ensure bucket exists
-        if not minio_client.bucket_exists(MINIO_BUCKET):
-            minio_client.make_bucket(MINIO_BUCKET)
+        loop = asyncio.get_event_loop()
+        if not await loop.run_in_executor(None, lambda: minio_client.bucket_exists(MINIO_BUCKET)):
+            await loop.run_in_executor(None, lambda: minio_client.make_bucket(MINIO_BUCKET))
 
         now = datetime.now(timezone.utc)
         date_prefix = now.strftime('%Y/%m/%d')
@@ -1175,7 +1177,7 @@ async def upload_to_worm_background(
         bundle_bytes = bundle_json.encode()
 
         # Upload bundle
-        minio_client.put_object(
+        await loop.run_in_executor(None, lambda: minio_client.put_object(
             MINIO_BUCKET,
             bundle_key,
             BytesIO(bundle_bytes),
@@ -1187,7 +1189,7 @@ async def upload_to_worm_background(
                 "bundle_hash": bundle_hash,
                 "uploaded_at": now.isoformat()
             }
-        )
+        ))
 
         s3_uri = f"s3://{MINIO_BUCKET}/{bundle_key}"
 
@@ -1195,7 +1197,7 @@ async def upload_to_worm_background(
         try:
             retention_until = now + timedelta(days=WORM_RETENTION_DAYS)
             retention = Retention(COMPLIANCE, retention_until)
-            minio_client.set_object_retention(MINIO_BUCKET, bundle_key, retention)
+            await loop.run_in_executor(None, lambda: minio_client.set_object_retention(MINIO_BUCKET, bundle_key, retention))
         except Exception as e:
             # Bucket may already have default retention
             logger.debug(f"Object Lock already set or not available: {e}")

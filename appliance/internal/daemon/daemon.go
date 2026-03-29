@@ -473,27 +473,27 @@ func (d *Daemon) runCycle(ctx context.Context) {
 	// Runs async so slow DC responses don't block the main loop.
 	// Only deploy when subscription is active — expired sites get drift detection but not healing.
 	if d.config.WorkstationEnabled && d.isSubscriptionActive() {
-		go d.deployer.runAutoDeployIfNeeded(ctx)
+		d.safeGo("autoDeploy", func() { d.deployer.runAutoDeployIfNeeded(ctx) })
 	}
 
 	// Self-healing: watch for stale agent heartbeats and auto-redeploy.
-	go d.selfHealer.runSelfHealIfNeeded(ctx)
+	d.safeGo("selfHeal", func() { d.selfHealer.runSelfHealIfNeeded(ctx) })
 
 	// Drift scanning: periodic security checks on Windows targets.
 	// Detects firewall disabled, rogue users, rogue tasks, stopped services.
 	if d.config.WorkstationEnabled {
-		go d.scanner.runDriftScanIfNeeded(ctx)
+		d.safeGo("driftScan", func() { d.scanner.runDriftScanIfNeeded(ctx) })
 	}
 
 	// Linux drift scanning: periodic security checks on Linux targets.
 	// Scans appliance self + any remote linux_targets from checkin response.
 	if d.config.EnableDriftDetection {
-		go d.scanner.runLinuxScanIfNeeded(ctx)
+		d.safeGo("linuxScan", func() { d.scanner.runLinuxScanIfNeeded(ctx) })
 	}
 
 	// Network scanning: port enumeration + host reachability checks.
 	if d.config.EnableDriftDetection {
-		go d.netScan.runNetScanIfNeeded(ctx)
+		d.safeGo("netScan", func() { d.netScan.runNetScanIfNeeded(ctx) })
 	}
 
 	elapsed := time.Since(start)

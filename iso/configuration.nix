@@ -81,7 +81,7 @@
   services.journald.extraConfig = ''
     Storage=persistent
     Compress=yes
-    SystemMaxUse=500M
+    SystemMaxUse=1G
     MaxRetentionSec=90day
   '';
 
@@ -103,6 +103,12 @@
     runtimeTime = "30s";
   };
 
+  # Disable core dumps — prevent PHI/credential leaks in crash dumps (HIPAA §164.312)
+  systemd.coredump.extraConfig = ''
+    Storage=none
+    ProcessSizeMax=0
+  '';
+
   # ============================================================================
   # Memory optimization for thin client
   # ============================================================================
@@ -120,6 +126,8 @@
     # HIPAA 164.312(a)(1) — Kernel hardening
     "kernel.randomize_va_space" = 2;
     "kernel.suid_dumpable" = 0;
+    # Disable core dumps — prevent PHI/credential leaks in crash dumps
+    "kernel.core_pattern" = "|/bin/false";
   };
 
   # Enable zram swap for thin client

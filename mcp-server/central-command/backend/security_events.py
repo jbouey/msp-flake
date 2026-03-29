@@ -5,6 +5,7 @@ and archives them to both PostgreSQL (partitioned) and MinIO (object lock).
 Events are append-only; no UPDATE or DELETE is permitted.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -191,14 +192,15 @@ async def _write_to_minio_worm(site_id: str, events: list):
         now = datetime.now(timezone.utc)
         key = f"{site_id}/{now.strftime('%Y/%m/%d')}/{now.strftime('%H%M%S')}_{len(events)}.json"
 
-        s3.put_object(
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: s3.put_object(
             Bucket=bucket,
             Key=key,
             Body=json.dumps(events).encode("utf-8"),
             ContentType="application/json",
             ObjectLockMode="COMPLIANCE",
             ObjectLockRetainUntilDate=now.replace(year=now.year + 7),  # 7-year HIPAA retention
-        )
+        ))
         logger.debug(f"WORM write: {bucket}/{key} ({len(events)} events)")
     except ImportError:
         pass  # boto3 not installed — MinIO feature unavailable
