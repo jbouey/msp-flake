@@ -60,7 +60,7 @@ class CVERemediateRequest(BaseModel):
 # =============================================================================
 
 @router.get("/summary")
-async def get_cve_summary():
+async def get_cve_summary(user: dict = Depends(require_auth)):
     """Global CVE summary with counts by severity and coverage percentage."""
     pool = await get_pool()
 
@@ -121,6 +121,7 @@ async def list_cves(
     search: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    user: dict = Depends(require_auth),
 ):
     """List CVEs with optional filters."""
     pool = await get_pool()
@@ -200,7 +201,7 @@ async def list_cves(
 
 
 @router.get("/cves/{cve_id}")
-async def get_cve_detail(cve_id: str):
+async def get_cve_detail(cve_id: str, user: dict = Depends(require_auth)):
     """Get full CVE detail including affected appliances."""
     pool = await get_pool()
 
@@ -246,7 +247,7 @@ async def get_cve_detail(cve_id: str):
 
 
 @router.put("/cves/{cve_id}/status")
-async def update_cve_status(cve_id: str, body: CVEStatusUpdate):
+async def update_cve_status(cve_id: str, body: CVEStatusUpdate, user: dict = Depends(require_auth)):
     """Update status for all fleet matches of a CVE."""
     pool = await get_pool()
 
@@ -270,14 +271,14 @@ async def update_cve_status(cve_id: str, body: CVEStatusUpdate):
 
 
 @router.post("/sync")
-async def trigger_sync(background_tasks: BackgroundTasks):
+async def trigger_sync(background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
     """Trigger manual NVD CVE sync."""
     background_tasks.add_task(_run_sync)
     return {"status": "sync_started"}
 
 
 @router.post("/cves/{cve_id}/generate-runbook")
-async def generate_runbook_for_cve(cve_id: str):
+async def generate_runbook_for_cve(cve_id: str, user: dict = Depends(require_auth)):
     """Manually trigger runbook generation for a specific CVE.
 
     Generates a preventative runbook from the CVE details and optionally
@@ -293,7 +294,7 @@ async def generate_runbook_for_cve(cve_id: str):
 
 
 @router.get("/cves/{cve_id}/remediation-status")
-async def get_remediation_status(cve_id: str):
+async def get_remediation_status(cve_id: str, user: dict = Depends(require_auth)):
     """Check remediation status for a CVE across the fleet.
 
     Returns runbook existence, auto-remediation status per match,
@@ -459,7 +460,7 @@ async def list_runbooks(user: dict = Depends(require_auth)):
 
 
 @router.get("/config")
-async def get_config():
+async def get_config(user: dict = Depends(require_auth)):
     """Get CVE Watch configuration."""
     pool = await get_pool()
     config = await pool.fetchrow("SELECT * FROM cve_watch_config LIMIT 1")
@@ -492,7 +493,7 @@ async def get_config():
 
 
 @router.put("/config")
-async def update_config(body: CVEWatchConfigUpdate):
+async def update_config(body: CVEWatchConfigUpdate, user: dict = Depends(require_auth)):
     """Update CVE Watch configuration."""
     pool = await get_pool()
 

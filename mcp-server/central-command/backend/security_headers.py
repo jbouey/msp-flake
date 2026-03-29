@@ -35,14 +35,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "upgrade-insecure-requests"  # Force HTTPS
     )
 
-    # Production CSP (stricter - no unsafe-eval)
+    # Production CSP (strict)
     PRODUCTION_CSP = (
         "default-src 'self'; "
         "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "  # Styled components still need this
-        "img-src 'self' data: https:; "
-        "font-src 'self' data:; "
-        "connect-src 'self' https://api.osiriscare.net wss://api.osiriscare.net; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "connect-src 'self' wss://dashboard.osiriscare.net; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'; "
@@ -63,9 +63,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         """Process request and add security headers to response."""
         response = await call_next(request)
 
-        # CSP is set by Caddy (edge proxy) — do NOT duplicate here.
-        # Duplicate CSP headers cause browsers to apply the most restrictive
-        # union, which can block legitimate functionality.
+        # Defense-in-depth: set CSP at app level (Caddy also sets it at edge)
+        response.headers["Content-Security-Policy"] = self.csp
 
         # Prevent clickjacking
         response.headers["X-Frame-Options"] = "DENY"
@@ -86,8 +85,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "max-age=31536000; includeSubDomains; preload"
             )
         else:
-            # Development: shorter HSTS to avoid issues
-            response.headers["Strict-Transport-Security"] = "max-age=86400"
+            # Development: still enforce HSTS but without preload
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
         # Permissions Policy (formerly Feature-Policy)
         # Restrict access to sensitive browser features
@@ -107,9 +106,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
 
-        # Remove server identification (if FastAPI adds it)
-        if "server" in response.headers:
-            del response.headers["server"]
+        # Override server identification to hide uvicorn
+        response.headers["Server"] = "OsirisCare"
 
         return response
 

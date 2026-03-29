@@ -1373,7 +1373,25 @@ app.include_router(metrics_router)  # Prometheus-compatible metrics endpoint
 # WebSocket endpoint for real-time event push
 @app.websocket("/ws/events")
 async def websocket_events(websocket: WebSocket):
-    await ws_manager.connect(websocket)
+    # Validate session token from query parameter before accepting connection
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+    try:
+        from dashboard_api.auth import validate_session, hash_token
+        async with async_session() as db:
+            user = await validate_session(db, token)
+        if not user:
+            await websocket.close(code=1008, reason="Invalid or expired token")
+            return
+    except Exception:
+        await websocket.close(code=1011, reason="Auth validation failed")
+        return
+
+    connected = await ws_manager.connect(websocket)
+    if not connected:
+        return
     try:
         while True:
             # Keep connection alive; client can send pings
@@ -1452,7 +1470,13 @@ async def root():
 
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
-    """Health check endpoint — runs all checks in parallel."""
+    """Public health check — uptime monitors, Docker healthcheck, Caddy."""
+    return JSONResponse(content={"status": "ok"})
+
+
+@app.get("/api/admin/health")
+async def admin_health(user: dict = Depends(require_auth)):
+    """Detailed health check — Redis, MinIO, DB, background tasks (admin only)."""
     checks = {"status": "ok"}
 
     async def check_redis():

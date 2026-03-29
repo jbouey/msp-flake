@@ -234,6 +234,7 @@ class ApplianceUpdateResponse(BaseModel):
 async def list_releases(
     active_only: bool = Query(True, description="Only return active releases"),
     limit: int = Query(20, ge=1, le=100),
+    user: dict = Depends(require_admin),
 ):
     """List all update releases."""
     pool = await get_pool()
@@ -266,7 +267,7 @@ async def list_releases(
 
 
 @router.post("/releases", response_model=ReleaseResponse)
-async def create_release(release: ReleaseCreate):
+async def create_release(release: ReleaseCreate, user: dict = Depends(require_admin)):
     """Create a new update release."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -318,7 +319,7 @@ async def create_release(release: ReleaseCreate):
 
 
 @router.get("/releases/{version}", response_model=ReleaseResponse)
-async def get_release(version: str):
+async def get_release(version: str, user: dict = Depends(require_admin)):
     """Get a specific release by version."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -348,7 +349,7 @@ async def get_release(version: str):
 
 
 @router.put("/releases/{version}/latest")
-async def set_latest_release(version: str):
+async def set_latest_release(version: str, user: dict = Depends(require_admin)):
     """Mark a release as the latest."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -363,7 +364,7 @@ async def set_latest_release(version: str):
 
 
 @router.delete("/releases/{version}")
-async def deactivate_release(version: str):
+async def deactivate_release(version: str, user: dict = Depends(require_admin)):
     """Deactivate a release (soft delete)."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -385,6 +386,7 @@ async def deactivate_release(version: str):
 async def list_rollouts(
     status: Optional[str] = Query(None, description="Filter by status"),
     limit: int = Query(20, ge=1, le=100),
+    user: dict = Depends(require_admin),
 ):
     """List all rollouts."""
     pool = await get_pool()
@@ -448,7 +450,7 @@ async def list_rollouts(
 
 
 @router.post("/rollouts", response_model=RolloutResponse)
-async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTasks):
+async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTasks, user: dict = Depends(require_admin)):
     """Create and start a new rollout."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -573,7 +575,7 @@ async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTas
 
 
 @router.post("/rollouts/{rollout_id}/pause")
-async def pause_rollout(rollout_id: str):
+async def pause_rollout(rollout_id: str, user: dict = Depends(require_admin)):
     """Pause a rollout."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -597,7 +599,7 @@ async def pause_rollout(rollout_id: str):
 
 
 @router.post("/rollouts/{rollout_id}/resume")
-async def resume_rollout(rollout_id: str):
+async def resume_rollout(rollout_id: str, user: dict = Depends(require_admin)):
     """Resume a paused rollout."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -621,7 +623,7 @@ async def resume_rollout(rollout_id: str):
 
 
 @router.post("/rollouts/{rollout_id}/cancel")
-async def cancel_rollout(rollout_id: str):
+async def cancel_rollout(rollout_id: str, user: dict = Depends(require_admin)):
     """Cancel a rollout."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -645,7 +647,7 @@ async def cancel_rollout(rollout_id: str):
 
 
 @router.post("/rollouts/{rollout_id}/advance")
-async def advance_rollout_stage(rollout_id: str):
+async def advance_rollout_stage(rollout_id: str, user: dict = Depends(require_admin)):
     """Manually advance to the next rollout stage."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -703,6 +705,7 @@ async def list_rollout_appliances(
     rollout_id: str,
     status: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
+    user: dict = Depends(require_admin),
 ):
     """List appliances in a rollout."""
     pool = await get_pool()
@@ -747,7 +750,7 @@ async def list_rollout_appliances(
 
 
 @router.get("/appliances/{appliance_id}/pending-update")
-async def get_pending_update(appliance_id: str):
+async def get_pending_update(appliance_id: str, user: dict = Depends(require_admin)):
     """Check if an appliance has a pending update (called during check-in).
 
     appliance_id can be either:
@@ -810,7 +813,7 @@ async def get_pending_update(appliance_id: str):
 
 
 @router.post("/appliances/{appliance_id}/update-status")
-async def update_appliance_status(appliance_id: str, status_update: ApplianceUpdateStatus):
+async def update_appliance_status(appliance_id: str, status_update: ApplianceUpdateStatus, user: dict = Depends(require_admin)):
     """Update the status of an appliance's update (called by appliance).
 
     appliance_id can be either UUID or site_id.
@@ -930,7 +933,7 @@ async def update_appliance_status(appliance_id: str, status_update: ApplianceUpd
 # =============================================================================
 
 @router.get("/stats")
-async def get_fleet_update_stats():
+async def get_fleet_update_stats(user: dict = Depends(require_admin)):
     """Get overall fleet update statistics."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -1098,6 +1101,7 @@ async def create_fleet_order(order: FleetOrderCreate, user: dict = Depends(requi
 async def list_fleet_orders(
     status: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=100),
+    user: dict = Depends(require_admin),
 ):
     """List fleet-wide orders with completion stats."""
     pool = await get_pool()
@@ -1135,7 +1139,7 @@ async def list_fleet_orders(
 
 
 @router.post("/orders/{order_id}/cancel")
-async def cancel_fleet_order(order_id: str):
+async def cancel_fleet_order(order_id: str, user: dict = Depends(require_admin)):
     """Cancel a fleet-wide order."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -1149,7 +1153,7 @@ async def cancel_fleet_order(order_id: str):
 
 
 @router.get("/orders/{order_id}/delivery")
-async def get_fleet_order_delivery(order_id: str):
+async def get_fleet_order_delivery(order_id: str, user: dict = Depends(require_admin)):
     """Get delivery status for a fleet order across all appliances."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -1198,7 +1202,7 @@ async def get_fleet_order_delivery(order_id: str):
 
 
 @router.get("/orders/dead-letter")
-async def get_dead_letter_orders(limit: int = Query(default=50, ge=1)):
+async def get_dead_letter_orders(limit: int = Query(default=50, ge=1), user: dict = Depends(require_admin)):
     """Get expired or failed fleet orders that didn't reach all appliances."""
     pool = await get_pool()
     async with admin_connection(pool) as conn:

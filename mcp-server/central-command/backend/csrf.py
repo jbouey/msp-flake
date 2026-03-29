@@ -96,6 +96,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     # SECURITY: Only exempt paths that genuinely cannot carry a CSRF cookie
     # (pre-login flows, machine-to-machine API-key auth, OAuth callbacks, webhooks).
     # Session-authenticated portals (partner, client, companion) MUST be CSRF-protected.
+    # Admin cookie-session endpoints (/api/admin/, /api/sites) are NOT exempt.
     EXEMPT_PREFIXES = (
         # --- Machine-to-machine / API-key auth (no browser session) ---
         "/api/appliances/",
@@ -124,10 +125,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/client/auth/",     # Client login/logout/magic-link (no session yet)
         "/api/portal/auth/",     # Portal magic link validation
         "/api/portal/sites/",    # Portal access request (public)
-        # --- Admin endpoints (Bearer token auth, not cookie-session) ---
-        "/api/admin/",           # Admin endpoints - Bearer auth protected
+        # --- Fleet / CVE / Framework (machine-to-machine or admin Bearer) ---
         "/api/fleet/",           # Fleet updates - admin auth protected
-        "/api/sites",            # Site CRUD — admin Bearer auth protected
         "/api/cve-watch/",       # CVE Watch — admin data ingest + sync triggers
         "/api/framework-sync/",  # Framework Sync — admin sync triggers
     )
@@ -188,7 +187,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 token,
                 max_age=86400,      # 24 hours
                 httponly=False,     # Must be readable by JavaScript
-                secure=os.getenv("ENVIRONMENT", "development") == "production",
+                secure=True,
                 samesite="strict",  # Strict same-site policy
                 path="/",
             )

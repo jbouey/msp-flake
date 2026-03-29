@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GlassCard, Spinner, Badge } from '../components/shared';
+import { csrfHeaders } from '../utils/csrf';
 
 /**
  * Notification channel configuration for partners.
@@ -238,10 +239,10 @@ export const NotificationSettings: React.FC = () => {
 
   const loadSettings = async () => {
     try {
+      const apiKey = localStorage.getItem('partner_api_key');
       const response = await fetch('/api/partners/me/notifications/settings', {
-        headers: {
-          'X-API-Key': localStorage.getItem('partner_api_key') || '',
-        },
+        credentials: 'include',
+        headers: apiKey ? { 'X-API-Key': apiKey } : csrfHeaders(),
       });
       if (response.ok) {
         const data = await response.json();
@@ -258,11 +259,13 @@ export const NotificationSettings: React.FC = () => {
     setIsSaving(true);
     setSaveMessage(null);
     try {
+      const apiKey = localStorage.getItem('partner_api_key');
       const response = await fetch('/api/partners/me/notifications/settings', {
         method: 'PUT',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': localStorage.getItem('partner_api_key') || '',
+          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
         },
         body: JSON.stringify(settings),
       });
@@ -282,11 +285,11 @@ export const NotificationSettings: React.FC = () => {
   const testChannel = async (channel: string) => {
     setTestResults((prev) => ({ ...prev, [channel]: { channel, status: 'pending' } }));
     try {
+      const apiKey = localStorage.getItem('partner_api_key');
       const response = await fetch(`/api/partners/me/notifications/settings/test?channel=${channel}`, {
         method: 'POST',
-        headers: {
-          'X-API-Key': localStorage.getItem('partner_api_key') || '',
-        },
+        credentials: 'include',
+        headers: apiKey ? { 'X-API-Key': apiKey } : csrfHeaders(),
       });
       const result = await response.json();
       setTestResults((prev) => ({

@@ -1,15 +1,17 @@
 """Prometheus-compatible metrics endpoint.
 
 Exposes platform health metrics in Prometheus text exposition format.
-No authentication required (standard for Prometheus scraping).
+Requires admin authentication (cookie or Bearer token).
 Generates text format manually — no prometheus_client dependency needed.
 """
 
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
+
+from .auth import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +58,7 @@ def _counter(name: str, help_text: str, values: list[tuple[dict[str, str], float
 
 
 @router.get("/metrics", response_class=PlainTextResponse)
-async def prometheus_metrics():
+async def prometheus_metrics(user: dict = Depends(require_auth)):
     """Return platform metrics in Prometheus text exposition format.
 
     Queries are executed fresh on each scrape — no background loop.

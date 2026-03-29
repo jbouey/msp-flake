@@ -10,12 +10,14 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from pydantic import BaseModel, Field
 import asyncpg
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
 from .oui_lookup import get_manufacturer_hint
 from .credential_crypto import decrypt_credential
+from .auth import require_auth
+from .shared import require_appliance_bearer
 
 logger = logging.getLogger(__name__)
 
@@ -787,7 +789,7 @@ device_sync_router = APIRouter(prefix="/api/devices", tags=["devices"])
 
 
 @device_sync_router.post("/sync", response_model=DeviceSyncResponse)
-async def receive_device_sync(report: DeviceSyncReport) -> DeviceSyncResponse:
+async def receive_device_sync(report: DeviceSyncReport, auth_site_id: str = Depends(require_appliance_bearer)) -> DeviceSyncResponse:
     """
     Receive device inventory sync from an appliance.
 
@@ -809,6 +811,7 @@ async def list_site_devices(
     include_medical: bool = Query(True, description="Include medical devices"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    user: dict = Depends(require_auth),
 ) -> dict:
     """
     Get all discovered devices for a site.
@@ -839,7 +842,7 @@ async def list_site_devices(
 
 
 @device_sync_router.get("/sites/{site_id}/summary")
-async def get_site_device_summary(site_id: str) -> dict:
+async def get_site_device_summary(site_id: str, user: dict = Depends(require_auth)) -> dict:
     """
     Get device inventory summary for a site.
 
@@ -920,6 +923,7 @@ async def list_medical_devices(
     site_id: str,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    user: dict = Depends(require_auth),
 ) -> dict:
     """
     Get all medical devices for a site.
@@ -967,7 +971,7 @@ async def list_medical_devices(
 
 
 @device_sync_router.get("/sites/{site_id}/device/{device_id}/compliance")
-async def get_device_compliance_details(site_id: str, device_id: int) -> dict:
+async def get_device_compliance_details(site_id: str, device_id: int, user: dict = Depends(require_auth)) -> dict:
     """
     Get compliance check details for a specific device.
 

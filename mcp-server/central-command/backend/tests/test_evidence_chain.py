@@ -25,6 +25,7 @@ _fastapi.APIRouter = lambda **kw: type("FakeRouter", (), {"post": lambda *a, **k
 _fastapi.HTTPException = Exception
 _fastapi.Depends = lambda x: x
 _fastapi.BackgroundTasks = object
+_fastapi.Request = object
 
 _pydantic = sys.modules.setdefault("pydantic", types.ModuleType("pydantic"))
 _pydantic.BaseModel = object

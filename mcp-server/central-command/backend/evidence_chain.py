@@ -27,6 +27,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 import aiohttp
+
+try:
+    from .auth import require_auth
+    from .shared import require_appliance_bearer
+except ImportError:
+    # Standalone import (e.g., tests that import pure functions directly)
+    require_auth = None  # type: ignore[assignment]
+    require_appliance_bearer = None  # type: ignore[assignment]
 import asyncpg
 
 # Ed25519 signature verification
@@ -745,7 +753,8 @@ async def submit_evidence(
     site_id: str,
     bundle: EvidenceBundleSubmit,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+    auth_site_id: str = Depends(require_appliance_bearer),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Submit an evidence bundle from appliance.
@@ -2035,7 +2044,8 @@ async def get_ots_status(
 @router.post("/ots/migrate-legacy")
 async def migrate_legacy_proofs(
     limit: int = 1000,
-    db: AsyncSession = Depends(get_db)
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Migrate legacy OTS proofs to proper OTS file format.
@@ -2103,7 +2113,8 @@ async def migrate_legacy_proofs(
 async def trigger_ots_upgrade(
     site_id: Optional[str] = None,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db)
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Manually trigger OTS proof upgrade check.
@@ -2118,7 +2129,8 @@ async def trigger_ots_upgrade(
 async def resubmit_expired_proofs(
     site_id: Optional[str] = None,
     limit: int = 500,
-    db: AsyncSession = Depends(get_db)
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Resubmit expired OTS proofs to calendar servers.
@@ -2244,7 +2256,8 @@ async def resubmit_expired_proofs(
 async def migrate_chain_positions(
     site_id: Optional[str] = None,
     batch_size: int = 5000,
-    db: AsyncSession = Depends(get_db)
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Fix legacy bundles with chain_position=0.
