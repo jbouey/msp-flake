@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentUpload } from './DocumentUpload';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface Plan {
   id: string;
@@ -49,7 +50,7 @@ export const ContingencyPlan: React.FC<ContingencyPlanProps> = ({ apiBase = '/ap
     const url = editId ? `${apiBase}/contingency/${editId}` : `${apiBase}/contingency`;
     await fetch(url, {
       method, credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify(form),
     });
     setShowForm(false); setEditId(null); setForm(EMPTY);

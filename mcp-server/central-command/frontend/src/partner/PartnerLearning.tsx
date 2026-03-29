@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { usePartner } from './PartnerContext';
+import { csrfHeaders } from '../utils/csrf';
 
 interface LearningStats {
   pending_candidates: number;
@@ -128,7 +129,7 @@ export const PartnerLearning: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
         },
         credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
@@ -167,7 +168,7 @@ export const PartnerLearning: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
         },
         credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({ reason: rejectReason }),
@@ -196,7 +197,7 @@ export const PartnerLearning: React.FC = () => {
     try {
       const response = await fetch(`/api/partners/me/learning/promoted-rules/${rule.rule_id}/status?status=${newStatus}`, {
         method: 'PATCH',
-        headers: apiKey ? { 'X-API-Key': apiKey } : {},
+        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
         credentials: apiKey ? undefined : 'include',
       });
 
@@ -244,7 +245,7 @@ export const PartnerLearning: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
         },
         credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
@@ -279,7 +280,7 @@ export const PartnerLearning: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
         },
         credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({

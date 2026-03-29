@@ -31,7 +31,7 @@ func TestCheckBudgetWithinLimits(t *testing.T) {
 func TestRecordCost(t *testing.T) {
 	bt := NewBudgetTracker(DefaultBudgetConfig())
 
-	// Typical Sonnet call: ~1000 input, ~500 output tokens
+	// Typical Haiku call: ~1000 input, ~500 output tokens
 	cost := bt.RecordCost(1000, 500)
 
 	expected := CalculateCost(1000, 500)
@@ -117,16 +117,16 @@ func TestConcurrencySemaphore(t *testing.T) {
 }
 
 func TestCalculateCost(t *testing.T) {
-	// 1M input tokens at $3.00 + 1M output tokens at $15.00 = $18.00
+	// 1M input tokens at $0.80 + 1M output tokens at $4.00 = $4.80
 	cost := CalculateCost(1_000_000, 1_000_000)
-	expected := 18.00
+	expected := 4.80
 	if cost != expected {
 		t.Errorf("1M+1M tokens: got $%.2f, want $%.2f", cost, expected)
 	}
 
-	// Typical Sonnet call: 2000 input, 500 output
+	// Typical Haiku call: 2000 input, 500 output
 	cost = CalculateCost(2000, 500)
-	expected = 2000.0/1_000_000*3.00 + 500.0/1_000_000*15.00
+	expected = 2000.0/1_000_000*0.80 + 500.0/1_000_000*4.00
 	if cost != expected {
 		t.Errorf("Typical call: got $%.6f, want $%.6f", cost, expected)
 	}

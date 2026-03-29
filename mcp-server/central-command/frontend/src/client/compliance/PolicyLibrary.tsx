@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentUpload } from './DocumentUpload';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface Policy {
   id: string;
@@ -120,7 +121,7 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
       const res = await fetch(`${apiBase}/policies`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ policy_key: key }),
       });
       if (res.ok) {
@@ -141,7 +142,7 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
       const res = await fetch(`${apiBase}/policies/${selected.id}`, {
         method: 'PUT',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ content: editContent }),
       });
       if (res.ok) {
@@ -162,6 +163,7 @@ export const PolicyLibrary: React.FC<PolicyLibraryProps> = ({ apiBase = '/api/cl
       const res = await fetch(`${apiBase}/policies/${id}/approve`, {
         method: 'POST',
         credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
       if (res.ok) {
         await fetchPolicies();

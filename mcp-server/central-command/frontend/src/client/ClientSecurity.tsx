@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
+import { csrfHeaders } from '../utils/csrf';
 
 type Step = 'status' | 'setup' | 'verify' | 'disable';
 
@@ -66,6 +67,7 @@ export const ClientSecurity: React.FC = () => {
     try {
       const response = await fetch('/api/client/totp/setup', {
         method: 'POST',
+        headers: { ...csrfHeaders() },
         credentials: 'include',
       });
 
@@ -90,7 +92,7 @@ export const ClientSecurity: React.FC = () => {
     try {
       const response = await fetch('/api/client/totp/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         credentials: 'include',
         body: JSON.stringify({ code: verifyCode, password: verifyPassword }),
       });
@@ -123,7 +125,7 @@ export const ClientSecurity: React.FC = () => {
     try {
       const response = await fetch('/api/client/totp', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         credentials: 'include',
         body: JSON.stringify({ password: disablePassword }),
       });

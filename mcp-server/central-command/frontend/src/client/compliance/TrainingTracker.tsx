@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentUpload } from './DocumentUpload';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface TrainingRecord {
   id: string;
@@ -51,7 +52,7 @@ export const TrainingTracker: React.FC<TrainingTrackerProps> = ({ apiBase = '/ap
     const url = editId ? `${apiBase}/training/${editId}` : `${apiBase}/training`;
     const res = await fetch(url, {
       method, credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify(form),
     });
     if (!res.ok) {
@@ -64,7 +65,7 @@ export const TrainingTracker: React.FC<TrainingTrackerProps> = ({ apiBase = '/ap
   };
 
   const remove = async (id: string) => {
-    await fetch(`${apiBase}/training/${id}`, { method: 'DELETE', credentials: 'include' });
+    await fetch(`${apiBase}/training/${id}`, { method: 'DELETE', credentials: 'include', headers: { ...csrfHeaders() } });
     await fetchRecords();
   };
 

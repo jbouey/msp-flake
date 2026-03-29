@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { usePartner } from './PartnerContext';
 import { InfoTip } from '../components/shared';
 import { formatTimeAgo } from '../constants';
+import { csrfHeaders } from '../utils/csrf';
 
 interface EscalationTicket {
   id: string;
@@ -81,7 +82,7 @@ export const PartnerEscalations: React.FC = () => {
 
   const postOptions = (body: Record<string, unknown>): RequestInit => apiKey
     ? { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey }, body: JSON.stringify(body) }
-    : { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) };
+    : { method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, credentials: 'include', body: JSON.stringify(body) };
 
   useEffect(() => {
     if (isAuthenticated) loadData();

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { usePartner } from './PartnerContext';
+import { csrfHeaders } from '../utils/csrf';
 
 interface Framework {
   id: string;
@@ -119,7 +120,7 @@ export const PartnerComplianceSettings: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
         },
         credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
@@ -147,7 +148,7 @@ export const PartnerComplianceSettings: React.FC = () => {
     try {
       const response = await fetch(`/api/partners/me/sites/${siteId}/compliance/apply-preset?industry=${industry}`, {
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : {},
+        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
         credentials: apiKey ? undefined : 'include',
       });
 
@@ -170,7 +171,7 @@ export const PartnerComplianceSettings: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
         },
         credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({

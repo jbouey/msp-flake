@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { formatTimeAgo } from '../constants';
 import { DisclaimerFooter } from '../components/composed';
+import { csrfHeaders } from '../utils/csrf';
 
 interface HealingLog {
   execution_id: string;
@@ -142,7 +143,7 @@ export const ClientHealingLogs: React.FC = () => {
         `/api/client/promotion-candidates/${candidateId}/forward`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
           credentials: 'include',
           body: JSON.stringify({ notes: forwardNotes || null }),
         }
@@ -172,7 +173,7 @@ export const ClientHealingLogs: React.FC = () => {
         `/api/client/promotion-candidates/${candidateId}/approve`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
           credentials: 'include',
           body: JSON.stringify({ notes: approveNotes || null }),
         }
@@ -205,7 +206,7 @@ export const ClientHealingLogs: React.FC = () => {
         `/api/client/promotion-candidates/${candidateId}/reject`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
           credentials: 'include',
           body: JSON.stringify({ reason: rejectReason || 'No reason provided' }),
         }

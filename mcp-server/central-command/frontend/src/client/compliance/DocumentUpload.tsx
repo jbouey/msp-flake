@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { formatTimeAgo, formatBytes } from '../../constants';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface Document {
   id: string;
@@ -99,6 +100,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
       const res = await fetch(`${apiBase}/documents/upload`, {
         method: 'POST',
         credentials: 'include',
+        headers: { ...csrfHeaders() },
         body: formData,
       });
 
@@ -157,6 +159,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
       const res = await fetch(`${apiBase}/documents/${docId}`, {
         method: 'DELETE',
         credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
       if (res.ok) {
         setDocuments(prev => prev.filter(d => d.id !== docId));

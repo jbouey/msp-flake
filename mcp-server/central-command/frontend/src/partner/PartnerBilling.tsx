@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { usePartner } from './PartnerContext';
+import { csrfHeaders } from '../utils/csrf';
 
 interface ApplianceTier {
   name: string;
@@ -120,7 +121,7 @@ export const PartnerBilling: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
         },
         credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({ price_id: priceId }),
@@ -146,7 +147,7 @@ export const PartnerBilling: React.FC = () => {
     try {
       const response = await fetch('/api/billing/portal', {
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : {},
+        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
         credentials: apiKey ? undefined : 'include',
       });
 
@@ -174,7 +175,7 @@ export const PartnerBilling: React.FC = () => {
     try {
       const response = await fetch('/api/billing/subscription/cancel', {
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : {},
+        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
         credentials: apiKey ? undefined : 'include',
       });
 
@@ -196,7 +197,7 @@ export const PartnerBilling: React.FC = () => {
     try {
       const response = await fetch('/api/billing/subscription/reactivate', {
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : {},
+        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
         credentials: apiKey ? undefined : 'include',
       });
 

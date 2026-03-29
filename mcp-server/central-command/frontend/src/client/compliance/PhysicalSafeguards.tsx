@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentUpload } from './DocumentUpload';
 import { PHYSICAL_SAFEGUARD_LABELS } from '../../constants';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface SafeguardItem {
   category: string;
@@ -73,7 +74,7 @@ export const PhysicalSafeguards: React.FC<PhysicalSafeguardsProps> = ({ apiBase 
     }));
     await fetch(`${apiBase}/physical`, {
       method: 'PUT', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify({ items: batch }),
     });
     setSaving(false);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentUpload } from './DocumentUpload';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface Officer {
   role_type: string;
@@ -66,7 +67,7 @@ export const OfficerDesignation: React.FC<OfficerDesignationProps> = ({ apiBase 
     const batch = Object.values(officers).filter(o => o.name.trim() !== '');
     await fetch(`${apiBase}/officers`, {
       method: 'PUT', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify({ officers: batch }),
     });
     setSaving(false);

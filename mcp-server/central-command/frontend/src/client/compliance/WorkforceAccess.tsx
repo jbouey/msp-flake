@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentUpload } from './DocumentUpload';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface Member {
   id: string;
@@ -52,7 +53,7 @@ export const WorkforceAccess: React.FC<WorkforceAccessProps> = ({ apiBase = '/ap
     const url = editId ? `${apiBase}/workforce/${editId}` : `${apiBase}/workforce`;
     await fetch(url, {
       method, credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify(form),
     });
     setShowForm(false); setEditId(null); setForm(EMPTY);

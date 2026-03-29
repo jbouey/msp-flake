@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface Question {
   section: string;
@@ -84,7 +85,7 @@ export const GapWizard: React.FC<GapWizardProps> = ({ apiBase = '/api/client/com
     const batch = Object.values(responses).filter(r => r.response !== null);
     await fetch(`${apiBase}/gap-analysis`, {
       method: 'PUT', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify({ responses: batch }),
     });
     setSaving(false);

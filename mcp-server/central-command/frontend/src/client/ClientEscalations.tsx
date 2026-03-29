@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useClient } from './ClientContext';
 import { formatTimeAgo } from '../constants';
 import { DisclaimerFooter } from '../components/composed';
+import { csrfHeaders } from '../utils/csrf';
 
 interface EscalationTicket {
   id: string;
@@ -50,11 +51,11 @@ type StatusFilter = 'all' | 'open' | 'acknowledged' | 'resolved';
 
 const fetchOpts: RequestInit = { credentials: 'include' };
 const postJson = (body: Record<string, unknown>): RequestInit => ({
-  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
   credentials: 'include', body: JSON.stringify(body),
 });
 const putJson = (body: Record<string, unknown>): RequestInit => ({
-  method: 'PUT', headers: { 'Content-Type': 'application/json' },
+  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
   credentials: 'include', body: JSON.stringify(body),
 });
 

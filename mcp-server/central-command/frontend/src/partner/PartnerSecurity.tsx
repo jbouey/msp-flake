@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { usePartner } from './PartnerContext';
+import { csrfHeaders } from '../utils/csrf';
 
 type Step = 'status' | 'setup' | 'verify' | 'disable';
 
@@ -47,7 +48,7 @@ export const PartnerSecurity: React.FC = () => {
     if (apiKey) {
       return { headers: { 'X-API-Key': apiKey } };
     }
-    return { credentials: 'include' };
+    return { credentials: 'include', headers: { ...csrfHeaders() } };
   };
 
   const fetchWithAuth = (url: string, options: RequestInit = {}): Promise<Response> => {

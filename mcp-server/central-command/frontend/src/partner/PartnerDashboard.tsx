@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { usePartner } from './PartnerContext';
 import { PartnerBilling } from './PartnerBilling';
+import { csrfHeaders } from '../utils/csrf';
 import { PartnerComplianceSettings } from './PartnerComplianceSettings';
 import { PartnerExceptionManagement } from './PartnerExceptionManagement';
 import { PartnerLearning } from './PartnerLearning';
@@ -114,7 +115,7 @@ export const PartnerDashboard: React.FC = () => {
     try {
       const headers: HeadersInit = apiKey
         ? { 'Content-Type': 'application/json', 'X-API-Key': apiKey }
-        : { 'Content-Type': 'application/json' };
+        : { 'Content-Type': 'application/json', ...csrfHeaders() };
 
       const response = await fetch('/api/partners/me/provisions', {
         method: 'POST',
@@ -144,7 +145,7 @@ export const PartnerDashboard: React.FC = () => {
     try {
       const fetchOptions: RequestInit = apiKey
         ? { method: 'DELETE', headers: { 'X-API-Key': apiKey } }
-        : { method: 'DELETE', credentials: 'include' };
+        : { method: 'DELETE', credentials: 'include', headers: { ...csrfHeaders() } };
 
       await fetch(`/api/partners/me/provisions/${id}`, fetchOptions);
       loadData();

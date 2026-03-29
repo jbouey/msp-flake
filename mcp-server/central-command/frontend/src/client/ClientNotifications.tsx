@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
+import { csrfHeaders } from '../utils/csrf';
 
 interface Notification {
   id: string;
@@ -53,6 +54,7 @@ export const ClientNotifications: React.FC = () => {
     try {
       const response = await fetch(`/api/client/notifications/${notificationId}/read`, {
         method: 'POST',
+        headers: { ...csrfHeaders() },
         credentials: 'include',
       });
       if (response.ok) {
@@ -70,6 +72,7 @@ export const ClientNotifications: React.FC = () => {
     try {
       const response = await fetch('/api/client/notifications/read-all', {
         method: 'POST',
+        headers: { ...csrfHeaders() },
         credentials: 'include',
       });
       if (response.ok) {

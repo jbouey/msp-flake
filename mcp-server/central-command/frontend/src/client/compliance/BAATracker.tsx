@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentUpload } from './DocumentUpload';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface BAA {
   id: string;
@@ -61,7 +62,7 @@ export const BAATracker: React.FC<BAATrackerProps> = ({ apiBase = '/api/client/c
     const url = editId ? `${apiBase}/baas/${editId}` : `${apiBase}/baas`;
     await fetch(url, {
       method, credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify(form),
     });
     setShowForm(false); setEditId(null); setForm(EMPTY);
@@ -69,7 +70,7 @@ export const BAATracker: React.FC<BAATrackerProps> = ({ apiBase = '/api/client/c
   };
 
   const remove = async (id: string) => {
-    await fetch(`${apiBase}/baas/${id}`, { method: 'DELETE', credentials: 'include' });
+    await fetch(`${apiBase}/baas/${id}`, { method: 'DELETE', credentials: 'include', headers: { ...csrfHeaders() } });
     await fetchBaas();
   };
 

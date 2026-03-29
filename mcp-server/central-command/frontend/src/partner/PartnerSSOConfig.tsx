@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePartner } from './PartnerContext';
 import { SSO_LABELS } from '../constants';
+import { csrfHeaders } from '../utils/csrf';
 
 interface SSOConfig {
   issuer_url: string;
@@ -41,7 +42,7 @@ export const PartnerSSOConfig: React.FC<PartnerSSOConfigProps> = ({ orgId, orgNa
   const fetchOptionsWithBody = useCallback((method: string, body: unknown): RequestInit => {
     const headers: HeadersInit = apiKey
       ? { 'Content-Type': 'application/json', 'X-API-Key': apiKey }
-      : { 'Content-Type': 'application/json' };
+      : { 'Content-Type': 'application/json', ...csrfHeaders() };
     return {
       method,
       headers,
@@ -144,7 +145,7 @@ export const PartnerSSOConfig: React.FC<PartnerSSOConfigProps> = ({ orgId, orgNa
     try {
       const opts: RequestInit = apiKey
         ? { method: 'DELETE', headers: { 'X-API-Key': apiKey } }
-        : { method: 'DELETE', credentials: 'include' };
+        : { method: 'DELETE', credentials: 'include', headers: { ...csrfHeaders() } };
 
       const res = await fetch(`/api/partners/me/orgs/${orgId}/sso`, opts);
       if (res.ok) {

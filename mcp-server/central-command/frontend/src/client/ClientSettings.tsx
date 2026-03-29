@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { DisclaimerFooter } from '../components/composed';
+import { csrfHeaders } from '../utils/csrf';
 
 interface OrgUser {
   id: string;
@@ -151,7 +152,7 @@ export const ClientSettings: React.FC = () => {
     try {
       const response = await fetch('/api/client/users/invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         credentials: 'include',
         body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
       });
@@ -177,6 +178,7 @@ export const ClientSettings: React.FC = () => {
     try {
       const response = await fetch(`/api/client/users/${userId}`, {
         method: 'DELETE',
+        headers: { ...csrfHeaders() },
         credentials: 'include',
       });
 
@@ -196,7 +198,7 @@ export const ClientSettings: React.FC = () => {
     try {
       const response = await fetch(`/api/client/users/${userId}/role`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         credentials: 'include',
         body: JSON.stringify({ role: newRole }),
       });
@@ -231,7 +233,7 @@ export const ClientSettings: React.FC = () => {
     try {
       const response = await fetch('/api/client/password', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         credentials: 'include',
         body: JSON.stringify({ password: newPassword }),
       });
@@ -259,7 +261,7 @@ export const ClientSettings: React.FC = () => {
     try {
       const response = await fetch('/api/client/transfer/request', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         credentials: 'include',
         body: JSON.stringify({ reason: transferReason }),
       });
@@ -283,6 +285,7 @@ export const ClientSettings: React.FC = () => {
     try {
       const response = await fetch('/api/client/transfer/cancel', {
         method: 'POST',
+        headers: { ...csrfHeaders() },
         credentials: 'include',
       });
 
@@ -341,7 +344,7 @@ export const ClientSettings: React.FC = () => {
     try {
       const response = await fetch('/api/client/billing/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         credentials: 'include',
         body: JSON.stringify({}),
       });
@@ -364,6 +367,7 @@ export const ClientSettings: React.FC = () => {
     try {
       const response = await fetch('/api/client/billing/portal', {
         method: 'POST',
+        headers: { ...csrfHeaders() },
         credentials: 'include',
       });
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentUpload } from './DocumentUpload';
+import { csrfHeaders } from '../../utils/csrf';
 
 interface IRPlan {
   id: string;
@@ -71,7 +72,7 @@ export const IncidentResponsePlan: React.FC<IncidentResponsePlanProps> = ({ apiB
   const savePlan = async () => {
     await fetch(`${apiBase}/ir-plan`, {
       method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify({ title: 'Incident Response Plan', content: editContent }),
     });
     setEditing(false);
@@ -83,7 +84,7 @@ export const IncidentResponsePlan: React.FC<IncidentResponsePlanProps> = ({ apiB
     const url = editBreachId ? `${apiBase}/breaches/${editBreachId}` : `${apiBase}/breaches`;
     await fetch(url, {
       method, credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       body: JSON.stringify(breachForm),
     });
     setShowBreachForm(false); setEditBreachId(null); setBreachForm(BREACH_EMPTY);
@@ -142,7 +143,7 @@ export const IncidentResponsePlan: React.FC<IncidentResponsePlanProps> = ({ apiB
 
             <div className="flex flex-wrap gap-2">
               <button onClick={async () => {
-                await fetch(`${apiBase}/ir-plan/review`, { method: 'POST', credentials: 'include' });
+                await fetch(`${apiBase}/ir-plan/review`, { method: 'POST', credentials: 'include', headers: { ...csrfHeaders() } });
                 fetchData();
               }} className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">
                 Mark as Reviewed

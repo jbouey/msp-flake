@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePartner } from './PartnerContext';
 import { STATUS_LABELS } from '../constants';
+import { csrfHeaders } from '../utils/csrf';
 
 interface OnboardingSite {
   site_id: string;
@@ -79,7 +80,7 @@ export const PartnerOnboarding: React.FC = () => {
     try {
       const opts: RequestInit = apiKey
         ? { method: 'POST', headers: { 'X-API-Key': apiKey } }
-        : { method: 'POST', credentials: 'include' };
+        : { method: 'POST', credentials: 'include', headers: { ...csrfHeaders() } };
 
       const res = await fetch(`/api/partners/me/sites/${siteId}/trigger-checkin`, opts);
       if (res.ok) {

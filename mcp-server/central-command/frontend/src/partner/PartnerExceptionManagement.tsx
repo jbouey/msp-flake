@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { csrfHeaders } from '../utils/csrf';
 
 // Types
 interface ComplianceException {
@@ -70,7 +71,7 @@ interface ExceptionAuditEntry {
 // API functions - uses cookie-based auth (OAuth session) or partner_api_key
 const getAuthHeaders = (): Record<string, string> => {
   const apiKey = localStorage.getItem('partner_api_key');
-  return apiKey ? { 'X-API-Key': apiKey } : {};
+  return apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() };
 };
 
 const api = {

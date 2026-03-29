@@ -89,40 +89,46 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/agent/patterns",           # Pattern sync from appliances (machine-to-machine)
         "/api/users/invite/accept",  # Public invite acceptance (no session yet)
         "/api/users/invite/validate",  # Public invite validation (GET but token in body)
+        "/api/partner-auth/logout",  # Logout should always work (no CSRF cookie after clear)
     }
 
-    # Exempt path prefixes (for API-key authenticated, OAuth, agent endpoints)
+    # Exempt path prefixes (for API-key authenticated, OAuth, webhooks, machine-to-machine)
+    # SECURITY: Only exempt paths that genuinely cannot carry a CSRF cookie
+    # (pre-login flows, machine-to-machine API-key auth, OAuth callbacks, webhooks).
+    # Session-authenticated portals (partner, client, companion) MUST be CSRF-protected.
     EXEMPT_PREFIXES = (
+        # --- Machine-to-machine / API-key auth (no browser session) ---
         "/api/appliances/",
-        "/api/webhook/",
-        "/api/oauth/",           # OAuth callbacks don't have CSRF
         "/api/agent/",           # Agent sync endpoints use API-key auth
+        "/api/orders/",          # Order acknowledgement from appliances
+        "/api/evidence/",        # Evidence chain - appliance submissions + admin ops
+        "/api/devices/sync",     # Device inventory sync from appliances (API-key auth)
+        "/api/logs/",            # Log ingestion from appliances (API-key auth)
+        "/incidents/",           # Incident resolve from appliances (machine-to-machine)
+        "/api/escalations",      # Agent L3 escalations from appliances (machine-to-machine)
+        # --- Webhooks (external service callbacks with their own auth) ---
+        "/api/webhook/",
+        "/api/billing/webhook",  # Stripe webhook (signature-verified, not session-auth)
+        # --- OAuth flows (no CSRF cookie available during redirect) ---
+        "/api/oauth/",           # OAuth callbacks don't have CSRF
+        "/api/partner-auth/microsoft",    # OAuth initiation
+        "/api/partner-auth/google",       # OAuth initiation
+        "/api/partner-auth/callback",     # OAuth callback
+        # --- Pre-login flows (no session/cookie yet) ---
         "/api/partners/auth/",   # Partner login/logout (magic link)
         "/api/partner-auth/email-login",  # Partner email/password login (no session yet)
         "/api/partner-auth/email-signup", # Partner signup (no session yet)
         "/api/partner-auth/verify-totp",  # Partner TOTP verification (MFA pending)
-        "/api/partner-auth/me/totp/",     # Partner TOTP management (session-auth)
-        "/api/partner-auth/microsoft",    # OAuth initiation
-        "/api/partner-auth/google",       # OAuth initiation
-        "/api/partner-auth/callback",     # OAuth callback
         "/api/partner-auth/providers",    # Provider list (GET-like)
-        "/api/client/",          # Client portal — session-auth protected
-        "/api/companion/",       # Companion portal — session-auth protected
+        "/api/client/auth/",     # Client login/logout/magic-link (no session yet)
         "/api/portal/auth/",     # Portal magic link validation
         "/api/portal/sites/",    # Portal access request (public)
+        # --- Admin endpoints (Bearer token auth, not cookie-session) ---
         "/api/admin/",           # Admin endpoints - Bearer auth protected
         "/api/fleet/",           # Fleet updates - admin auth protected
-        "/api/sites",            # Site CRUD — session-auth protected
-        "/api/orders/",          # Order acknowledgement from appliances
-        "/api/evidence/",        # Evidence chain - appliance submissions + admin ops
-        "/incidents/",           # Incident resolve from appliances (machine-to-machine)
-        "/api/partners/me/",     # Partner portal — partner session-auth protected
-        "/api/billing/",         # Billing — partner session-auth protected
+        "/api/sites",            # Site CRUD — admin Bearer auth protected
         "/api/cve-watch/",       # CVE Watch — admin data ingest + sync triggers
         "/api/framework-sync/",  # Framework Sync — admin sync triggers
-        "/api/devices/sync",     # Device inventory sync from appliances (API-key auth)
-        "/api/escalations",      # Agent L3 escalations from appliances (machine-to-machine)
-        "/api/logs/",            # Log ingestion from appliances (API-key auth)
     )
 
     # Safe methods that don't require CSRF validation
