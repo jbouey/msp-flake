@@ -143,6 +143,9 @@ MONITORING_ONLY_CHECKS = {
     "screen_lock_policy",
     # Credential staleness — informational, not auto-fixable
     "credential_stale",
+    # Agent deploy exhausted — max retries hit, needs human investigation
+    "AGENT-REDEPLOY-EXHAUSTED",
+    "WIN-DEPLOY-UNREACHABLE",
 }
 
 # ============================================================================

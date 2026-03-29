@@ -681,7 +681,7 @@ async def record_l2_decision(
         })
 
 
-async def lookup_cached_l2_decision(db, pattern_signature: str, max_age_hours: int = 24) -> Optional["L2Decision"]:
+async def lookup_cached_l2_decision(db, pattern_signature: str, max_age_hours: int = 72) -> Optional["L2Decision"]:
     """Look up a recent L2 decision with the same pattern_signature.
 
     Returns an L2Decision if a cached decision exists within max_age_hours,
