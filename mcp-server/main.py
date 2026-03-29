@@ -2215,18 +2215,35 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         l2_succeeded = False
         if not skip_l2 and is_l2_available():
             try:
-                logger.info("No L1 match, trying L2 planner",
-                            site_id=incident.site_id,
-                            incident_type=incident.incident_type)
+                # L2 cache: reuse recent decision for same pattern (72h TTL)
+                from dashboard_api.l2_planner import lookup_cached_l2_decision, generate_pattern_signature
+                check_type_key = incident.check_type or incident.incident_type
+                pattern_sig = generate_pattern_signature(incident.incident_type, check_type_key, "")
+                cached = None
+                try:
+                    cached = await lookup_cached_l2_decision(db, pattern_sig)
+                except Exception:
+                    pass  # Cache miss, proceed to LLM
 
-                decision = await analyze_incident(
-                    incident_type=incident.incident_type,
-                    severity=incident.severity,
-                    check_type=incident.check_type or incident.incident_type,
-                    details=incident.details,
-                    pre_state=incident.pre_state,
-                    hipaa_controls=incident.hipaa_controls,
-                )
+                if cached:
+                    logger.info("L2 cache hit on /incidents path",
+                                site_id=incident.site_id,
+                                incident_type=incident.incident_type,
+                                cached_runbook=cached.runbook_id)
+                    decision = cached
+                else:
+                    logger.info("No L1 match, trying L2 planner",
+                                site_id=incident.site_id,
+                                incident_type=incident.incident_type)
+
+                    decision = await analyze_incident(
+                        incident_type=incident.incident_type,
+                        severity=incident.severity,
+                        check_type=check_type_key,
+                        details=incident.details,
+                        pre_state=incident.pre_state,
+                        hipaa_controls=incident.hipaa_controls,
+                    )
 
                 # Record L2 decision for data flywheel
                 try:
