@@ -138,7 +138,12 @@ in
 
     # Kernel params — quiet boot, suppress noisy drivers
     kernelParams = [ "quiet" "loglevel=3" "console=tty1" "console=ttyS0,115200" ];
-    blacklistedKernelModules = [ "hid_logitech_hidpp" ];
+    blacklistedKernelModules = [
+      "hid_logitech_hidpp"
+      "usb_storage" "uas"              # Block USB mass storage (HIPAA physical security)
+      "thunderbolt"                     # Block Thunderbolt DMA attacks
+      "firewire_core" "firewire_ohci"  # Block FireWire DMA attacks
+    ];
 
     # Essential kernel modules for HP T640 and common hardware
     initrd.availableKernelModules = [
@@ -548,6 +553,10 @@ EOF
     chmod 700 /var/lib/msp /var/lib/msp/ca /etc/msp/certs
   '';
 
+  # Central Command Ed25519 public key — used to verify provisioning config signatures
+  # Replace with real hex-encoded public key before production deployment
+  environment.etc."msp/central-command.pub".text = "YOUR_HEX_PUBLIC_KEY_HERE";
+
   # ============================================================================
   # SSH for emergency access
   # ============================================================================
@@ -564,11 +573,9 @@ EOF
   # Password: osiris2024 | Lab-only — production MUST override via SOPS
   users.users.root.hashedPassword = lib.mkDefault "$6$w8KL8dUxFMVF4DmE$NQX0TULi8a8pSytrYP83Xu4vz6sydv0PdtZpSe5Dd7henertz6cpJHmMgTtdQ67ijLgiHkaMuhsNDn//CS8eV1";
 
-  # Lab SSH keys — production appliances receive keys via Central Command provisioning API
-  users.users.root.openssh.authorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE8uV6E//e4fQXlDEMoE0uADd/nAzKwqA0btaoHc28Bl macs-imac-vm-access"
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
-  ];
+  # Remove hardcoded keys — provisioned from Central Command only
+  # SSH access is written by msp-auto-provision after successful provisioning
+  users.users.root.openssh.authorizedKeys.keys = lib.mkForce [];
 
   # ============================================================================
   # Reduce image size
@@ -700,6 +707,52 @@ EOF
         echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
       }
 
+      # Verify provisioning config signature from Central Command
+      # Returns 0 if valid, 1 if invalid/missing
+      verify_provision_signature() {
+        local response_file="$1"
+        CONFIG_SIG=$(${pkgs.jq}/bin/jq -r '.signature // empty' "$response_file" 2>/dev/null)
+        if [ -z "$CONFIG_SIG" ]; then
+          log "ERROR: Provisioning response not signed — rejecting"
+          return 1
+        fi
+
+        # The Central Command Ed25519 public key is baked into the ISO
+        VERIFY_RESULT=$(echo "$CONFIG_SIG" | /run/current-system/sw/bin/python3 -c "
+import sys, json, hashlib
+from nacl.signing import VerifyKey
+from nacl.encoding import HexEncoder
+PUBKEY = open('/etc/msp/central-command.pub').read().strip()
+config = json.dumps(json.load(open('$response_file'))['config'], sort_keys=True)
+try:
+    vk = VerifyKey(PUBKEY, encoder=HexEncoder)
+    vk.verify(config.encode(), bytes.fromhex(sys.stdin.read().strip()))
+    print('VALID')
+except Exception as e:
+    print(f'INVALID: {e}')
+" 2>/dev/null || echo "INVALID: python error")
+
+        if [ "$VERIFY_RESULT" != "VALID" ]; then
+          log "ERROR: Provisioning config signature $VERIFY_RESULT — rejecting"
+          return 1
+        fi
+        log "Provisioning config signature verified"
+        return 0
+      }
+
+      # Write SSH key from provisioning response to root authorized_keys
+      write_ssh_key() {
+        local response_file="$1"
+        SSH_PUBKEY=$(${pkgs.jq}/bin/jq -r '.ssh_pubkey // empty' "$response_file" 2>/dev/null)
+        if [ -n "$SSH_PUBKEY" ]; then
+          mkdir -p /root/.ssh
+          echo "$SSH_PUBKEY" > /root/.ssh/authorized_keys
+          chmod 600 /root/.ssh/authorized_keys
+          chmod 700 /root/.ssh
+          log "SSH key provisioned from Central Command"
+        fi
+      }
+
       mkdir -p /var/lib/msp
 
       if [ -f "$CONFIG_PATH" ]; then
@@ -779,8 +832,14 @@ EOF
 
         if [ "$HTTP_CODE" = "200" ]; then
           if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
+            if ! verify_provision_signature /tmp/provision-response.json; then
+              rm -f /tmp/provision-response.json
+              sleep $RETRY_DELAY
+              continue
+            fi
             ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
             chmod 600 "$CONFIG_PATH"
+            write_ssh_key /tmp/provision-response.json
             log "SUCCESS: Provisioning complete via MAC lookup"
             rm -f /tmp/provision-response.json
             exit 0
@@ -798,14 +857,22 @@ EOF
       done
 
       # Phase 2: Drop-ship polling (unclaimed appliance waits for admin to claim it).
-      # Polls every 60s indefinitely. Once claimed, Central Command returns site_id + api_key.
+      # Polls every 60s, max 24 hours. Once claimed, Central Command returns site_id + api_key.
       if [ "$REGISTERED" = true ] || [ "$HTTP_CODE" = "200" ]; then
         POLL_DELAY=60
         POLL_COUNT=0
-        log "Drop-ship mode: polling every ''${POLL_DELAY}s for site assignment..."
+        POLL_START=$(date +%s)
+        MAX_POLL_SECS=86400  # 24 hours
+        log "Drop-ship mode: polling every ''${POLL_DELAY}s for site assignment (24h timeout)..."
         log "Claim this appliance in Central Command dashboard: MAC=$MAC_ADDR"
 
         while true; do
+          ELAPSED=$(( $(date +%s) - POLL_START ))
+          if [ $ELAPSED -gt $MAX_POLL_SECS ]; then
+            log "ERROR: Provisioning timeout after 24 hours. Manual claim required."
+            log "Register MAC $MAC_ADDR in Central Command, then reboot appliance."
+            break
+          fi
           POLL_COUNT=$((POLL_COUNT + 1))
           sleep $POLL_DELAY
 
@@ -814,8 +881,13 @@ EOF
 
           if [ "$HTTP_CODE" = "200" ]; then
             if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
+              if ! verify_provision_signature /tmp/provision-response.json; then
+                rm -f /tmp/provision-response.json
+                continue
+              fi
               ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
               chmod 600 "$CONFIG_PATH"
+              write_ssh_key /tmp/provision-response.json
               log "SUCCESS: Provisioning complete via MAC lookup (poll #$POLL_COUNT)"
               rm -f /tmp/provision-response.json
               exit 0

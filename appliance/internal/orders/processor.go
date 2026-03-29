@@ -39,11 +39,13 @@ import (
 var allowedFlakeRefPattern = regexp.MustCompile(`^github:jbouey/msp-flake#[a-zA-Z0-9_-]+$`)
 
 // allowedDownloadDomains are the only domains from which we accept package/ISO URLs.
+// NOTE: No raw IPs — use DNS names only. Pinning to IPs leaks infrastructure details
+// in the binary and breaks if the VPS migrates.
 var allowedDownloadDomains = map[string]bool{
+	"api.osiriscare.net":            true,
+	"release.osiriscare.net":        true,
 	"github.com":                    true,
 	"objects.githubusercontent.com": true,
-	"178.156.162.116":               true, // VPS IP
-	"api.osiriscare.net":            true, // VPS domain
 }
 
 // validateFlakeRef ensures flake_ref points to the official repo.
@@ -322,6 +324,23 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 			log.Printf("[orders] SECURITY: %s for order %s (type=%s)", errMsg, order.OrderID, order.OrderType)
 			p.complete(ctx, order.OrderID, false, nil, errMsg)
 			return &OrderResult{OrderID: order.OrderID, Success: false, Error: errMsg}
+		}
+	}
+
+	// Expiry validation: reject orders past their expires_at timestamp.
+	// The expires_at is embedded in the signed payload (tamper-proof after signature verification).
+	if order.SignedPayload != "" {
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(order.SignedPayload), &payload); err == nil {
+			if expiresStr, ok := payload["expires_at"].(string); ok {
+				expiresAt, err := time.Parse(time.RFC3339, expiresStr)
+				if err == nil && time.Now().After(expiresAt) {
+					errMsg := fmt.Sprintf("order expired at %s (current: %s)", expiresAt.Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339))
+					log.Printf("[orders] SECURITY: %s for order %s (type=%s)", errMsg, order.OrderID, order.OrderType)
+					p.complete(ctx, order.OrderID, false, nil, errMsg)
+					return &OrderResult{OrderID: order.OrderID, Success: false, Error: errMsg}
+				}
+			}
 		}
 	}
 

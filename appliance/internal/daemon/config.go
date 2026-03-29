@@ -67,6 +67,12 @@ type Config struct {
 
 	// Security: reject unsigned L1 rules when a server public key is configured
 	RequireSignedRules bool `yaml:"require_signed_rules"`
+
+	// TLS certificate pinning: SHA-256 hash of Central Command's SPKI (Subject Public Key Info).
+	// If set, the daemon verifies the server's public key matches this hash on every TLS connection,
+	// protecting against MITM even if a CA is compromised. If empty, falls back to TOFU pinning.
+	// Generate with: openssl x509 -in cert.pem -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -hex
+	TLSPinHash string `yaml:"tls_pin_hash"`
 }
 
 // DefaultConfig returns a config with sane defaults.

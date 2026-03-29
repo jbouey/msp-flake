@@ -32,20 +32,44 @@ type PhoneHomeClient struct {
 }
 
 // NewPhoneHomeClient creates a new client for Central Command checkin.
-// Uses Trust-On-First-Use (TOFU) certificate pinning: on the first successful
-// TLS connection the server's leaf certificate SHA-256 fingerprint is saved to
-// {StateDir}/server_cert_pin.hex. Subsequent connections verify the fingerprint
-// matches, protecting against MITM even if a CA is compromised.
+//
+// TLS pinning modes (in priority order):
+//  1. SPKI pin (config): If TLSPinHash is set, the SHA-256 of the server's Subject Public
+//     Key Info (SPKI) is verified on every connection. This survives certificate renewals
+//     (the public key stays the same) and protects against CA compromise.
+//  2. TOFU pin (fallback): On the first successful TLS connection the server's leaf
+//     certificate SHA-256 fingerprint is saved to {StateDir}/server_cert_pin.hex.
+//     Subsequent connections verify the fingerprint matches.
 func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 	pinPath := filepath.Join(cfg.StateDir, "server_cert_pin.hex")
+	spkiPinHash := cfg.TLSPinHash // empty string = not configured
 
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
-			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 				if len(rawCerts) == 0 {
 					return fmt.Errorf("no certificates presented")
 				}
+
+				// Mode 1: SPKI public key pinning (build-time/config-time hash)
+				if spkiPinHash != "" {
+					for _, chain := range verifiedChains {
+						for _, cert := range chain {
+							pubKeyBytes, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
+							if err != nil {
+								continue
+							}
+							hash := sha256.Sum256(pubKeyBytes)
+							if hex.EncodeToString(hash[:]) == spkiPinHash {
+								return nil // SPKI pin matches
+							}
+						}
+					}
+					return fmt.Errorf("TLS public key does not match pinned SPKI hash %s... — possible MITM attack", spkiPinHash[:min(16, len(spkiPinHash))])
+				}
+
+				// Mode 2: TOFU certificate fingerprint pinning (fallback)
 				fingerprint := sha256.Sum256(rawCerts[0])
 				fpHex := hex.EncodeToString(fingerprint[:])
 
@@ -73,6 +97,10 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 		MaxIdleConns:        5,
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
+	}
+
+	if spkiPinHash != "" {
+		log.Printf("[tls-pin] SPKI public key pinning enabled: %s...", spkiPinHash[:min(16, len(spkiPinHash))])
 	}
 
 	return &PhoneHomeClient{

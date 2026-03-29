@@ -485,7 +485,7 @@ func TestHostScopeMatchingAppliance(t *testing.T) {
 		"parameters":           map[string]interface{}{},
 		"nonce":                "abc123",
 		"created_at":           "2026-02-24T00:00:00+00:00",
-		"expires_at":           "2026-02-24T01:00:00+00:00",
+		"expires_at":           "2099-12-31T23:59:59+00:00",
 		"target_appliance_id":  "site-AA:BB:CC:DD:EE:FF",
 	}
 	signedPayload, signature := signPayload(t, payload, privKey)
@@ -517,7 +517,7 @@ func TestHostScopeMismatchedAppliance(t *testing.T) {
 		"parameters":           map[string]interface{}{},
 		"nonce":                "def456",
 		"created_at":           "2026-02-24T00:00:00+00:00",
-		"expires_at":           "2026-02-24T01:00:00+00:00",
+		"expires_at":           "2099-12-31T23:59:59+00:00",
 		"target_appliance_id":  "site-11:22:33:44:55:66",
 	}
 	signedPayload, signature := signPayload(t, payload, privKey)
@@ -552,7 +552,7 @@ func TestHostScopeFleetOrder(t *testing.T) {
 		"parameters": map[string]interface{}{},
 		"nonce":      "ghi789",
 		"created_at": "2026-02-24T00:00:00+00:00",
-		"expires_at": "2026-02-24T01:00:00+00:00",
+		"expires_at": "2099-12-31T23:59:59+00:00",
 	}
 	signedPayload, signature := signPayload(t, payload, privKey)
 
@@ -601,7 +601,9 @@ func TestValidateDownloadURL(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid_github", "https://github.com/jbouey/msp-flake/releases/download/v1.0/agent.tar.gz", false},
-		{"valid_vps", "https://178.156.162.116/packages/agent-v2.tar.gz", false},
+		{"valid_api_domain", "https://api.osiriscare.net/updates/agent-v2.tar.gz", false},
+		{"valid_release_domain", "https://release.osiriscare.net/packages/agent-v2.tar.gz", false},
+		{"rejected_raw_ip", "https://178.156.162.116/packages/agent-v2.tar.gz", true},
 		{"valid_gh_objects", "https://objects.githubusercontent.com/release/agent.tar.gz", false},
 		{"http_not_https", "http://github.com/jbouey/msp-flake/releases/download/v1.0/agent.tar.gz", true},
 		{"evil_domain", "https://evil.com/agent.tar.gz", true},
@@ -800,7 +802,7 @@ func TestHostScopeNoApplianceIDYet(t *testing.T) {
 		"parameters":           map[string]interface{}{},
 		"nonce":                "jkl012",
 		"created_at":           "2026-02-24T00:00:00+00:00",
-		"expires_at":           "2026-02-24T01:00:00+00:00",
+		"expires_at":           "2099-12-31T23:59:59+00:00",
 		"target_appliance_id":  "site-11:22:33:44:55:66",
 	}
 	signedPayload, signature := signPayload(t, payload, privKey)
@@ -815,5 +817,86 @@ func TestHostScopeNoApplianceIDYet(t *testing.T) {
 	// Should allow — we don't know our ID yet, can't enforce scoping
 	if !result.Success {
 		t.Fatalf("expected success when appliance ID not yet known, got: %s", result.Error)
+	}
+}
+
+// --- Order expiry tests ---
+
+func TestOrderExpiryRejectsExpiredOrder(t *testing.T) {
+	_, privKey, _ := ed25519.GenerateKey(nil)
+	pubKeyHex := hex.EncodeToString(privKey.Public().(ed25519.PublicKey))
+
+	p := NewProcessor("/tmp/test", nil)
+	p.SetServerPublicKey(pubKeyHex)
+
+	// Order that expired in the past
+	payload := map[string]interface{}{
+		"order_id":   "expired-001",
+		"order_type": "force_checkin",
+		"parameters": map[string]interface{}{},
+		"nonce":      "exp-nonce-1",
+		"created_at": "2025-01-01T00:00:00+00:00",
+		"expires_at": "2025-01-01T01:00:00+00:00",
+	}
+	signedPayload, signature := signPayload(t, payload, privKey)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:       "expired-001",
+		OrderType:     "force_checkin",
+		Nonce:         "exp-nonce-1",
+		SignedPayload: signedPayload,
+		Signature:     signature,
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for expired order")
+	}
+	if !strings.Contains(result.Error, "expired") {
+		t.Fatalf("expected 'expired' in error, got: %s", result.Error)
+	}
+}
+
+func TestOrderExpiryAllowsFutureOrder(t *testing.T) {
+	_, privKey, _ := ed25519.GenerateKey(nil)
+	pubKeyHex := hex.EncodeToString(privKey.Public().(ed25519.PublicKey))
+
+	p := NewProcessor("/tmp/test", nil)
+	p.SetServerPublicKey(pubKeyHex)
+
+	// Order that expires far in the future
+	payload := map[string]interface{}{
+		"order_id":   "future-001",
+		"order_type": "force_checkin",
+		"parameters": map[string]interface{}{},
+		"nonce":      "fut-nonce-1",
+		"created_at": "2026-01-01T00:00:00+00:00",
+		"expires_at": "2099-12-31T23:59:59+00:00",
+	}
+	signedPayload, signature := signPayload(t, payload, privKey)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:       "future-001",
+		OrderType:     "force_checkin",
+		Nonce:         "fut-nonce-1",
+		SignedPayload: signedPayload,
+		Signature:     signature,
+	})
+
+	if !result.Success {
+		t.Fatalf("expected success for future-expiry order, got: %s", result.Error)
+	}
+}
+
+func TestOrderExpirySkippedWithoutSignedPayload(t *testing.T) {
+	// Orders without signed payload (unsigned, pre-key-exchange) skip expiry check
+	p := NewProcessor("/tmp/test", nil)
+
+	result := p.Process(context.Background(), &Order{
+		OrderID:   "nosig-001",
+		OrderType: "force_checkin",
+	})
+
+	if !result.Success {
+		t.Fatalf("expected success for unsigned order without expiry, got: %s", result.Error)
 	}
 }
