@@ -3158,6 +3158,151 @@ async def enable_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
 
 
 # =============================================================================
+# L1 RULE BUILDER ENDPOINTS
+# =============================================================================
+
+
+@router.get("/admin/rules")
+async def list_l1_rules(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """List all L1 rules with runbook names."""
+    from .fleet import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT r.rule_id, r.incident_pattern, r.runbook_id, r.confidence,
+                   r.enabled, r.source, r.match_count, r.success_count, r.success_rate,
+                   r.created_at, rb.name as runbook_name
+            FROM l1_rules r
+            LEFT JOIN runbooks rb ON rb.runbook_id = r.runbook_id
+            ORDER BY r.enabled DESC, r.created_at DESC
+        """)
+        return [dict(r) for r in rows]
+
+
+@router.post("/admin/rules")
+async def create_l1_rule(
+    request: Request,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Create a new manual L1 rule."""
+    body = await request.json()
+    incident_type = body.get("incident_type")
+    runbook_id = body.get("runbook_id")
+    confidence = body.get("confidence", 0.90)
+
+    if not incident_type or not runbook_id:
+        raise HTTPException(status_code=400, detail="incident_type and runbook_id are required")
+
+    rule_id = f"L1-MANUAL-{incident_type.upper().replace(' ', '-')[:30]}"
+    incident_pattern = json.dumps({"incident_type": incident_type})
+
+    from .fleet import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, enabled, source)
+            VALUES ($1, $2::jsonb, $3, $4, true, 'manual')
+            ON CONFLICT (rule_id) DO UPDATE SET
+                runbook_id = EXCLUDED.runbook_id,
+                confidence = EXCLUDED.confidence,
+                enabled = true
+        """, rule_id, incident_pattern, runbook_id, confidence)
+
+    # Audit log
+    from .fleet import get_pool as _gp
+    pool2 = await _gp()
+    async with pool2.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO audit_log (event_type, actor, resource_type, resource_id, details)
+            VALUES ('rule.created', $1, 'l1_rule', $2, $3::jsonb)
+        """, user.get("username", "admin"), rule_id, json.dumps({
+            "incident_type": incident_type,
+            "runbook_id": runbook_id,
+            "confidence": confidence,
+            "source": "manual",
+        }))
+
+    return {"rule_id": rule_id, "status": "created"}
+
+
+@router.delete("/admin/rules/{rule_id}")
+async def delete_l1_rule(
+    rule_id: str,
+    request: Request,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Delete an L1 rule."""
+    from .fleet import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM l1_rules WHERE rule_id = $1", rule_id
+        )
+
+    # Audit log
+    pool2 = await get_pool()
+    async with pool2.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO audit_log (event_type, actor, resource_type, resource_id, details)
+            VALUES ('rule.deleted', $1, 'l1_rule', $2, $3::jsonb)
+        """, user.get("username", "admin"), rule_id, json.dumps({
+            "action": "manual_delete",
+        }))
+
+    return {"status": "deleted", "rule_id": rule_id}
+
+
+@router.get("/admin/rules/incident-types")
+async def list_incident_types(
+    request: Request,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """List known incident types from recent incidents for dropdown selection."""
+    from .fleet import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT incident_type, COUNT(*) as occurrences
+            FROM incidents
+            WHERE created_at > NOW() - INTERVAL '30 days'
+              AND incident_type IS NOT NULL
+            GROUP BY incident_type
+            ORDER BY occurrences DESC
+        """)
+    return [{"type": r["incident_type"], "count": r["occurrences"]} for r in rows]
+
+
+@router.post("/admin/rules/test")
+async def test_l1_rule(
+    request: Request,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Dry-run a rule against recent incidents to preview matches."""
+    body = await request.json()
+    incident_type = body.get("incident_type")
+    if not incident_type:
+        raise HTTPException(status_code=400, detail="incident_type is required")
+
+    from .fleet import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        matches = await conn.fetch("""
+            SELECT id, incident_type, check_type, details->>'hostname' as hostname,
+                   severity, created_at
+            FROM incidents
+            WHERE incident_type = $1
+            AND created_at > NOW() - INTERVAL '7 days'
+            ORDER BY created_at DESC
+            LIMIT 20
+        """, incident_type)
+    return {"matches": [dict(m) for m in matches], "count": len(matches)}
+
+
+# =============================================================================
 # ORGANIZATION ENDPOINTS
 # =============================================================================
 

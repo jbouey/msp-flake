@@ -85,6 +85,19 @@ export {
   // VPN Management hooks
   useVPNStatus,
   useRotateVPNKey,
+  // Evidence Verification hooks
+  useEvidenceBundles,
+  useVerifyBundle,
+  useVerifyBatch,
+  useBlockchainStatus,
+  // L1 Rule Builder hooks
+  useL1Rules,
+  useIncidentTypes,
+  useCreateL1Rule,
+  useDeleteL1Rule,
+  useEnableL1Rule,
+  useDisableL1Rule,
+  useTestL1Rule,
 } from './useFleet';
 
 export { useKeyboardShortcuts, useCommandPalette } from './useKeyboardShortcuts';

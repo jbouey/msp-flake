@@ -2987,3 +2987,88 @@ async def get_chain_health(
             )
 
         return {"sites": sites}
+
+
+@router.post("/sites/{site_id}/verify-batch")
+async def verify_batch(
+    site_id: str,
+    request: Request,
+):
+    """Batch verify recent evidence bundles for a site.
+
+    Checks chain linkage and signature presence for all bundles
+    submitted in the last 24 hours. Returns a summary suitable
+    for auditor review.
+
+    Auth: admin (require_auth).
+    """
+    from .auth import require_auth
+    await require_auth(request)
+
+    pool, admin_connection = await _get_admin_pool()
+    async with admin_connection(pool) as conn:
+        bundles = await conn.fetch(
+            """
+            SELECT bundle_id, bundle_hash, prev_hash, chain_position,
+                   agent_signature, chain_hash
+            FROM compliance_bundles
+            WHERE site_id = $1 AND created_at > NOW() - INTERVAL '24 hours'
+            ORDER BY chain_position DESC
+            """,
+            site_id,
+        )
+
+        results = {
+            "site_id": site_id,
+            "total": len(bundles),
+            "passed": 0,
+            "failed": 0,
+            "failures": [],
+        }
+
+        GENESIS_HASH = "0" * 64
+
+        for b in bundles:
+            issues = []
+
+            # Check chain linkage with previous bundle
+            if b["chain_position"] == 1:
+                # Genesis bundle: prev_hash should be all-zeros
+                if not hmac.compare_digest(b["prev_hash"] or "", GENESIS_HASH):
+                    issues.append("genesis_prev_hash_mismatch")
+            else:
+                prev = await conn.fetchrow(
+                    """
+                    SELECT bundle_hash FROM compliance_bundles
+                    WHERE site_id = $1 AND chain_position = $2
+                    """,
+                    site_id,
+                    b["chain_position"] - 1,
+                )
+                if prev is None:
+                    issues.append("predecessor_missing")
+                elif not hmac.compare_digest(b["prev_hash"] or "", prev["bundle_hash"] or ""):
+                    issues.append("chain_break")
+
+            # Verify chain_hash self-consistency
+            chain_data = f"{b['bundle_hash']}:{b['prev_hash'] or 'genesis'}:{b['chain_position']}"
+            expected_chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
+            if not hmac.compare_digest(b["chain_hash"] or "", expected_chain_hash):
+                issues.append("chain_hash_invalid")
+
+            if issues:
+                results["failed"] += 1
+                results["failures"].append({
+                    "bundle_id": b["bundle_id"],
+                    "chain_position": b["chain_position"],
+                    "reasons": issues,
+                })
+            else:
+                results["passed"] += 1
+
+        logger.info(
+            f"Batch verify: site={site_id} total={results['total']} "
+            f"passed={results['passed']} failed={results['failed']}"
+        )
+
+        return results

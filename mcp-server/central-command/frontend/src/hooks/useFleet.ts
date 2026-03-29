@@ -3,8 +3,8 @@
  */
 
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi } from '../utils/api';
-import type { Site, SiteDetail, OrderType, OrderStatus, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice, VPNStatus } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi, evidenceApi, l1RulesApi } from '../utils/api';
+import type { Site, SiteDetail, OrderType, OrderStatus, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice, VPNStatus, EvidenceBundleListResponse, BundleVerifyResult, BatchVerifyResult, BlockchainStatus, L1Rule, IncidentTypeOption } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, StatsDeltas, LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, RunbookSummary, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, IncidentBreakdownResponse, AttentionRequiredResponse } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
 
@@ -1140,5 +1140,154 @@ export function useRotateVPNKey() {
       queryClient.invalidateQueries({ queryKey: ['vpn'] });
     },
     onError: (error) => logMutationError('rotateVPNKey', error),
+  });
+}
+
+// =============================================================================
+// EVIDENCE VERIFICATION HOOKS
+// =============================================================================
+
+/**
+ * Hook for fetching evidence bundles for a site
+ */
+export function useEvidenceBundles(siteId: string | null, limit?: number) {
+  const defaults = useQueryDefaults();
+  return useQuery<EvidenceBundleListResponse>({
+    queryKey: ['evidence-bundles', siteId, limit],
+    queryFn: () => evidenceApi.listBundles(siteId!, limit),
+    enabled: !!siteId,
+    ...defaults,
+  });
+}
+
+/**
+ * Hook for verifying a single evidence bundle (mutation)
+ */
+export function useVerifyBundle() {
+  return useMutation<BundleVerifyResult, Error, string>({
+    mutationFn: (bundleId: string) => evidenceApi.verifyBundle(bundleId),
+    onError: (error) => logMutationError('verifyBundle', error),
+  });
+}
+
+/**
+ * Hook for batch-verifying recent evidence bundles for a site (mutation)
+ */
+export function useVerifyBatch() {
+  return useMutation<BatchVerifyResult, Error, string>({
+    mutationFn: (siteId: string) => evidenceApi.verifyBatch(siteId),
+    onError: (error) => logMutationError('verifyBatch', error),
+  });
+}
+
+/**
+ * Hook for fetching blockchain anchoring status for a site
+ */
+export function useBlockchainStatus(siteId: string | null) {
+  const defaults = useQueryDefaults();
+  return useQuery<BlockchainStatus>({
+    queryKey: ['blockchain-status', siteId],
+    queryFn: () => evidenceApi.blockchainStatus(siteId!),
+    enabled: !!siteId,
+    ...defaults,
+  });
+}
+
+// =============================================================================
+// L1 RULE BUILDER HOOKS
+// =============================================================================
+
+/**
+ * Hook for fetching all L1 rules
+ */
+export function useL1Rules() {
+  const defaults = useQueryDefaults();
+  return useQuery<L1Rule[]>({
+    queryKey: ['l1-rules'],
+    queryFn: l1RulesApi.getRules,
+    ...defaults,
+  });
+}
+
+/**
+ * Hook for fetching known incident types
+ */
+export function useIncidentTypes() {
+  return useQuery<IncidentTypeOption[]>({
+    queryKey: ['l1-rules', 'incident-types'],
+    queryFn: l1RulesApi.getIncidentTypes,
+    staleTime: STALE_TIME,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * Hook for creating a new L1 rule
+ */
+export function useCreateL1Rule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: { incident_type: string; runbook_id: string; confidence: number }) =>
+      l1RulesApi.createRule(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['l1-rules'] });
+    },
+    onError: (error) => logMutationError('createL1Rule', error),
+  });
+}
+
+/**
+ * Hook for deleting an L1 rule
+ */
+export function useDeleteL1Rule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (ruleId: string) => l1RulesApi.deleteRule(ruleId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['l1-rules'] });
+    },
+    onError: (error) => logMutationError('deleteL1Rule', error),
+  });
+}
+
+/**
+ * Hook for enabling an L1 rule
+ */
+export function useEnableL1Rule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (ruleId: string) => l1RulesApi.enableRule(ruleId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['l1-rules'] });
+    },
+    onError: (error) => logMutationError('enableL1Rule', error),
+  });
+}
+
+/**
+ * Hook for disabling an L1 rule
+ */
+export function useDisableL1Rule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (ruleId: string) => l1RulesApi.disableRule(ruleId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['l1-rules'] });
+    },
+    onError: (error) => logMutationError('disableL1Rule', error),
+  });
+}
+
+/**
+ * Hook for testing a rule against recent incidents
+ */
+export function useTestL1Rule() {
+  return useMutation({
+    mutationFn: (incidentType: string) => l1RulesApi.testRule(incidentType),
+    onError: (error) => logMutationError('testL1Rule', error),
   });
 }

@@ -271,6 +271,74 @@ export const learningApi = {
 };
 
 // =============================================================================
+// L1 RULES API
+// =============================================================================
+
+export interface L1Rule {
+  rule_id: string;
+  incident_pattern: Record<string, unknown>;
+  runbook_id: string;
+  confidence: number;
+  enabled: boolean;
+  source: string;
+  match_count: number;
+  success_count: number;
+  success_rate: number;
+  created_at: string;
+  runbook_name: string | null;
+}
+
+export interface IncidentTypeOption {
+  type: string;
+  count: number;
+}
+
+export interface RuleTestResult {
+  matches: Array<{
+    id: number;
+    incident_type: string;
+    check_type: string;
+    hostname: string | null;
+    severity: string;
+    created_at: string;
+  }>;
+  count: number;
+}
+
+export const l1RulesApi = {
+  getRules: () => fetchApi<L1Rule[]>('/admin/rules'),
+
+  createRule: (data: { incident_type: string; runbook_id: string; confidence?: number }) =>
+    fetchApi<{ rule_id: string; status: string }>('/admin/rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  deleteRule: (ruleId: string) =>
+    fetchApi<{ status: string; rule_id: string }>(`/admin/rules/${encodeURIComponent(ruleId)}`, {
+      method: 'DELETE',
+    }),
+
+  enableRule: (ruleId: string) =>
+    fetchApi<{ status: string; rule_id: string }>(`/admin/rules/${encodeURIComponent(ruleId)}/enable`, {
+      method: 'POST',
+    }),
+
+  disableRule: (ruleId: string) =>
+    fetchApi<{ status: string; rule_id: string }>(`/admin/rules/${encodeURIComponent(ruleId)}/disable`, {
+      method: 'POST',
+    }),
+
+  getIncidentTypes: () => fetchApi<IncidentTypeOption[]>('/admin/rules/incident-types'),
+
+  testRule: (incidentType: string) =>
+    fetchApi<RuleTestResult>('/admin/rules/test', {
+      method: 'POST',
+      body: JSON.stringify({ incident_type: incidentType }),
+    }),
+};
+
+// =============================================================================
 // ONBOARDING API
 // =============================================================================
 
@@ -2064,6 +2132,125 @@ export interface VPNStatus {
 export const vpnApi = {
   getStatus: () => fetchApi<VPNStatus>('/vpn/status'),
   rotateKey: (siteId: string) => fetchApi<{ status: string; order_id: string }>(`/vpn/${siteId}/rotate-key`, { method: 'POST' }),
+};
+
+// =============================================================================
+// EVIDENCE VERIFICATION API
+// =============================================================================
+
+const EVIDENCE_BASE = '/api/evidence';
+
+async function fetchEvidenceApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
+  return _fetchWithBase<T>(EVIDENCE_BASE, endpoint, options);
+}
+
+export interface EvidenceBundle {
+  bundle_id: string;
+  bundle_hash: string;
+  prev_hash: string;
+  check_type: string | null;
+  check_result: string | null;
+  checked_at: string;
+  chain_position: number;
+  signed: boolean;
+  signature_valid: boolean | null;
+  ots_status: string;
+  bitcoin_block: number | null;
+  anchored_at: string | null;
+  calendar_url: string | null;
+}
+
+export interface EvidenceBundleListResponse {
+  bundles: EvidenceBundle[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface BundleVerifyResult {
+  bundle_id: string;
+  site_id: string;
+  chain_position: number;
+  created_at: string | null;
+  verification: {
+    hash_valid: boolean;
+    chain_valid: boolean;
+    chain_prev_valid: boolean | null;
+    chain_next_valid: boolean | null;
+    signature_valid: boolean | null;
+    signature_key_id: string | null;
+  };
+  blockchain: {
+    status: string;
+    bitcoin_txid: string | null;
+    block_height: number | null;
+    anchored_at: string | null;
+    explorer_url: string | null;
+  };
+  bundle_summary: {
+    check_count: number;
+    bundle_type: string;
+    has_signature: boolean;
+  };
+}
+
+export interface BatchVerifyResult {
+  site_id: string;
+  total: number;
+  passed: number;
+  failed: number;
+  failures: Array<{
+    bundle_id: string;
+    chain_position: number;
+    reasons: string[];
+  }>;
+}
+
+export interface BlockchainStatus {
+  site_id: string;
+  blockchain: {
+    total_proofs: number;
+    anchored: number;
+    verified: number;
+    pending: number;
+    expired: number;
+    anchor_rate_pct: number;
+    first_bitcoin_block: number | null;
+    latest_bitcoin_block: number | null;
+    last_anchored: string | null;
+    oldest_pending: string | null;
+    blockstream_url: string | null;
+  };
+  evidence_chain: {
+    total_bundles: number;
+    signed_bundles: number;
+    verified_signatures: number;
+    chain_length: number;
+    first_evidence: string | null;
+    last_evidence: string | null;
+  };
+  recent_anchors: Array<{
+    bitcoin_block: number;
+    anchored_at: string | null;
+    bundle_id: string;
+    check_type: string;
+    checked_at: string | null;
+    blockstream_url: string;
+  }>;
+}
+
+export const evidenceApi = {
+  listBundles: (siteId: string, limit?: number) =>
+    fetchEvidenceApi<EvidenceBundleListResponse>(`/sites/${siteId}/bundles?limit=${limit || 50}`),
+
+  verifyBundle: (bundleId: string) =>
+    fetchEvidenceApi<BundleVerifyResult>(`/${bundleId}/verify`),
+
+  verifyBatch: (siteId: string) =>
+    fetchEvidenceApi<BatchVerifyResult>(`/sites/${siteId}/verify-batch`, { method: 'POST' }),
+
+  blockchainStatus: (siteId: string) =>
+    fetchEvidenceApi<BlockchainStatus>(`/sites/${siteId}/blockchain-status`),
 };
 
 export { ApiError };

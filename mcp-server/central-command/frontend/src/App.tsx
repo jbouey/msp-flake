@@ -53,6 +53,8 @@ const OrgDashboard = lazy(() => import('./pages/OrgDashboard').then(m => ({ defa
 const ProtectionProfiles = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfiles })));
 const ProtectionProfileView = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfileView })));
 const DriftConfig = lazy(() => import('./pages/DriftConfig'));
+const Evidence = lazy(() => import('./pages/Evidence').then(m => ({ default: m.Evidence })));
+const RuleBuilder = lazy(() => import('./pages/RuleBuilder').then(m => ({ default: m.RuleBuilder })));
 const VPNManagement = lazy(() => import('./pages/VPNManagement'));
 
 // Detect if serving from marketing domain (www.osiriscare.net or osiriscare.net)
@@ -197,11 +199,13 @@ const pageTitles: Record<string, string> = {
   '/runbooks': 'Runbook Library',
   '/runbook-config': 'Runbook Configuration',
   '/learning': 'Learning Loop',
+  '/rule-builder': 'L1 Rule Builder',
   '/fleet-updates': 'Fleet Updates',
   '/vpn': 'VPN Management',
   '/cve-watch': 'CVE Watch',
   '/compliance-library': 'Compliance Library',
   '/reports': 'Reports',
+  '/evidence': 'Evidence Verification',
   '/audit-logs': 'Audit Logs',
   '/settings/oauth': 'OAuth Settings',
   '/settings': 'Settings',
@@ -331,6 +335,7 @@ const AppLayout: React.FC = () => {
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/incidents" element={<Incidents />} />
               <Route path="/l4-queue" element={<L4Queue />} />
+              <Route path="/evidence" element={<Evidence />} />
               <Route path="/notification-settings" element={<NotificationSettings />} />
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/partners" element={<Partners />} />
@@ -339,6 +344,7 @@ const AppLayout: React.FC = () => {
               <Route path="/runbooks" element={<Runbooks />} />
               <Route path="/runbook-config" element={<RunbookConfig />} />
               <Route path="/learning" element={<Learning />} />
+              <Route path="/rule-builder" element={<RuleBuilder />} />
               <Route path="/audit-logs" element={<AuditLogs />} />
               <Route path="/logs" element={<LogExplorer />} />
               <Route path="/settings" element={<Settings />} />
