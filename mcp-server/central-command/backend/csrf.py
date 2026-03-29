@@ -102,6 +102,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/agent/",           # Agent sync endpoints use API-key auth
         "/api/orders/",          # Order acknowledgement from appliances
         "/api/evidence/",        # Evidence chain - appliance submissions + admin ops
+        "/api/security-events/", # WORM archival - admin-only (require_auth)
         "/api/devices/sync",     # Device inventory sync from appliances (API-key auth)
         "/api/logs/",            # Log ingestion from appliances (API-key auth)
         "/incidents/",           # Incident resolve from appliances (machine-to-machine)
