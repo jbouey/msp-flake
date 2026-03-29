@@ -261,6 +261,6 @@ func (d *Daemon) buildWinRMTargetByHostname(hostname string) *winrm.Target {
 		Username:  username,
 		Password:  password,
 		UseSSL:    ws.UseSSL,
-		VerifySSL: false,
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 }

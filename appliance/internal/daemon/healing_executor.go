@@ -231,7 +231,7 @@ func (d *Daemon) buildHealingWinRMTarget(hostID string) *winrm.Target {
 		Username:  *d.config.DCUsername,
 		Password:  *d.config.DCPassword,
 		UseSSL:    ws.UseSSL,
-		VerifySSL: false, // Tolerate self-signed certs during rollout
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 }
 

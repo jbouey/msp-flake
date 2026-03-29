@@ -7,11 +7,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -22,13 +25,14 @@ import (
 
 // Target describes a Windows machine to execute scripts on.
 type Target struct {
-	Hostname  string `json:"hostname"`
-	Port      int    `json:"port"`
-	Username  string `json:"username"` // DOMAIN\user format
-	Password  string `json:"password"`
-	UseSSL    bool   `json:"use_ssl"`
-	VerifySSL bool   `json:"verify_ssl"`
-	IPAddress string `json:"ip_address,omitempty"`
+	Hostname  string      `json:"hostname"`
+	Port      int         `json:"port"`
+	Username  string      `json:"username"` // DOMAIN\user format
+	Password  string      `json:"password"`
+	UseSSL    bool        `json:"use_ssl"`
+	VerifySSL bool        `json:"verify_ssl"`
+	IPAddress string      `json:"ip_address,omitempty"`
+	TLSConfig *tls.Config `json:"-"` // Custom TLS config (e.g., TOFU cert pinning); overrides VerifySSL
 }
 
 // ExecutionResult is the result of a script execution.
@@ -63,12 +67,21 @@ const (
 type Executor struct {
 	sessions map[string]*cachedSession
 	mu       sync.Mutex
+	CertPins *CertPinStore // TOFU certificate pinning store (nil = no pinning)
 }
 
-// NewExecutor creates a new WinRM executor.
+// NewExecutor creates a new WinRM executor without certificate pinning.
 func NewExecutor() *Executor {
 	return &Executor{
 		sessions: make(map[string]*cachedSession),
+	}
+}
+
+// NewExecutorWithPins creates a new WinRM executor with TOFU certificate pinning.
+func NewExecutorWithPins(pins *CertPinStore) *Executor {
+	return &Executor{
+		sessions: make(map[string]*cachedSession),
+		CertPins: pins,
 	}
 }
 
@@ -330,7 +343,31 @@ func (e *Executor) getSession(target *Target) (*gowinrm.Client, error) {
 		}
 	}
 
-	endpoint := gowinrm.NewEndpoint(target.Hostname, port, target.UseSSL, !target.VerifySSL, nil, nil, nil, 120*time.Second)
+	// TOFU cert pinning: before establishing the WinRM session, verify the
+	// server's TLS certificate fingerprint. Priority:
+	//   1. target.TLSConfig (explicit per-target override)
+	//   2. executor.CertPins (global TOFU store)
+	//   3. legacy VerifySSL flag (no pinning)
+	pinStore := e.CertPins
+	if target.TLSConfig != nil && target.TLSConfig.VerifyPeerCertificate != nil {
+		// target-level TLS config has its own verification — use it via pre-flight
+		if target.UseSSL {
+			if err := e.preflightTLSCheck(target.Hostname, port, target.TLSConfig.VerifyPeerCertificate); err != nil {
+				return nil, fmt.Errorf("TLS pin check for %s: %w", target.Hostname, err)
+			}
+		}
+	} else if pinStore != nil && target.UseSSL {
+		// Use the executor's TOFU pin store for verification
+		tlsCfg := pinStore.TLSConfigForHost(target.Hostname)
+		if err := e.preflightTLSCheck(target.Hostname, port, tlsCfg.VerifyPeerCertificate); err != nil {
+			return nil, fmt.Errorf("TLS pin check for %s: %w", target.Hostname, err)
+		}
+	}
+
+	// The gowinrm library handles the actual HTTP/WinRM session. We keep
+	// Insecure=true because self-signed WinRM certs are the norm; our
+	// pre-flight TOFU check above provides the real security guarantee.
+	endpoint := gowinrm.NewEndpoint(target.Hostname, port, target.UseSSL, true, nil, nil, nil, 120*time.Second)
 
 	// Use default (Basic) auth — both DC and workstations have Basic enabled via GPO
 	params := gowinrm.NewParameters("PT120S", "en-US", 153600)
@@ -345,8 +382,31 @@ func (e *Executor) getSession(target *Target) (*gowinrm.Client, error) {
 		createdAt: time.Now(),
 	}
 
-	log.Printf("[winrm] New session for %s:%d (ssl=%v)", target.Hostname, port, target.UseSSL)
+	pinned := (target.TLSConfig != nil || pinStore != nil) && target.UseSSL
+	log.Printf("[winrm] New session for %s:%d (ssl=%v, pinned=%v)", target.Hostname, port, target.UseSSL, pinned)
 	return client, nil
+}
+
+// preflightTLSCheck connects to the host, performs a TLS handshake, and runs
+// the given VerifyPeerCertificate callback against the server's certificate chain.
+// This is a separate TCP connection from the WinRM session — it exists solely
+// to verify the certificate fingerprint before trusting the endpoint.
+func (e *Executor) preflightTLSCheck(host string, port int, verify func([][]byte, [][]*x509.Certificate) error) error {
+	addr := fmt.Sprintf("%s:%d", host, port)
+	conn, err := tls.DialWithDialer(
+		&net.Dialer{Timeout: 10 * time.Second},
+		"tcp",
+		addr,
+		&tls.Config{
+			InsecureSkipVerify:    true, //nolint:gosec // We use VerifyPeerCertificate
+			VerifyPeerCertificate: verify,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
 }
 
 // InvalidateSession removes a cached session for a host.

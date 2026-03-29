@@ -199,7 +199,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 				Username:  *cfg.DCUsername,
 				Password:  *cfg.DCPassword,
 				UseSSL:    dcWS.UseSSL,
-				VerifySSL: false,
+				VerifySSL: true, // TOFU cert pinning via CertPinStore
 			},
 		},
 	}
@@ -254,7 +254,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 					Username:  wsUser,
 					Password:  wsPass,
 					UseSSL:    ws.UseSSL,
-					VerifySSL: false,
+					VerifySSL: true, // TOFU cert pinning via CertPinStore
 				},
 			})
 			scanned[hostname] = true
@@ -321,7 +321,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 				Username:  wt.Username,
 				Password:  wt.Password,
 				UseSSL:    ws.UseSSL,
-				VerifySSL: false,
+				VerifySSL: true, // TOFU cert pinning via CertPinStore
 			},
 		})
 	}
@@ -1306,7 +1306,7 @@ func (ds *driftScanner) checkTargetViaDCProxy(ctx context.Context, t scanTarget)
 		Username:  *cfg.DCUsername,
 		Password:  *cfg.DCPassword,
 		UseSSL:    dcWS.UseSSL,
-		VerifySSL: false,
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 
 	// Run the same scan via Invoke-Command on the DC
@@ -1431,7 +1431,7 @@ func (ds *driftScanner) checkTargetDirectFallback(ctx context.Context, t scanTar
 			Username:  wt.Username,
 			Password:  wt.Password,
 			UseSSL:    ws.UseSSL,
-			VerifySSL: false,
+			VerifySSL: true, // TOFU cert pinning via CertPinStore
 		},
 	}
 

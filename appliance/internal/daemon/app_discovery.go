@@ -117,7 +117,7 @@ func (ds *driftScanner) buildWindowsTargets() []scanTarget {
 				Username:  *cfg.DCUsername,
 				Password:  *cfg.DCPassword,
 				UseSSL:    dcWS.UseSSL,
-				VerifySSL: false,
+				VerifySSL: true, // TOFU cert pinning via CertPinStore
 			},
 		},
 	}
@@ -135,7 +135,7 @@ func (ds *driftScanner) buildWindowsTargets() []scanTarget {
 					Username:  *cfg.DCUsername,
 					Password:  *cfg.DCPassword,
 					UseSSL:    ws.UseSSL,
-					VerifySSL: false,
+					VerifySSL: true, // TOFU cert pinning via CertPinStore
 				},
 			})
 		}

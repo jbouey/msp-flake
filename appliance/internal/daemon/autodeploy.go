@@ -905,7 +905,7 @@ func (ad *autoDeployer) buildTargetByHostname(hostname string) *winrm.Target {
 		Username:  username,
 		Password:  password,
 		UseSSL:    ws.UseSSL,
-		VerifySSL: false,
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 }
 
@@ -1020,7 +1020,7 @@ func (ad *autoDeployer) dcTarget() *winrm.Target {
 		Username:  *cfg.DCUsername,
 		Password:  *cfg.DCPassword,
 		UseSSL:    ad.dcUseSSL,
-		VerifySSL: false,
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 }
 
@@ -1075,7 +1075,7 @@ func (ad *autoDeployer) buildTarget(ws *discovery.ADComputer) *winrm.Target {
 		Username:  username,
 		Password:  password,
 		UseSSL:    useSSL,
-		VerifySSL: false,
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 }
 
@@ -1928,7 +1928,7 @@ func (e *adScriptExec) RunScript(_ context.Context, hostname, script, username, 
 		Username:  username,
 		Password:  password,
 		UseSSL:    ws.UseSSL,
-		VerifySSL: false,
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 
 	result := e.winrmExec.Execute(target, script, "AD-ENUM", "discovery", timeout, 1, float64(timeout), nil)

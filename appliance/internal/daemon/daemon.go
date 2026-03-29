@@ -63,6 +63,7 @@ type Daemon struct {
 	l2Planner *l2planner.Planner // native Go L2 LLM planner
 	orderProc *orders.Processor
 	winrmExec *winrm.Executor
+	certPins  *winrm.CertPinStore // TOFU cert pinning for WinRM TLS
 	sshExec   *sshexec.Executor
 
 	// Credential envelope encryption keypair (X25519)
@@ -152,8 +153,10 @@ func New(cfg *Config) *Daemon {
 		state:    NewStateManager(),
 	}
 
-	// Initialize WinRM and SSH executors (must be before L1 engine)
-	d.winrmExec = winrm.NewExecutor()
+	// Initialize WinRM cert pin store + executor (must be before L1 engine)
+	pinStorePath := filepath.Join(cfg.StateDir, "winrm_pins.json")
+	d.certPins = winrm.NewCertPinStore(pinStorePath)
+	d.winrmExec = winrm.NewExecutorWithPins(d.certPins)
 	d.sshExec = sshexec.NewExecutor()
 
 	// Initialize L1 healing engine
@@ -280,6 +283,21 @@ func New(cfg *Config) *Daemon {
 	// remove_agent: stop service, remove binary + data dirs from a Linux/macOS host via SSH
 	d.orderProc.RegisterHandler("remove_agent", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
 		return d.handleRemoveAgent(ctx, params)
+	})
+
+	// clear_winrm_pin: remove TOFU cert pin for a host (e.g., after cert rotation)
+	d.orderProc.RegisterHandler("clear_winrm_pin", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+		hostname := maputil.String(params, "hostname")
+		if hostname == "" {
+			return nil, fmt.Errorf("hostname is required for clear_winrm_pin")
+		}
+		d.certPins.ClearPin(hostname)
+		d.winrmExec.InvalidateSession(hostname) // Force new session on next connect
+		log.Printf("[orders] clear_winrm_pin: cleared cert pin for %s", hostname)
+		return map[string]interface{}{
+			"status":   "cleared",
+			"hostname": hostname,
+		}, nil
 	})
 
 	// Initialize network scanner for port/reachability checks
@@ -1218,7 +1236,7 @@ func (d *Daemon) buildWinRMTarget(req *grpcserver.HealRequest) *winrm.Target {
 		Username:  username,
 		Password:  password,
 		UseSSL:    ws.UseSSL,
-		VerifySSL: false, // Tolerate self-signed certs during rollout
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 }
 
@@ -1284,7 +1302,7 @@ func (d *Daemon) handleValidateCredential(ctx context.Context, params map[string
 		Username:  target.Username,
 		Password:  target.Password,
 		UseSSL:    ws.UseSSL,
-		VerifySSL: false,
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 
 	// Test basic WinRM connectivity with a simple command
@@ -1395,7 +1413,7 @@ func (d *Daemon) fixFirewallGPO(triggerHost string) {
 		Username:  *d.config.DCUsername,
 		Password:  *d.config.DCPassword,
 		UseSSL:    ws.UseSSL,
-		VerifySSL: false, // Tolerate self-signed certs during rollout
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 
 	// PowerShell script that checks and fixes the GPO firewall setting.
@@ -1487,7 +1505,7 @@ func (d *Daemon) findWinRMTarget(hostname string) *winrm.Target {
 		Username:  *d.config.DCUsername,
 		Password:  *d.config.DCPassword,
 		UseSSL:    ws.UseSSL,
-		VerifySSL: false, // Tolerate self-signed certs during rollout
+		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
 }
 
