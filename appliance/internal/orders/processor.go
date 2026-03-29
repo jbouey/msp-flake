@@ -32,6 +32,33 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// --- Order execution timeouts ---
+// Long-running orders (NixOS rebuild, binary downloads) get generous timeouts.
+// Quick handlers (checkin, status, sync) get short timeouts to prevent hangs.
+var orderTimeouts = map[string]time.Duration{
+	"nixos_rebuild":       30 * time.Minute,
+	"update_agent":        10 * time.Minute,
+	"update_daemon":       10 * time.Minute,
+	"update_iso":          15 * time.Minute,
+	"healing":             5 * time.Minute,
+	"deploy_sensor":       5 * time.Minute,
+	"deploy_linux_sensor": 5 * time.Minute,
+	"diagnostic":          2 * time.Minute,
+	"view_logs":           30 * time.Second,
+	"validate_credential": 30 * time.Second,
+}
+
+// defaultOrderTimeout is used for order types not in orderTimeouts.
+const defaultOrderTimeout = 2 * time.Minute
+
+// orderTimeout returns the timeout for a given order type.
+func orderTimeout(orderType string) time.Duration {
+	if t, ok := orderTimeouts[orderType]; ok {
+		return t
+	}
+	return defaultOrderTimeout
+}
+
 // --- Parameter allowlists for dangerous order types ---
 
 // allowedFlakeRefPattern matches only our official flake refs.
@@ -357,16 +384,25 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 		params = map[string]interface{}{}
 	}
 
-	result, err := handler(ctx, params)
+	// Enforce per-order-type timeout to prevent handlers from blocking forever.
+	timeout := orderTimeout(order.OrderType)
+	handlerCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	result, err := handler(handlerCtx, params)
 	if err != nil {
-		log.Printf("[orders] Order %s failed: %v", order.OrderID, err)
+		errMsg := err.Error()
+		if handlerCtx.Err() == context.DeadlineExceeded {
+			errMsg = fmt.Sprintf("order timed out after %s: %v", timeout, err)
+		}
+		log.Printf("[orders] Order %s failed: %s", order.OrderID, errMsg)
 		// Clear nonce on execution failure so the order can be retried
 		// after the backend auto-expires the failed completion (1 hour).
 		// Security failures (bad signature, bad nonce) are caught above
 		// and keep the nonce cached to prevent replay attacks.
 		p.removeNonce(order.Nonce)
-		p.complete(ctx, order.OrderID, false, nil, err.Error())
-		return &OrderResult{OrderID: order.OrderID, Success: false, Error: err.Error()}
+		p.complete(ctx, order.OrderID, false, nil, errMsg)
+		return &OrderResult{OrderID: order.OrderID, Success: false, Error: errMsg}
 	}
 
 	log.Printf("[orders] Order %s completed successfully", order.OrderID)

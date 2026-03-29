@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -124,14 +125,15 @@ type Daemon struct {
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
-// If the goroutine panics, the panic is logged instead of crashing the daemon.
+// If the goroutine panics, the panic value and full stack trace are logged
+// instead of crashing the daemon.
 func (d *Daemon) safeGo(name string, f func()) {
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("[daemon] PANIC in goroutine %q: %v", name, r)
+				log.Printf("[daemon] PANIC in goroutine %q: %v\n%s", name, r, debug.Stack())
 			}
 		}()
 		f()

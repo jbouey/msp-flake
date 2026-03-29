@@ -464,8 +464,9 @@ async def _ots_repair_block_heights():
                                 WHERE bundle_id = :bid
                             """), {"height": correct_height, "bid": proof.bundle_id})
                             fixed += 1
-                except Exception:
-                    continue  # Skip malformed proofs
+                except Exception as e:
+                    logger.debug("Skipping malformed OTS proof", bundle_id=str(proof.bundle_id), error=str(e))
+                    continue
 
             await db.commit()
             logger.info(f"OTS block height repair: fixed {fixed}/{len(bad_proofs)} proofs")
@@ -1059,8 +1060,14 @@ async def lifespan(app: FastAPI):
     _bg_tasks: dict = {}
     _bg_shutdown = asyncio.Event()
 
-    async def _supervised(name: str, coro_fn, *args, restart=True):
-        """Run a coroutine with auto-restart on unexpected exit."""
+    async def _supervised(name: str, coro_fn, *args, restart=True, max_restarts=20):
+        """Run a coroutine with auto-restart on unexpected exit.
+
+        Logs full tracebacks on crash and detects restart loops (exponential backoff
+        up to 5 minutes, hard stop after max_restarts consecutive failures).
+        """
+        restart_count = 0
+        backoff_s = 30  # Initial backoff; doubles on each restart up to 300s
         while not _bg_shutdown.is_set():
             try:
                 logger.info(f"bg_task_started", task=name)
@@ -1070,11 +1077,19 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"bg_task_crashed", task=name, error=str(e))
+                restart_count += 1
+                logger.error(f"bg_task_crashed", task=name, error=str(e),
+                             restart_count=restart_count, exc_info=True)
                 if not restart or _bg_shutdown.is_set():
                     break
-                logger.warning("bg_task_restarting", task=name, after_s=30)
-                await asyncio.sleep(30)  # Back off before restart
+                if restart_count >= max_restarts:
+                    logger.error("bg_task_restart_loop_detected — giving up",
+                                 task=name, total_restarts=restart_count)
+                    break
+                logger.warning("bg_task_restarting", task=name, after_s=backoff_s,
+                               attempt=restart_count, max=max_restarts)
+                await asyncio.sleep(backoff_s)
+                backoff_s = min(backoff_s * 2, 300)  # Cap at 5 minutes
 
     from dashboard_api.companion import companion_alert_check_loop
 
@@ -1389,7 +1404,8 @@ async def websocket_events(websocket: WebSocket):
         if not user:
             await websocket.close(code=1008, reason="Invalid or expired token")
             return
-    except Exception:
+    except Exception as e:
+        logger.warning("WebSocket auth validation failed", error=str(e))
         await websocket.close(code=1011, reason="Auth validation failed")
         return
 
@@ -1404,7 +1420,8 @@ async def websocket_events(websocket: WebSocket):
                 await websocket.send_text('{"type":"pong"}')
     except WebSocketDisconnect:
         await ws_manager.disconnect(websocket)
-    except Exception:
+    except Exception as e:
+        logger.warning("WebSocket connection error", error=str(e))
         await ws_manager.disconnect(websocket)
 
 # Serve agent update packages (only if directory exists)
@@ -1691,8 +1708,9 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
         maint_row = maint_result.fetchone()
         if maint_row and maint_row[0]:
             maintenance_until = maint_row[0].isoformat()
-    except Exception:
-        pass  # Non-critical — column may not exist yet
+    except Exception as e:
+        # Graceful degradation: maintenance_until column may not exist yet (pre-migration)
+        logger.debug("Skipping maintenance window check (column may not exist)", error=str(e))
 
     logger.info("Appliance checked in",
                 site_id=req.site_id,
@@ -1882,8 +1900,9 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                     "runbook_id": None,
                     "timestamp": now.isoformat()
                 }
-        except Exception:
-            pass  # Column doesn't exist yet (migration 099 not applied)
+        except Exception as e:
+            # Graceful degradation: remediation_exhausted column requires migration 099
+            logger.debug("Skipping exhaustion check (migration 099 not applied)", error=str(e))
 
         # If previously resolved but drift recurred, reopen instead of creating new
         if existing_status == 'resolved':
@@ -2135,8 +2154,9 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                 """),
                 {"id": incident_id, "attempt": l1_attempt, "hash": context_hash}
             )
-        except Exception:
-            pass  # Migration 099 not yet applied
+        except Exception as e:
+            # Graceful degradation: remediation tracking columns require migration 099
+            logger.debug("Skipping L1 remediation tracking (migration 099 not applied)", error=str(e))
     elif resolution_tier == "L3":
         # L1 rule matched an escalation-only runbook (ESC-*) — skip L2, go straight to L3
         await db.execute(
@@ -2207,10 +2227,12 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                             "hash": context_hash,
                         }
                     )
-                except Exception:
-                    pass  # Migration 099 columns not yet available
-        except Exception:
-            pass  # Migration 099 not applied — skip state machine, proceed normally
+                except Exception as e:
+                    # Graceful degradation: exhaustion columns require migration 099
+                    logger.debug("Skipping exhaustion update (migration 099 not applied)", error=str(e))
+        except Exception as e:
+            # Graceful degradation: state machine columns require migration 099
+            logger.debug("Skipping remediation state machine (migration 099 not applied)", error=str(e))
 
         l2_succeeded = False
         if not skip_l2 and is_l2_available():
@@ -2222,8 +2244,9 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                 cached = None
                 try:
                     cached = await lookup_cached_l2_decision(db, pattern_sig)
-                except Exception:
-                    pass  # Cache miss, proceed to LLM
+                except Exception as e:
+                    # L2 cache lookup failed — not critical, fall through to LLM
+                    logger.debug("L2 cache lookup failed, proceeding to LLM", error=str(e))
 
                 if cached:
                     logger.info("L2 cache hit on /incidents path",
@@ -2360,8 +2383,9 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                             "hash": context_hash,
                         }
                     )
-                except Exception:
-                    pass  # Migration 099 not yet applied
+                except Exception as e:
+                    # Graceful degradation: L2 remediation tracking requires migration 099
+                    logger.debug("Skipping L2 remediation tracking (migration 099 not applied)", error=str(e))
 
                 # Rule 2: If budget exhausted after this attempt, force L3 escalation
                 if is_exhausted and not l2_succeeded:
@@ -3526,7 +3550,8 @@ async def upload_evidence_worm(
                     # Handle Z suffix for UTC
                     ts = ts.replace('Z', '+00:00')
                     return datetime.fromisoformat(ts)
-                except Exception:
+                except (ValueError, TypeError):
+                    # Unparseable timestamp from appliance — use current time as fallback
                     return now
             return now
 
@@ -4224,8 +4249,9 @@ async def agent_sync_rules(site_id: Optional[str] = None, db: AsyncSession = Dep
                         rule_json = ppr_row[0] if isinstance(ppr_row[0], dict) else json.loads(ppr_row[0])
                         db_rules.append(rule_json)
                         continue
-                except Exception:
-                    pass  # Fall through to generic format
+                except Exception as e:
+                    # Protection profile rule_json lookup failed — fall through to generic format
+                    logger.debug("Failed to load protection_profile rule_json", rule_id=str(row[0]), error=str(e))
 
             # Convert incident_pattern dict to conditions list
             # Database stores: {"incident_type": "firewall"} or {"check_type": "screen_lock"}
