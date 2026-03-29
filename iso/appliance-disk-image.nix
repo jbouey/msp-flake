@@ -131,9 +131,15 @@ in
   # ============================================================================
   boot = {
     loader = {
-      systemd-boot.enable = true;
+      systemd-boot.enable = lib.mkForce false;  # Lanzaboote replaces systemd-boot
       efi.canTouchEfiVariables = false;
       timeout = 3;
+    };
+
+    # UEFI Secure Boot via lanzaboote — signs EFI binaries with self-managed keys
+    lanzaboote = {
+      enable = true;
+      pkiBundle = "/etc/secureboot";
     };
 
     # Kernel params — quiet boot, suppress noisy drivers
@@ -455,6 +461,7 @@ EOF
     wireguard-tools
     compliance-agent appliance-daemon-go network-scanner local-portal
     jq yq
+    sbctl  # UEFI Secure Boot key management
   ];
 
   # ============================================================================
@@ -679,6 +686,26 @@ EOF
 
       # Reboot to internal drive
       ${pkgs.systemd}/bin/systemctl reboot
+    '';
+  };
+
+  # ============================================================================
+  # Secure Boot Key Generation (first boot only)
+  # ============================================================================
+  systemd.services.msp-secureboot-keygen = {
+    description = "Generate UEFI Secure Boot keys if not present";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "local-fs.target" ];
+    unitConfig.ConditionPathExists = "!/etc/secureboot/keys/db/db.key";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      echo "Generating UEFI Secure Boot keys..."
+      ${pkgs.sbctl}/bin/sbctl create-keys
+      echo "Secure Boot keys generated at /etc/secureboot/keys/"
+      echo "Enroll keys with: sbctl enroll-keys --microsoft"
     '';
   };
 

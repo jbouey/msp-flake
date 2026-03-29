@@ -7,9 +7,11 @@
     flake-utils.url = "github:numtide/flake-utils";
     nix2container.url = "github:nlewo/nix2container";
     nix2container.inputs.nixpkgs.follows = "nixpkgs";
+    lanzaboote.url = "github:nix-community/lanzaboote/v0.4.1";
+    lanzaboote.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, nix2container }:
+  outputs = { self, nixpkgs, flake-utils, nix2container, lanzaboote }:
     let
       # Keep a single import of the module and reuse it everywhere.
       logWatcherModule = import ./flake/Modules/log-watcher.nix;
@@ -173,6 +175,7 @@
       nixosConfigurations.osiriscare-appliance-disk = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
+          lanzaboote.nixosModules.lanzaboote
           ./iso/appliance-disk-image.nix
         ];
       };

@@ -206,6 +206,7 @@ in
       nix  # Required - nixos-install calls nix and nix-build internally
       dialog  # Professional TUI installer (mixedgauge, gauge, msgbox)
       figlet  # ASCII art banner for splash/completion screens
+      sbctl  # UEFI Secure Boot key generation
     ];
 
     script = ''
@@ -454,6 +455,21 @@ in
 
       S_INSTALL=0
       log "nixos-install completed successfully"
+
+      # ── Step 6b: Generate Secure Boot keys ──────────────────────
+      show_progress 90 "Generating UEFI Secure Boot keys..."
+      log "Step 6b: Generating Secure Boot keys"
+      if [ ! -f /mnt/etc/secureboot/keys/db/db.key ]; then
+        mkdir -p /mnt/etc/secureboot
+        # Generate keys in the installed system's /etc/secureboot
+        chroot /mnt ${pkgs.sbctl}/bin/sbctl create-keys 2>> "$LOG_FILE" || {
+          log "WARNING: Secure Boot key generation failed (non-fatal)"
+          log "Keys can be generated post-boot with: sbctl create-keys"
+        }
+        log "Secure Boot keys generated"
+      else
+        log "Secure Boot keys already exist, skipping"
+      fi
 
       # ── Step 7: Verify ─────────────────────────────────────────
       S_VERIFY=7
