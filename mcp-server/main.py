@@ -1173,6 +1173,27 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Evidence chain check failed: {e}")
             await asyncio.sleep(86400)  # Once per day
 
+    async def _merkle_batch_loop():
+        """Hourly Merkle batching of evidence bundles for OTS."""
+        await asyncio.sleep(300)  # 5 min after startup
+        while True:
+            try:
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    sites = await conn.fetch(
+                        "SELECT DISTINCT site_id FROM compliance_bundles WHERE ots_status = 'batching'"
+                    )
+                    for row in sites:
+                        from dashboard_api.evidence_chain import process_merkle_batch
+                        stats = await process_merkle_batch(conn, row["site_id"])
+                        if stats.get("batched", 0) > 0:
+                            logger.info("Merkle batch created", **stats)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error("Merkle batch loop error", error=str(e))
+            await asyncio.sleep(3600)  # 1 hour
+
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
         ("ots_resubmit", _ots_resubmit_expired_loop),
@@ -1185,6 +1206,7 @@ async def lifespan(app: FastAPI):
         ("health_monitor", health_monitor_loop),
         ("reconciliation", _reconciliation_loop),
         ("evidence_chain_check", _evidence_chain_check_loop),
+        ("merkle_batch", _merkle_batch_loop),
     ]
 
     for name, fn in task_defs:

@@ -53,6 +53,7 @@ OTS_CALENDARS = [
 
 OTS_ENABLED = os.getenv("OTS_ENABLED", "true").lower() == "true"
 OTS_TIMEOUT = int(os.getenv("OTS_TIMEOUT", "30"))
+MERKLE_BATCHING_ENABLED = os.getenv("MERKLE_BATCHING_ENABLED", "true").lower() == "true"
 
 # Bitcoin attestation tag in OTS proofs
 BTC_ATTESTATION_TAG = b'\x05\x88\x96\x0d\x73\xd7\x19\x01'
@@ -624,6 +625,13 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
                                     last_upgrade_attempt = NOW()
                                 WHERE bundle_id = :bundle_id
                             """), {"bundle_id": proof.bundle_id, "block": attestation.height})
+                            # If this was a Merkle batch proof, update the batch table too
+                            if proof.bundle_id.startswith("MB-"):
+                                await db.execute(text("""
+                                    UPDATE ots_merkle_batches
+                                    SET ots_status = 'anchored', bitcoin_block = :block, anchored_at = NOW()
+                                    WHERE batch_id = :batch_id
+                                """), {"block": attestation.height, "batch_id": proof.bundle_id})
                             upgraded += 1
                             upgrade_success = True
                             logger.info(f"OTS already anchored: {proof.bundle_id[:8]}... block={attestation.height}")
@@ -668,6 +676,14 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
                                                 "bundle_id": proof.bundle_id,
                                                 "calendar_url": calendar_url,
                                             })
+
+                                            # If this was a Merkle batch proof, update the batch table too
+                                            if proof.bundle_id.startswith("MB-"):
+                                                await db.execute(text("""
+                                                    UPDATE ots_merkle_batches
+                                                    SET ots_status = 'anchored', bitcoin_block = :block, anchored_at = NOW()
+                                                    WHERE batch_id = :batch_id
+                                                """), {"block": block_height, "batch_id": proof.bundle_id})
 
                                             upgraded += 1
                                             upgrade_success = True
@@ -987,13 +1003,21 @@ async def submit_evidence(
     # Submit to OTS in background
     ots_submitted = False
     if OTS_ENABLED:
-        background_tasks.add_task(
-            submit_ots_proof_background,
-            db,
-            bundle.bundle_id,
-            bundle.bundle_hash,
-            site_id
-        )
+        if MERKLE_BATCHING_ENABLED:
+            # Mark for hourly Merkle batching instead of immediate individual OTS
+            await db.execute(text("""
+                UPDATE compliance_bundles SET ots_status = 'batching' WHERE bundle_id = :bundle_id
+            """), {"bundle_id": bundle.bundle_id})
+            await db.commit()
+        else:
+            # Legacy: individual OTS proof per bundle
+            background_tasks.add_task(
+                submit_ots_proof_background,
+                db,
+                bundle.bundle_id,
+                bundle.bundle_hash,
+                site_id
+            )
         ots_submitted = True
 
     # Upload to MinIO WORM storage in background
@@ -1545,6 +1569,66 @@ async def submit_ots_proof_background(db: AsyncSession, bundle_id: str, bundle_h
 
     except Exception as e:
         logger.error(f"OTS background submission failed for {bundle_id}: {e}")
+
+
+async def process_merkle_batch(conn, site_id: str) -> dict:
+    """Process a Merkle batch for a site: collect 'batching' bundles, build tree, submit root to OTS."""
+    from .merkle import build_merkle_tree
+
+    bundles = await conn.fetch("""
+        SELECT bundle_id, bundle_hash, chain_position
+        FROM compliance_bundles
+        WHERE site_id = $1 AND ots_status = 'batching'
+        ORDER BY chain_position ASC
+    """, site_id)
+
+    if not bundles:
+        return {"site_id": site_id, "batched": 0}
+
+    hashes = [b["bundle_hash"] for b in bundles]
+    root, proofs = build_merkle_tree(hashes)
+
+    batch_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    batch_id = f"MB-{site_id[:20]}-{batch_hour.strftime('%Y%m%d%H')}"
+    tree_depth = len(proofs[0]) if proofs and proofs[0] else 0
+
+    # Submit merkle root to OTS
+    ots_result = await submit_hash_to_ots(root, batch_id)
+
+    if not ots_result:
+        logger.warning(f"Merkle batch OTS submission failed for {batch_id}, will retry next cycle")
+        return {"site_id": site_id, "batched": 0, "error": "ots_submission_failed"}
+
+    proof_data = ots_result["proof_data"]
+    calendar_url = ots_result["calendar_url"]
+
+    # Record the batch
+    await conn.execute("""
+        INSERT INTO ots_merkle_batches (batch_id, site_id, merkle_root, bundle_count, tree_depth,
+            ots_status, ots_submitted_at, batch_hour)
+        VALUES ($1, $2, $3, $4, $5, 'pending', NOW(), $6)
+        ON CONFLICT (batch_id) DO NOTHING
+    """, batch_id, site_id, root, len(bundles), tree_depth, batch_hour)
+
+    # Insert into ots_proofs so existing upgrade loop handles it
+    await conn.execute("""
+        INSERT INTO ots_proofs (bundle_id, bundle_hash, site_id, proof_data, calendar_url,
+            submitted_at, status, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, NOW(), 'pending', NOW(), NOW())
+        ON CONFLICT (bundle_id) DO NOTHING
+    """, batch_id, root, site_id, proof_data, calendar_url)
+
+    # Update each bundle with its Merkle proof
+    for i, bundle in enumerate(bundles):
+        await conn.execute("""
+            UPDATE compliance_bundles
+            SET merkle_batch_id = $1, merkle_proof = $2::jsonb, merkle_leaf_index = $3, ots_status = 'pending'
+            WHERE bundle_id = $4
+        """, batch_id, json.dumps(proofs[i]), i, bundle["bundle_id"])
+
+    logger.info(f"Merkle batch created: {batch_id} with {len(bundles)} bundles, root={root[:16]}")
+
+    return {"site_id": site_id, "batched": len(bundles), "batch_id": batch_id, "root": root[:16]}
 
 
 @router.get("/sites/{site_id}/verify/{bundle_id}", response_model=EvidenceVerifyResponse)
