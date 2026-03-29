@@ -6,12 +6,13 @@ on:
     paths:
       - 'mcp-server/central-command/**'
       - 'mcp-server/main.py'
-      - 'mcp-server/server.py'
   workflow_dispatch:  # Allow manual trigger
 
 env:
   VPS_HOST: 178.156.162.116
   VPS_USER: root
+  RELEASES_DIR: /opt/mcp-server/releases
+  CURRENT_LINK: /opt/mcp-server/current
 
 jobs:
   test:
@@ -28,7 +29,7 @@ jobs:
       - name: Install backend test dependencies
         working-directory: mcp-server/central-command/backend
         run: |
-          pip install pytest pytest-asyncio httpx
+          pip install pytest==8.0.0 pytest-asyncio==0.23.0 httpx==0.27.0
           pip install -r requirements.txt
 
       - name: Run backend tests
@@ -90,42 +91,67 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy backend files
+      - name: Create release directory
+        run: |
+          RELEASE_ID=$(date -u +%Y%m%d_%H%M%S)_${GITHUB_SHA::8}
+          echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_ENV
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "mkdir -p ${{ env.RELEASES_DIR }}/$RELEASE_ID/{dashboard_api,app,frontend_dist,frontend}"
+
+      - name: Deploy backend to release
         run: |
           rsync -avz --delete \
             mcp-server/central-command/backend/ \
-            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/dashboard_api_mount/
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/dashboard_api/
 
-      - name: Deploy main.py
+      - name: Deploy main.py to release
         run: |
           rsync -avz \
             mcp-server/main.py \
-            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/app/
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/app/
 
-      - name: Deploy frontend
+      - name: Deploy frontend to release
         run: |
           rsync -avz --delete \
             mcp-server/central-command/frontend/dist/ \
-            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/frontend_dist/
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/
 
-      - name: Deploy nginx config
+      - name: Deploy nginx config to release
         run: |
           rsync -avz \
             mcp-server/central-command/frontend/nginx.conf \
-            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:/opt/mcp-server/frontend/nginx.conf
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend/nginx.conf
+
+      - name: Atomic switch — symlink to new release
+        run: |
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << EOF
+            # Save previous release for rollback reference
+            PREV_RELEASE=\$(readlink -f ${{ env.CURRENT_LINK }} 2>/dev/null || echo "none")
+            echo "Previous release: \$PREV_RELEASE"
+            echo "New release: ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}"
+
+            # Copy release files to the live mount points (Docker volume mounts)
+            rsync -a --delete ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/dashboard_api/ /opt/mcp-server/dashboard_api_mount/
+            rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/app/ /opt/mcp-server/app/
+            rsync -a --delete ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/ /opt/mcp-server/frontend_dist/
+            rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend/nginx.conf /opt/mcp-server/frontend/nginx.conf
+
+            # Update symlink to new release (for rollback reference)
+            ln -sfn ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }} ${{ env.CURRENT_LINK }}
+
+            # Fix permissions
+            chmod -R 755 /opt/mcp-server/dashboard_api_mount/
+            chmod 644 /opt/mcp-server/app/main.py
+          EOF
 
       - name: Run database migrations
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
-            # Run migrations using DATABASE_URL already configured in the container environment
             docker exec mcp-server python3 /app/dashboard_api/migrate.py up || echo "Migration runner failed — manual migration may be needed"
           EOF
 
-      - name: Fix permissions and restart services
+      - name: Restart services
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
-            chmod -R 755 /opt/mcp-server/dashboard_api_mount/
-            chmod 644 /opt/mcp-server/app/main.py /opt/mcp-server/app/server.py
             cd /opt/mcp-server
             docker compose restart pgbouncer
             sleep 3
@@ -135,4 +161,35 @@ jobs:
       - name: Verify deployment
         run: |
           sleep 15
-          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "curl -sf http://localhost:8000/health"
+          HEALTH=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "curl -sf http://localhost:8000/health")
+          echo "$HEALTH"
+          echo "$HEALTH" | grep -q '"status":"ok"' || exit 1
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
+            echo "DEPLOY FAILED — attempting rollback..."
+            CURRENT=$(readlink -f /opt/mcp-server/current 2>/dev/null)
+            # Find the previous release (second newest)
+            PREV=$(ls -dt /opt/mcp-server/releases/*/ 2>/dev/null | sed -n '2p' | sed 's:/$::')
+            if [ -n "$PREV" ] && [ -d "$PREV" ]; then
+              echo "Rolling back to: $PREV"
+              rsync -a --delete "$PREV/dashboard_api/" /opt/mcp-server/dashboard_api_mount/
+              rsync -a "$PREV/app/" /opt/mcp-server/app/
+              rsync -a --delete "$PREV/frontend_dist/" /opt/mcp-server/frontend_dist/
+              rsync -a "$PREV/frontend/nginx.conf" /opt/mcp-server/frontend/nginx.conf
+              ln -sfn "$PREV" /opt/mcp-server/current
+              chmod -R 755 /opt/mcp-server/dashboard_api_mount/
+              cd /opt/mcp-server && docker compose restart pgbouncer && sleep 3 && docker compose restart mcp-server frontend
+              sleep 10
+              curl -sf http://localhost:8000/health && echo "ROLLBACK SUCCESSFUL" || echo "ROLLBACK FAILED — manual intervention required"
+            else
+              echo "NO PREVIOUS RELEASE FOUND — manual intervention required"
+            fi
+          EOF
+
+      - name: Cleanup old releases (keep last 5)
+        if: success()
+        run: |
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "ls -dt ${{ env.RELEASES_DIR }}/*/ | tail -n +6 | xargs rm -rf 2>/dev/null; echo 'Kept last 5 releases:'; ls -dt ${{ env.RELEASES_DIR }}/*/ | head -5"
