@@ -56,6 +56,8 @@ const DriftConfig = lazy(() => import('./pages/DriftConfig'));
 const Evidence = lazy(() => import('./pages/Evidence').then(m => ({ default: m.Evidence })));
 const RuleBuilder = lazy(() => import('./pages/RuleBuilder').then(m => ({ default: m.RuleBuilder })));
 const VPNManagement = lazy(() => import('./pages/VPNManagement'));
+const Reports = lazy(() => import('./pages/Reports').then(m => ({ default: m.Reports })));
+const SystemHealth = lazy(() => import('./pages/SystemHealth').then(m => ({ default: m.SystemHealth })));
 
 // Detect if serving from marketing domain (www.osiriscare.net or osiriscare.net)
 const isLandingSite = typeof window !== 'undefined' &&
@@ -205,6 +207,7 @@ const pageTitles: Record<string, string> = {
   '/cve-watch': 'CVE Watch',
   '/compliance-library': 'Compliance Library',
   '/reports': 'Reports',
+  '/system-health': 'System Health',
   '/evidence': 'Evidence Verification',
   '/audit-logs': 'Audit Logs',
   '/settings/oauth': 'OAuth Settings',
@@ -355,7 +358,8 @@ const AppLayout: React.FC = () => {
               <Route path="/compliance-library" element={<ComplianceLibrary />} />
               <Route path="/docs" element={<Documentation />} />
               <Route path="/client/:siteId" element={<ClientDetail />} />
-              <Route path="/reports" element={<ComingSoon title="Reports" />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/system-health" element={<SystemHealth />} />
             </Routes>
             </div>
           </Suspense>
@@ -368,14 +372,6 @@ const AppLayout: React.FC = () => {
     </WebSocketContext.Provider>
   );
 };
-
-// Placeholder for pages not yet implemented
-const ComingSoon: React.FC<{ title: string }> = ({ title }) => (
-  <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
-    <h1 className="text-2xl font-semibold text-label-primary mb-2">{title}</h1>
-    <p className="text-label-tertiary">Coming soon in a future phase.</p>
-  </div>
-);
 
 const AuthenticatedApp: React.FC = () => {
   const { isAuthenticated, isLoading, user } = useAuth();

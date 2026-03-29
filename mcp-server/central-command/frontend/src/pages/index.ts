@@ -21,3 +21,5 @@ export { IntegrationError } from './IntegrationError';
 export { Settings } from './Settings';
 export { Organizations } from './Organizations';
 export { OrgDashboard } from './OrgDashboard';
+export { Reports } from './Reports';
+export { SystemHealth } from './SystemHealth';

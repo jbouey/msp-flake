@@ -5570,3 +5570,198 @@ async def apply_industry_preset(
         "enabled_frameworks": enabled,
         "appliances_updated": updated_count,
     }
+
+
+# =============================================================================
+# ADMIN REPORTS
+# =============================================================================
+
+@router.get("/admin/reports/generate")
+async def generate_admin_report(
+    request: Request,
+    site_id: str = Query(...),
+    month: str = Query(None),
+    format: str = Query("json"),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Generate a compliance report for a site."""
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Get site info
+        site = await conn.fetchrow(
+            "SELECT site_id, clinic_name FROM sites WHERE site_id = $1", site_id
+        )
+        if not site:
+            raise HTTPException(404, "Site not found")
+
+        # Determine target month
+        target_month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+        parts = target_month.split("-")
+        if len(parts) != 2:
+            raise HTTPException(400, "month must be YYYY-MM format")
+        start = f"{parts[0]}-{parts[1]}-01"
+
+        # Bundle stats
+        bundle_stats = await conn.fetchrow("""
+            SELECT COUNT(*) as total_bundles,
+                   COUNT(CASE WHEN signature IS NOT NULL THEN 1 END) as signed_bundles,
+                   COUNT(CASE WHEN ots_status = 'anchored' THEN 1 END) as anchored_bundles,
+                   AVG(check_count) as avg_checks
+            FROM compliance_bundles
+            WHERE site_id = $1 AND created_at >= $2::date
+              AND created_at < ($2::date + interval '1 month')
+        """, site_id, start)
+
+        # Incident stats
+        incident_stats = await conn.fetchrow("""
+            SELECT COUNT(*) as total,
+                   COUNT(CASE WHEN resolution_tier = 'L1' THEN 1 END) as l1_resolved,
+                   COUNT(CASE WHEN resolution_tier = 'L2' THEN 1 END) as l2_resolved,
+                   COUNT(CASE WHEN resolution_tier = 'L3' THEN 1 END) as l3_escalated,
+                   COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved
+            FROM incidents
+            WHERE site_id = $1 AND created_at >= $2::date
+              AND created_at < ($2::date + interval '1 month')
+        """, site_id, start)
+
+        # Compliance score
+        score_row = await conn.fetchrow(
+            "SELECT compliance_score FROM site_appliances WHERE site_id = $1", site_id
+        )
+
+        # Category breakdown from recent bundles
+        categories = await conn.fetch("""
+            SELECT x.check_type,
+                   COUNT(*) as checks,
+                   SUM(CASE WHEN x.result = 'pass' THEN 1 ELSE 0 END) as passed,
+                   SUM(CASE WHEN x.result = 'fail' THEN 1 ELSE 0 END) as failed
+            FROM compliance_bundles cb,
+                 jsonb_array_elements(cb.checks) AS c,
+                 jsonb_to_record(c) AS x(check_type text, result text)
+            WHERE cb.site_id = $1 AND cb.created_at >= $2::date
+              AND cb.created_at < ($2::date + interval '1 month')
+            GROUP BY x.check_type
+            ORDER BY failed DESC
+            LIMIT 20
+        """, site_id, start)
+
+        total_incidents = incident_stats["total"] or 0
+        resolved_incidents = incident_stats["resolved"] or 0
+
+        report = {
+            "site_id": site_id,
+            "clinic_name": site["clinic_name"],
+            "period": target_month,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "compliance_score": score_row["compliance_score"] if score_row else None,
+            "evidence": {
+                "total_bundles": bundle_stats["total_bundles"],
+                "signed": bundle_stats["signed_bundles"],
+                "blockchain_anchored": bundle_stats["anchored_bundles"],
+                "avg_checks_per_bundle": round(float(bundle_stats["avg_checks"] or 0), 1),
+            },
+            "incidents": {
+                "total": total_incidents,
+                "l1_auto_resolved": incident_stats["l1_resolved"],
+                "l2_llm_resolved": incident_stats["l2_resolved"],
+                "l3_escalated": incident_stats["l3_escalated"],
+                "resolution_rate": round(
+                    100 * resolved_incidents / max(total_incidents, 1), 1
+                ),
+            },
+            "categories": [dict(c) for c in categories],
+        }
+
+        return report
+
+
+# =============================================================================
+# SYSTEM HEALTH
+# =============================================================================
+
+@router.get("/admin/system-health")
+async def get_system_health(
+    request: Request,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Composite system health endpoint for admin dashboard."""
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Database stats
+        db_size = await conn.fetchval("SELECT pg_size_pretty(pg_database_size(current_database()))")
+        conn_stats = await conn.fetch(
+            "SELECT state, COUNT(*) as count FROM pg_stat_activity GROUP BY state"
+        )
+        table_sizes = await conn.fetch("""
+            SELECT relname as table_name,
+                   n_live_tup as row_count,
+                   pg_size_pretty(pg_total_relation_size(relid)) as total_size
+            FROM pg_stat_user_tables
+            ORDER BY pg_total_relation_size(relid) DESC
+            LIMIT 10
+        """)
+
+        # L2 API usage
+        l2_24h = await conn.fetchval(
+            "SELECT COUNT(*) FROM l2_decisions WHERE created_at > NOW() - INTERVAL '24 hours'"
+        )
+
+        # Error count
+        errors_1h = await conn.fetchval("""
+            SELECT COUNT(*) FROM incidents
+            WHERE created_at > NOW() - INTERVAL '1 hour' AND severity = 'critical'
+        """)
+
+        # Fleet status
+        fleet = await conn.fetch("""
+            SELECT sa.site_id, sa.agent_version,
+                   s.clinic_name,
+                   CASE WHEN sa.last_checkin > NOW() - INTERVAL '5 minutes' THEN 'online'
+                        WHEN sa.last_checkin > NOW() - INTERVAL '15 minutes' THEN 'stale'
+                        ELSE 'offline' END as status,
+                   sa.last_checkin
+            FROM site_appliances sa
+            LEFT JOIN sites s ON s.site_id = sa.site_id
+        """)
+
+    # Background tasks
+    bg_tasks = {}
+    try:
+        import main as _main_mod
+        for name, task in getattr(_main_mod.app.state, 'bg_tasks', {}).items():
+            if task.done():
+                exc = task.exception() if not task.cancelled() else None
+                bg_tasks[name] = {"status": f"crashed: {exc}" if exc else "completed"}
+            else:
+                bg_tasks[name] = {"status": "running"}
+    except Exception:
+        bg_tasks = {"note": {"status": "unable to inspect background tasks"}}
+
+    overall = "healthy" if (errors_1h or 0) == 0 else "degraded"
+
+    return {
+        "status": overall,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "database": {
+            "size": db_size,
+            "connections": {r["state"] or "unknown": r["count"] for r in conn_stats},
+            "top_tables": [dict(t) for t in table_sizes],
+        },
+        "l2_api": {"calls_24h": l2_24h or 0},
+        "errors": {"critical_1h": errors_1h or 0},
+        "fleet": [
+            {
+                "site_id": f["site_id"],
+                "clinic_name": f["clinic_name"],
+                "agent_version": f["agent_version"],
+                "status": f["status"],
+                "last_checkin": f["last_checkin"].isoformat() if f["last_checkin"] else None,
+            }
+            for f in fleet
+        ],
+        "background_tasks": bg_tasks,
+    }
