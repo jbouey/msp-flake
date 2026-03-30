@@ -52,28 +52,21 @@ logger = structlog.get_logger()
 router = APIRouter(tags=["agent"])
 
 # Check types that are monitoring-only — detect drift but don't attempt auto-remediation.
-# These checks either can't be auto-fixed (backup needs destination, BitLocker needs TPM)
-# or are informational (network reachability = host is offline, not a fixable drift).
+# Only checks that genuinely cannot be auto-fixed belong here.
+# NOTE: bitlocker, screen_lock, backup_status REMOVED — L1 runbooks exist and work.
 MONITORING_ONLY_CHECKS = {
     # Network monitoring — host offline is not a remediable drift
     "net_host_reachability",
     "net_unexpected_ports",
     "net_expected_service",
     "net_dns_resolution",
-    # Backup — requires manual configuration of backup destination
+    # Backup destination — requires manual configuration (NOT backup_status)
     "backup_not_configured",
-    "backup_status",
     "backup_verification",
-    # Encryption — BitLocker needs TPM/Pro edition, FileVault needs user auth
-    "bitlocker_status",
-    "bitlocker",
     # Credential staleness — informational, not auto-fixable
     "credential_stale",
     # Device reachability — host offline, nothing to remediate
     "device_unreachable",
-    # Screen lock — policy enforcement, not auto-fixable remotely
-    "screen_lock",
-    "screen_lock_policy",
 }
 
 

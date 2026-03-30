@@ -105,17 +105,19 @@ class TestMonitoringOnlyChecks:
     def test_device_unreachable_in_monitoring_only(self):
         assert "device_unreachable" in MONITORING_ONLY_CHECKS
 
-    def test_screen_lock_in_monitoring_only(self):
-        assert "screen_lock" in MONITORING_ONLY_CHECKS
+    def test_screen_lock_not_in_monitoring_only(self):
+        # Removed: screen_lock_policy has 100% L1 success rate — let it heal
+        assert "screen_lock" not in MONITORING_ONLY_CHECKS
 
-    def test_screen_lock_policy_in_monitoring_only(self):
-        assert "screen_lock_policy" in MONITORING_ONLY_CHECKS
+    def test_screen_lock_policy_not_in_monitoring_only(self):
+        assert "screen_lock_policy" not in MONITORING_ONLY_CHECKS
 
-    def test_bitlocker_in_monitoring_only(self):
-        assert "bitlocker" in MONITORING_ONLY_CHECKS
+    def test_bitlocker_not_in_monitoring_only(self):
+        # Removed: Resume-BitLocker works via WinRM
+        assert "bitlocker" not in MONITORING_ONLY_CHECKS
 
-    def test_bitlocker_status_in_monitoring_only(self):
-        assert "bitlocker_status" in MONITORING_ONLY_CHECKS
+    def test_bitlocker_status_not_in_monitoring_only(self):
+        assert "bitlocker_status" not in MONITORING_ONLY_CHECKS
 
     def test_net_host_reachability_in_monitoring_only(self):
         assert "net_host_reachability" in MONITORING_ONLY_CHECKS
@@ -163,7 +165,7 @@ class TestL2MonitoringOnlyGuard:
             host_id="host-1",
             incident_type="drift_detected",
             severity="medium",
-            raw_data={"check_type": "screen_lock_policy"},
+            raw_data={"check_type": "credential_stale"},
         )
 
         mock_db = AsyncMock()

@@ -75,6 +75,7 @@ from dashboard_api.cve_remediation import cve_remediation_loop
 from dashboard_api.framework_sync import router as framework_sync_router, framework_sync_loop
 from dashboard_api.prometheus_metrics import router as metrics_router
 from dashboard_api.websocket_manager import ws_manager
+from dashboard_api.agent_api import agent_l2_plan as agent_l2_plan_handler
 
 # ============================================================================
 # Configuration
@@ -121,8 +122,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 
 # Check types that are monitoring-only — detect drift but don't attempt auto-remediation.
-# These checks either can't be auto-fixed (backup needs destination, BitLocker needs TPM)
-# or are informational (network reachability = host is offline, not a fixable drift).
+# Only checks that genuinely cannot be auto-fixed belong here.
+# NOTE: bitlocker, screen_lock, backup_status REMOVED — L1 runbooks exist and work.
+#   screen_lock_policy had 100% L1 success rate (38/38) but was blocked here.
+#   bitlocker can be resumed via Resume-BitLocker over WinRM.
+#   backup_status service restart is automatable (58% success rate).
 MONITORING_ONLY_CHECKS = {
     # Network monitoring — host offline is not a remediable drift
     "net_host_reachability",
@@ -131,16 +135,9 @@ MONITORING_ONLY_CHECKS = {
     "net_dns_resolution",
     # Device reachability — host offline/unreachable, not auto-fixable
     "device_unreachable",
-    # Backup — requires manual configuration of backup destination
+    # Backup destination — requires manual configuration (NOT backup_status)
     "backup_not_configured",
-    "backup_status",
     "backup_verification",
-    # Encryption — BitLocker needs TPM/Pro edition, FileVault needs user auth
-    "bitlocker_status",
-    "bitlocker",
-    # Screen lock — requires local GPO or user config, not remotely fixable
-    "screen_lock",
-    "screen_lock_policy",
     # Credential staleness — informational, not auto-fixable
     "credential_stale",
     # Agent deploy exhausted — max retries hit, needs human investigation
@@ -2054,7 +2051,12 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             "configuration": "RB-DRIFT-001",
             "firewall": "RB-FIREWALL-001",
             "patching": "RB-PATCH-001",
-            "update": "RB-PATCH-001"
+            "update": "RB-PATCH-001",
+            "audit": "RB-WIN-SEC-002",
+            "defender": "RB-WIN-AV-001",
+            "registry": "RB-WIN-SEC-019",
+            "bitlocker": "RB-WIN-SEC-005",
+            "screen_lock": "RB-WIN-SEC-016",
         }
 
         for keyword, rb_id in runbook_map.items():
@@ -3346,11 +3348,11 @@ async def report_execution_telemetry(request: ExecutionTelemetryInput, db: Async
 
 
 # ============================================================================
-# L2 Agent Plan Endpoint — REMOVED (duplicate of agent_api.py)
-# The canonical /api/agent/l2/plan endpoint with monitoring-only guard,
-# L2 decision cache, and incident_type tracking lives in agent_api.py.
-# This duplicate in main.py was overriding the fixed version.
+# L2 Agent Plan Endpoint — delegates to agent_api.py canonical implementation
+# The agent_api router is NOT registered (too many overlapping endpoints with
+# main.py), so we wire up just this one endpoint that the daemon calls directly.
 # ============================================================================
+app.post("/api/agent/l2/plan")(agent_l2_plan_handler)
 
 
 # ============================================================================
