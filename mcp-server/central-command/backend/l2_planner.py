@@ -594,7 +594,7 @@ async def analyze_incident(
             reasoning=parsed.get("reasoning", "No reasoning provided"),
             confidence=confidence,
             alternative_runbooks=parsed.get("alternative_runbooks", []),
-            requires_human_review=parsed.get("requires_human_review", confidence < 0.7),
+            requires_human_review=parsed.get("requires_human_review", confidence < 0.6),
             pattern_signature=pattern_sig,
             llm_model=llm_model,
             llm_latency_ms=latency_ms,
