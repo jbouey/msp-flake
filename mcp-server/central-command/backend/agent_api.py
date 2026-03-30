@@ -67,6 +67,9 @@ MONITORING_ONLY_CHECKS = {
     "credential_stale",
     # Device reachability — host offline, nothing to remediate
     "device_unreachable",
+    # Agent deploy exhausted — max retries hit, needs human investigation
+    "AGENT-REDEPLOY-EXHAUSTED",
+    "WIN-DEPLOY-UNREACHABLE",
 }
 
 
