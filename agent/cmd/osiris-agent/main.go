@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -326,6 +327,21 @@ func reconnectLoop(ctx context.Context, cfg *config.Config, client *transport.GR
 
 		log.Printf("[reconnect] Attempting gRPC reconnect to %s...", cfg.ApplianceAddr)
 		if err := client.Reconnect(ctx); err != nil {
+			// Detect TOFU pin mismatch — appliance may have regenerated its
+			// self-signed cert on restart. After threshold consecutive failures,
+			// clear the stale pin so the next attempt re-enrolls via TOFU.
+			if errors.Is(err, transport.ErrPinMismatch) {
+				n := client.PinMismatchCount()
+				if n >= 3 {
+					log.Printf("[reconnect] TOFU pin mismatch detected %d times — clearing stale pin for re-enrollment", n)
+					if clearErr := client.ClearPinFile(); clearErr != nil {
+						log.Printf("[reconnect] WARNING: failed to clear pin file: %v", clearErr)
+					}
+					// Use short backoff so re-enrollment happens quickly
+					backoff = 5 * time.Second
+					continue
+				}
+			}
 			log.Printf("[reconnect] Failed: %v (retry in %s)", err, backoff)
 			backoff = backoff * 2
 			if backoff > maxBackoff {

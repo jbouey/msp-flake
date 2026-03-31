@@ -140,6 +140,50 @@ func TestAllAgents(t *testing.T) {
 	}
 }
 
+func TestHasActiveAgentForHost(t *testing.T) {
+	r := NewAgentRegistry()
+
+	// Active agent — heartbeat 1 minute ago
+	active := newTestState("go-WS01-abc", "NVWS01")
+	active.LastHeartbeat = time.Now().Add(-1 * time.Minute)
+	r.Register(active)
+
+	// Stale agent — heartbeat 20 minutes ago
+	stale := newTestState("go-WS02-def", "NVWS02")
+	stale.LastHeartbeat = time.Now().Add(-20 * time.Minute)
+	r.Register(stale)
+
+	// Disk-loaded agent — never heartbeated (zero time)
+	diskOnly := newTestState("go-DC01-ghi", "NVDC01")
+	diskOnly.LastHeartbeat = time.Time{}
+	r.Register(diskOnly)
+
+	maxStale := 10 * time.Minute
+
+	tests := []struct {
+		hostname string
+		wantReg  bool // HasAgentForHost
+		wantAct  bool // HasActiveAgentForHost
+	}{
+		{"NVWS01", true, true},   // active heartbeat
+		{"nvws01", true, true},   // case insensitive
+		{"NVWS02", true, false},  // stale heartbeat
+		{"NVDC01", true, false},  // never heartbeated
+		{"NVWS99", false, false}, // not registered
+	}
+
+	for _, tt := range tests {
+		gotReg := r.HasAgentForHost(tt.hostname)
+		if gotReg != tt.wantReg {
+			t.Errorf("HasAgentForHost(%q) = %v, want %v", tt.hostname, gotReg, tt.wantReg)
+		}
+		gotAct := r.HasActiveAgentForHost(tt.hostname, maxStale)
+		if gotAct != tt.wantAct {
+			t.Errorf("HasActiveAgentForHost(%q) = %v, want %v", tt.hostname, gotAct, tt.wantAct)
+		}
+	}
+}
+
 func TestToLower(t *testing.T) {
 	tests := []struct {
 		in, want string

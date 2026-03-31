@@ -16,17 +16,22 @@ def _get_fernet() -> Fernet:
 
     key = os.environ.get("CREDENTIAL_ENCRYPTION_KEY")
     if not key:
-        # Try loading from file
         key_path = "/app/secrets/credential_encryption.key"
         if os.path.exists(key_path):
             with open(key_path) as f:
                 key = f.read().strip()
         else:
-            # Generate and store (first run)
-            key = Fernet.generate_key().decode()
-            os.makedirs(os.path.dirname(key_path), exist_ok=True)
-            with open(key_path, "w") as f:
-                f.write(key)
+            import logging
+            logging.getLogger(__name__).error(
+                "CRITICAL: No credential encryption key found. "
+                "Set CREDENTIAL_ENCRYPTION_KEY env var or mount key at %s. "
+                "Credentials cannot be encrypted/decrypted without this key.",
+                key_path,
+            )
+            raise RuntimeError(
+                f"Credential encryption key not found at {key_path} "
+                "and CREDENTIAL_ENCRYPTION_KEY env var not set"
+            )
 
     _fernet = Fernet(key.encode() if isinstance(key, str) else key)
     return _fernet

@@ -49,6 +49,7 @@ type Config struct {
 	BatchSize   int           // max entries per POST (default 500)
 	FlushEvery  time.Duration // how often to flush (default 30s)
 	HTTPClient  *http.Client
+	AllowFunc   func() bool // optional: if set, skip shipping when it returns false (circuit breaker)
 }
 
 // Shipper tails journald and ships log batches.
@@ -90,6 +91,9 @@ func (s *Shipper) Run(ctx context.Context) {
 			log.Println("[logshipper] Shutting down")
 			return
 		case <-ticker.C:
+			if s.cfg.AllowFunc != nil && !s.cfg.AllowFunc() {
+				continue // circuit breaker open — server unreachable, skip shipping
+			}
 			if err := s.shipBatch(ctx); err != nil {
 				log.Printf("[logshipper] Ship error: %v", err)
 			}

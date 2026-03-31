@@ -363,23 +363,7 @@ func builtinRules() []*Rule {
 			MaxRetries:      1,
 			Source:          "builtin",
 		},
-		{
-			ID:          "L1-LIN-PERM-001",
-			Name:        "Linux Permissions Drift",
-			Description: "Insecure file permissions on Linux — remediate via runbook",
-			Conditions: []RuleCondition{
-				{Field: "check_type", Operator: OpEquals, Value: "linux_file_permissions"},
-				{Field: "drift_detected", Operator: OpEquals, Value: true},
-			},
-			Action:          "run_linux_runbook",
-			ActionParams:    map[string]interface{}{"runbook_id": "LIN-PERM-001", "phases": []interface{}{"remediate", "verify"}},
-			HIPAAControls:   []string{"164.312(a)(1)", "164.312(c)(1)"},
-			Enabled:         true,
-			Priority:        8,
-			CooldownSeconds: 300,
-			MaxRetries:      1,
-			Source:          "builtin",
-		},
+		// L1-LIN-PERM-001 removed: linux_file_permissions check_type never fires on NixOS appliance (0 incidents, 21 failures)
 		{
 			ID:          "L1-LIN-NET-001",
 			Name:        "Linux Network Hardening Drift",
@@ -414,23 +398,7 @@ func builtinRules() []*Rule {
 			MaxRetries:      1,
 			Source:          "builtin",
 		},
-		{
-			ID:          "L1-LIN-CRYPTO-001",
-			Name:        "Linux Cryptographic Policy Drift",
-			Description: "Weak SSH ciphers/MACs/KEX detected — remediate via runbook",
-			Conditions: []RuleCondition{
-				{Field: "check_type", Operator: OpEquals, Value: "crypto"},
-				{Field: "drift_detected", Operator: OpEquals, Value: true},
-			},
-			Action:          "run_linux_runbook",
-			ActionParams:    map[string]interface{}{"runbook_id": "LIN-CRYPTO-001", "phases": []interface{}{"remediate", "verify"}},
-			HIPAAControls:   []string{"164.312(e)(1)", "164.312(e)(2)(ii)"},
-			Enabled:         true,
-			Priority:        5,
-			CooldownSeconds: 300,
-			MaxRetries:      1,
-			Source:          "builtin",
-		},
+		// L1-LIN-CRYPTO-001 removed: crypto check_type never fires (0 incidents, 729 failures); encryption handled by L1-ENCRYPT-001 → escalate
 		{
 			ID:          "L1-LIN-IR-001",
 			Name:        "Linux Incident Response Readiness Drift",
@@ -696,23 +664,7 @@ func builtinRules() []*Rule {
 			MaxRetries:      1,
 			Source:          "builtin",
 		},
-		{
-			ID:          "L1-LIN-NTP-001",
-			Name:        "Linux NTP Sync Drift",
-			Description: "NTP not synced on Linux — restart chronyd/ntpd via runbook",
-			Conditions: []RuleCondition{
-				{Field: "check_type", Operator: OpEquals, Value: "linux_ntp_sync"},
-				{Field: "drift_detected", Operator: OpEquals, Value: true},
-			},
-			Action:          "run_linux_runbook",
-			ActionParams:    map[string]interface{}{"runbook_id": "LIN-NTP-001", "phases": []interface{}{"remediate", "verify"}},
-			HIPAAControls:   []string{"164.312(b)"},
-			Enabled:         true,
-			Priority:        15,
-			CooldownSeconds: 300,
-			MaxRetries:      1,
-			Source:          "builtin",
-		},
+		// L1-LIN-NTP-001 removed: linux_ntp_sync check_type doesn't exist; NTP is ntp_sync, handled by L1-NIX-NTP-001 (2 success, 0 fail)
 		{
 			ID:          "L1-LIN-PORTS-001",
 			Name:        "Linux Unexpected Open Ports",

@@ -21,10 +21,29 @@ type wgStatus struct {
 	BytesSent     int64
 }
 
+// findWgBinary locates the wg command, checking PATH and common NixOS locations.
+func findWgBinary() string {
+	if p, err := exec.LookPath("wg"); err == nil {
+		return p
+	}
+	// NixOS: wg may not be in the daemon's PATH but exists via nix profile or /run
+	for _, dir := range []string{"/run/current-system/sw/bin", "/root/.nix-profile/bin"} {
+		p := filepath.Join(dir, "wg")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 // checkWireGuardStatus parses `wg show wg0 dump` output to determine tunnel state.
 // Returns nil if WireGuard is not configured or the interface doesn't exist.
 func checkWireGuardStatus() *wgStatus {
-	out, err := exec.Command("wg", "show", "wg0", "dump").Output()
+	wgBin := findWgBinary()
+	if wgBin == "" {
+		return nil // wg binary not found
+	}
+	out, err := exec.Command(wgBin, "show", "wg0", "dump").Output()
 	if err != nil {
 		return nil // WireGuard not configured or wg0 doesn't exist
 	}

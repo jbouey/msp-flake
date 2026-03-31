@@ -216,11 +216,15 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 			if scanned[hostname] {
 				continue
 			}
-			// If a Go agent is connected for this host, skip WinRM — push covers it
-			if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
-				log.Printf("[driftscan] Skipping WinRM for %s (covered by Go agent)", hostname)
+			// If a Go agent is actively heartbeating for this host, skip WinRM — push covers it.
+			// Stale/dead agents (no heartbeat in 10min) fall back to WinRM pull scan.
+			if ds.svc.Registry != nil && ds.svc.Registry.HasActiveAgentForHost(hostname, agentStaleTimeout) {
+				log.Printf("[driftscan] Skipping WinRM for %s (covered by active Go agent)", hostname)
 				scanned[hostname] = true
 				continue
+			}
+			if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
+				log.Printf("[driftscan] Agent %s registered but stale — falling back to WinRM pull scan", hostname)
 			}
 			ws := ds.svc.Targets.ProbeWinRMPort(hostname)
 			// Use per-workstation credentials if available.
@@ -268,8 +272,11 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		if scanned[hostname] || wt.Role == "domain_admin" {
 			continue
 		}
-		if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
+		if ds.svc.Registry != nil && ds.svc.Registry.HasActiveAgentForHost(hostname, agentStaleTimeout) {
 			continue
+		}
+		if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
+			log.Printf("[driftscan] Credential target %s has stale agent — WinRM fallback scan", hostname)
 		}
 		connectHost := hostname
 		// DNS re-resolution: if the credential is stored by hostname and the
@@ -755,10 +762,16 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		if t.label == "WS" {
 			return ds.checkTargetViaDCProxy(ctx, t)
 		}
-		log.Printf("[driftscan] Scan failed for %s (%s): %s", t.hostname, t.label, scanResult.Error)
-		// Report unreachable so it surfaces as an incident in the dashboard.
-		// Cooldown in healIncident prevents spam for the same host.
-		return ds.unreachableFinding(t, "windows", scanResult.Error)
+		errMsg := scanResult.Error
+		log.Printf("[driftscan] Scan failed for %s (%s): %s", t.hostname, t.label, errMsg)
+
+		// Distinguish auth failures from connectivity failures — auth errors
+		// mean credentials are wrong, not that the host is unreachable.
+		if isAuthError(errMsg) {
+			log.Printf("[driftscan] ERROR: Credential auth failure for %s — check credential_name/password in site_credentials", t.hostname)
+			return ds.credentialFailureFinding(t, errMsg)
+		}
+		return ds.unreachableFinding(t, "windows", errMsg)
 	}
 
 	stdout := maputil.String(scanResult.Output, "std_out")
@@ -1583,6 +1596,41 @@ func (ds *driftScanner) unreachableFinding(t scanTarget, platform, errorMsg stri
 			"error":      errorMsg,
 			"platform":   platform,
 			"label":      t.label,
+		},
+	}}
+}
+
+// isAuthError returns true if the WinRM error indicates an authentication
+// failure (wrong credentials) rather than a connectivity failure (host down).
+func isAuthError(errMsg string) bool {
+	lower := strings.ToLower(errMsg)
+	return strings.Contains(lower, "401") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "access denied") ||
+		strings.Contains(lower, "invalid content type") // WinRM NTLM auth mismatch
+}
+
+// credentialFailureFinding creates a credential_stale drift finding when
+// WinRM authentication fails. This is distinct from device_unreachable —
+// the host is reachable but credentials are wrong.
+func (ds *driftScanner) credentialFailureFinding(t scanTarget, errorMsg string) []driftFinding {
+	if ds.isCheckDisabled("credential_stale") {
+		return nil
+	}
+	return []driftFinding{{
+		Hostname:     t.hostname,
+		CheckType:    "credential_stale",
+		Expected:     "WinRM authentication successful",
+		Actual:       fmt.Sprintf("Authentication failed: %s", errorMsg),
+		HIPAAControl: "164.312(d)",
+		Severity:     "high",
+		Details: map[string]string{
+			"hostname":   t.hostname,
+			"ip_address": t.target.Hostname,
+			"port":       fmt.Sprintf("%d", t.target.Port),
+			"error":      errorMsg,
+			"label":      t.label,
+			"username":   t.target.Username,
 		},
 	}}
 }

@@ -1040,6 +1040,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not create delegation tables: {e}")
 
+    # Verify credential encryption key is available
+    try:
+        from dashboard_api.credential_crypto import _get_fernet
+        _get_fernet()
+        logger.info("Credential encryption key loaded")
+    except Exception as e:
+        logger.error(f"CRITICAL: Credential encryption unavailable: {e}. "
+                     "Credentials cannot be decrypted for appliance delivery.")
+
     # Ensure default admin user exists
     try:
         from dashboard_api.auth import ensure_default_admin

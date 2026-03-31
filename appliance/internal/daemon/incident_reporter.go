@@ -15,10 +15,11 @@ import (
 // endpoint so they appear in the dashboard's incidents table.
 // This runs alongside the telemetry reporter (which feeds the learning loop).
 type incidentReporter struct {
-	endpoint string // Base API endpoint
-	apiKey   string
-	siteID   string
-	client   *http.Client
+	endpoint  string // Base API endpoint
+	apiKey    string
+	siteID    string
+	client    *http.Client
+	allowFunc func() bool // optional: skip reporting when server is unreachable
 }
 
 func newIncidentReporter(endpoint, apiKey, siteID string) *incidentReporter {
@@ -52,6 +53,9 @@ func (r *incidentReporter) ReportDriftIncident(
 ) {
 	if r == nil {
 		return
+	}
+	if r.allowFunc != nil && !r.allowFunc() {
+		return // circuit breaker open
 	}
 
 	// Scrub all text fields before sending to Central Command.
@@ -125,6 +129,9 @@ func (r *incidentReporter) ReportHealed(
 ) {
 	if r == nil {
 		return
+	}
+	if r.allowFunc != nil && !r.allowFunc() {
+		return // circuit breaker open
 	}
 
 	// Scrub hostname (may contain patient identifiers).

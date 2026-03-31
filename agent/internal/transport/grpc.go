@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -31,6 +32,16 @@ import (
 // HealChanSize is the buffer size for the heal command channel
 const HealChanSize = 128
 
+// pinMismatchAutoRecoverThreshold is the number of consecutive TLS fingerprint
+// mismatches before auto-clearing the stale pin for TOFU re-enrollment.
+// Appliance self-signed certs regenerate on daemon restart, so this is expected.
+const pinMismatchAutoRecoverThreshold = 3
+
+// ErrPinMismatch is returned when the appliance TLS certificate fingerprint
+// does not match the previously pinned value. Callers can check for this
+// sentinel to trigger auto-recovery in the reconnect loop.
+var ErrPinMismatch = fmt.Errorf("TOFU certificate pin mismatch")
+
 // GRPCClient manages the gRPC connection to the appliance
 type GRPCClient struct {
 	conn       *grpc.ClientConn
@@ -42,6 +53,10 @@ type GRPCClient struct {
 	needsCerts bool // true when no TLS certs present (enrollment needed)
 	mu         sync.RWMutex
 	config     *config.Config
+
+	// pinMismatchCount tracks consecutive TLS fingerprint mismatches.
+	// Accessed atomically from the TLS VerifyConnection callback.
+	pinMismatchCount atomic.Int32
 
 	// For streaming drift events
 	driftStream pb.ComplianceAgent_ReportDriftClient
@@ -107,12 +122,17 @@ func (c *GRPCClient) connect(ctx context.Context) error {
 					if saveErr := saveCertFingerprint(fpPath, actual[:]); saveErr != nil {
 						log.Printf("[transport] WARNING: failed to save cert pin: %v", saveErr)
 					}
+					c.pinMismatchCount.Store(0)
 					return nil
 				}
 				// Subsequent connection — verify pin
 				if !bytes.Equal(actual[:], pinned) {
-					return fmt.Errorf("certificate fingerprint mismatch — expected %x, got %x (possible MITM)", pinned, actual[:])
+					n := c.pinMismatchCount.Add(1)
+					log.Printf("[transport] TOFU pin mismatch #%d — expected %x, got %x", n, pinned, actual[:])
+					return fmt.Errorf("%w — expected %x, got %x (attempt %d)", ErrPinMismatch, pinned, actual[:], n)
 				}
+				// Pin matches — reset mismatch counter
+				c.pinMismatchCount.Store(0)
 				return nil
 			},
 		}
@@ -601,6 +621,24 @@ func (c *GRPCClient) Reconnect(ctx context.Context) error {
 	c.agentID = ""
 
 	return c.connect(ctx)
+}
+
+// PinMismatchCount returns the current consecutive pin mismatch count.
+func (c *GRPCClient) PinMismatchCount() int {
+	return int(c.pinMismatchCount.Load())
+}
+
+// ClearPinFile removes the TOFU certificate pin file so the next connection
+// will re-pin via TOFU. This is used for auto-recovery when the appliance
+// regenerates its self-signed TLS certificate (e.g., after daemon restart).
+func (c *GRPCClient) ClearPinFile() error {
+	fpPath := certFingerprintPath(c.config.DataDir)
+	if err := os.Remove(fpPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove pin file: %w", err)
+	}
+	c.pinMismatchCount.Store(0)
+	log.Printf("[transport] TOFU pin file cleared — next connection will re-enroll")
+	return nil
 }
 
 // Helper functions

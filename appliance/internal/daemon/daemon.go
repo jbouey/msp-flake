@@ -117,11 +117,17 @@ type Daemon struct {
 	// Log shipper: tails journald and ships batches to Central Command
 	logShipper *logshipper.Shipper
 
+	// Circuit breaker: gates outbound calls when Central Command is unreachable
+	serverBreaker *CircuitBreaker
+
 	// Self-healer: monitors agent heartbeats, auto-redeploys stale agents
 	selfHealer *selfHealer
 
 	// WireGuard tunnel monitor: tracks connection state transitions
 	wgMon *wgMonitor
+
+	// credentialProbeOnce ensures the startup credential connectivity probe runs exactly once.
+	credentialProbeOnce sync.Once
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
@@ -149,10 +155,11 @@ func (d *Daemon) isSubscriptionActive() bool {
 // New creates a new daemon with the given configuration.
 func New(cfg *Config) *Daemon {
 	d := &Daemon{
-		config:   cfg,
-		phoneCli: NewPhoneHomeClient(cfg),
-		registry: grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
-		state:    NewStateManager(),
+		config:        cfg,
+		phoneCli:      NewPhoneHomeClient(cfg),
+		registry:      grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
+		state:         NewStateManager(),
+		serverBreaker: NewCircuitBreaker(5, 5*time.Minute), // 5 consecutive checkin failures → stop secondary traffic for 5min
 	}
 
 	// Initialize WinRM cert pin store + executor (must be before L1 engine)
@@ -196,6 +203,7 @@ func New(cfg *Config) *Daemon {
 		d.telemetry = l2planner.NewTelemetryReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
 		d.telemetry.EnableQueue(cfg.StateDir)
 		d.incidents = newIncidentReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
+		d.incidents.allowFunc = d.serverBreaker.Allow
 		log.Printf("[daemon] Telemetry + incident reporters initialized (endpoint=%s)", cfg.APIEndpoint)
 	}
 
@@ -210,6 +218,7 @@ func New(cfg *Config) *Daemon {
 			StateDir:    cfg.StateDir,
 			BatchSize:   500,
 			FlushEvery:  30 * time.Second,
+			AllowFunc:   d.serverBreaker.Allow,
 		})
 		log.Printf("[daemon] Log shipper initialized (endpoint=%s)", cfg.APIEndpoint)
 	}
@@ -321,6 +330,7 @@ func New(cfg *Config) *Daemon {
 			d.evidenceSubmitter = evidence.NewSubmitter(
 				cfg.SiteID, cfg.APIEndpoint, cfg.APIKey, sigKey, pubHex,
 			)
+			d.evidenceSubmitter.AllowFunc = d.serverBreaker.Allow
 			log.Printf("[daemon] Evidence submitter initialized (pubkey=%s...)", pubHex[:12])
 		}
 	}
@@ -576,8 +586,10 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 
 	resp, err := d.phoneCli.Checkin(ctx, &req)
 	if err != nil {
+		d.serverBreaker.RecordFailure()
 		failures := d.phoneCli.ConsecutiveFailures()
-		log.Printf("[daemon] Checkin failed (%s, consecutive=%d): %v", classifyConnectivityError(err), failures, err)
+		log.Printf("[daemon] Checkin failed (%s, consecutive=%d, circuit=%s): %v",
+			classifyConnectivityError(err), failures, d.serverBreaker.State(), err)
 
 		// Fallback: poll for fleet orders directly when checkin is broken
 		if failures >= 1 && d.orderProc.ApplianceID() != "" {
@@ -588,6 +600,8 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		}
 		return
 	}
+
+	d.serverBreaker.RecordSuccess()
 
 	// Set appliance ID on telemetry reporter and order processor (received from Central Command)
 	if resp.ApplianceID != "" {
@@ -650,6 +664,15 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	// Store Windows targets (DC credentials) from checkin response
 	if len(resp.WindowsTargets) > 0 {
 		d.state.LoadWindowsTargets(resp.WindowsTargets, d.config)
+	}
+
+	// Probe target connectivity once after first credential load
+	if len(resp.WindowsTargets) > 0 || len(resp.LinuxTargets) > 0 {
+		d.credentialProbeOnce.Do(func() {
+			d.safeGo("credential-probe", func() {
+				d.probeTargetConnectivity(ctx)
+			})
+		})
 	}
 
 	// Log after envelope decryption so target counts are accurate
@@ -728,6 +751,88 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 // LookupWinTarget delegates to StateManager.
 func (d *Daemon) LookupWinTarget(hostname string) (winTarget, bool) {
 	return d.state.LookupWinTarget(hostname)
+}
+
+// probeTargetConnectivity runs a lightweight connectivity check against all
+// configured Windows and Linux targets immediately after the first credential
+// load. It dials TCP only (WinRM port for Windows, SSH port for Linux) and
+// logs clear pass/fail results so operators can catch bad credentials or
+// unreachable hosts before the first full scan cycle.
+func (d *Daemon) probeTargetConnectivity(ctx context.Context) {
+	log.Printf("[daemon] [startup] Probing target connectivity...")
+
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	okCount, failCount := 0, 0
+
+	// Probe Windows targets
+	winTargets := d.state.GetWinTargets()
+	for hostname, wt := range winTargets {
+		if ctx.Err() != nil {
+			return
+		}
+		role := wt.Role
+		if role == "" {
+			role = "unknown"
+		}
+		// Determine which WinRM port to dial (prefer 5986 HTTPS, fall back 5985 HTTP)
+		ports := []struct {
+			port int
+			desc string
+		}{
+			{5986, "WinRM-HTTPS"},
+			{5985, "WinRM-HTTP"},
+		}
+		connected := false
+		for _, p := range ports {
+			addr := net.JoinHostPort(hostname, fmt.Sprintf("%d", p.port))
+			conn, err := dialer.DialContext(ctx, "tcp", addr)
+			if err == nil {
+				conn.Close()
+				log.Printf("[daemon] [startup] Target %s (%s): %s OK (port %d)", hostname, role, p.desc, p.port)
+				connected = true
+				okCount++
+				break
+			}
+		}
+		if !connected {
+			log.Printf("[daemon] [startup] WARNING: Target %s (%s): WinRM UNREACHABLE (5986+5985 failed)", hostname, role)
+			failCount++
+		}
+	}
+
+	// Probe Linux/macOS targets
+	linuxTargets := d.state.GetLinuxTargets()
+	for _, lt := range linuxTargets {
+		if ctx.Err() != nil {
+			return
+		}
+		label := lt.Label
+		if label == "" {
+			label = "linux"
+		}
+		port := lt.Port
+		if port == 0 {
+			port = 22
+		}
+		addr := net.JoinHostPort(lt.Hostname, fmt.Sprintf("%d", port))
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
+		if err == nil {
+			conn.Close()
+			log.Printf("[daemon] [startup] Target %s (%s): SSH OK (port %d)", lt.Hostname, label, port)
+			okCount++
+		} else {
+			log.Printf("[daemon] [startup] WARNING: Target %s (%s): SSH UNREACHABLE (port %d: %v)", lt.Hostname, label, port, err)
+			failCount++
+		}
+	}
+
+	if failCount > 0 {
+		log.Printf("[daemon] [startup] Credential probe complete: %d OK, %d FAILED — check target IPs and firewall rules", okCount, failCount)
+	} else if okCount > 0 {
+		log.Printf("[daemon] [startup] Credential probe complete: all %d targets reachable", okCount)
+	} else {
+		log.Printf("[daemon] [startup] Credential probe: no targets configured")
+	}
 }
 
 // processOrders converts raw checkin order maps to Order structs and dispatches them.

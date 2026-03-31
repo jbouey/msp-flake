@@ -196,13 +196,37 @@ func (r *AgentRegistry) AgentIDForHostname(hostname string) string {
 	return ""
 }
 
-// HasAgentForHost checks if a Go agent is connected for the given hostname.
+// HasAgentForHost checks if a Go agent is registered for the given hostname.
+// NOTE: This checks registration only, not heartbeat freshness.
+// Use HasActiveAgentForHost when you need to verify the agent is alive.
 func (r *AgentRegistry) HasAgentForHost(hostname string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	_, ok := r.hostnameIndex[toLower(hostname)]
 	return ok
+}
+
+// HasActiveAgentForHost checks if a Go agent has heartbeated within maxStale.
+// Returns false for registered-but-stale agents (loaded from disk, never
+// reconnected, or agent process died), allowing callers to fall back to
+// pull-based scanning instead of leaving the host in a blind spot.
+func (r *AgentRegistry) HasActiveAgentForHost(hostname string, maxStale time.Duration) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	agentID, ok := r.hostnameIndex[toLower(hostname)]
+	if !ok {
+		return false
+	}
+	agent, ok := r.agents[agentID]
+	if !ok {
+		return false
+	}
+	if agent.LastHeartbeat.IsZero() {
+		return false
+	}
+	return time.Since(agent.LastHeartbeat) < maxStale
 }
 
 // ConnectedCount returns the number of connected agents.

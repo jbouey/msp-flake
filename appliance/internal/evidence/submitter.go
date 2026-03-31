@@ -77,12 +77,13 @@ var networkCheckTypes = []string{
 
 // Submitter builds and submits evidence bundles to Central Command.
 type Submitter struct {
-	siteID      string
-	apiEndpoint string
-	apiKey      string
-	signingKey  ed25519.PrivateKey
+	siteID       string
+	apiEndpoint  string
+	apiKey       string
+	signingKey   ed25519.PrivateKey
 	publicKeyHex string
-	client      *http.Client
+	client       *http.Client
+	AllowFunc    func() bool // optional: skip submission when server is unreachable (circuit breaker)
 }
 
 // NewSubmitter creates a new evidence submitter.
@@ -113,6 +114,10 @@ type bundlePayload struct {
 // buildAndSubmitForTypes is the shared implementation for building evidence bundles.
 func (s *Submitter) buildAndSubmitForTypes(ctx context.Context, findings []DriftFinding, scannedHosts []string, checkTypes []string) error {
 	if len(scannedHosts) == 0 {
+		return nil
+	}
+	if s.AllowFunc != nil && !s.AllowFunc() {
+		log.Printf("[evidence] Skipping submission: server circuit breaker open")
 		return nil
 	}
 
