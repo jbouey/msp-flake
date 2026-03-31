@@ -1767,6 +1767,74 @@ async def agent_l2_plan(
 
     logger.info(f"L2 plan request: site={request.site_id} host={request.host_id} type={request.incident_type}")
 
+    # Step 0: Check L1 rules before burning an LLM call
+    l1_runbook = None
+    try:
+        l1_match = await db.execute(
+            text("""
+                SELECT runbook_id FROM l1_rules
+                WHERE enabled = true
+                AND incident_pattern->>'incident_type' = :incident_type
+                ORDER BY confidence DESC
+                LIMIT 1
+            """),
+            {"incident_type": request.incident_type}
+        )
+        l1_row = l1_match.fetchone()
+        if l1_row and not l1_row[0].startswith("ESC-"):
+            l1_runbook = l1_row[0]
+    except Exception as e:
+        logger.warning(f"L1 lookup failed in L2 endpoint (proceeding to LLM): {e}")
+
+    if not l1_runbook:
+        # Keyword fallback matching (synced with main.py)
+        type_lower = request.incident_type.lower()
+        check_type = request.raw_data.get("check_type", "").lower() if request.raw_data else ""
+        keyword_map = {
+            "backup": "RB-BACKUP-001",
+            "certificate": "RB-CERT-001",
+            "cert": "RB-CERT-001",
+            "disk": "RB-DISK-001",
+            "storage": "RB-DISK-001",
+            "service": "RB-SERVICE-001",
+            "drift": "RB-DRIFT-001",
+            "configuration": "RB-DRIFT-001",
+            "firewall": "RB-FIREWALL-001",
+            "patching": "RB-PATCH-001",
+            "update": "RB-PATCH-001",
+            "audit": "RB-WIN-SEC-002",
+            "defender": "RB-WIN-AV-001",
+            "registry": "RB-WIN-SEC-019",
+            "bitlocker": "RB-WIN-SEC-005",
+            "screen_lock": "RB-WIN-SEC-016",
+            "credential": "RB-WIN-SEC-022",
+            "smb": "RB-WIN-SEC-007",
+        }
+        for keyword, rb_id in keyword_map.items():
+            if keyword in type_lower or keyword in check_type:
+                l1_runbook = rb_id
+                break
+
+    if l1_runbook:
+        logger.info(f"L1 match in L2 endpoint: type={request.incident_type} runbook={l1_runbook}")
+        return {
+            "incident_id": request.incident_id,
+            "recommended_action": "execute_runbook",
+            "action_params": {"runbook_id": l1_runbook},
+            "confidence": 0.9,
+            "reasoning": f"L1 rule match for {request.incident_type}",
+            "runbook_id": l1_runbook,
+            "requires_approval": False,
+            "escalate_to_l3": False,
+            "context_used": {
+                "llm_model": "l1_rules_db",
+                "llm_latency_ms": 0,
+                "pattern_signature": "",
+                "alternative_runbooks": [],
+                "cache_status": "l1_match",
+            },
+        }
+
     # L2 decision cache: reuse recent decisions for the same pattern_signature
     cached = None
     if request.pattern_signature:

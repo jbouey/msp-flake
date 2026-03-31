@@ -180,17 +180,18 @@ class TestL2MonitoringOnlyGuard:
 
     @pytest.mark.asyncio
     async def test_non_monitoring_type_proceeds_to_llm(self):
-        """Non-monitoring incident types should proceed to LLM normally."""
+        """Non-monitoring incident types with no L1 match should proceed to LLM."""
         from dashboard_api.agent_api import agent_l2_plan, L2PlanRequest
         from dashboard_api.l2_planner import L2Decision
 
+        # Use an incident_type that won't match any L1 rule or keyword
         request = _make_l2_request(
             incident_id=str(uuid.uuid4()),
             site_id="site-1",
             host_id="host-1",
-            incident_type="service_down",
+            incident_type="custom_unusual_check",
             severity="high",
-            raw_data={"check_type": "service_down"},
+            raw_data={"check_type": "custom_unusual_check"},
         )
 
         mock_decision = L2Decision(
@@ -204,7 +205,11 @@ class TestL2MonitoringOnlyGuard:
             llm_latency_ms=1200,
         )
 
+        # Mock DB: L1 query returns no rows
+        mock_l1_result = MagicMock()
+        mock_l1_result.fetchone.return_value = None
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_l1_result)
         with patch("dashboard_api.l2_planner.is_l2_available", return_value=True), \
              patch("dashboard_api.l2_planner.analyze_incident", new_callable=AsyncMock, return_value=mock_decision), \
              patch("dashboard_api.l2_planner.record_l2_decision", new_callable=AsyncMock):
@@ -213,6 +218,60 @@ class TestL2MonitoringOnlyGuard:
 
             assert result["recommended_action"] == "execute_runbook"
             assert result["runbook_id"] == "RB-SVC-001"
+
+    @pytest.mark.asyncio
+    async def test_l1_match_in_l2_endpoint_skips_llm(self):
+        """When L1 rule matches in L2 endpoint, return immediately without LLM call."""
+        from dashboard_api.agent_api import agent_l2_plan
+
+        request = _make_l2_request(
+            incident_id=str(uuid.uuid4()),
+            site_id="site-1",
+            host_id="host-1",
+            incident_type="screen_lock",
+            severity="high",
+            raw_data={"check_type": "screen_lock"},
+        )
+
+        # Mock DB: L1 query returns a match
+        mock_l1_result = MagicMock()
+        mock_l1_result.fetchone.return_value = ("RB-WIN-SEC-022",)
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_l1_result)
+
+        with patch("dashboard_api.l2_planner.is_l2_available", return_value=True):
+            result = await agent_l2_plan(request, db=mock_db, auth_site_id="site-1")
+
+            assert result["recommended_action"] == "execute_runbook"
+            assert result["runbook_id"] == "RB-WIN-SEC-022"
+            assert result["context_used"]["cache_status"] == "l1_match"
+
+    @pytest.mark.asyncio
+    async def test_l1_keyword_fallback_in_l2_endpoint(self):
+        """Keyword fallback matches incident types without DB rules."""
+        from dashboard_api.agent_api import agent_l2_plan
+
+        request = _make_l2_request(
+            incident_id=str(uuid.uuid4()),
+            site_id="site-1",
+            host_id="host-1",
+            incident_type="defender_cloud_disabled",
+            severity="high",
+            raw_data={"check_type": "defender_cloud_disabled"},
+        )
+
+        # Mock DB: L1 query returns no rows
+        mock_l1_result = MagicMock()
+        mock_l1_result.fetchone.return_value = None
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_l1_result)
+
+        with patch("dashboard_api.l2_planner.is_l2_available", return_value=True):
+            result = await agent_l2_plan(request, db=mock_db, auth_site_id="site-1")
+
+            assert result["recommended_action"] == "execute_runbook"
+            assert result["runbook_id"] == "RB-WIN-AV-001"  # "defender" keyword match
+            assert result["context_used"]["cache_status"] == "l1_match"
 
 
 # ---------------------------------------------------------------------------
@@ -277,17 +336,22 @@ class TestL2DecisionCache:
             llm_latency_ms=1000,
         )
 
+        # Use a type that won't match L1 DB or keywords
         request = _make_l2_request(
             incident_id=str(uuid.uuid4()),
             site_id="site-1",
             host_id="host-1",
-            incident_type="service_down",
+            incident_type="custom_unusual_check",
             severity="high",
-            raw_data={"check_type": "service_down"},
+            raw_data={"check_type": "custom_unusual_check"},
             pattern_signature="cached_sig",
         )
 
+        # Mock DB: L1 query returns no rows
+        mock_l1_result = MagicMock()
+        mock_l1_result.fetchone.return_value = None
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_l1_result)
         with patch("dashboard_api.l2_planner.is_l2_available", return_value=True), \
              patch("dashboard_api.l2_planner.lookup_cached_l2_decision", new_callable=AsyncMock, return_value=cached_decision), \
              patch("dashboard_api.l2_planner.analyze_incident") as mock_llm:
@@ -301,7 +365,7 @@ class TestL2DecisionCache:
 
     @pytest.mark.asyncio
     async def test_cache_miss_calls_llm(self):
-        """When cache misses, LLM is called normally."""
+        """When cache misses and no L1 match, LLM is called normally."""
         from dashboard_api.agent_api import agent_l2_plan, L2PlanRequest
         mock_decision = L2Decision(
             runbook_id="RB-SVC-003",
@@ -318,13 +382,17 @@ class TestL2DecisionCache:
             incident_id=str(uuid.uuid4()),
             site_id="site-1",
             host_id="host-1",
-            incident_type="service_down",
+            incident_type="custom_unusual_check",
             severity="high",
-            raw_data={"check_type": "service_down"},
+            raw_data={"check_type": "custom_unusual_check"},
             pattern_signature="new_sig",
         )
 
+        # Mock DB: L1 query returns no rows
+        mock_l1_result = MagicMock()
+        mock_l1_result.fetchone.return_value = None
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_l1_result)
         with patch("dashboard_api.l2_planner.is_l2_available", return_value=True), \
              patch("dashboard_api.l2_planner.lookup_cached_l2_decision", new_callable=AsyncMock, return_value=None), \
              patch("dashboard_api.l2_planner.analyze_incident", new_callable=AsyncMock, return_value=mock_decision), \

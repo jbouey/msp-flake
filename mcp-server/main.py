@@ -2057,6 +2057,8 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             "registry": "RB-WIN-SEC-019",
             "bitlocker": "RB-WIN-SEC-005",
             "screen_lock": "RB-WIN-SEC-016",
+            "credential": "RB-WIN-SEC-022",
+            "smb": "RB-WIN-SEC-007",
         }
 
         for keyword, rb_id in runbook_map.items():
