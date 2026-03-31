@@ -924,7 +924,7 @@ func builtinRules() []*Rule {
 	{
 			ID:          "L1-WIN-FW-RULES-001",
 			Name:        "Dangerous Firewall Inbound Rules",
-			Description: "Dangerous inbound firewall allow rules detected — remove non-standard rules",
+			Description: "Dangerous inbound firewall allow rules detected — remove by name pattern and port risk",
 			Conditions: []RuleCondition{
 				{Field: "check_type", Operator: OpEquals, Value: "firewall_dangerous_rules"},
 				{Field: "drift_detected", Operator: OpEquals, Value: true},

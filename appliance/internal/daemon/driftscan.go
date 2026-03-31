@@ -670,18 +670,30 @@ $result.DefenderAdvanced = $defAdv
 $sp = Get-Service Spooler -EA SilentlyContinue
 $result.SpoolerService = if ($sp) { $sp.Status.ToString() } else { "NotFound" }
 
-# 24. Dangerous inbound firewall rules (allow rules on risky ports/any)
+# 24. Dangerous inbound firewall rules (name patterns + risky ports)
 $dangerousRules = @()
+$dangerousPatterns = @('Allow All*', 'Allow All Inbound*', 'Allow All RDP*', '*Allow Telnet*', 'RemoteAccess*', '*Open All*', '*Permit Any*')
+$safeNamePrefixes = @('Core Networking', 'File and Printer', 'Remote Desktop', 'Windows Remote', 'DFS', 'AllJoyn', 'Cast to', 'Delivery', 'mDNS', 'Hyper-V', 'Network Discovery', 'Performance', 'Remote Event', 'OsirisCare', 'Wi-Fi Direct', 'BranchCache', 'Windows Defender')
 try {
     Get-NetFirewallRule -Direction Inbound -Action Allow -Enabled True -EA Stop | ForEach-Object {
         $r = $_
+        $isSafe = $false
+        foreach ($sp in $safeNamePrefixes) { if ($r.DisplayName -like "$sp*") { $isSafe = $true; break } }
+        if ($isSafe) { return }
+        $matchedPattern = $false
+        foreach ($p in $dangerousPatterns) { if ($r.DisplayName -like $p) { $matchedPattern = $true; break } }
+        if ($matchedPattern) {
+            $port = (Get-NetFirewallPortFilter -AssociatedNetFirewallRule $r -EA SilentlyContinue)
+            $dangerousRules += @{ Name=$r.DisplayName; Port=$port.LocalPort; Protocol=$port.Protocol.ToString() }
+            return
+        }
         $port = (Get-NetFirewallPortFilter -AssociatedNetFirewallRule $r -EA SilentlyContinue)
         $isRisky = $false
         if ($port.LocalPort -eq 'Any' -and $port.Protocol -ne 'ICMPv4') { $isRisky = $true }
         if ($port.LocalPort -match '(21|23|69|445|3389|4444|5985|5986)') {
             if ($r.DisplayGroup -notmatch '(Remote Desktop|Windows Remote Management|File and Printer|Core Networking)') { $isRisky = $true }
         }
-        if ($r.DisplayName -notmatch '^(Core Networking|File and Printer|Remote Desktop|Windows Remote|DFS|AllJoyn|Cast to|Delivery|mDNS|Hyper-V|Network Discovery|Performance|Remote Event|OsirisCare|Wi-Fi Direct|BranchCache)' -and $isRisky) {
+        if ($isRisky) {
             $dangerousRules += @{ Name=$r.DisplayName; Port=$port.LocalPort; Protocol=$port.Protocol.ToString() }
         }
     }

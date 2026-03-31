@@ -52,6 +52,30 @@ func TestMatchFirewallDrift(t *testing.T) {
 	}
 }
 
+func TestMatchFirewallDangerousRules(t *testing.T) {
+	e := NewEngine("", nil)
+
+	data := map[string]interface{}{
+		"check_type":     "firewall_dangerous_rules",
+		"drift_detected": true,
+	}
+
+	m := e.Match("inc-fw-rules-001", "firewall_dangerous_rules", "high", data)
+	if m == nil {
+		t.Fatal("expected firewall_dangerous_rules match, got nil")
+	}
+	if m.Rule.ID != "L1-WIN-FW-RULES-001" {
+		t.Fatalf("expected L1-WIN-FW-RULES-001, got %s", m.Rule.ID)
+	}
+	if m.Action != "run_windows_runbook" {
+		t.Fatalf("expected run_windows_runbook, got %s", m.Action)
+	}
+	rbID, ok := m.ActionParams["runbook_id"].(string)
+	if !ok || rbID != "RB-WIN-SEC-028" {
+		t.Fatalf("expected runbook_id RB-WIN-SEC-028, got %v", m.ActionParams["runbook_id"])
+	}
+}
+
 func TestMatchEncryptionEscalate(t *testing.T) {
 	e := NewEngine("", nil)
 

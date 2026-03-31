@@ -347,7 +347,7 @@ func New(cfg *Config) *Daemon {
 func (d *Daemon) Run(ctx context.Context) error {
 	d.runCtx, d.runCancel = context.WithCancel(ctx)
 	d.svc.RunCtx = d.runCtx
-	log.Printf("[daemon] OsirisCare Appliance Daemon v%s starting", Version)
+	log.Printf("[daemon] OsirisCare Appliance Daemon %s starting", Version)
 	l2Mode := "disabled"
 	if d.l2Planner != nil {
 		l2Mode = "native"
