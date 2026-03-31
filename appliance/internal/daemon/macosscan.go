@@ -330,8 +330,13 @@ func resolveMAC(ip string) string {
 // scanMacOSRemote scans a remote macOS target via SSH.
 // Sends Wake-on-LAN if SSH probe fails (macOS may be sleeping).
 func (ds *driftScanner) scanMacOSRemote(ctx context.Context, target *sshexec.Target, label string) []driftFinding {
+	// Per-target deadline: WoL probe (5s) + sleep (20s) + SSH Execute (60s + retry 15s + 60s) = ~160s.
+	// Use 4 minutes as a hard upper bound.
+	targetCtx, targetCancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer targetCancel()
+
 	// Quick TCP probe — if SSH port is unreachable, try WoL to wake the Mac
-	probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+	probeCtx, probeCancel := context.WithTimeout(targetCtx, 5*time.Second)
 	defer probeCancel()
 	probeConn, probeErr := (&net.Dialer{}).DialContext(probeCtx, "tcp", fmt.Sprintf("%s:%d", target.Hostname, target.Port))
 	if probeErr != nil {
@@ -341,8 +346,13 @@ func (ds *driftScanner) scanMacOSRemote(ctx context.Context, target *sshexec.Tar
 			if err := sendWakeOnLAN(mac); err != nil {
 				log.Printf("[macosscan] WoL failed: %v", err)
 			} else {
-				// Wait for Mac to wake up (typically 10-15s)
-				time.Sleep(20 * time.Second)
+				// Wait for Mac to wake up (typically 10-15s).
+				// Use select so we bail early if the scan context is cancelled.
+				select {
+				case <-targetCtx.Done():
+					return nil
+				case <-time.After(20 * time.Second):
+				}
 			}
 		} else {
 			log.Printf("[macosscan] SSH probe failed for %s, no MAC found for WoL", target.Hostname)
@@ -352,7 +362,7 @@ func (ds *driftScanner) scanMacOSRemote(ctx context.Context, target *sshexec.Tar
 	}
 
 	result := ds.svc.SSH.Execute(
-		ctx, target, macosScanScript,
+		targetCtx, target, macosScanScript,
 		"MACOS-DRIFT-SCAN", "driftscan",
 		60, 1, 15.0, true, nil,
 	)

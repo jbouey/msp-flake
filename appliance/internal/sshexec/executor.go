@@ -272,9 +272,13 @@ func (e *Executor) getConnection(ctx context.Context, target *Target) (*ssh.Clie
 
 	if cached, ok := e.conns[target.Hostname]; ok {
 		if time.Since(cached.createdAt) < connMaxAge {
-			// Quick check: try to open a session to verify connection
-			_, err := cached.client.NewSession()
+			// Quick check: try to open a session to verify connection is alive.
+			// Close it immediately to avoid leaking SSH sessions — OpenSSH
+			// defaults to MaxSessions 10, and leaked sessions eventually
+			// saturate that limit, causing NewSession() to block.
+			testSess, err := cached.client.NewSession()
 			if err == nil {
+				testSess.Close()
 				e.lruTouch(target.Hostname) // Move to back of LRU
 				return cached.client, nil
 			}

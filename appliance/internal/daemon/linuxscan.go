@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/osiriscare/appliance/internal/evidence"
 	"github.com/osiriscare/appliance/internal/grpcserver"
@@ -438,6 +439,13 @@ type linuxScanState struct {
 // and self-scanning produces false positives (NixOS SUID wrappers, nftables
 // vs iptables, NixOS-specific sysctl paths, etc.).
 func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
+	// Overall deadline prevents the entire scan from hanging forever.
+	// Per-target SSH has a 60s command timeout + 1 retry, plus macOS WoL adds ~25s,
+	// so each target can take up to ~160s. With 10 targets + healing + evidence
+	// submission, 10 minutes is a generous but finite upper bound.
+	scanCtx, scanCancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer scanCancel()
+
 	var allFindings []driftFinding
 	var scannedHosts []string
 
@@ -446,7 +454,8 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 
 	for _, lt := range targets {
 		select {
-		case <-ctx.Done():
+		case <-scanCtx.Done():
+			log.Printf("[linuxscan] Scan aborted: %v (scanned %d/%d targets)", scanCtx.Err(), len(scannedHosts), len(targets))
 			return
 		default:
 		}
@@ -468,9 +477,9 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 
 		var findings []driftFinding
 		if lt.Label == "macos" {
-			findings = ds.scanMacOSRemote(ctx, target, lt.Label)
+			findings = ds.scanMacOSRemote(scanCtx, target, lt.Label)
 		} else {
-			findings = ds.scanLinuxRemote(ctx, target, lt.Label)
+			findings = ds.scanLinuxRemote(scanCtx, target, lt.Label)
 		}
 		allFindings = append(allFindings, findings...)
 		scannedHosts = append(scannedHosts, lt.Hostname)
@@ -501,7 +510,7 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 				Severity:     f.Severity,
 			}
 		}
-		if err := ds.daemon.evidenceSubmitter.BuildAndSubmitLinux(ctx, evFindings, scannedHosts); err != nil {
+		if err := ds.daemon.evidenceSubmitter.BuildAndSubmitLinux(scanCtx, evFindings, scannedHosts); err != nil {
 			log.Printf("[linuxscan] Evidence submission failed: %v", err)
 		}
 	}
@@ -509,8 +518,13 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 
 // scanLinuxRemote scans a remote Linux target via SSH.
 func (ds *driftScanner) scanLinuxRemote(ctx context.Context, target *sshexec.Target, label string) []driftFinding {
+	// Per-target deadline: 60s command timeout + 1 retry (15s delay + 60s) = ~135s.
+	// Use 3 minutes as a hard upper bound.
+	targetCtx, targetCancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer targetCancel()
+
 	result := ds.svc.SSH.Execute(
-		ctx, target, linuxScanScript,
+		targetCtx, target, linuxScanScript,
 		"LINUX-DRIFT-SCAN", "driftscan",
 		60, 1, 15.0, true, nil,
 	)
