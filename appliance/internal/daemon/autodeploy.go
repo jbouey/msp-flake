@@ -1440,13 +1440,32 @@ func (ad *autoDeployer) stageAgentToNETLOGON(ctx context.Context) error {
 	cfg := ad.daemon.config
 	dc := *cfg.DomainController
 
-	// Version-aware guard: re-stage when agent binary version changes
-	currentVersion := readVersionFile(filepath.Join(ad.daemon.config.StateDir, "agent"))
+	// Hash-aware guard: re-stage when the on-disk agent binary actually changes.
+	// Using SHA256 instead of VERSION sidecar — the VERSION file may not update
+	// when a new binary is deployed via fleet order, causing NETLOGON to serve
+	// a stale binary indefinitely.
+	currentHash := ""
+	if ad.daemon.agentVersionCache != nil {
+		if info, err := ad.daemon.agentVersionCache.get(); err == nil {
+			currentHash = info.SHA256
+		}
+	}
+	if currentHash == "" {
+		// Fallback: compute hash directly if cache unavailable
+		binPath := filepath.Join(ad.daemon.config.StateDir, "agent", agentBinaryName)
+		if h, _, err := computeAgentSHA256(binPath); err == nil {
+			currentHash = h
+		}
+	}
 	if staged, ok := netlogonStaged.Load(dc); ok {
-		if s, ok := staged.(string); ok && s == currentVersion {
+		if s, ok := staged.(string); ok && s == currentHash && currentHash != "" {
 			return nil
 		}
-		log.Printf("[autodeploy] Agent version changed to %s, re-staging to NETLOGON", currentVersion)
+		hashLabel := currentHash
+		if len(hashLabel) > 12 {
+			hashLabel = hashLabel[:12]
+		}
+		log.Printf("[autodeploy] Agent binary changed (hash=%s), re-staging to NETLOGON", hashLabel)
 		// Invalidate the binary cache so we re-read from disk
 		ad.mu.Lock()
 		ad.agentLoaded = false
@@ -1528,7 +1547,7 @@ try {
 		log.Printf("[autodeploy] Config staging failed (non-fatal): %s", configResult.Error)
 	}
 
-	netlogonStaged.Store(dc, currentVersion)
+	netlogonStaged.Store(dc, currentHash)
 	return nil
 }
 

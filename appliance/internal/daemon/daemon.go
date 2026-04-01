@@ -95,6 +95,9 @@ type Daemon struct {
 	// StateManager holds all mutex-protected state (cooldowns, targets, L2 mode, etc.)
 	state *StateManager
 
+	// Healing rate tracker: timestamped outcomes for rolling 24h rate calculation
+	healTracker *healingRateTracker
+
 	// Services bundles interfaces for subsystem access (set in New, RunCtx updated in Run)
 	svc *Services
 
@@ -159,6 +162,7 @@ func New(cfg *Config) *Daemon {
 		phoneCli:      NewPhoneHomeClient(cfg),
 		registry:      grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
 		state:         NewStateManager(),
+		healTracker:   newHealingRateTracker(),
 		serverBreaker: NewCircuitBreaker(5, 5*time.Minute), // 5 consecutive checkin failures → stop secondary traffic for 5min
 	}
 
@@ -1089,6 +1093,7 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 
 		if result.Success {
 			d.healJournal.FinishHealing(incidentID, true, "")
+			d.healTracker.Record(true)
 			log.Printf("[daemon] L1 healed %s/%s via %s in %dms",
 				req.Hostname, req.CheckType, match.Rule.ID, result.DurationMs)
 
@@ -1111,6 +1116,7 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 			}
 		} else {
 			d.healJournal.FinishHealing(incidentID, false, result.Error)
+			d.healTracker.Record(false)
 
 			// Track L1 failure for exhaustion
 			failCount := d.state.RecordHealingFailure(cooldownKey)
@@ -1200,6 +1206,7 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 				l2Success, l2Err = d.executeL2Action(ctx, decision, req, incidentID)
 			}
 			d.healJournal.FinishHealing(incidentID, l2Success, l2Err)
+			d.healTracker.Record(l2Success)
 			// Report telemetry for data flywheel (async) with actual success/failure
 			dur := time.Since(l2Start).Milliseconds()
 			d.safeGo("telemetryL2", func() { d.l2Planner.ReportExecution(incident, decision, l2Success, l2Err, dur) })

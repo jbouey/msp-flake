@@ -44,7 +44,8 @@ func (f *flexStringSlice) UnmarshalJSON(data []byte) error {
 }
 
 const (
-	driftScanInterval = 15 * time.Minute // How often to scan all targets
+	driftScanInterval      = 15 * time.Minute // How often to scan all targets
+	driftRescanInterval    = 5 * time.Minute  // Faster rescan when drift was found on last cycle
 )
 
 // clampScanInterval enforces safety bounds on scan intervals.
@@ -83,6 +84,11 @@ type driftScanner struct {
 	// the dashboard on every 15-min scan cycle while a credential is stale.
 	ipMismatchMu       sync.Mutex
 	ipMismatchCooldown map[string]time.Time // hostname -> last reported
+
+	// Adaptive scan interval: hosts that had drift on the last scan cycle
+	// trigger a faster rescan (5 min instead of 15) to verify healing worked.
+	lastDriftHostsMu sync.Mutex
+	lastDriftHosts   map[string]bool // hostname -> had drift on last scan
 }
 
 func newDriftScanner(svc *Services, d *Daemon) *driftScanner {
@@ -90,6 +96,50 @@ func newDriftScanner(svc *Services, d *Daemon) *driftScanner {
 		svc:                svc,
 		daemon:             d,
 		ipMismatchCooldown: make(map[string]time.Time),
+		lastDriftHosts:     make(map[string]bool),
+	}
+}
+
+// effectiveInterval returns driftRescanInterval if any host had drift on the
+// last scan, otherwise driftScanInterval. This lets the scanner verify healing
+// worked sooner without per-host timers.
+func (ds *driftScanner) effectiveInterval() time.Duration {
+	ds.lastDriftHostsMu.Lock()
+	defer ds.lastDriftHostsMu.Unlock()
+	for _, hasDrift := range ds.lastDriftHosts {
+		if hasDrift {
+			return driftRescanInterval
+		}
+	}
+	return driftScanInterval
+}
+
+// updateLastDriftHosts merges scan results into the drift host map.
+// Hosts with findings are marked true; scanned hosts with no findings are cleared.
+// This supports concurrent Windows + Linux scans updating the same map safely.
+func (ds *driftScanner) updateLastDriftHosts(findings []driftFinding, scannedHosts []string) {
+	driftSet := make(map[string]bool)
+	for _, f := range findings {
+		driftSet[f.Hostname] = true
+	}
+
+	ds.lastDriftHostsMu.Lock()
+	// Clear hosts that were scanned clean this cycle
+	for _, h := range scannedHosts {
+		if !driftSet[h] {
+			delete(ds.lastDriftHosts, h)
+		}
+	}
+	// Mark hosts that had drift
+	for h := range driftSet {
+		ds.lastDriftHosts[h] = true
+	}
+	count := len(ds.lastDriftHosts)
+	ds.lastDriftHostsMu.Unlock()
+
+	if count > 0 {
+		log.Printf("[driftscan] Adaptive interval: %d host(s) with drift, next scan in %v",
+			count, driftRescanInterval)
 	}
 }
 
@@ -165,11 +215,12 @@ func (ds *driftScanner) runDriftScanIfNeeded(ctx context.Context) {
 	first := ds.lastScanTime.IsZero()
 	ds.mu.Unlock()
 
-	if !first && since < clampScanInterval(driftScanInterval) {
+	interval := clampScanInterval(ds.effectiveInterval())
+	if !first && since < interval {
 		return
 	}
 
-	log.Printf("[driftscan] Starting drift scan cycle")
+	log.Printf("[driftscan] Starting drift scan cycle (interval=%v)", interval)
 	ds.mu.Lock()
 	ds.lastScanTime = time.Now()
 	ds.mu.Unlock()
@@ -375,6 +426,12 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 
 	log.Printf("[driftscan] Scan complete: targets=%d, drifts_found=%d",
 		len(targets), len(allFindings))
+
+	// Update adaptive scan interval: track which hosts had drift
+	ds.updateLastDriftHosts(allFindings, scannedHosts)
+
+	// Log healing rate after each scan cycle
+	ds.daemon.logHealingRate()
 
 	// Collect and analyze compliance-relevant Windows Event Logs (on-prem only).
 	// Device logs are also fed into the threat detector for cross-host correlation
@@ -1481,7 +1538,8 @@ func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
 	first := ds.lastLinuxScanTime.IsZero()
 	ds.linuxMu.Unlock()
 
-	if !first && since < clampScanInterval(driftScanInterval) {
+	interval := clampScanInterval(ds.effectiveInterval())
+	if !first && since < interval {
 		return
 	}
 
@@ -1491,7 +1549,7 @@ func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[linuxscan] Starting Linux drift scan cycle")
+	log.Printf("[linuxscan] Starting Linux drift scan cycle (interval=%v)", interval)
 	ds.linuxMu.Lock()
 	ds.lastLinuxScanTime = time.Now()
 	ds.linuxMu.Unlock()

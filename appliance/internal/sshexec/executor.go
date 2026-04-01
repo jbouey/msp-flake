@@ -266,10 +266,13 @@ func (e *Executor) DetectDistro(ctx context.Context, target *Target) (string, er
 
 // getConnection returns a cached or new SSH connection.
 // The context is used for TCP dial cancellation and SSH handshake deadline.
+//
+// IMPORTANT: The mutex is released before TCP dial and SSH handshake so that
+// tofuHostKeyCallback (called during handshake) can acquire e.mu without
+// deadlocking. Network I/O must never run under e.mu.
 func (e *Executor) getConnection(ctx context.Context, target *Target) (*ssh.Client, error) {
+	// --- Phase 1: check cache (under lock) ---
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	if cached, ok := e.conns[target.Hostname]; ok {
 		if time.Since(cached.createdAt) < connMaxAge {
 			// Quick check: try to open a session to verify connection is alive.
@@ -292,12 +295,14 @@ func (e *Executor) getConnection(ctx context.Context, target *Target) (*ssh.Clie
 				if r.err == nil {
 					r.sess.Close()
 					e.lruTouch(target.Hostname)
+					e.mu.Unlock()
 					return cached.client, nil
 				}
 				log.Printf("[ssh] Stale connection to %s (session error: %v), reconnecting", target.Hostname, r.err)
 			case <-time.After(5 * time.Second):
 				log.Printf("[ssh] Connection health check timed out for %s, reconnecting", target.Hostname)
 			case <-ctx.Done():
+				e.mu.Unlock()
 				return nil, fmt.Errorf("context cancelled while checking connection to %s", target.Hostname)
 			}
 		}
@@ -305,6 +310,12 @@ func (e *Executor) getConnection(ctx context.Context, target *Target) (*ssh.Clie
 		delete(e.conns, target.Hostname)
 		e.lruRemove(target.Hostname)
 	}
+	e.mu.Unlock()
+
+	// --- Phase 2: build config, dial, handshake (NO lock held) ---
+	// tofuHostKeyCallback acquires e.mu during handshake, so we must not
+	// hold it here. Context cancellation can interrupt DialContext and the
+	// TCP deadline guards the handshake.
 
 	config, err := e.buildSSHConfig(target)
 	if err != nil {
@@ -347,6 +358,10 @@ func (e *Executor) getConnection(ctx context.Context, target *Target) (*ssh.Clie
 	}
 
 	client := ssh.NewClient(sshConn, chans, reqs)
+
+	// --- Phase 3: store in cache (under lock) ---
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	// LRU eviction: if at capacity, close oldest connection
 	if len(e.conns) >= maxCachedConns && len(e.connOrder) > 0 {

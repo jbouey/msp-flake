@@ -497,6 +497,12 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 	log.Printf("[linuxscan] Scan complete: targets=%d, drifts_found=%d",
 		len(scannedHosts), len(allFindings))
 
+	// Update adaptive scan interval with Linux findings
+	ds.updateLastDriftHosts(allFindings, scannedHosts)
+
+	// Log healing rate after each scan cycle
+	ds.daemon.logHealingRate()
+
 	// Submit evidence bundle
 	if ds.daemon.evidenceSubmitter != nil && len(scannedHosts) > 0 {
 		evFindings := make([]evidence.DriftFinding, len(allFindings))
