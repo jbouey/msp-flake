@@ -58,6 +58,7 @@ const RuleBuilder = lazy(() => import('./pages/RuleBuilder').then(m => ({ defaul
 const VPNManagement = lazy(() => import('./pages/VPNManagement'));
 const Reports = lazy(() => import('./pages/Reports').then(m => ({ default: m.Reports })));
 const SystemHealth = lazy(() => import('./pages/SystemHealth').then(m => ({ default: m.SystemHealth })));
+const PipelineHealth = lazy(() => import('./pages/PipelineHealth').then(m => ({ default: m.PipelineHealth })));
 
 // Detect if serving from marketing domain (www.osiriscare.net or osiriscare.net)
 const isLandingSite = typeof window !== 'undefined' &&
@@ -208,6 +209,7 @@ const pageTitles: Record<string, string> = {
   '/compliance-library': 'Compliance Library',
   '/reports': 'Reports',
   '/system-health': 'System Health',
+  '/pipeline-health': 'Pipeline Health',
   '/evidence': 'Evidence Verification',
   '/audit-logs': 'Audit Logs',
   '/settings/oauth': 'OAuth Settings',
@@ -360,6 +362,7 @@ const AppLayout: React.FC = () => {
               <Route path="/client/:siteId" element={<ClientDetail />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/system-health" element={<SystemHealth />} />
+              <Route path="/pipeline-health" element={<PipelineHealth />} />
             </Routes>
             </div>
           </Suspense>

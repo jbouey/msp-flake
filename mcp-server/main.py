@@ -5292,3 +5292,310 @@ async def list_snapshots(user: dict = Depends(require_auth)):
         return {"status": "error", "message": "Command timed out"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# =============================================================================
+# CHAOS QUICKTEST — inject drift, verify healing pipeline detects + remediates
+# =============================================================================
+
+# Default chaos scenarios targeting ws01 (.251) — Windows drift injections
+# that the scan cycle should detect and the healing pipeline should fix.
+CHAOS_QUICKTEST_SCENARIOS = [
+    {
+        "target": "192.168.88.251",
+        "type": "windows_update",
+        "inject": "Stop-Service wuauserv -Force",
+    },
+    {
+        "target": "192.168.88.251",
+        "type": "defender_exclusions",
+        "inject": "Set-MpPreference -ExclusionPath C:\\Windows\\Temp",
+    },
+    {
+        "target": "192.168.88.251",
+        "type": "guest_account",
+        "inject": "net user Guest /active:yes",
+    },
+    {
+        "target": "192.168.88.251",
+        "type": "smb_signing",
+        "inject": "Set-SmbServerConfiguration -RequireSecuritySignature $false -Force",
+    },
+    {
+        "target": "192.168.88.251",
+        "type": "audit_policy",
+        "inject": "auditpol /set /subcategory:Logon /success:disable /failure:disable",
+    },
+]
+
+# Map drift types to the incident_type values the scan cycle generates
+CHAOS_INCIDENT_TYPE_MAP = {
+    "windows_update": "windows_update_service_stopped",
+    "defender_exclusions": "defender_exclusion_path",
+    "guest_account": "guest_account_enabled",
+    "smb_signing": "smb_signing_disabled",
+    "audit_policy": "audit_policy_insufficient",
+}
+
+
+@app.post("/api/admin/chaos-quicktest")
+async def create_chaos_quicktest(
+    request: Request,
+    user: dict = Depends(require_auth),
+):
+    """Create a chaos quicktest fleet order that injects drift into Windows targets.
+
+    The order tells the appliance daemon to run the inject commands via WinRM.
+    The normal scan cycle then detects the drift and the healing pipeline remediates.
+    Use the GET status endpoint to check progress.
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass  # Use defaults if no body
+
+    scenarios = body.get("scenarios", CHAOS_QUICKTEST_SCENARIOS)
+
+    # Validate scenarios
+    if not isinstance(scenarios, list) or len(scenarios) == 0:
+        raise HTTPException(status_code=400, detail="scenarios must be a non-empty array")
+    if len(scenarios) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 scenarios per quicktest")
+
+    for i, s in enumerate(scenarios):
+        if not isinstance(s, dict):
+            raise HTTPException(status_code=400, detail=f"scenario[{i}] must be an object")
+        if not s.get("target") or not s.get("inject") or not s.get("type"):
+            raise HTTPException(status_code=400, detail=f"scenario[{i}] requires target, type, and inject")
+
+    campaign_id = f"chaos-qt-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+
+    parameters = {
+        "campaign_id": campaign_id,
+        "scenarios": scenarios,
+    }
+
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.order_signing import sign_fleet_order
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=2)
+
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow("""
+            INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
+                                      nonce, signature, signed_payload)
+            VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+            RETURNING id, created_at, expires_at
+        """,
+            "chaos_quicktest",
+            json.dumps(parameters),
+            expires_at,
+            user.get("username") or user.get("email"),
+            *sign_fleet_order(0, "chaos_quicktest", parameters, now, expires_at),
+        )
+
+        # Audit log
+        try:
+            await conn.execute("""
+                INSERT INTO audit_log (action, actor, target_type, target_id, details)
+                VALUES ($1, $2, 'fleet', $3, $4::jsonb)
+            """,
+                "chaos_quicktest_created",
+                user.get("username") or user.get("email"),
+                str(row["id"]),
+                json.dumps({"campaign_id": campaign_id, "scenario_count": len(scenarios)}),
+            )
+        except Exception:
+            pass  # Non-critical
+
+    logger.info(
+        f"Chaos quicktest created: order={row['id']} campaign={campaign_id} "
+        f"scenarios={len(scenarios)} by={user.get('username')}"
+    )
+
+    return {
+        "order_id": str(row["id"]),
+        "campaign_id": campaign_id,
+        "scenarios": len(scenarios),
+        "created_at": row["created_at"].isoformat(),
+        "expires_at": row["expires_at"].isoformat(),
+        "status_url": f"/api/admin/chaos-quicktest/{row['id']}/status",
+    }
+
+
+@app.get("/api/admin/chaos-quicktest/{order_id}/status")
+async def get_chaos_quicktest_status(
+    order_id: str,
+    user: dict = Depends(require_auth),
+):
+    """Check the status of a chaos quicktest.
+
+    Checks:
+    1. Fleet order completion status (did the daemon execute the injects?)
+    2. Execution telemetry for matching incident types (detected + healed?)
+    3. Returns per-scenario status: injected, detected, healed, or failed
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # 1. Get the fleet order
+        order = await conn.fetchrow("""
+            SELECT id, order_type, parameters, status, created_at, expires_at
+            FROM fleet_orders
+            WHERE id = $1
+        """, uuid.UUID(order_id))
+
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        if order["order_type"] != "chaos_quicktest":
+            raise HTTPException(status_code=400, detail="Order is not a chaos_quicktest")
+
+        params = json.loads(order["parameters"]) if isinstance(order["parameters"], str) else order["parameters"]
+        campaign_id = params.get("campaign_id", "")
+        scenarios = params.get("scenarios", [])
+
+        # 2. Check fleet order completion
+        completion = await conn.fetchrow("""
+            SELECT status, result, completed_at
+            FROM fleet_order_completions
+            WHERE fleet_order_id = $1
+            ORDER BY completed_at DESC
+            LIMIT 1
+        """, order["id"])
+
+        order_executed = completion is not None
+        completion_status = completion["status"] if completion else "pending"
+        completion_result = {}
+        if completion and completion["result"]:
+            completion_result = json.loads(completion["result"]) if isinstance(completion["result"], str) else completion["result"]
+
+        # 3. Check execution telemetry for incident detection + healing
+        # Look for telemetry entries matching the injected drift types
+        # within a window from order creation to now
+        order_created = order["created_at"]
+
+        # Build the set of incident types we expect to see
+        expected_types = []
+        for s in scenarios:
+            drift_type = s.get("type", "")
+            incident_type = CHAOS_INCIDENT_TYPE_MAP.get(drift_type, drift_type)
+            expected_types.append(incident_type)
+
+        # Query telemetry for these incident types since the order was created
+        telemetry_rows = await conn.fetch("""
+            SELECT incident_type, success, hostname, runbook_id,
+                   resolution_level, duration_seconds, error_message,
+                   created_at
+            FROM execution_telemetry
+            WHERE created_at >= $1
+              AND incident_type = ANY($2)
+            ORDER BY created_at DESC
+        """, order_created, expected_types)
+
+        # Build a lookup: incident_type -> latest telemetry row
+        telemetry_by_type = {}
+        for row in telemetry_rows:
+            itype = row["incident_type"]
+            if itype not in telemetry_by_type:
+                telemetry_by_type[itype] = row
+
+        # Also check incidents table for detection (incidents may exist before healing runs)
+        incident_rows = await conn.fetch("""
+            SELECT incident_type, status, hostname, reported_at
+            FROM incidents
+            WHERE reported_at >= $1
+              AND incident_type = ANY($2)
+            ORDER BY reported_at DESC
+        """, order_created, expected_types)
+
+        detected_types = set()
+        for row in incident_rows:
+            detected_types.add(row["incident_type"])
+
+        # 4. Build per-scenario status
+        scenario_results = []
+        for s in scenarios:
+            drift_type = s.get("type", "")
+            incident_type = CHAOS_INCIDENT_TYPE_MAP.get(drift_type, drift_type)
+            target = s.get("target", "")
+
+            # Check injection result from completion
+            inject_status = "pending"
+            if order_executed:
+                inject_results = completion_result.get("results", [])
+                for ir in inject_results:
+                    if ir.get("type") == drift_type:
+                        inject_status = ir.get("status", "unknown")
+                        break
+                if inject_status == "pending" and completion_status == "completed":
+                    inject_status = "injected"  # Assume success if order completed
+
+            # Check detection
+            detected = incident_type in detected_types
+
+            # Check healing from telemetry
+            healed = False
+            heal_details = None
+            if incident_type in telemetry_by_type:
+                t = telemetry_by_type[incident_type]
+                healed = t["success"]
+                heal_details = {
+                    "resolution_level": t["resolution_level"],
+                    "runbook_id": t["runbook_id"],
+                    "duration_seconds": float(t["duration_seconds"]) if t["duration_seconds"] else None,
+                    "error": t["error_message"],
+                    "healed_at": t["created_at"].isoformat() if t["created_at"] else None,
+                }
+
+            # Determine overall scenario status
+            if inject_status == "pending":
+                status = "pending"
+            elif inject_status in ("inject_failed", "rejected", "error"):
+                status = "inject_failed"
+            elif healed:
+                status = "healed"
+            elif detected:
+                status = "detected"
+            elif inject_status == "injected":
+                status = "waiting_for_scan"
+            else:
+                status = inject_status
+
+            scenario_results.append({
+                "type": drift_type,
+                "incident_type": incident_type,
+                "target": target,
+                "inject_status": inject_status,
+                "detected": detected,
+                "healed": healed,
+                "status": status,
+                "healing": heal_details,
+            })
+
+        # Summary counts
+        summary = {
+            "total": len(scenarios),
+            "injected": sum(1 for s in scenario_results if s["inject_status"] == "injected"),
+            "detected": sum(1 for s in scenario_results if s["detected"]),
+            "healed": sum(1 for s in scenario_results if s["healed"]),
+            "failed": sum(1 for s in scenario_results if s["status"] == "inject_failed"),
+            "pending": sum(1 for s in scenario_results if s["status"] in ("pending", "waiting_for_scan")),
+        }
+
+        return {
+            "order_id": str(order["id"]),
+            "campaign_id": campaign_id,
+            "order_status": order["status"],
+            "order_executed": order_executed,
+            "completion_status": completion_status,
+            "created_at": order["created_at"].isoformat(),
+            "scenarios": scenario_results,
+            "summary": summary,
+        }
