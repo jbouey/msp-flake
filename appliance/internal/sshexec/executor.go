@@ -173,11 +173,16 @@ func (e *Executor) executeOnce(ctx context.Context, target *Target, script strin
 
 	var cmd string
 	if useSudo && target.Username != "root" {
+		// Use `sudo env` to pass environment vars through sudo barrier.
+		// SYSTEMD_PAGER= prevents systemctl from paging output.
+		// DEBIAN_FRONTEND=noninteractive prevents apt/dpkg prompts.
+		// Without these, systemctl on Ubuntu 24.04+ triggers polkit
+		// "Interactive authentication required" even when running as root.
 		if target.SudoPassword != nil && *target.SudoPassword != "" {
 			escapedPass := shellEscapeSingleQuote(*target.SudoPassword)
-			cmd = fmt.Sprintf(`echo '%s' | sudo -S bash -c "$(echo %s | base64 -d)"`, escapedPass, encoded)
+			cmd = fmt.Sprintf(`echo '%s' | sudo -S env SYSTEMD_PAGER= DEBIAN_FRONTEND=noninteractive bash -c "$(echo %s | base64 -d)"`, escapedPass, encoded)
 		} else {
-			cmd = fmt.Sprintf(`sudo bash -c "$(echo %s | base64 -d)"`, encoded)
+			cmd = fmt.Sprintf(`sudo env SYSTEMD_PAGER= DEBIAN_FRONTEND=noninteractive bash -c "$(echo %s | base64 -d)"`, encoded)
 		}
 	} else {
 		cmd = fmt.Sprintf(`bash -c "$(echo %s | base64 -d)"`, encoded)
