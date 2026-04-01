@@ -508,11 +508,47 @@ func builtinRules() []*Rule {
 			GPOManaged:      true,
 		},
 		{
+			// Go agent reports "screen_lock" (not "screen_lock_policy") — same runbook
+			ID:          "L1-WIN-SEC-SCREENLOCK-AGENT",
+			Name:        "Windows Screen Lock (Go Agent)",
+			Description: "Screen lock drift from Go agent push scan — same remediation as screen_lock_policy",
+			Conditions: []RuleCondition{
+				{Field: "check_type", Operator: OpEquals, Value: "screen_lock"},
+				{Field: "drift_detected", Operator: OpEquals, Value: true},
+			},
+			Action:          "run_windows_runbook",
+			ActionParams:    map[string]interface{}{"runbook_id": "RB-WIN-SEC-022", "phases": []interface{}{"remediate", "verify"}},
+			HIPAAControls:   []string{"164.312(a)(2)(iii)"},
+			Enabled:         true,
+			Priority:        8,
+			CooldownSeconds: 300,
+			MaxRetries:      1,
+			Source:          "builtin",
+		},
+		{
 			ID:          "L1-WIN-SEC-BITLOCKER",
 			Name:        "Windows BitLocker Disabled",
 			Description: "BitLocker drive encryption off — remediate via runbook",
 			Conditions: []RuleCondition{
 				{Field: "check_type", Operator: OpEquals, Value: "bitlocker_status"},
+				{Field: "drift_detected", Operator: OpEquals, Value: true},
+			},
+			Action:          "run_windows_runbook",
+			ActionParams:    map[string]interface{}{"runbook_id": "RB-WIN-SEC-005", "phases": []interface{}{"remediate", "verify"}},
+			HIPAAControls:   []string{"164.312(a)(2)(iv)", "164.312(e)(2)(ii)"},
+			Enabled:         true,
+			Priority:        5,
+			CooldownSeconds: 300,
+			MaxRetries:      1,
+			Source:          "builtin",
+		},
+		{
+			// Go agent reports "bitlocker" (not "bitlocker_status") — same runbook, different check type
+			ID:          "L1-WIN-SEC-BITLOCKER-AGENT",
+			Name:        "Windows BitLocker (Go Agent)",
+			Description: "BitLocker drift from Go agent push scan — same remediation as bitlocker_status",
+			Conditions: []RuleCondition{
+				{Field: "check_type", Operator: OpEquals, Value: "bitlocker"},
 				{Field: "drift_detected", Operator: OpEquals, Value: true},
 			},
 			Action:          "run_windows_runbook",
