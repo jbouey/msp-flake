@@ -273,16 +273,33 @@ func (e *Executor) getConnection(ctx context.Context, target *Target) (*ssh.Clie
 	if cached, ok := e.conns[target.Hostname]; ok {
 		if time.Since(cached.createdAt) < connMaxAge {
 			// Quick check: try to open a session to verify connection is alive.
-			// Close it immediately to avoid leaking SSH sessions — OpenSSH
-			// defaults to MaxSessions 10, and leaked sessions eventually
-			// saturate that limit, causing NewSession() to block.
-			testSess, err := cached.client.NewSession()
-			if err == nil {
-				testSess.Close()
-				e.lruTouch(target.Hostname) // Move to back of LRU
-				return cached.client, nil
+			// Close it immediately to avoid leaking SSH sessions.
+			// Use a goroutine + timer because NewSession() on a half-open TCP
+			// connection blocks indefinitely (no timeout or context support in
+			// crypto/ssh). Without this guard, one dead connection blocks ALL
+			// SSH operations via the executor mutex.
+			type sessResult struct {
+				sess *ssh.Session
+				err  error
 			}
-			log.Printf("[ssh] Stale connection to %s, reconnecting", target.Hostname)
+			ch := make(chan sessResult, 1)
+			go func() {
+				s, err := cached.client.NewSession()
+				ch <- sessResult{s, err}
+			}()
+			select {
+			case r := <-ch:
+				if r.err == nil {
+					r.sess.Close()
+					e.lruTouch(target.Hostname)
+					return cached.client, nil
+				}
+				log.Printf("[ssh] Stale connection to %s (session error: %v), reconnecting", target.Hostname, r.err)
+			case <-time.After(5 * time.Second):
+				log.Printf("[ssh] Connection health check timed out for %s, reconnecting", target.Hostname)
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled while checking connection to %s", target.Hostname)
+			}
 		}
 		_ = cached.client.Close()
 		delete(e.conns, target.Hostname)
