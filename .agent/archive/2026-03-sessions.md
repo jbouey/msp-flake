@@ -2397,3 +2397,156 @@ Applied to VPS. Totals: **112 L1 rules, 169 runbooks, 330 framework mappings**
 [truncated...]
 
 ---
+
+## 2026-03-14-session-179-Chaos lab healing gaps - audit, persistence, rogue admin, firewall rules, DNS service.md
+
+# Session 179 - Chaos Lab Healing Gaps   Audit, Persistence, Rogue Admin, Firewall Rules, Dns Service
+
+**Date:** 2026-03-14
+**Started:** 21:44
+**Previous Session:** 178
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-14-session-179-Chaos-lab-healing-gaps.md
+
+# Session 179 — Chaos Lab Healing Gaps
+
+**Date:** 2026-03-14
+**Focus:** Address 5 chaos lab healing gaps (43.8% → target improvement)
+
+## Problem
+
+Chaos lab daily report showed 43.8% healing rate with 5 identified gaps:
+1. Audit policy modifications not healing (object access, process tracking)
+2. Registry persistence (Winlogon key path not covered)
+3. Hidden admin accounts only escalated, never auto-removed
+4. Firewall inbound rules persist after profile recovery
+5. DNS service fails to restart when disabled (not just stopped)
+
+## Changes
+
+### Audit Policy (RB-WIN-SEC-026)
+- Expanded subcategory coverage: 6 → 12 (added File System, Registry, Handle Manipulation, Detailed File Share, Process Termination, DPAPI Activity)
+- Added `gpupdate /force` before `auditpol /set` to prevent GPO override
+- Scanner `driftscan.go` updated to check same 12 subcategories
+
+### Registry Persistence (RB-WIN-SEC-019)
+- Added Winlogon key path: `HKLM:\...\Windows NT\CurrentVersion\Winlogon`
+- Whitelisted safe entries: Userinit, Shell, AutoRestartShell
+- Targets suspicious entries: Taskman, AppSetup, AlternateShell
+
+### Rogue Admin (L1-WIN-ROGUE-ADMIN-001 + RB-WIN-SEC-027)
+- Changed L1 rule from `escalate` to `run_windows_runbook`
+- New runbook RB-WIN-SEC-027: Remove from Administrators group + Disable account
+- Verify phase confirms no rogue admins remain
+
+### Firewall Inbound Rules (new end-to-end)
+- Scanner: check #24 — `firewall_dangerous_rules` (any-port rules, risky ports outside safe groups)
+- L1 rule: `L1-WIN-FW-RULES-001` → `RB-WIN-SEC-028`
+- Runbook: Remove/disable dangerous inbound allow rules, preserve standard Windows services
+- Frontend: label added to CHECK_TYPE_LABELS
+
+### DNS Service (RB-WIN-SVC-001)
+- Dependency-aware restart (checks RequiredServices first)
+- Handles disabled StartType → re-enables to Automatic
+- Better error reporting
+
+## Fleet Order
+
+- Cancelled expired `359717f5` (0/2 delivered after 2 days)
+- Created `48e4e7f6` — nixos_rebuild, skip v0.3.21, 7-day expiry (Mar 22)
+- VM already at v0.3.21 (marked skipped)
+- iMac unreachable from Mac (SSH timeout) — can't debug appliance-side fleet order issue
+
+## Test Results
+
+[truncated...]
+
+---
+
+## 2026-03-18-session-180-v0.3.23 SSH handshake fix, WS01 WinRM repair, healing validation.md
+
+# Session 180 — v0.3.23 SSH Handshake Fix, WS01 WinRM Repair, Healing Validation
+
+## Date: 2026-03-18
+
+## Summary
+
+Continued from Session 179. Validated that the v0.3.23 SSH handshake timeout fix (deployed last session) is working — physical appliance successfully detected and healed DC drift. Fixed WS01 WinRM authentication so the appliance can scan and heal it.
+
+## Key Accomplishments
+
+### 1. Healing System Validated (v0.3.23)
+- Physical appliance at 13:53 UTC: drift scan found `windows_update` stopped on DC (.250)
+- L1 rule `L1-WIN-SVC-WUAUSERV` matched, ran `RB-WIN-SVC-001` remediation
+- **Healed in 1.78 seconds** — L1 healing pipeline fully functional
+- Telemetry reported successfully to backend
+
+### 2. WS01 WinRM Basic Auth Enabled
+- Root cause: WS01 only accepted Negotiate/Kerberos auth, which was broken (0x8009030d)
+- WMI from DC also blocked (Access Denied) — all remote Windows protocols affected
+- **Fix**: Used VBoxManage keyboardputscancode via iMac to type commands on WS01 console:
+  - `winrm set winrm/config/service/auth @{Basic="true"}` — enabled Basic auth
+  - `winrm set winrm/config/service @{AllowUnencrypted="true"}` — enabled HTTP transport
+  - `klist purge` — cleared stale Kerberos tickets
+  - `net stop winrm && net start winrm` — restarted WinRM service
+- **Verified**: Appliance can now connect to WS01 via WinRM Basic auth (HTTP 200)
+
+### 3. Tools Created
+- `/tmp/type_fast.sh` on iMac — fast PS/2 scancode typing helper for VBoxManage console automation
+- Raw SOAP WinRM executor via curl on physical appliance (for environments without Python)
+
+## Issues Found
+
+### Logshipper 500 Errors
+- `[logshipper] Ship error: post batch: server returned 500` — every 30s
+- Backend log ingest endpoint returning 500
+- Not blocking core functionality but losing log data
+
+### iMac WiFi
+- iMac was on wrong WiFi after reboot, causing appliance to lose connectivity to all VMs
+- User switched back to correct WiFi (192.168.88.x network)
+
+### Autodeploy Backoff
+- WS01 autodeploy failures accumulated 4-hour backoff
+- Even with WinRM now fixed, next autodeploy attempt may be delayed
+- WS01 not yet in deployer.deployed map, so drift scans skip it
+
+## System State at End of Session
+- Physical appliance (.241): v0.3.23, healing working, scanning DC
+- DC (.250): WinRM Basic auth, scannable, healing functional
+- WS01 (.251): WinRM Basic auth NOW enabled, awaiting autodeploy
+
+[truncated...]
+
+---
