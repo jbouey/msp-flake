@@ -202,3 +202,12 @@ Primary state: `.agent/claude-progress.json`
 - **PHI scrubbing at appliance egress (Session 185).** `phiscrub` package scrubs all outbound data before it leaves the appliance. Central Command is PHI-free.
 - **Design system: constants/copy.ts is THE source of truth** for all user-facing text. Never hardcode status labels, tooltips, disclaimers, or branding in component files.
 - **Score thresholds: 90/70/50.** Defined in `constants/status.ts` via `getScoreStatus()`. Never create local score-to-color functions.
+- **MONITORING_ONLY_CHECKS must be synced** between `main.py` AND `agent_api.py`. Only genuinely un-automatable checks belong there. Both files have their own copy.
+- **agent_api.py router is NOT registered in main.py** (too many overlapping endpoints). Individual endpoints like `/api/agent/l2/plan` are wired manually via `app.post()(handler)`.
+- **L1 rule `incident_pattern` must have `incident_type` key.** The L1 query matches on `incident_pattern->>'incident_type'`. Synced/promoted rules with only `check_type` are dead weight.
+- **CI/CD deploys code but does NOT restart the container.** After git push, manually restart: `cd /opt/mcp-server && docker compose up -d --build mcp-server`.
+- **iMac SSH on port 2222** (Session 191). Port 22 blocked by MikroTik HW offload (Ethernet↔WiFi). Use `ssh -p 2222 jrelly@192.168.88.50`. LaunchDaemon plist at `/Library/LaunchDaemons/com.local.sshd2222.plist`.
+- **Credential encryption key required.** Fernet key at `/app/secrets/credential_encryption.key`. Missing key = RuntimeError on startup. Key also in `.env` as `CREDENTIAL_ENCRYPTION_KEY`.
+- **`dashboard_api_mount` overrides `./app/dashboard_api`** in docker-compose. Copy backend files to BOTH paths when deploying manually.
+- **Go build ldflags**: Version is `internal/daemon.Version`, NOT `main.Version`. Use `make build-linux VERSION=x` or `-X github.com/osiriscare/appliance/internal/daemon.Version=x`.
+- **Fleet orders: complete old before creating new.** Active orders block delivery of newer orders. `UPDATE fleet_orders SET status='completed' WHERE status='active'` before creating.

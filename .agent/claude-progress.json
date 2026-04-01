@@ -1,28 +1,29 @@
 {
-  "session": 187,
-  "updated": "2026-03-28T07:12:02.524904Z",
+  "session": 191,
+  "updated": "2026-04-01T13:53:29.899199Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
-    "dashboard": "healthy_metrics_endpoint_structured_logging",
-    "physical_appliance": "go_daemon_v0.3.49_enterprise_db_audit_unified_scoring_stable_agent_ids_net_filtering",
+    "dashboard": "redesigned_hero_compliance_merged_attention_sidebar_sections_dark_badges",
+    "physical_appliance": "go_daemon_v0.3.62_push_agents_live_phase3_deployed",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
-    "learning_flywheel": "production_hardened_l2_only_eligibility_rate_limited_post_promotion_monitoring_rollback_endpoints",
-    "incident_resolution": "pipeline_active_514_stale_incidents_resolved_nixos_generation_disabled",
+    "learning_flywheel": "flywheel_incident_type_fixed_pattern_sig_consistent_l2_haiku_redis_circuit_breaker",
+    "incident_resolution": "pipeline_working_65pct_healing_adaptive_5min_rescan_error_classification",
     "evidence_pipeline": "end_to_end_live_heartbeats_site_appliances",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
-    "ots_proofs": "2705_anchored_251_pending_78699_expired_background_drain_active",
-    "fleet_updates": "v0.3.49_deployed_stable_agent_ids_selfheal_guard_net_filtering",
+    "ots_proofs": "127529_anchored_15_pending_verify_endpoint_chain_health_daily_integrity_check",
+    "evidence_verify": "production_verify_endpoint_chain_health_hash_recompute_ed25519_ots_blockchain",
+    "fleet_updates": "v0.3.52_deployed_circuit_breaker_dead_rules_purged_both_appliances_updated",
     "log_pipeline": "operational_35k_plus_entries_csrf_gzip_auth_fixed",
     "prometheus_metrics": "live_at_slash_metrics_7_gauges_counters",
     "offline_alerting": "partner_email_on_15min_offline",
     "reconciliation": "5min_background_sync_site_appliances_from_appliances",
-    "runbook_system": "169_db_runbooks_122_embedded_0_general_category_20_orphan_rules_disabled",
+    "runbook_system": "169_db_runbooks_119_embedded_0_general_category_dead_rules_purged",
     "compliance_infographic": "client_portal_plus_admin_sitedetail_clickthrough_to_incidents_category_filter",
     "l4_escalation": "partner_escalate_to_l4_admin_queue_recurrence_detection_migration_077",
     "portal_auth": "email_password_login_all_portals_totp_2fa_all_portals_security_hardened",
@@ -30,7 +31,68 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "None. All Tier 3/4 items complete. Daemon v0.3.28 deployed with auto-discovery live (7 devices). Selfheal OS type fix deployed.",
+  "current_blocker": "iMac SSH blocked by MikroTik HW offload (ether2 fixed, need ether3-5). CI fixed.",
+  "openclaw_server": {
+    "host": "178.156.243.221",
+    "url": "https://openclaw.osiriscare.net",
+    "version": "2026.3.28",
+    "status": "running_optimized",
+    "model_primary": "anthropic/claude-haiku-4-5",
+    "model_heartbeat": "openai/gpt-4.1-nano",
+    "model_compaction": "openai/gpt-4.1-nano",
+    "telegram_bot": "@AmunRaKemetbot",
+    "plugins_enabled": 1,
+    "plugins_disabled": 40,
+    "skills_eligible": 71
+  },
+  "completed_session_190": [
+    "DIAG: OpenClaw 502 \u2014 gateway inactive since 2026-03-23 (update killed process, service not enabled)",
+    "SECURITY: Full compromise audit \u2014 no unauthorized access, only owner SSH key, fail2ban active",
+    "FIX: Enabled + started openclaw-gateway.service (survives reboots now)",
+    "FIX: Updated OpenClaw 2026.3.22 \u2192 2026.3.28",
+    "OPTIMIZE: NODE_COMPILE_CACHE, NO_RESPAWN, maxConcurrent 2\u21921, context pruning, session rotation",
+    "OPTIMIZE: Heartbeat + compaction \u2192 openai/gpt-4.1-nano (~8x cheaper than Haiku)",
+    "OPTIMIZE: Memory 479MB \u2192 375MB",
+    "VERIFIED: HTTP 200 on https://openclaw.osiriscare.net",
+    "FIX: /api/agent/l2/plan was BYPASSING all 112 L1 rules \u2014 added L1 lookup + keyword fallback before LLM",
+    "FIX: Synced keyword fallback map between main.py and agent_api.py (added credential, smb)",
+    "FIX: Chaos lab parser couldn't match current log format \u2014 added v13 pattern (Running Scenario N:)",
+    "FIX: Chaos lab morning/afternoon results split \u2014 separate scores per run",
+    "FIX: end_of_day_report.py now merges morning+afternoon results",
+    "FIX: Added 1PM scenario regeneration cron based on mid-day gaps",
+    "AUDIT: Traced full healing pipeline \u2014 Go daemon L1 working (4/5 checks healing), backend L2 was broken",
+    "VERIFIED: 292 Python tests passing, deployed to VPS, container rebuilt"
+  ],
+  "test_results_190": {
+    "go_daemon": "18 packages passed, 0 failures",
+    "python_backend": "292 passed, 0 failures",
+    "frontend": "tsc 0 errors, eslint 0 warnings, vitest 90 passed (from session 189)"
+  },
+  "healing_pipeline_audit_190": {
+    "root_cause": "/api/agent/l2/plan endpoint had NO L1 rule lookup \u2014 went straight to LLM, got wrong runbooks",
+    "fix": "Added L1 DB query + keyword fallback before LLM call in agent_api.py",
+    "chaos_lab_fixes": "Parser v13 pattern, morning/afternoon split, end_of_day merge, 1PM regen cron",
+    "verified_healing": [
+      "windows_update\u2192RB-WIN-SVC-001(success)",
+      "rogue_scheduled_tasks\u2192L1-WIN-ROGUE-TASKS-001(success)",
+      "bitlocker_status\u2192RB-WIN-SEC-005(healed 2671ms)",
+      "defender_exclusions\u2192RB-WIN-SEC-017(healed 2685ms)"
+    ],
+    "remaining_gaps": [
+      "firewall_dangerous_rules (rogue rules not profile disable)",
+      "screen_lock_policy (GPO-level)",
+      "registry_persistence (Winlogon hijack)"
+    ],
+    "next_score_expected": "6AM cron run will produce first clean score with all fixes"
+  },
+  "daemon_v0_3_52_changes": [
+    "Circuit breaker wired: shared serverBreaker gates logshipper, evidence, incidents when Central Command unreachable",
+    "Checkin feeds breaker: RecordSuccess/RecordFailure on every checkin cycle, state logged",
+    "Log shipper: AllowFunc callback skips shipBatch when circuit open (cursor held, no data loss)",
+    "Evidence submitter: AllowFunc callback skips bundle POST when circuit open",
+    "Incident reporter: allowFunc callback skips drift/healed reports when circuit open",
+    "Dead rules purged: 3 builtin rules removed (LIN-CRYPTO-001, LIN-PERM-001, LIN-NTP-001), 59\u219256 rules"
+  ],
   "auto_discovery_system": {
     "phase1_core": "complete \u2014 probing, auto-deploy, Take Over UI, rogue alerting, lifecycle state machine",
     "phase2_reliability": "complete \u2014 self-healing, staggered deploy, pre-flight checks",
@@ -98,9 +160,9 @@
     "Appliances (.241, .254) reclassified from unknown to appliance"
   ],
   "test_results": {
-    "python_backend": "1172 passed (7 new OAuth health tests), 0 failures",
-    "go_daemon": "16 packages passed (6 new concurrent race-condition tests), 0 failures",
-    "frontend": "tsc + eslint 0 errors 0 warnings"
+    "go_daemon": "18 packages passed, 0 failures",
+    "python_backend": "359 passed (pre-existing: 1 escalation test)",
+    "frontend": "tsc 0 errors"
   },
   "production_hardening_session_184": {
     "tier1_fake_metrics_fixed": [
@@ -253,21 +315,45 @@
     "Chaos lab VM snapshot fix in progress (replacing 4GB snapshots with 6GB+)"
   ],
   "completed_this_session": [
-    "Enterprise DB audit: 28 FK indexes, 30 dupes dropped, 33 SERIAL\u2192BIGINT, PG tuned, 400MB freed",
-    "Unified HIPAA-weighted compliance scoring (both endpoints consistent)",
-    "State-based notification dedup (71\u219213 unread)",
-    "Bridge MAC filtering + device dedup (daemon + backend)",
-    "Stable agent IDs + selfheal heartbeat guard (no more redeploy loops)",
-    "Net_* bundles separated from compliance (evidence_chain + scoring)",
-    "Monitoring-only checks: 9 check types skip L1/L2/L3 remediation",
-    "N/A exception feature: 3-state drift config (enabled/disabled/N/A with reason)",
-    "Credential health endpoint: per-host failure tracking",
-    "Go agent status mapping fix (connected\u2192Active in frontend)",
-    "iMac agent deployed + FileVault/Firewall/ScreenLock/SSH hardened",
-    "4 new skills installed (postgres x2, sql-expert, grpc-go)",
-    "Evidence chain response model fix (net_* skip validation error)",
-    "Multiple frontend crash fixes (null .toFixed, hipaa_controls, pattern.sites)",
-    "Daemon v0.3.45\u2192v0.3.49 (5 deploys), L1 rate 71.8%\u219284%"
+    "FIX: Credential IPs (3 wrong), Fernet encryption, fail-fast on missing key",
+    "FIX: HasActiveAgentForHost \u2014 stale agents fall back to WinRM pull scan",
+    "FIX: SSH session leak in getConnection + 5s timeout on NewSession health check",
+    "FIX: SSH getConnection mutex deadlock \u2014 3-phase lock/unlock split",
+    "FIX: TLS TOFU auto-recovery \u2014 3-strike pin clear + re-enroll",
+    "FIX: Linuxscan hanging \u2014 context deadlines + session leak",
+    "FIX: wuauserv StartType to Automatic (was Manual, kept reverting)",
+    "FIX: firewall_dangerous_rules two-pass runbook (name pattern + port risk)",
+    "FIX: BitLocker runbook \u2014 TPM-less VM fallback, all volumes, AD key backup",
+    "FIX: screen_lock runbook \u2014 InactivityTimeoutSecs + secedit persistence",
+    "FIX: AD phantom NVSRV01 (.244) disabled",
+    "FIX: winrm-exec stdout/stderr deadlock",
+    "FEAT: Startup credential probe \u2014 TCP connectivity check on boot",
+    "FEAT: Error classification \u2014 6 categories in healing telemetry",
+    "FEAT: Adaptive scan interval \u2014 5 min for drifting hosts",
+    "FEAT: Healing rate tracker \u2014 rolling 24h log per scan cycle",
+    "FEAT: Agent health API + healing telemetry API + target health API",
+    "FEAT: PipelineHealth.tsx operational dashboard",
+    "FEAT: Chaos quicktest \u2014 inject+detect+heal from dashboard",
+    "FEAT: Agent auto-update via heartbeat version check",
+    "FEAT: Healing SLA background task (hourly per-site rate tracking)",
+    "FEAT: iMac SSH persistence (LaunchDaemon + caffeinate)",
+    "DEPLOY: Go agents NVDC01 + NVWS01 connected via gRPC push",
+    "DEPLOY: Credential encryption live, startup checks passing",
+    "ROOT CAUSE: MikroTik hAP ac\u00b2 HW offload blocks Ethernet\u2194WiFi TCP"
+  ],
+  "session_189_earlier": [
+    "AUDIT: Full production healing pipeline audit (DB queries, docker logs, code trace)",
+    "FIX: Removed bitlocker, bitlocker_status, screen_lock, screen_lock_policy, backup_status from MONITORING_ONLY (main.py + agent_api.py)",
+    "FIX: Restored /api/agent/l2/plan endpoint \u2014 was returning 404 because agent_api router never registered in main.py",
+    "FIX: Added audit, defender, registry, bitlocker, screen_lock to keyword fallback map in /incidents handler",
+    "FIX: Disabled 3 broken L1 rules with 0% success (LIN-CRYPTO-001: 729 fails, LIN-PERM-001: 21 fails, LIN-NTP-001: 8 fails)",
+    "FIX: Added incident_type to 4 null-pattern synced/promoted rules (bitlocker_status, backup_status, audit_logging, linux_ssh_config)",
+    "FIX: Resolved 3 stale monitoring/escalated incidents to unblock dedup for fresh pipeline flow",
+    "VERIFIED: bitlocker_status now healing via L1 (success=True in production telemetry)",
+    "VERIFIED: L2 endpoint returning 200 (was 404 for months)",
+    "VERIFIED: backup_not_configured and device_unreachable correctly remain monitoring-only",
+    "DEPLOY: Pushed to main, CI/CD passed, rebuilt mcp-server container on VPS",
+    "TESTS: 290 passed, 0 failures (updated test_l2_spend.py for new MONITORING_ONLY membership)"
   ],
   "session_187_changes": [
     "DB audit: 28 missing FK indexes created, 30 duplicate indexes dropped (~200MB freed), 348MB unused tsvector dropped",
@@ -294,5 +380,12 @@
     "python_backend": "1190 passed, 0 failures",
     "go_daemon": "16 packages passed, 0 failures",
     "frontend": "tsc 0 errors, eslint 0 warnings"
-  }
+  },
+  "daemon_v0_3_62_changes": [
+    "Agent auto-update: SHA256 version tracking, heartbeat delivers new_version+download_url",
+    "BitLocker runbook: TPM-less fallback, all volumes, AD key backup",
+    "Screen lock runbook: InactivityTimeoutSecs + secedit + GPO defense-in-depth",
+    "chaos_quicktest order handler (24 handlers total)",
+    "Healing SLA background task"
+  ]
 }
