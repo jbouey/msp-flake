@@ -450,6 +450,11 @@ func (d *Daemon) isKnownTarget(hostname, platform string) bool {
 				return true
 			}
 		}
+		// Go agent registry — connected agents are known targets.
+		// Critical for healing commands from gRPC push agents (hostname != credential IP).
+		if d.registry != nil && d.registry.HasAgentForHost(hostname) {
+			return true
+		}
 		return false
 
 	case "linux", "macos":
