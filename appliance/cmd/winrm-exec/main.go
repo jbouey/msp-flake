@@ -55,8 +55,15 @@ func main() {
 	}
 	defer command.Close()
 
+	// Read stdout/stderr concurrently — sequential io.Copy deadlocks because
+	// the pipe blocks until the command finishes, but Wait() is after Copy().
+	done := make(chan struct{})
+	go func() {
+		io.Copy(os.Stderr, command.Stderr)
+		close(done)
+	}()
 	io.Copy(os.Stdout, command.Stdout)
-	io.Copy(os.Stderr, command.Stderr)
+	<-done
 	command.Wait()
 	os.Exit(command.ExitCode())
 }
