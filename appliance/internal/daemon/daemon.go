@@ -1101,7 +1101,7 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 			d.state.ResetHealingExhaustion(cooldownKey)
 
 			if d.telemetry != nil {
-				d.safeGo("telemetryL1", func() { d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, true, "", result.DurationMs) })
+				d.safeGo("telemetryL1", func() { d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, true, "", "", result.DurationMs) })
 			}
 
 			if d.incidents != nil {
@@ -1124,7 +1124,10 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 				req.Hostname, req.CheckType, result.Error, failCount, maxHealingAttempts)
 
 			if d.telemetry != nil {
-				d.safeGo("telemetryL1Fail", func() { d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, result.DurationMs) })
+				d.safeGo("telemetryL1Fail", func() {
+					errCat := classifyHealError(result.Error)
+					d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, errCat, result.DurationMs)
+				})
 			}
 		}
 		return
@@ -1209,7 +1212,10 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 			d.healTracker.Record(l2Success)
 			// Report telemetry for data flywheel (async) with actual success/failure
 			dur := time.Since(l2Start).Milliseconds()
-			d.safeGo("telemetryL2", func() { d.l2Planner.ReportExecution(incident, decision, l2Success, l2Err, dur) })
+			d.safeGo("telemetryL2", func() {
+					errCat := classifyHealError(l2Err)
+					d.l2Planner.ReportExecution(incident, decision, l2Success, l2Err, errCat, dur)
+				})
 			return
 		}
 

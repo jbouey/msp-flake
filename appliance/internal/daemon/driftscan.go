@@ -1670,14 +1670,10 @@ func (ds *driftScanner) unreachableFinding(t scanTarget, platform, errorMsg stri
 	}}
 }
 
-// isAuthError returns true if the WinRM error indicates an authentication
-// failure (wrong credentials) rather than a connectivity failure (host down).
+// isAuthError returns true if the error indicates an authentication failure.
+// Delegates to classifyHealError (healing_executor.go) to avoid duplicating match logic.
 func isAuthError(errMsg string) bool {
-	lower := strings.ToLower(errMsg)
-	return strings.Contains(lower, "401") ||
-		strings.Contains(lower, "unauthorized") ||
-		strings.Contains(lower, "access denied") ||
-		strings.Contains(lower, "invalid content type") // WinRM NTLM auth mismatch
+	return classifyHealError(errMsg) == "auth_failure"
 }
 
 // credentialFailureFinding creates a credential_stale drift finding when

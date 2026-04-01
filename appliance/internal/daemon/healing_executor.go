@@ -24,6 +24,42 @@ import (
 	"github.com/osiriscare/appliance/internal/winrm"
 )
 
+// classifyHealError returns a structured error category from a raw error string.
+// Dashboard uses these to show "30% auth failures, 20% timeouts" etc.
+func classifyHealError(errMsg string) string {
+	if errMsg == "" {
+		return ""
+	}
+	lower := strings.ToLower(errMsg)
+	switch {
+	case strings.Contains(lower, "401") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "access denied") ||
+		strings.Contains(lower, "permission denied") ||
+		strings.Contains(lower, "invalid content type"): // WinRM NTLM auth mismatch
+		return "auth_failure"
+	case strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "deadline exceeded") ||
+		strings.Contains(lower, "timed out"):
+		return "timeout"
+	case strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "no route") ||
+		strings.Contains(lower, "unreachable") ||
+		strings.Contains(lower, "i/o timeout"):
+		return "network_error"
+	case strings.Contains(lower, "exit code") ||
+		strings.Contains(lower, "non-zero") ||
+		strings.Contains(lower, "failed:"):
+		return "script_error"
+	case strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "no such") ||
+		strings.Contains(lower, "missing"):
+		return "not_found"
+	default:
+		return "unknown"
+	}
+}
+
 // runbookEntry is a single runbook loaded from the embedded JSON.
 type runbookEntry struct {
 	ID               string   `json:"id"`

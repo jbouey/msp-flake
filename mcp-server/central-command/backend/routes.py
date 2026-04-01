@@ -5008,6 +5008,76 @@ async def get_credential_health(
     }
 
 
+# =============================================================================
+# TARGET HEALTH — connectivity probe status per target
+# =============================================================================
+
+@router.get("/sites/{site_id}/target-health")
+async def get_target_health(
+    site_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Get target connectivity health for a site.
+
+    Returns per-target probe results reported by the appliance daemon's
+    probeTargetConnectivity function. Each target has status per protocol
+    (SSH, WinRM, SNMP) with error details and latency.
+    """
+    await check_site_access_pool(user, site_id)
+    from .fleet import get_pool
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch("""
+            SELECT hostname, protocol, port, status, error,
+                   latency_ms, reported_by, last_reported_at
+            FROM target_health
+            WHERE site_id = $1
+            ORDER BY hostname, protocol
+        """, site_id)
+
+        # Group by hostname for a cleaner response
+        hosts: dict = {}
+        for row in rows:
+            hostname = row["hostname"]
+            if hostname not in hosts:
+                hosts[hostname] = {
+                    "hostname": hostname,
+                    "protocols": [],
+                    "overall_status": "ok",
+                }
+            proto_entry = {
+                "protocol": row["protocol"],
+                "port": row["port"],
+                "status": row["status"],
+                "error": row["error"],
+                "latency_ms": row["latency_ms"],
+                "reported_by": row["reported_by"],
+                "last_reported_at": row["last_reported_at"].isoformat() if row["last_reported_at"] else None,
+            }
+            hosts[hostname]["protocols"].append(proto_entry)
+
+            # Worst-status wins for overall
+            if row["status"] != "ok":
+                hosts[hostname]["overall_status"] = "unhealthy"
+
+        host_list = list(hosts.values())
+
+        # Summary
+        ok_count = sum(1 for h in host_list if h["overall_status"] == "ok")
+        unhealthy_count = len(host_list) - ok_count
+
+    return {
+        "site_id": site_id,
+        "targets": host_list,
+        "summary": {
+            "total_targets": len(host_list),
+            "healthy": ok_count,
+            "unhealthy": unhealthy_count,
+        },
+    }
+
+
 @router.post("/sites/{site_id}/decommission")
 async def decommission_site(
     site_id: str,
@@ -5764,4 +5834,161 @@ async def get_system_health(
             for f in fleet
         ],
         "background_tasks": bg_tasks,
+    }
+
+
+# =============================================================================
+# AGENT HEALTH (fleet-wide Go agent status)
+# =============================================================================
+
+@router.get("/admin/agent-health")
+async def get_agent_health(
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Fleet-wide Go agent health overview.
+
+    Returns every registered Go agent with a derived status based on
+    heartbeat freshness:
+      - active:  heartbeat < 5 min ago
+      - stale:   5-60 min
+      - offline: > 60 min
+      - never:   null heartbeat
+
+    Also returns summary counts.
+    """
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch("""
+            SELECT g.agent_id, g.hostname, g.ip_address, g.os_version,
+                   g.agent_version, g.status, g.last_heartbeat,
+                   g.checks_passed, g.checks_total,
+                   g.compliance_percentage, g.site_id,
+                   s.clinic_name
+            FROM go_agents g
+            LEFT JOIN sites s ON s.site_id = g.site_id
+            ORDER BY g.last_heartbeat DESC NULLS LAST
+        """)
+
+    now = datetime.now(timezone.utc)
+    agents = []
+    summary = {"active": 0, "stale": 0, "offline": 0, "never": 0}
+
+    for row in rows:
+        hb = row["last_heartbeat"]
+        if hb is None:
+            derived = "never"
+        else:
+            # Ensure timezone-aware comparison
+            if hb.tzinfo is None:
+                hb = hb.replace(tzinfo=timezone.utc)
+            age = now - hb
+            if age < timedelta(minutes=5):
+                derived = "active"
+            elif age < timedelta(hours=1):
+                derived = "stale"
+            else:
+                derived = "offline"
+
+        summary[derived] += 1
+        agents.append({
+            "agent_id": row["agent_id"],
+            "hostname": row["hostname"],
+            "ip_address": row["ip_address"],
+            "os_version": row["os_version"],
+            "agent_version": row["agent_version"],
+            "db_status": row["status"],
+            "derived_status": derived,
+            "last_heartbeat": row["last_heartbeat"].isoformat() if row["last_heartbeat"] else None,
+            "checks_passed": row["checks_passed"] or 0,
+            "checks_total": row["checks_total"] or 0,
+            "compliance_percentage": float(row["compliance_percentage"] or 0),
+            "site_id": row["site_id"],
+            "clinic_name": row["clinic_name"],
+        })
+
+    return {
+        "checked_at": now.isoformat(),
+        "total_agents": len(agents),
+        "summary": summary,
+        "agents": agents,
+    }
+
+
+# =============================================================================
+# HEALING TELEMETRY (execution_telemetry breakdown)
+# =============================================================================
+
+@router.get("/admin/healing-telemetry")
+async def get_healing_telemetry(
+    hours: int = Query(default=24, ge=1, le=168, description="Lookback window in hours"),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Healing execution telemetry grouped by incident_type and outcome.
+
+    Returns aggregated counts from execution_telemetry for the given
+    lookback window (default 24h, max 7d). Powers error-breakdown and
+    success-rate charts on the admin dashboard.
+    """
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch("""
+            SELECT incident_type, runbook_id, success,
+                   COUNT(*) AS attempts,
+                   MAX(created_at) AS latest
+            FROM execution_telemetry
+            WHERE created_at > NOW() - make_interval(hours => $1)
+            GROUP BY incident_type, runbook_id, success
+            ORDER BY attempts DESC
+        """, hours)
+
+        totals = await conn.fetchrow("""
+            SELECT COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE success = true) AS succeeded,
+                   COUNT(*) FILTER (WHERE success = false) AS failed
+            FROM execution_telemetry
+            WHERE created_at > NOW() - make_interval(hours => $1)
+        """, hours)
+
+        error_breakdown = await conn.fetch("""
+            SELECT COALESCE(failure_type, 'unknown') AS failure_type,
+                   COUNT(*) AS count
+            FROM execution_telemetry
+            WHERE created_at > NOW() - make_interval(hours => $1)
+              AND success = false
+            GROUP BY failure_type
+            ORDER BY count DESC
+        """, hours)
+
+    entries = []
+    for row in rows:
+        entries.append({
+            "incident_type": row["incident_type"],
+            "runbook_id": row["runbook_id"],
+            "success": row["success"],
+            "attempts": row["attempts"],
+            "latest": row["latest"].isoformat() if row["latest"] else None,
+        })
+
+    total = totals["total"] or 0
+    succeeded = totals["succeeded"] or 0
+    failed = totals["failed"] or 0
+
+    return {
+        "hours": hours,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "totals": {
+            "total": total,
+            "succeeded": succeeded,
+            "failed": failed,
+            "success_rate": round(100 * succeeded / max(total, 1), 1),
+        },
+        "error_breakdown": [
+            {"failure_type": r["failure_type"], "count": r["count"]}
+            for r in error_breakdown
+        ],
+        "entries": entries,
     }

@@ -3367,6 +3367,87 @@ app.post("/api/agent/l2/plan")(agent_l2_plan_handler)
 
 
 # ============================================================================
+# Target Health — daemon reports connectivity probe results (SSH/WinRM/SNMP)
+# ============================================================================
+
+@app.post("/api/agent/target-health")
+async def report_target_health(
+    request: Request,
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Receive target connectivity probe results from the appliance daemon.
+
+    Called after probeTargetConnectivity runs at startup and on each scan cycle.
+    Upserts into target_health table for persistent status tracking.
+
+    Body: {"targets": [
+        {"hostname": "192.168.88.250", "protocol": "winrm", "port": 5985,
+         "status": "ok", "latency_ms": 42},
+        {"hostname": "192.168.88.50", "protocol": "ssh", "port": 22,
+         "status": "unreachable", "error": "timeout after 10s"},
+    ]}
+    """
+    body = await request.json()
+    targets = body.get("targets", [])
+
+    if not targets:
+        return {"status": "ok", "updated": 0}
+
+    # Cap at 200 targets per report to prevent abuse
+    if len(targets) > 200:
+        raise HTTPException(status_code=400, detail="Too many targets (max 200)")
+
+    # Extract appliance_id from the request if available
+    appliance_id = body.get("appliance_id", "unknown")
+
+    from dashboard_api.fleet import get_pool
+    pool = await get_pool()
+
+    updated = 0
+    async with pool.acquire() as conn:
+        for t in targets:
+            hostname = (t.get("hostname") or "").strip()
+            protocol = (t.get("protocol") or "").strip().lower()
+            port = t.get("port")
+            t_status = (t.get("status") or "unknown").strip().lower()
+            error = t.get("error")
+            latency_ms = t.get("latency_ms")
+
+            if not hostname or not protocol:
+                continue
+
+            # Validate status values
+            if t_status not in ("ok", "unreachable", "auth_failed", "timeout", "error", "unknown"):
+                t_status = "error"
+
+            # Validate protocol
+            if protocol not in ("ssh", "winrm", "snmp", "rdp", "https"):
+                continue
+
+            try:
+                await conn.execute("""
+                    INSERT INTO target_health
+                        (site_id, hostname, protocol, port, status, error,
+                         latency_ms, reported_by, last_reported_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                    ON CONFLICT (site_id, hostname, protocol, port)
+                    DO UPDATE SET
+                        status = EXCLUDED.status,
+                        error = EXCLUDED.error,
+                        latency_ms = EXCLUDED.latency_ms,
+                        reported_by = EXCLUDED.reported_by,
+                        last_reported_at = NOW()
+                """, auth_site_id, hostname, protocol, port, t_status,
+                    error, latency_ms, appliance_id)
+                updated += 1
+            except Exception as e:
+                logger.warning("target_health upsert failed",
+                               hostname=hostname, error=str(e))
+
+    return {"status": "ok", "updated": updated}
+
+
+# ============================================================================
 # WORM Evidence Upload Endpoint (Proxy Mode)
 # ============================================================================
 

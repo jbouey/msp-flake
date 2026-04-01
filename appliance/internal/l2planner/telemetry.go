@@ -55,6 +55,7 @@ type executionData struct {
 	Confidence      float64 `json:"confidence"`
 	ResolutionLevel string  `json:"resolution_level"`
 	ErrorMessage    string  `json:"error_message,omitempty"`
+	ErrorCategory   string  `json:"error_category,omitempty"`
 	// Flywheel fields — cost, tokens, reasoning, pattern_signature
 	CostUSD          float64 `json:"cost_usd,omitempty"`
 	InputTokens      int     `json:"input_tokens,omitempty"`
@@ -77,6 +78,7 @@ func (r *TelemetryReporter) ReportExecution(
 	decision *l2bridge.LLMDecision,
 	success bool,
 	execErr string,
+	errorCategory string,
 	durationMs int64,
 	inputTokens, outputTokens int,
 ) {
@@ -110,6 +112,7 @@ func (r *TelemetryReporter) ReportExecution(
 			Confidence:       decision.Confidence,
 			ResolutionLevel:  "L2",
 			ErrorMessage:     execErr,
+			ErrorCategory:    errorCategory,
 			CostUSD:          costUSD,
 			InputTokens:      inputTokens,
 			OutputTokens:     outputTokens,
@@ -159,6 +162,7 @@ func (r *TelemetryReporter) ReportL1Execution(
 	incidentID, hostname, incidentType, runbookID string,
 	success bool,
 	execErr string,
+	errorCategory string,
 	durationMs int64,
 ) {
 	now := time.Now().UTC()
@@ -185,6 +189,7 @@ func (r *TelemetryReporter) ReportL1Execution(
 			Confidence:       1.0, // L1 deterministic = 100% confidence
 			ResolutionLevel:  "L1",
 			ErrorMessage:     execErr,
+			ErrorCategory:    errorCategory,
 			PatternSignature: patternSig,
 		},
 		ReportedAt: now.Format(time.RFC3339),
