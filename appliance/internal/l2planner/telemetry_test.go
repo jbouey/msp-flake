@@ -52,7 +52,7 @@ func TestTelemetryReport(t *testing.T) {
 		RunbookID:         "L2-AUTO-firewall_status",
 	}
 
-	reporter.ReportExecution(incident, decision, true, "", 1500, 2000, 500)
+	reporter.ReportExecution(incident, decision, true, "", "", 1500, 2000, 500)
 
 	// Verify wrapper structure
 	if receivedPayload.SiteID != "test-site" {
@@ -128,7 +128,7 @@ func TestTelemetryReportFailure(t *testing.T) {
 		Reasoning:         "SSH config drift",
 	}
 
-	reporter.ReportExecution(incident, decision, false, "SSH connection refused", 500, 1000, 300)
+	reporter.ReportExecution(incident, decision, false, "SSH connection refused", "network_error", 500, 1000, 300)
 
 	exec := receivedPayload.Execution
 	if exec.Success {
@@ -139,6 +139,9 @@ func TestTelemetryReportFailure(t *testing.T) {
 	}
 	if exec.ErrorMessage != "SSH connection refused" {
 		t.Errorf("Wrong error: %s", exec.ErrorMessage)
+	}
+	if exec.ErrorCategory != "network_error" {
+		t.Errorf("Wrong error_category: %s", exec.ErrorCategory)
 	}
 	if exec.PatternSignature != "linux_ssh_config::linux-1" {
 		t.Errorf("Wrong pattern_signature: %s", exec.PatternSignature)
@@ -168,7 +171,7 @@ func TestTelemetryReportWithPatternSignature(t *testing.T) {
 		Confidence:   0.8,
 	}
 
-	reporter.ReportExecution(incident, decision, true, "", 100, 0, 0)
+	reporter.ReportExecution(incident, decision, true, "", "", 100, 0, 0)
 
 	// Should use incident's pattern signature when available
 	if receivedPayload.Execution.PatternSignature != "custom-pattern-sig" {
@@ -184,7 +187,7 @@ func TestTelemetryServerDown(t *testing.T) {
 	decision := &l2bridge.LLMDecision{ActionParams: map[string]interface{}{}}
 
 	// This should log an error but not panic
-	reporter.ReportExecution(incident, decision, false, "test", 0, 0, 0)
+	reporter.ReportExecution(incident, decision, false, "test", "unknown", 0, 0, 0)
 }
 
 func TestL1TelemetryReport(t *testing.T) {
@@ -204,7 +207,7 @@ func TestL1TelemetryReport(t *testing.T) {
 	reporter := NewTelemetryReporter(server.URL, "test-key", "test-site")
 	reporter.SetApplianceID("appliance-001")
 
-	reporter.ReportL1Execution("drift-DC01-firewall-123", "DC01", "firewall_status", "RB-WIN-SEC-001", true, "", 250)
+	reporter.ReportL1Execution("drift-DC01-firewall-123", "DC01", "firewall_status", "RB-WIN-SEC-001", true, "", "", 250)
 
 	// Verify wrapper
 	if receivedPayload.SiteID != "test-site" {
@@ -260,7 +263,7 @@ func TestL1TelemetryReportFailure(t *testing.T) {
 	defer server.Close()
 
 	reporter := NewTelemetryReporter(server.URL, "key", "site")
-	reporter.ReportL1Execution("test-1", "SRV01", "services", "RB-WIN-SVC-001", false, "service restart failed", 500)
+	reporter.ReportL1Execution("test-1", "SRV01", "services", "RB-WIN-SVC-001", false, "service restart failed", "script_error", 500)
 
 	exec := receivedPayload.Execution
 	if exec.Success {
@@ -271,6 +274,9 @@ func TestL1TelemetryReportFailure(t *testing.T) {
 	}
 	if exec.ErrorMessage != "service restart failed" {
 		t.Errorf("Wrong error: %s", exec.ErrorMessage)
+	}
+	if exec.ErrorCategory != "script_error" {
+		t.Errorf("Wrong error_category: %s", exec.ErrorCategory)
 	}
 	if exec.ResolutionLevel != "L1" {
 		t.Errorf("Should be L1, got: %s", exec.ResolutionLevel)

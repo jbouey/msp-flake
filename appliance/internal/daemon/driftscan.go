@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1069,16 +1070,29 @@ func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanT
 		})
 	}
 
-	// 11. Screen lock — must be configured (inactivity timeout)
+	// 11. Screen lock — must be configured with inactivity timeout <= 900s (15 min)
 	if state.ScreenLock == "NotConfigured" {
 		findings = append(findings, driftFinding{
 			Hostname:     t.hostname,
 			CheckType:    "screen_lock_policy",
-			Expected:     "Configured",
+			Expected:     "<= 900",
 			Actual:       "NotConfigured",
 			HIPAAControl: "164.312(a)(2)(iii)",
 			Severity:     "medium",
 		})
+	} else if state.ScreenLock != "Unknown" {
+		// Check if timeout exceeds HIPAA 15-minute limit
+		if timeout, err := strconv.Atoi(state.ScreenLock); err == nil && (timeout > 900 || timeout == 0) {
+			findings = append(findings, driftFinding{
+				Hostname:     t.hostname,
+				CheckType:    "screen_lock_policy",
+				Expected:     "<= 900",
+				Actual:       state.ScreenLock,
+				HIPAAControl: "164.312(a)(2)(iii)",
+				Severity:     "medium",
+				Details:      map[string]string{"inactivity_timeout_secs": state.ScreenLock},
+			})
+		}
 	}
 
 	// 12. Defender exclusions — flag if any exist (review needed)

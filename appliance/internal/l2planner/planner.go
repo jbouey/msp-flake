@@ -237,6 +237,7 @@ func (p *Planner) ReportExecution(
 	decision *l2bridge.LLMDecision,
 	success bool,
 	execErr string,
+	errorCategory string,
 	durationMs int64,
 ) {
 	if p.telemetry == nil {
@@ -252,7 +253,7 @@ func (p *Planner) ReportExecution(
 		outputTokens = int(v)
 	}
 
-	p.telemetry.ReportExecution(incident, decision, success, execErr, durationMs, inputTokens, outputTokens)
+	p.telemetry.ReportExecution(incident, decision, success, execErr, errorCategory, durationMs, inputTokens, outputTokens)
 }
 
 // Stats returns current budget statistics.

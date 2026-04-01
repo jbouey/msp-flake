@@ -315,6 +315,11 @@ func New(cfg *Config) *Daemon {
 		}, nil
 	})
 
+	// chaos_quicktest: inject drift scenarios via WinRM, let normal scan cycle detect + heal
+	d.orderProc.RegisterHandler("chaos_quicktest", func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+		return d.handleChaosQuicktest(ctx, params)
+	})
+
 	// Initialize network scanner for port/reachability checks
 	d.netScan = newNetScanner(d.svc, d)
 
@@ -1358,6 +1363,121 @@ func (d *Daemon) buildWinRMTarget(req *grpcserver.HealRequest) *winrm.Target {
 		UseSSL:    ws.UseSSL,
 		VerifySSL: true, // TOFU cert pinning via CertPinStore
 	}
+}
+
+// handleChaosQuicktest injects drift scenarios via WinRM for chaos testing.
+// Each scenario runs a PowerShell inject command on a Windows target.
+// The normal scan cycle then detects drift and the healing pipeline remediates.
+// The backend polls execution_telemetry to track detect/heal status.
+func (d *Daemon) handleChaosQuicktest(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	campaignID := maputil.String(params, "campaign_id")
+	if campaignID == "" {
+		campaignID = fmt.Sprintf("chaos-%d", time.Now().UnixMilli())
+	}
+
+	scenariosRaw, ok := params["scenarios"]
+	if !ok {
+		return nil, fmt.Errorf("scenarios array is required")
+	}
+
+	scenarios, ok := scenariosRaw.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("scenarios must be an array")
+	}
+
+	if len(scenarios) == 0 || len(scenarios) > 10 {
+		return nil, fmt.Errorf("scenarios must have 1-10 entries (got %d)", len(scenarios))
+	}
+
+	results := make([]map[string]interface{}, 0, len(scenarios))
+
+	for i, raw := range scenarios {
+		s, ok := raw.(map[string]interface{})
+		if !ok {
+			results = append(results, map[string]interface{}{
+				"index":  i,
+				"status": "error",
+				"error":  "scenario must be an object",
+			})
+			continue
+		}
+
+		target := maputil.String(s, "target")
+		driftType := maputil.String(s, "type")
+		inject := maputil.String(s, "inject")
+
+		if target == "" || inject == "" {
+			results = append(results, map[string]interface{}{
+				"index":  i,
+				"type":   driftType,
+				"status": "error",
+				"error":  "target and inject are required",
+			})
+			continue
+		}
+
+		// SECURITY: only allow injection against known Windows targets
+		if !d.isKnownTarget(target, "windows") {
+			log.Printf("[chaos] SECURITY: rejected inject against unknown target %q", target)
+			results = append(results, map[string]interface{}{
+				"index":  i,
+				"type":   driftType,
+				"target": target,
+				"status": "rejected",
+				"error":  fmt.Sprintf("target %q is not a known Windows host", target),
+			})
+			continue
+		}
+
+		winrmTarget := d.buildHealingWinRMTarget(target)
+		if winrmTarget == nil {
+			results = append(results, map[string]interface{}{
+				"index":  i,
+				"type":   driftType,
+				"target": target,
+				"status": "error",
+				"error":  "no WinRM credentials available for target",
+			})
+			continue
+		}
+
+		log.Printf("[chaos] Injecting scenario %d/%d: %s on %s (campaign=%s)",
+			i+1, len(scenarios), driftType, target, campaignID)
+
+		execResult := d.winrmExec.ExecuteCtx(ctx, winrmTarget, inject,
+			"chaos-"+driftType, "inject", 60, 1, 5.0, nil)
+
+		status := "injected"
+		errMsg := ""
+		if !execResult.Success {
+			status = "inject_failed"
+			errMsg = execResult.Error
+		}
+
+		results = append(results, map[string]interface{}{
+			"index":  i,
+			"type":   driftType,
+			"target": target,
+			"status": status,
+			"error":  errMsg,
+		})
+	}
+
+	injected := 0
+	for _, r := range results {
+		if r["status"] == "injected" {
+			injected++
+		}
+	}
+
+	log.Printf("[chaos] Campaign %s complete: %d/%d scenarios injected", campaignID, injected, len(scenarios))
+
+	return map[string]interface{}{
+		"campaign_id":     campaignID,
+		"scenarios_total": len(scenarios),
+		"injected":        injected,
+		"results":         results,
+	}, nil
 }
 
 // handleValidateCredential tests WinRM connectivity using a stored credential.

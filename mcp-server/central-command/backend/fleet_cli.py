@@ -50,6 +50,7 @@ VALID_ORDER_TYPES = {
     "sync_promoted_rule", "healing", "update_credentials", "update_daemon",
     "configure_workstation_agent", "validate_credential",
     "remove_agent", "rotate_wg_key", "isolate_host",
+    "chaos_quicktest",
 }
 
 DEFAULT_PARAMS = {

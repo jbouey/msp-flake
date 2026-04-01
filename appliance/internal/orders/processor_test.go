@@ -16,8 +16,8 @@ func TestNewProcessor(t *testing.T) {
 	if p == nil {
 		t.Fatal("expected non-nil processor")
 	}
-	if p.HandlerCount() != 23 {
-		t.Fatalf("expected 23 handlers, got %d", p.HandlerCount())
+	if p.HandlerCount() != 24 {
+		t.Fatalf("expected 24 handlers, got %d", p.HandlerCount())
 	}
 }
 

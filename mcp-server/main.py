@@ -76,6 +76,7 @@ from dashboard_api.framework_sync import router as framework_sync_router, framew
 from dashboard_api.prometheus_metrics import router as metrics_router
 from dashboard_api.websocket_manager import ws_manager
 from dashboard_api.agent_api import agent_l2_plan as agent_l2_plan_handler
+from dashboard_api.healing_sla import healing_sla_loop
 
 # ============================================================================
 # Configuration
@@ -1232,6 +1233,7 @@ async def lifespan(app: FastAPI):
         ("reconciliation", _reconciliation_loop),
         ("evidence_chain_check", _evidence_chain_check_loop),
         ("merkle_batch", _merkle_batch_loop),
+        ("healing_sla", healing_sla_loop),
     ]
 
     for name, fn in task_defs:

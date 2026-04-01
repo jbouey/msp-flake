@@ -36,6 +36,9 @@ type HealRequest struct {
 // AgentVersionProvider supplies the current agent binary version info.
 type AgentVersionProvider interface {
 	CurrentAgentVersion() (version, sha256hex, downloadURL string, ok bool)
+	// AgentVersionForPlatform returns update info for a specific platform/arch/osVersion.
+	// Uses the AgentManifest for macOS/Linux, falls back to CurrentAgentVersion for Windows.
+	AgentVersionForPlatform(platform, arch, osVersion string) (version, sha256hex, downloadURL string, ok bool)
 }
 
 // Config holds gRPC server configuration.
@@ -177,10 +180,14 @@ type servicer struct {
 }
 
 // checkTypeMap maps Go agent check types to L1 rule check types.
+// The appliance driftscan uses "screen_lock_policy" and "bitlocker_status"
+// which the L1 builtin rules match on. The Go workstation agent uses shorter
+// names so we must map them here to avoid silent L1 mismatches.
 var checkTypeMap = map[string]string{
 	"defender":   "windows_defender",
 	"firewall":   "firewall_status",
-	"screenlock": "screen_lock",
+	"screenlock": "screen_lock_policy",
+	"bitlocker":  "bitlocker_status",
 	"patches":    "patching",
 }
 
@@ -380,21 +387,29 @@ func (s *servicer) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*pb.H
 	}
 
 	// Check if agent needs an update.
-	// Only offer updates to Windows agents — the cached binary is osiris-agent.exe.
-	// macOS/Linux agents need platform-specific binaries served via the manifest.
+	// Uses platform-aware lookup: Windows via legacy agentVersionCache,
+	// macOS/Linux via AgentManifest with platform/arch matching.
 	if s.agentVersion != nil && req.AgentVersion != "" {
 		agent := s.registry.GetAgent(req.AgentId)
-		isWindows := agent == nil || agent.OSType() == "windows" || agent.OSType() == ""
-		if isWindows {
-			ver, sha, url, ok := s.agentVersion.CurrentAgentVersion()
-			if ok && ver != "" && ver != req.AgentVersion {
-				resp.UpdateAvailable = true
-				resp.UpdateVersion = ver
-				resp.UpdateUrl = url
-				resp.UpdateSha256 = sha
-				log.Printf("[gRPC] Agent %s running v%s, update v%s available",
-					req.AgentId, req.AgentVersion, ver)
+
+		platform := "windows"
+		osVersion := ""
+		if agent != nil {
+			osType := agent.OSType()
+			if osType != "" {
+				platform = osType
 			}
+			osVersion = agent.OSVersion
+		}
+
+		ver, sha, url, ok := s.agentVersion.AgentVersionForPlatform(platform, "", osVersion)
+		if ok && ver != "" && ver != req.AgentVersion {
+			resp.UpdateAvailable = true
+			resp.UpdateVersion = ver
+			resp.UpdateUrl = url
+			resp.UpdateSha256 = sha
+			log.Printf("[gRPC] Agent %s (%s) running v%s, update v%s available",
+				req.AgentId, platform, req.AgentVersion, ver)
 		}
 	}
 

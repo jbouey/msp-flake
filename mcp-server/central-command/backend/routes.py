@@ -5992,3 +5992,317 @@ async def get_healing_telemetry(
         ],
         "entries": entries,
     }
+
+
+# =============================================================================
+# HEALING SLA OVERVIEW
+# =============================================================================
+
+@router.get("/admin/sla-overview")
+async def get_sla_overview_endpoint(
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Per-site healing rate SLA overview with 7-period trend.
+
+    Returns for each active site: current healing rate, SLA target,
+    whether the SLA is met, and the last 7 hourly periods for trending.
+    """
+    from .fleet import get_pool
+    from .healing_sla import get_sla_overview
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        overview = await get_sla_overview(conn)
+
+    return {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "sites": overview,
+    }
+
+
+# =============================================================================
+# COMPLIANCE EVIDENCE PACKET GENERATION
+# =============================================================================
+
+@router.post("/admin/sites/{site_id}/compliance-packet")
+async def generate_site_compliance_packet(
+    site_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Generate a JSON compliance evidence packet for a site.
+
+    Aggregates site info, compliance scores, healing rate, evidence
+    bundle hashes, incident summary, and HIPAA control mapping into a
+    single downloadable JSON structure.
+
+    Partners can format this however they need for auditors or clients.
+    """
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Verify site exists
+        site = await conn.fetchrow("""
+            SELECT s.site_id, s.clinic_name, s.status, s.created_at,
+                   s.client_org_id
+            FROM sites s WHERE s.site_id = $1
+        """, site_id)
+        if not site:
+            raise HTTPException(404, "Site not found")
+
+        await check_site_access_pool(conn, user, site_id)
+
+        # --- Site info ---
+        devices = await conn.fetch("""
+            SELECT hostname, os_type, compliance_status, last_seen
+            FROM discovered_devices
+            WHERE site_id = $1
+            ORDER BY last_seen DESC NULLS LAST
+        """, site_id)
+
+        agents = await conn.fetch("""
+            SELECT appliance_id, hostname, agent_version, status, last_checkin
+            FROM site_appliances
+            WHERE site_id = $1
+            ORDER BY last_checkin DESC NULLS LAST
+        """, site_id)
+
+        # --- Compliance score + category breakdown ---
+        score_row = await conn.fetchrow("""
+            WITH expanded AS (
+                SELECT
+                    c->>'check' AS check_type,
+                    c->>'status' AS check_status
+                FROM compliance_bundles cb,
+                     jsonb_array_elements(cb.checks) AS c
+                WHERE cb.site_id = $1
+                  AND cb.checked_at > NOW() - INTERVAL '30 days'
+                  AND jsonb_array_length(cb.checks) > 0
+            )
+            SELECT
+                COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) AS passes,
+                COUNT(*) FILTER (WHERE check_status = 'warning') AS warnings,
+                COUNT(*) FILTER (WHERE check_status IN ('fail', 'non_compliant')) AS fails,
+                COUNT(*) AS total
+            FROM expanded
+            WHERE check_type IS NOT NULL
+        """, site_id)
+
+        total_checks = score_row["total"] or 0
+        passes = score_row["passes"] or 0
+        warnings = score_row["warnings"] or 0
+        fails = score_row["fails"] or 0
+        distinct_fails = fails  # Each check result counted once
+        denom = passes + warnings + distinct_fails
+        compliance_score = round((passes + 0.5 * warnings) / denom * 100, 1) if denom > 0 else None
+
+        # Category breakdown (group by check_type prefix)
+        categories = await conn.fetch("""
+            WITH expanded AS (
+                SELECT
+                    c->>'check' AS check_type,
+                    c->>'status' AS check_status
+                FROM compliance_bundles cb,
+                     jsonb_array_elements(cb.checks) AS c
+                WHERE cb.site_id = $1
+                  AND cb.checked_at > NOW() - INTERVAL '30 days'
+                  AND jsonb_array_length(cb.checks) > 0
+            )
+            SELECT
+                check_type,
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) AS pass_count,
+                COUNT(*) FILTER (WHERE check_status IN ('fail', 'non_compliant')) AS fail_count
+            FROM expanded
+            WHERE check_type IS NOT NULL
+            GROUP BY check_type
+            ORDER BY fail_count DESC, total DESC
+        """, site_id)
+
+        # --- Healing rate for last 30 days ---
+        healing = await conn.fetchrow("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE success = true) AS succeeded
+            FROM execution_telemetry
+            WHERE site_id = $1
+              AND created_at > NOW() - INTERVAL '30 days'
+        """, site_id)
+
+        healing_total = healing["total"] or 0
+        healing_succeeded = healing["succeeded"] or 0
+        healing_rate = round(healing_succeeded / healing_total * 100, 1) if healing_total > 0 else None
+
+        # SLA status (latest period)
+        sla = await conn.fetchrow("""
+            SELECT healing_rate, sla_target, sla_met, period_start, period_end
+            FROM site_healing_sla
+            WHERE site_id = $1
+            ORDER BY period_start DESC
+            LIMIT 1
+        """, site_id)
+
+        # --- Evidence bundle hashes (last 30 days, most recent 50) ---
+        evidence_hashes = await conn.fetch("""
+            SELECT bundle_id, bundle_hash, chain_position, check_type,
+                   check_result, checked_at
+            FROM compliance_bundles
+            WHERE site_id = $1
+              AND checked_at > NOW() - INTERVAL '30 days'
+            ORDER BY chain_position DESC
+            LIMIT 50
+        """, site_id)
+
+        # --- Incident summary ---
+        incident_summary = await conn.fetch("""
+            SELECT
+                COALESCE(i.check_type, i.incident_type, 'unknown') AS category,
+                COUNT(*) FILTER (WHERE i.status != 'resolved') AS open_count,
+                COUNT(*) FILTER (WHERE i.status = 'resolved') AS resolved_count,
+                COUNT(*) AS total
+            FROM incidents i
+            JOIN appliances a ON a.id = i.appliance_id
+            WHERE a.site_id = $1
+              AND i.reported_at > NOW() - INTERVAL '30 days'
+            GROUP BY category
+            ORDER BY total DESC
+        """, site_id)
+
+        incident_totals = await conn.fetchrow("""
+            SELECT
+                COUNT(*) FILTER (WHERE i.status != 'resolved') AS total_open,
+                COUNT(*) FILTER (WHERE i.status = 'resolved') AS total_resolved,
+                COUNT(*) AS total
+            FROM incidents i
+            JOIN appliances a ON a.id = i.appliance_id
+            WHERE a.site_id = $1
+              AND i.reported_at > NOW() - INTERVAL '30 days'
+        """, site_id)
+
+        # --- HIPAA control mapping status ---
+        control_mappings = await conn.fetch("""
+            SELECT
+                crm.framework, crm.control_id, crm.control_title,
+                crm.runbook_id, crm.automated
+            FROM control_runbook_mapping crm
+            ORDER BY crm.framework, crm.control_id
+        """)
+
+    # Build the packet
+    now = datetime.now(timezone.utc)
+    packet = {
+        "packet_type": "compliance_evidence",
+        "generated_at": now.isoformat(),
+        "period": "last_30_days",
+
+        "site": {
+            "site_id": site["site_id"],
+            "clinic_name": site["clinic_name"],
+            "status": site["status"],
+            "created_at": site["created_at"].isoformat() if site["created_at"] else None,
+            "device_count": len(devices),
+            "agent_count": len(agents),
+            "devices": [
+                {
+                    "hostname": d["hostname"],
+                    "os_type": d["os_type"],
+                    "compliance_status": d["compliance_status"],
+                    "last_seen": d["last_seen"].isoformat() if d["last_seen"] else None,
+                }
+                for d in devices
+            ],
+            "agents": [
+                {
+                    "appliance_id": a["appliance_id"],
+                    "hostname": a["hostname"],
+                    "agent_version": a["agent_version"],
+                    "status": a["status"],
+                    "last_checkin": a["last_checkin"].isoformat() if a["last_checkin"] else None,
+                }
+                for a in agents
+            ],
+        },
+
+        "compliance": {
+            "score": compliance_score,
+            "total_checks": total_checks,
+            "passes": passes,
+            "warnings": warnings,
+            "fails": fails,
+            "categories": [
+                {
+                    "check_type": c["check_type"],
+                    "total": c["total"],
+                    "pass_count": c["pass_count"],
+                    "fail_count": c["fail_count"],
+                    "pass_rate": round(c["pass_count"] / c["total"] * 100, 1) if c["total"] > 0 else 0,
+                }
+                for c in categories
+            ],
+        },
+
+        "healing": {
+            "total_attempts_30d": healing_total,
+            "successful_heals_30d": healing_succeeded,
+            "healing_rate_30d": healing_rate,
+            "sla": {
+                "current_rate": float(sla["healing_rate"]) if sla else None,
+                "target": float(sla["sla_target"]) if sla else None,
+                "met": sla["sla_met"] if sla else None,
+                "period_start": sla["period_start"].isoformat() if sla else None,
+                "period_end": sla["period_end"].isoformat() if sla else None,
+            } if sla else None,
+        },
+
+        "evidence_chain": {
+            "bundle_count": len(evidence_hashes),
+            "bundles": [
+                {
+                    "bundle_id": str(e["bundle_id"]),
+                    "bundle_hash": e["bundle_hash"],
+                    "chain_position": e["chain_position"],
+                    "check_type": e["check_type"],
+                    "check_result": e["check_result"],
+                    "checked_at": e["checked_at"].isoformat() if e["checked_at"] else None,
+                }
+                for e in evidence_hashes
+            ],
+        },
+
+        "incidents": {
+            "total_open": incident_totals["total_open"] if incident_totals else 0,
+            "total_resolved": incident_totals["total_resolved"] if incident_totals else 0,
+            "total": incident_totals["total"] if incident_totals else 0,
+            "by_category": [
+                {
+                    "category": row["category"],
+                    "open": row["open_count"],
+                    "resolved": row["resolved_count"],
+                    "total": row["total"],
+                }
+                for row in incident_summary
+            ],
+        },
+
+        "hipaa_controls": {
+            "total_mappings": len(control_mappings),
+            "mappings": [
+                {
+                    "framework": m["framework"],
+                    "control_id": m["control_id"],
+                    "control_title": m["control_title"],
+                    "runbook_id": m["runbook_id"],
+                    "automated": m["automated"],
+                }
+                for m in control_mappings
+            ],
+        },
+    }
+
+    return Response(
+        content=json.dumps(packet, indent=2, default=str),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="compliance-packet-{site_id}-{now.strftime("%Y%m%d")}.json"',
+        },
+    )

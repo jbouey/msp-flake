@@ -44,6 +44,7 @@ var orderTimeouts = map[string]time.Duration{
 	"deploy_sensor":       5 * time.Minute,
 	"deploy_linux_sensor": 5 * time.Minute,
 	"diagnostic":          2 * time.Minute,
+	"chaos_quicktest":     5 * time.Minute,
 	"view_logs":           30 * time.Second,
 	"validate_credential": 30 * time.Second,
 }
@@ -281,6 +282,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["enable_healing"] = p.handleEnableHealing
 	p.handlers["rotate_wg_key"] = p.handleRotateWgKey
 	p.handlers["isolate_host"] = p.handleIsolateHost
+	p.handlers["chaos_quicktest"] = p.handleChaosQuicktest
 
 	return p
 }
@@ -972,6 +974,14 @@ func (p *Processor) handleHealing(_ context.Context, params map[string]interface
 	runbookID, _ := params["runbook_id"].(string)
 	log.Printf("[orders] WARNING: healing stub invoked for %s — real handler not registered", runbookID)
 	return nil, fmt.Errorf("healing handler not initialized — daemon must register executeHealingOrder")
+}
+
+func (p *Processor) handleChaosQuicktest(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+	// Fallback stub — the daemon overrides this via RegisterHandler("chaos_quicktest", ...)
+	// with handleChaosQuicktest() which injects drift via WinRM.
+	// If this code runs, the daemon failed to register the real handler.
+	log.Printf("[orders] WARNING: chaos_quicktest stub invoked — real handler not registered")
+	return nil, fmt.Errorf("chaos_quicktest handler not initialized — daemon must register real handler")
 }
 
 func (p *Processor) handleUpdateCredentials(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
