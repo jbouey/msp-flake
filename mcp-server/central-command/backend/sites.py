@@ -2523,16 +2523,17 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         await conn.execute("""
                             INSERT INTO go_agents (
                                 agent_id, site_id, hostname, agent_version,
-                                ip_address, os_name,
+                                ip_address, os_name, os_version,
                                 capability_tier, status, checks_passed, checks_total,
                                 compliance_percentage, connected_at, last_heartbeat,
                                 updated_at
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'connected', $8, $9, $10, $11, $12, NOW())
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 'connected', $8, $9, $10, $11, $12, NOW())
                             ON CONFLICT (agent_id) DO UPDATE SET
                                 hostname = EXCLUDED.hostname,
-                                agent_version = EXCLUDED.agent_version,
+                                agent_version = COALESCE(NULLIF(EXCLUDED.agent_version, ''), go_agents.agent_version),
                                 ip_address = COALESCE(NULLIF(EXCLUDED.ip_address, ''), go_agents.ip_address),
                                 os_name = COALESCE(NULLIF(EXCLUDED.os_name, ''), go_agents.os_name),
+                                os_version = COALESCE(NULLIF(EXCLUDED.os_version, ''), go_agents.os_version),
                                 capability_tier = EXCLUDED.capability_tier,
                                 status = 'connected',
                                 checks_passed = EXCLUDED.checks_passed,

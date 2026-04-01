@@ -254,7 +254,8 @@ func (ds *driftScanner) archiveSecurityEvents(ctx context.Context, hostname stri
 	}
 
 	payload := map[string]interface{}{
-		"events": events,
+		"site_id": cfg.SiteID,
+		"events":  events,
 	}
 
 	body, err := json.Marshal(payload)

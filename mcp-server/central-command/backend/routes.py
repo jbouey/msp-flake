@@ -5861,7 +5861,8 @@ async def get_agent_health(
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         rows = await conn.fetch("""
-            SELECT g.agent_id, g.hostname, g.ip_address, g.os_version,
+            SELECT g.agent_id, g.hostname, g.ip_address,
+                   COALESCE(NULLIF(g.os_version, ''), g.os_name) AS os_version,
                    g.agent_version, g.status, g.last_heartbeat,
                    g.checks_passed, g.checks_total,
                    g.compliance_percentage, g.site_id,

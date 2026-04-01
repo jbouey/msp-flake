@@ -61,6 +61,13 @@ async def health_monitor_loop():
         except Exception as e:
             logger.error(f"Device reachability check error: {e}", exc_info=True)
 
+        try:
+            await _resolve_stale_incidents()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Stale incident cleanup error: {e}", exc_info=True)
+
         await asyncio.sleep(300)  # Every 5 minutes
 
 
@@ -557,3 +564,45 @@ async def _check_device_reachability():
                 json.dumps({"hosts": hosts, "count": row["unreachable_count"]}),
             )
             logger.warning(f"[health] {row['unreachable_count']} unreachable devices at {row['clinic_name']}")
+
+
+async def _resolve_stale_incidents():
+    """Auto-resolve incidents stuck in open/resolving/escalated for >7 days.
+
+    These are incidents that the healing pipeline cannot fix (monitoring-only
+    types, agent deploy failures, credential issues). Leaving them open
+    permanently inflates the active-incident count and obscures real issues.
+
+    Only resolves incidents whose types are NOT actively being healed — if
+    execution_telemetry shows recent attempts, the pipeline is still working
+    on it and we leave it alone.
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        result = await conn.fetch("""
+            UPDATE incidents SET
+                status = 'resolved',
+                resolved_at = NOW(),
+                resolution_tier = 'auto_stale'
+            WHERE id IN (
+                SELECT i.id FROM incidents i
+                WHERE i.status IN ('open', 'resolving', 'escalated')
+                AND i.created_at < NOW() - INTERVAL '7 days'
+                AND NOT EXISTS (
+                    SELECT 1 FROM execution_telemetry et
+                    WHERE et.incident_type = i.incident_type
+                    AND et.created_at > NOW() - INTERVAL '24 hours'
+                )
+            )
+            RETURNING id, incident_type
+        """)
+
+        if result:
+            for row in result:
+                logger.info("Auto-resolved stale incident",
+                            incident_id=str(row["id"]),
+                            incident_type=row["incident_type"])
+            logger.info(f"Resolved {len(result)} stale incidents (>7d, no recent healing)")

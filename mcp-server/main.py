@@ -1912,16 +1912,48 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             # Graceful degradation: remediation_exhausted column requires migration 099
             logger.debug("Skipping exhaustion check (migration 099 not applied)", error=str(e))
 
-        # If previously resolved but drift recurred, reopen instead of creating new
+        # If previously resolved but drift recurred, check grace period before reopening.
+        # Healing effects may take 1-2 scan cycles to propagate (e.g. Windows Update
+        # restart, GPO refresh). A 30-min grace window prevents the resolve→reopen→resolve
+        # churn that makes the dashboard show 0 resolved despite hundreds of healings.
         if existing_status == 'resolved':
+            resolved_at_check = await db.execute(
+                text("SELECT resolved_at FROM incidents WHERE id = :id"),
+                {"id": existing_id}
+            )
+            resolved_at_row = resolved_at_check.fetchone()
+            resolved_at = resolved_at_row[0] if resolved_at_row else None
+
+            if resolved_at:
+                if resolved_at.tzinfo is None:
+                    resolved_at = resolved_at.replace(tzinfo=timezone.utc)
+                age_since_resolve = now - resolved_at
+                if age_since_resolve < timedelta(minutes=30):
+                    logger.debug("Incident recently resolved, grace period active",
+                                 incident_id=existing_id, resolved_ago=str(age_since_resolve),
+                                 incident_type=incident.incident_type)
+                    return {
+                        "status": "deduplicated",
+                        "incident_id": existing_id,
+                        "resolution_tier": None,
+                        "order_id": None,
+                        "runbook_id": None,
+                        "timestamp": now.isoformat()
+                    }
+
+            # Grace period expired — drift genuinely recurred, reopen
             await db.execute(
                 text("""
-                    UPDATE incidents SET status = 'resolving', resolved_at = NULL
+                    UPDATE incidents SET status = 'resolving', resolved_at = NULL,
+                        reopen_count = COALESCE(reopen_count, 0) + 1
                     WHERE id = :id
                 """),
                 {"id": existing_id}
             )
             await db.commit()
+            logger.info("Incident reopened after grace period",
+                        incident_id=existing_id, incident_type=incident.incident_type,
+                        site_id=incident.site_id)
             return {
                 "status": "reopened",
                 "incident_id": existing_id,
