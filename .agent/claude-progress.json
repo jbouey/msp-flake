@@ -1,19 +1,19 @@
 {
   "session": 191,
-  "updated": "2026-04-01T17:01:38.431343Z",
+  "updated": "2026-04-01T17:45:13.143003Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "redesigned_hero_compliance_merged_attention_sidebar_sections_dark_badges",
-    "physical_appliance": "go_daemon_v0.3.62_push_agents_live_phase3_deployed",
+    "physical_appliance": "go_daemon_v0.3.65_push_agents_live_bom_fix_polkit_fix",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "flywheel_incident_type_fixed_pattern_sig_consistent_l2_haiku_redis_circuit_breaker",
-    "incident_resolution": "pipeline_working_65pct_healing_adaptive_5min_rescan_error_classification",
+    "incident_resolution": "pipeline_93pct_windows_healing_linux_polkit_fixed_adaptive_5min",
     "evidence_pipeline": "end_to_end_live_heartbeats_site_appliances",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "127529_anchored_15_pending_verify_endpoint_chain_health_daily_integrity_check",
@@ -31,7 +31,7 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "iMac SSH blocked by MikroTik HW offload (ether2 fixed, need ether3-5). CI fixed.",
+  "current_blocker": "None. All 7 concerns addressed. Linux healing deploying v0.3.65.",
   "openclaw_server": {
     "host": "178.156.243.221",
     "url": "https://openclaw.osiriscare.net",
@@ -161,8 +161,8 @@
   ],
   "test_results": {
     "go_daemon": "18 packages passed, 0 failures",
-    "python_backend": "359 passed (pre-existing: 1 escalation test)",
-    "frontend": "tsc 0 errors"
+    "python_backend": "359 passed",
+    "frontend": "tsc 0 errors, vite build OK"
   },
   "production_hardening_session_184": {
     "tier1_fake_metrics_fixed": [
@@ -314,7 +314,41 @@
     "Agent binaries staged on appliance (linux-amd64 + darwin-amd64)",
     "Chaos lab VM snapshot fix in progress (replacing 4GB snapshots with 6GB+)"
   ],
-  "completed_this_session": [],
+  "completed_this_session": [
+    "FIX: 3 wrong credential IPs + Fernet encryption + fail-fast on missing key",
+    "FIX: SSH session leak + mutex deadlock (3-phase lock/unlock in getConnection)",
+    "FIX: SSH getConnection 5s timeout on half-open NewSession",
+    "FIX: TLS TOFU auto-recovery (3-strike pin clear)",
+    "FIX: isKnownTarget missing gRPC registry check for Windows (86 failures)",
+    "FIX: Go agent check types unmapped: screen_lock, bitlocker L1 rules added",
+    "FIX: config.json UTF-8 BOM \u2014 root cause of ALL Go agent gRPC failures since Mar 24",
+    "FIX: Linux sudo polkit \u2014 SYSTEMD_PAGER + DEBIAN_FRONTEND via sudo env",
+    "FIX: wuauserv StartType Automatic + runbook updated",
+    "FIX: BitLocker TPM-less VM fallback + screen_lock InactivityTimeoutSecs",
+    "FIX: firewall_dangerous_rules two-pass runbook",
+    "FIX: Chaos lab cron replaced \u2014 telemetry-based reports, no snapshot restores",
+    "FIX: DC VM snapshot deleted (was destroying production twice daily)",
+    "FIX: Windows service recovery (restart 5/10/30s on failure)",
+    "FIX: autodeploy config.json BOM prevention (WriteAllText no BOM)",
+    "FIX: compliance-packet POST\u2192GET for CSRF",
+    "FEAT: Startup credential probe + error classification (6 categories)",
+    "FEAT: Adaptive scan interval (5min for drifting hosts)",
+    "FEAT: Healing rate tracker + production healing report script",
+    "FEAT: Agent health + healing telemetry + target health APIs",
+    "FEAT: PipelineHealth.tsx operational dashboard + sidebar nav",
+    "FEAT: Chaos quicktest (inject\u2192detect\u2192heal from dashboard)",
+    "FEAT: Agent auto-update via heartbeat version check",
+    "FEAT: Healing SLA background task + email alerting",
+    "FEAT: Compliance evidence packet endpoint",
+    "INFRA: Go agents as Windows services with gRPC push (BOM fixed)",
+    "INFRA: Reverse SSH tunnel to iMac (permanent LaunchDaemon)",
+    "INFRA: Fernet key backed up",
+    "INFRA: MikroTik HW offload disabled (didn't fix WiFi but cleaned up)",
+    "INFRA: Rollback binaries preserved on VPS (v0.3.46-v0.3.65)",
+    "ROOT CAUSE: UTF-8 BOM in config.json broke Go agent gRPC since Mar 24",
+    "ROOT CAUSE: Ubuntu polkit blocks systemctl in non-interactive sudo sessions",
+    "ROOT CAUSE: macOS Big Sur WiFi drops all inbound TCP (not router)"
+  ],
   "session_189_earlier": [
     "AUDIT: Full production healing pipeline audit (DB queries, docker logs, code trace)",
     "FIX: Removed bitlocker, bitlocker_status, screen_lock, screen_lock_policy, backup_status from MONITORING_ONLY (main.py + agent_api.py)",
@@ -361,5 +395,12 @@
     "Screen lock runbook: InactivityTimeoutSecs + secedit + GPO defense-in-depth",
     "chaos_quicktest order handler (24 handlers total)",
     "Healing SLA background task"
+  ],
+  "daemon_v0_3_65_changes": [
+    "SSH executor: sudo env SYSTEMD_PAGER= DEBIAN_FRONTEND=noninteractive for polkit bypass",
+    "autodeploy: WriteAllText with UTF8Encoding(false) \u2014 no BOM in config.json",
+    "L1 rules: screen_lock + bitlocker for Go agent check types",
+    "isKnownTarget: gRPC registry check for Windows platform",
+    "Service recovery: restart 5/10/30s on failure"
   ]
 }
