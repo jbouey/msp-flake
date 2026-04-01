@@ -1830,10 +1830,12 @@ func (ad *autoDeployer) writeConfigToTarget(target *winrm.Target, grpcAddr strin
     "check_interval": 300
 }`, grpcAddr)
 
+	// Use WriteAllText with UTF8Encoding($false) to avoid BOM.
+	// PowerShell's Set-Content -Encoding UTF8 adds BOM which breaks Go's JSON parser.
 	configScript := fmt.Sprintf(`
-Set-Content -Path "%s\config.json" -Value @'
+[IO.File]::WriteAllText("%s\config.json", @'
 %s
-'@ -Encoding UTF8
+'@, [Text.UTF8Encoding]::new($false))
 "OK"
 `, agentInstallDir, configJSON)
 
