@@ -6024,7 +6024,7 @@ async def get_sla_overview_endpoint(
 # COMPLIANCE EVIDENCE PACKET GENERATION
 # =============================================================================
 
-@router.post("/admin/sites/{site_id}/compliance-packet")
+@router.get("/admin/sites/{site_id}/compliance-packet")
 async def generate_site_compliance_packet(
     site_id: str,
     user: dict = Depends(auth_module.require_auth),
