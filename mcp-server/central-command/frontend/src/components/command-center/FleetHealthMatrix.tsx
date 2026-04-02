@@ -63,7 +63,7 @@ const SiteRow: React.FC<{
         w-full grid grid-cols-[1fr_80px_100px_60px_60px_130px_32px] items-center gap-2 px-3 py-2.5
         text-left transition-all duration-150 rounded-ios-md
         ${hasAttention
-          ? 'bg-red-50/50 hover:bg-red-50/80 border border-red-100/50'
+          ? 'bg-health-critical/10 hover:bg-health-critical/15 border border-health-critical/20'
           : 'hover:bg-fill-secondary border border-transparent'
         }
       `}
