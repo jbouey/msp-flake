@@ -42,7 +42,7 @@ export const PartnerDashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { partner, apiKey, isAuthenticated, isLoading, logout } = usePartner();
 
-  const [activeTab, setActiveTab] = useState<'sites' | 'onboarding' | 'provisions' | 'billing' | 'compliance' | 'exceptions' | 'escalations' | 'learning' | 'sso'>('sites');
+  const [activeTab, setActiveTab] = useState<'sites' | 'onboarding' | 'provisions' | 'billing' | 'compliance' | 'exceptions' | 'escalations' | 'learning' | 'sso' | 'inventory'>('sites');
   const [ssoConfigSite, setSsoConfigSite] = useState<{ id: string; name: string } | null>(null);
 
   // Handle billing redirect from Stripe
@@ -393,6 +393,16 @@ export const PartnerDashboard: React.FC = () => {
             }`}
           >
             SSO
+          </button>
+          <button
+            onClick={() => setActiveTab('inventory')}
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
+              activeTab === 'inventory'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
+            }`}
+          >
+            Inventory
           </button>
           <button
             onClick={() => navigate('/partner/security')}
@@ -782,7 +792,133 @@ export const PartnerDashboard: React.FC = () => {
             )}
           </div>
         )}
+
+        {activeTab === 'inventory' && (
+          <PartnerInventory apiKey={apiKey} />
+        )}
       </div>
+    </div>
+  );
+};
+
+/** Partner org inventory — devices, workstations, agents, witnesses across all orgs */
+const PartnerInventory: React.FC<{ apiKey: string | null }> = ({ apiKey }) => {
+  const [orgs, setOrgs] = React.useState<Array<{ id: string; name: string; site_count: number }>>([]);
+  const [selectedOrg, setSelectedOrg] = React.useState<string>('');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [data, setData] = React.useState<Record<string, any>>({});
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['X-API-Key'] = apiKey;
+    fetch('/api/partners/me/orgs', { credentials: 'same-origin', headers })
+      .then(r => r.json())
+      .then(d => {
+        const list = d.organizations || [];
+        setOrgs(list);
+        if (list.length > 0) setSelectedOrg(list[0].id);
+      })
+      .catch(() => {});
+  }, [apiKey]);
+
+  React.useEffect(() => {
+    if (!selectedOrg) return;
+    setLoading(true);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['X-API-Key'] = apiKey;
+    const base = `/api/partners/me/orgs/${selectedOrg}`;
+    Promise.all([
+      fetch(`${base}/devices`, { credentials: 'same-origin', headers }).then(r => r.json()).catch(() => null),
+      fetch(`${base}/workstations`, { credentials: 'same-origin', headers }).then(r => r.json()).catch(() => null),
+      fetch(`${base}/agents`, { credentials: 'same-origin', headers }).then(r => r.json()).catch(() => null),
+      fetch(`${base}/evidence-witnesses`, { credentials: 'same-origin', headers }).then(r => r.json()).catch(() => null),
+    ]).then(([devices, workstations, agents, witnesses]) => {
+      setData({ devices, workstations, agents, witnesses });
+      setLoading(false);
+    });
+  }, [selectedOrg, apiKey]);
+
+  return (
+    <div className="space-y-6">
+      {/* Org selector */}
+      {orgs.length > 1 && (
+        <select
+          value={selectedOrg}
+          onChange={e => setSelectedOrg(e.target.value)}
+          className="block w-full max-w-xs px-3 py-2 border border-slate-200 rounded-lg text-sm"
+        >
+          {orgs.map(o => <option key={o.id} value={o.id}>{o.name} ({o.site_count} sites)</option>)}
+        </select>
+      )}
+
+      {loading ? (
+        <div className="text-center py-12 text-slate-500">Loading inventory...</div>
+      ) : (
+        <>
+          {/* KPI row */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-white rounded-xl border border-slate-100 p-4 text-center">
+              <p className="text-2xl font-bold text-slate-900">{data.devices?.summary?.total ?? 0}</p>
+              <p className="text-xs text-slate-500">Devices ({data.devices?.summary?.compliance_rate ?? 0}% compliant)</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 p-4 text-center">
+              <p className="text-2xl font-bold text-slate-900">{data.workstations?.summary?.total_workstations ?? 0}</p>
+              <p className="text-xs text-slate-500">Workstations ({data.workstations?.summary?.overall_compliance_rate ?? 0}% compliant)</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 p-4 text-center">
+              <p className="text-2xl font-bold text-slate-900">
+                {data.agents?.summary?.active ?? 0}/{data.agents?.summary?.total ?? 0}
+              </p>
+              <p className="text-xs text-slate-500">Agents Active</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 p-4 text-center">
+              <p className="text-2xl font-bold text-emerald-600">{data.witnesses?.coverage_pct ?? 0}%</p>
+              <p className="text-xs text-slate-500">Evidence Witnessed ({data.witnesses?.attestations_24h ?? 0} 24h)</p>
+            </div>
+          </div>
+
+          {/* Device table */}
+          {data.devices?.devices?.length > 0 && (
+            <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-100">
+                <h3 className="font-medium text-slate-900">Devices ({data.devices.devices.length})</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-xs text-slate-500 uppercase">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Hostname/IP</th>
+                      <th className="px-4 py-2 text-left">Site</th>
+                      <th className="px-4 py-2 text-left">Type</th>
+                      <th className="px-4 py-2 text-left">OS</th>
+                      <th className="px-4 py-2 text-left">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                    {data.devices.devices.slice(0, 50).map((d: any) => (
+                      <tr key={d.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-2 font-mono text-xs">{d.hostname || d.ip_address}</td>
+                        <td className="px-4 py-2">{d.clinic_name}</td>
+                        <td className="px-4 py-2">{d.device_type}</td>
+                        <td className="px-4 py-2 text-xs">{d.os_name || '--'}</td>
+                        <td className="px-4 py-2">
+                          <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                            d.compliance_status === 'compliant' ? 'bg-emerald-100 text-emerald-700' :
+                            d.compliance_status === 'drifted' ? 'bg-red-100 text-red-700' :
+                            'bg-slate-100 text-slate-600'
+                          }`}>{d.compliance_status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 };

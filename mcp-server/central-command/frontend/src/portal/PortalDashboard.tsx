@@ -298,6 +298,9 @@ export const PortalDashboard: React.FC = () => {
           </div>
         </section>
 
+        {/* Org Overview (multi-site) */}
+        <OrgOverviewSection siteId={siteId || ''} />
+
         {/* Controls Section */}
         <section className="mb-8">
           <h2 className="text-xl font-semibold text-slate-900 mb-4">Control Status</h2>
@@ -404,6 +407,49 @@ export const PortalDashboard: React.FC = () => {
         </footer>
       </main>
     </div>
+  );
+};
+
+/** Org overview section — shows multi-site aggregate when site belongs to an org */
+const OrgOverviewSection: React.FC<{ siteId: string }> = ({ siteId }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [overview, setOverview] = React.useState<Record<string, any> | null>(null);
+
+  React.useEffect(() => {
+    if (!siteId) return;
+    fetch(`/api/portal/site/${siteId}/org-overview`, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.org) setOverview(d); })
+      .catch(() => {});
+  }, [siteId]);
+
+  if (!overview || !overview.org || overview.sites.length <= 1) return null;
+
+  const s = overview.summary;
+  return (
+    <section className="mb-8">
+      <h2 className="text-xl font-semibold text-slate-900 mb-4">
+        {overview.org.name} — Organization Overview
+      </h2>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl border border-slate-100 p-4 text-center">
+          <p className="text-2xl font-bold text-slate-900">{s.total_sites}</p>
+          <p className="text-xs text-slate-500">Sites</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-100 p-4 text-center">
+          <p className="text-2xl font-bold text-slate-900">{s.total_devices}</p>
+          <p className="text-xs text-slate-500">{s.device_compliance_rate}% Compliant</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-100 p-4 text-center">
+          <p className="text-2xl font-bold text-slate-900">{s.active_incidents}</p>
+          <p className="text-xs text-slate-500">Active Incidents</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-100 p-4 text-center">
+          <p className="text-2xl font-bold text-emerald-600">{s.evidence_witness_coverage_pct}%</p>
+          <p className="text-xs text-slate-500">Evidence Witnessed</p>
+        </div>
+      </div>
+    </section>
   );
 };
 
