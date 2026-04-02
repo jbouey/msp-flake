@@ -293,6 +293,17 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                     )
                     devices_created += 1
 
+                # Set scan ownership: first appliance to discover a device owns it.
+                # Only set if unowned — never steal from another appliance.
+                try:
+                    await conn.execute("""
+                        UPDATE discovered_devices
+                        SET owner_appliance_id = $2, owned_since = NOW()
+                        WHERE id = $1 AND owner_appliance_id IS NULL
+                    """, device_db_id, appliance_db_id)
+                except Exception:
+                    pass  # Column may not exist yet (pre-migration 114)
+
                 # Auto-classify device_status based on probe results.
                 # Only update if current status is 'discovered' or null
                 # (never overwrite managed states).

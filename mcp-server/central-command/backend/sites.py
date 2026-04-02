@@ -2768,6 +2768,35 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # is acceptable.
         should_send_creds = True
 
+        # === STEP 5 PRELUDE: Discovery-based target filtering ===
+        # Each appliance only scans hosts it OWNS via first-discovery.
+        # Prevents duplicate scanning when multiple appliances share a subnet.
+        # Falls back to all-discovered if ownership not yet assigned (pre-migration 114).
+        # First checkin (no discoveries yet) gets all creds to bootstrap scanning.
+        owned_ips = set()
+        discovered_ips = set()
+        try:
+            # Prefer ownership-based filter (migration 114+)
+            own_rows = await conn.fetch("""
+                SELECT DISTINCT ip_address FROM discovered_devices
+                WHERE owner_appliance_id = $1 AND ip_address IS NOT NULL
+            """, appliance_db_id)
+            owned_ips = {r['ip_address'] for r in own_rows}
+        except Exception:
+            pass  # owner_appliance_id column may not exist yet
+        if not owned_ips:
+            # Fallback: all devices this appliance discovered
+            try:
+                disc_rows = await conn.fetch("""
+                    SELECT DISTINCT ip_address FROM discovered_devices
+                    WHERE appliance_id = $1 AND ip_address IS NOT NULL
+                """, appliance_db_id)
+                discovered_ips = {r['ip_address'] for r in disc_rows}
+            except Exception:
+                pass
+        scan_ips = owned_ips or discovered_ips
+        has_discoveries = len(scan_ips) > 0
+
         windows_targets = []
         if should_send_creds:
             try:
@@ -2782,8 +2811,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
 
                     # Org-level credential inheritance: if this site has no Windows creds,
                     # inherit from sibling sites in the same org (same network, shared AD).
-                    # Uses a separate admin connection to bypass tenant RLS — the JOIN to
-                    # sites needs to see sibling site_ids outside the current tenant.
+                    # Uses admin connection to bypass tenant RLS for the cross-site JOIN.
                     if not creds:
                         async with admin_connection(pool) as admin_conn:
                             creds = await admin_conn.fetch("""
@@ -2823,6 +2851,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         continue  # No usable credential data
 
                     if hostname:
+                        # Discovery filter: only deliver targets this appliance has discovered.
+                        # Skip filter on first checkin (no discoveries yet) to bootstrap scanning.
+                        if has_discoveries and hostname not in scan_ips:
+                            continue
                         windows_targets.append({
                             "hostname": hostname,
                             "username": username,
@@ -2888,6 +2920,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                             if cred_data.get('label'):
                                 target_entry["label"] = cred_data['label']
                             if hostname:
+                                # Discovery filter (same as Windows targets)
+                                if has_discoveries and hostname not in scan_ips:
+                                    continue
                                 linux_targets.append(target_entry)
                         except json.JSONDecodeError as e:
                             logger.warning(f"Checkin {checkin.site_id}: malformed SSH credential JSON for {cred.get('credential_name', '?')}: {e}")

@@ -1885,15 +1885,22 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     canonical_appliance_id = canonical_row[0] if canonical_row else appliance_id
     now = datetime.now(timezone.utc)
 
-    # Deduplicate: Check for existing incident of same type (open OR recently resolved)
-    # This prevents flapping: L1 heals → drift recurs → new incident every cycle.
-    # 24-hour resolved window prevents recurring driftscans from creating 5+ incidents/day
-    # for the same check (e.g. windows_update, linux_unattended_upgrades).
+    # Deduplicate: Check for existing incident of same type + hostname across the ORG.
+    # Cross-appliance dedup: if appliance A already created an incident for
+    # windows_update on 192.168.88.251, appliance B seeing the same drift on the
+    # same host deduplicates instead of creating a duplicate incident.
+    # Falls back to appliance-scoped dedup when hostname is not available.
+    hostname = incident.host_id or ""
     existing_check = await db.execute(
         text("""
             SELECT id, status FROM incidents
-            WHERE appliance_id = :appliance_id
+            WHERE site_id IN (
+                SELECT s2.site_id FROM sites s1
+                JOIN sites s2 ON s1.client_org_id = s2.client_org_id
+                WHERE s1.site_id = :site_id
+            )
             AND incident_type = :incident_type
+            AND details->>'hostname' = :hostname
             AND (
                 (status IN ('open', 'resolving', 'escalated'))
                 OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '24 hours')
@@ -1902,7 +1909,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             ORDER BY created_at DESC
             LIMIT 1
         """),
-        {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+        {"site_id": incident.site_id, "incident_type": incident.incident_type, "hostname": hostname}
     )
     existing_incident = existing_check.fetchone()
 
@@ -2629,7 +2636,8 @@ async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(
 
     appliance_id = str(appliance[0])
 
-    # Resolve the latest open/resolving incident for this type
+    # Resolve the latest open/resolving incident for this type + hostname,
+    # searching across all sites in the org (matches cross-appliance dedup).
     result = await db.execute(
         text("""
             UPDATE incidents SET
@@ -2637,18 +2645,24 @@ async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(
                 status = 'resolved',
                 resolution_tier = :resolution_tier
             WHERE id = (
-                SELECT id FROM incidents
-                WHERE appliance_id = :appliance_id
-                AND incident_type = :check_type
-                AND status IN ('open', 'resolving', 'escalated')
-                ORDER BY created_at DESC
+                SELECT i.id FROM incidents i
+                WHERE i.site_id IN (
+                    SELECT s2.site_id FROM sites s1
+                    JOIN sites s2 ON s1.client_org_id = s2.client_org_id
+                    WHERE s1.site_id = :site_id
+                )
+                AND i.incident_type = :check_type
+                AND i.details->>'hostname' = :host_id
+                AND i.status IN ('open', 'resolving', 'escalated')
+                ORDER BY i.created_at DESC
                 LIMIT 1
             )
             RETURNING id
         """),
         {
-            "appliance_id": appliance_id,
+            "site_id": site_id,
             "check_type": check_type,
+            "host_id": host_id,
             "resolution_tier": resolution_tier,
         }
     )
