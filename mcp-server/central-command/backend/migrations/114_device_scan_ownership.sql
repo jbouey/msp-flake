@@ -11,7 +11,7 @@ ADD COLUMN IF NOT EXISTS owned_since TIMESTAMP WITH TIME ZONE;
 -- Set initial ownership: current appliance_id owns all its discovered devices
 UPDATE discovered_devices
 SET owner_appliance_id = appliance_id::uuid,
-    owned_since = created_at
+    owned_since = first_seen_at
 WHERE owner_appliance_id IS NULL;
 
 -- Index for ownership lookups during credential filtering
