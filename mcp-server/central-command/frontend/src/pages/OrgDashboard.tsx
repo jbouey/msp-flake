@@ -234,7 +234,7 @@ export const OrgDashboard: React.FC = () => {
         <GlassCard padding="md" className="text-center">
           <p className="text-2xl font-bold text-label-primary">{orgDevices?.summary?.total ?? '—'}</p>
           <p className="text-xs text-label-tertiary">
-            Devices {orgDevices?.summary?.compliance_rate !== null ? `(${orgDevices.summary.compliance_rate}% compliant)` : ''}
+            Devices {orgDevices?.summary?.compliance_rate !== null && orgDevices?.summary?.compliance_rate !== undefined ? `(${orgDevices.summary.compliance_rate}% compliant)` : ''}
           </p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
@@ -249,7 +249,7 @@ export const OrgDashboard: React.FC = () => {
         </GlassCard>
         <GlassCard padding="md" className="text-center">
           <p className={`text-2xl font-bold ${(health?.evidence_witnesses?.coverage_pct ?? 0) >= 50 ? 'text-health-healthy' : 'text-label-primary'}`}>
-            {health?.evidence_witnesses?.coverage_pct !== null ? `${health.evidence_witnesses.coverage_pct}%` : '—'}
+            {health?.evidence_witnesses?.coverage_pct !== undefined && health?.evidence_witnesses?.coverage_pct !== null ? `${health.evidence_witnesses.coverage_pct}%` : '—'}
           </p>
           <p className="text-xs text-label-tertiary">
             Evidence Witnessed {health?.evidence_witnesses?.attestations_24h ? `(${health.evidence_witnesses.attestations_24h})` : ''}
