@@ -1216,10 +1216,14 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 				req.Hostname, req.CheckType, result.Error, failCount, maxHealingAttempts)
 
 			if d.telemetry != nil {
-				d.safeGo("telemetryL1Fail", func() {
-					errCat := classifyHealError(result.Error)
-					d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, errCat, result.DurationMs)
-				})
+				errCat := classifyHealError(result.Error)
+				// Don't report "no_credentials" as failures — these are config gaps,
+				// not healing failures. Reporting them tanks the healing rate.
+				if errCat != "no_credentials" {
+					d.safeGo("telemetryL1Fail", func() {
+						d.telemetry.ReportL1Execution(incidentID, req.Hostname, req.CheckType, telemetryRunbookID, false, result.Error, errCat, result.DurationMs)
+					})
+				}
 			}
 		}
 		return

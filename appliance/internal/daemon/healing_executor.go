@@ -53,6 +53,9 @@ func classifyHealError(errMsg string) string {
 		strings.Contains(lower, "non-zero") ||
 		strings.Contains(lower, "failed:"):
 		return "script_error"
+	case strings.Contains(lower, "no ssh credentials") ||
+		strings.Contains(lower, "no winrm credentials"):
+		return "no_credentials"
 	case strings.Contains(lower, "not found") ||
 		strings.Contains(lower, "no such") ||
 		strings.Contains(lower, "missing"):
