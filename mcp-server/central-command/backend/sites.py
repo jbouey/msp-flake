@@ -2780,6 +2780,22 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         ORDER BY CASE WHEN credential_type = 'domain_admin' THEN 0 ELSE 1 END, created_at DESC
                     """, checkin.site_id)
 
+                    # Org-level credential inheritance: if this site has no Windows creds,
+                    # inherit from sibling sites in the same org (same network, shared AD)
+                    if not creds:
+                        creds = await conn.fetch("""
+                            SELECT sc.credential_name, sc.credential_type, sc.encrypted_data
+                            FROM site_credentials sc
+                            JOIN sites s1 ON sc.site_id = s1.site_id
+                            JOIN sites s2 ON s1.client_org_id = s2.client_org_id
+                            WHERE s2.site_id = $1
+                            AND sc.site_id != $1
+                            AND sc.credential_type IN ('winrm', 'domain_admin', 'domain_member', 'service_account', 'local_admin')
+                            ORDER BY CASE WHEN sc.credential_type = 'domain_admin' THEN 0 ELSE 1 END, sc.created_at DESC
+                        """, checkin.site_id)
+                        if creds:
+                            logger.info(f"Checkin {checkin.site_id}: inherited {len(creds)} Windows credential(s) from org siblings")
+
                 for cred in creds:
                     cred_type = cred.get('credential_type', 'winrm')
                     hostname = None
@@ -2826,6 +2842,21 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         AND credential_type IN ('ssh_password', 'ssh_key')
                         ORDER BY created_at DESC
                     """, checkin.site_id)
+
+                    # Org-level credential inheritance for SSH targets
+                    if not ssh_creds:
+                        ssh_creds = await conn.fetch("""
+                            SELECT sc.credential_name, sc.encrypted_data
+                            FROM site_credentials sc
+                            JOIN sites s1 ON sc.site_id = s1.site_id
+                            JOIN sites s2 ON s1.client_org_id = s2.client_org_id
+                            WHERE s2.site_id = $1
+                            AND sc.site_id != $1
+                            AND sc.credential_type IN ('ssh_password', 'ssh_key')
+                            ORDER BY sc.created_at DESC
+                        """, checkin.site_id)
+                        if ssh_creds:
+                            logger.info(f"Checkin {checkin.site_id}: inherited {len(ssh_creds)} SSH credential(s) from org siblings")
 
                 for cred in ssh_creds:
                     if cred['encrypted_data']:
