@@ -3,10 +3,29 @@ import { useParams, Link } from 'react-router-dom';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { AddDeviceModal } from '../components/shared/AddDeviceModal';
 import { AddNetworkDeviceModal } from '../components/shared/AddNetworkDeviceModal';
-import { useSiteDevices, useSiteDeviceSummary } from '../hooks';
+import { useSiteDevices, useSiteDeviceSummary, useSite } from '../hooks';
 import type { DiscoveredDevice, SiteDeviceSummary as DeviceSummaryType } from '../utils/api';
 import { CHECK_TYPE_LABELS } from '../types';
 import { formatTimeAgo } from '../constants';
+
+/** Org context banner — shown when site belongs to a multi-site org */
+const OrgBanner: React.FC<{ siteId: string }> = ({ siteId }) => {
+  const { data: site } = useSite(siteId);
+  if (!site?.client_org_id) return null;
+  return (
+    <div className="bg-accent-primary/10 border border-accent-primary/20 rounded-ios px-4 py-2 flex items-center justify-between">
+      <span className="text-sm text-label-secondary">
+        Part of <span className="font-medium text-label-primary">{site.org_name || 'organization'}</span> — viewing this site only
+      </span>
+      <Link
+        to={`/organizations/${site.client_org_id}`}
+        className="text-sm text-accent-primary hover:underline font-medium"
+      >
+        View all org sites
+      </Link>
+    </div>
+  );
+};
 
 const formatRelativeTime = formatTimeAgo;
 
@@ -691,6 +710,9 @@ export const SiteDevices: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Org context banner */}
+      {siteId && <OrgBanner siteId={siteId} />}
+
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm">
         <Link to="/sites" className="text-label-secondary hover:text-label-primary">

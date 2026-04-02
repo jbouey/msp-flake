@@ -1123,6 +1123,107 @@ async def add_portal_network_device(
 
 
 # =============================================================================
+# ORG OVERVIEW (client view — multi-site aggregate, PHI-safe)
+# =============================================================================
+
+@router.get("/site/{site_id}/org-overview")
+async def get_client_org_overview(
+    site_id: str,
+    token: str = Query(None),
+    portal_session: Optional[str] = Cookie(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Org-level compliance overview for clients.
+
+    Derives the org from the client's authenticated site. Returns aggregate
+    stats across all sites in the org — no raw IPs or hostnames (PHI boundary).
+    """
+    await validate_session(site_id, portal_session, token)
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Look up org from site
+        org_row = await conn.fetchrow("""
+            SELECT co.id, co.name, co.practice_type
+            FROM sites s
+            JOIN client_orgs co ON s.client_org_id = co.id
+            WHERE s.site_id = $1
+        """, site_id)
+        if not org_row:
+            return {"org": None, "sites": [], "summary": {}}
+
+        org_id = str(org_row['id'])
+
+        # All sites in the org
+        site_rows = await conn.fetch("""
+            SELECT s.site_id, s.clinic_name,
+                   sa.last_checkin,
+                   CASE WHEN sa.last_checkin > NOW() - INTERVAL '15 minutes' THEN 'online'
+                        WHEN sa.last_checkin > NOW() - INTERVAL '1 hour' THEN 'stale'
+                        ELSE 'offline' END as status
+            FROM sites s
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+            WHERE s.client_org_id = $1
+            ORDER BY s.clinic_name
+        """, org_id)
+
+        site_ids = [r['site_id'] for r in site_rows]
+
+        # Aggregate compliance
+        compliance = await conn.fetchrow("""
+            SELECT count(*) as total_devices,
+                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant,
+                count(*) FILTER (WHERE compliance_status = 'drifted') as drifted
+            FROM discovered_devices WHERE site_id = ANY($1)
+        """, site_ids)
+
+        # Aggregate workstations
+        workstations = await conn.fetchrow("""
+            SELECT count(*) as total,
+                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant
+            FROM workstations WHERE site_id = ANY($1)
+        """, site_ids)
+
+        # Incident summary (no hostnames — PHI boundary)
+        incidents = await conn.fetchrow("""
+            SELECT count(*) FILTER (WHERE status IN ('open','resolving','escalated')) as active,
+                count(*) FILTER (WHERE resolved_at > NOW() - interval '24h') as resolved_24h,
+                count(*) FILTER (WHERE created_at > NOW() - interval '7d') as total_7d
+            FROM incidents WHERE site_id = ANY($1)
+        """, site_ids)
+
+    total_devices = compliance['total_devices'] or 0
+    total_ws = workstations['total'] or 0
+
+    return {
+        "org": {
+            "id": org_id,
+            "name": org_row['name'],
+            "practice_type": org_row['practice_type'],
+        },
+        "sites": [
+            {
+                "site_id": s['site_id'],
+                "name": s['clinic_name'] or s['site_id'],
+                "status": s['status'],
+            }
+            for s in site_rows
+        ],
+        "summary": {
+            "total_sites": len(site_ids),
+            "total_devices": total_devices,
+            "compliant_devices": compliance['compliant'] or 0,
+            "device_compliance_rate": round((compliance['compliant'] or 0) / total_devices * 100, 1) if total_devices > 0 else 0,
+            "total_workstations": total_ws,
+            "workstation_compliance_rate": round((workstations['compliant'] or 0) / total_ws * 100, 1) if total_ws > 0 else 0,
+            "active_incidents": incidents['active'] or 0,
+            "resolved_24h": incidents['resolved_24h'] or 0,
+            "incidents_7d": incidents['total_7d'] or 0,
+        },
+    }
+
+
+# =============================================================================
 # CONTROLS ENDPOINT
 # =============================================================================
 
