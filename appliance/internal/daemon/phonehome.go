@@ -212,6 +212,26 @@ type CheckinRequest struct {
 	EncryptionPublicKey string                   `json:"encryption_public_key,omitempty"`
 	DeployResults       []DeployResult           `json:"deploy_results,omitempty"`
 	DaemonHealth        *DaemonHealth            `json:"daemon_health,omitempty"`
+	// Peer witnessing: recent bundle hashes for sibling appliances to counter-sign
+	BundleHashes        []BundleHashEntry        `json:"bundle_hashes,omitempty"`
+	// Witness attestations: counter-signatures of sibling bundle hashes from previous cycle
+	WitnessAttestations []WitnessAttestation     `json:"witness_attestations,omitempty"`
+}
+
+// BundleHashEntry is a recent evidence bundle hash for peer witnessing.
+type BundleHashEntry struct {
+	BundleID   string `json:"bundle_id"`
+	BundleHash string `json:"bundle_hash"`
+	CheckedAt  string `json:"checked_at"`
+}
+
+// WitnessAttestation is this appliance's counter-signature of a sibling's bundle hash.
+type WitnessAttestation struct {
+	BundleID         string `json:"bundle_id"`
+	BundleHash       string `json:"bundle_hash"`
+	WitnessSignature string `json:"witness_signature"` // Ed25519 signature of the hash
+	WitnessPublicKey string `json:"witness_public_key"`
+	SourceAppliance  string `json:"source_appliance"` // who created the bundle
 }
 
 // DaemonHealth reports runtime stats from the Go daemon.
@@ -287,6 +307,16 @@ type CheckinResponse struct {
 	EncryptedCredentials map[string]interface{}   `json:"encrypted_credentials,omitempty"`
 	PendingDeploys       []PendingDeploy          `json:"pending_deploys,omitempty"`
 	Wireguard            *WireguardConfig         `json:"wireguard,omitempty"`
+	// Peer witnessing: sibling appliance bundle hashes to counter-sign
+	PeerBundleHashes     []PeerBundleHash         `json:"peer_bundle_hashes,omitempty"`
+}
+
+// PeerBundleHash is a sibling appliance's bundle hash delivered for witnessing.
+type PeerBundleHash struct {
+	BundleID        string `json:"bundle_id"`
+	BundleHash      string `json:"bundle_hash"`
+	SourceAppliance string `json:"source_appliance"` // appliance_id that created it
+	SourcePublicKey string `json:"source_public_key"`
 }
 
 // Checkin sends a phone-home checkin to Central Command.

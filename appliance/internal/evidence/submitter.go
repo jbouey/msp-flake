@@ -9,6 +9,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,6 +79,8 @@ var networkCheckTypes = []string{
 }
 
 // Submitter builds and submits evidence bundles to Central Command.
+// When Central Command is unreachable (circuit breaker open or HTTP failure),
+// evidence bundles are cached locally and drained on reconnection.
 type Submitter struct {
 	siteID       string
 	apiEndpoint  string
@@ -83,7 +88,9 @@ type Submitter struct {
 	signingKey   ed25519.PrivateKey
 	publicKeyHex string
 	client       *http.Client
-	AllowFunc    func() bool // optional: skip submission when server is unreachable (circuit breaker)
+	AllowFunc    func() bool              // optional: skip submission when server is unreachable (circuit breaker)
+	CacheDir     string                  // local evidence cache directory (set by daemon)
+	OnSubmitted  func(bundleID, hash string) // callback: record bundle hash for peer witnessing
 }
 
 // NewSubmitter creates a new evidence submitter.
@@ -111,14 +118,17 @@ type bundlePayload struct {
 	SignedData     string                 `json:"signed_data"`
 }
 
+// SigningKey returns the Ed25519 private key for peer witness counter-signing.
+func (s *Submitter) SigningKey() ed25519.PrivateKey { return s.signingKey }
+
 // buildAndSubmitForTypes is the shared implementation for building evidence bundles.
 func (s *Submitter) buildAndSubmitForTypes(ctx context.Context, findings []DriftFinding, scannedHosts []string, checkTypes []string) error {
 	if len(scannedHosts) == 0 {
 		return nil
 	}
 	if s.AllowFunc != nil && !s.AllowFunc() {
-		log.Printf("[evidence] Skipping submission: server circuit breaker open")
-		return nil
+		log.Printf("[evidence] Circuit breaker open — caching evidence locally")
+		// Don't return nil — build the bundle and cache it
 	}
 
 	now := time.Now().UTC()
@@ -228,8 +238,16 @@ func (s *Submitter) submitBundle(ctx context.Context, checks []map[string]any, c
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.apiKey)
 
+	// If circuit breaker is open, cache locally instead of attempting HTTP
+	if s.AllowFunc != nil && !s.AllowFunc() {
+		return s.cacheBundle(body)
+	}
+
 	resp, err := s.client.Do(req)
 	if err != nil {
+		// Submission failed — cache locally for retry
+		log.Printf("[evidence] Submit failed, caching locally: %v", err)
+		_ = s.cacheBundle(body)
 		return fmt.Errorf("submit evidence: %w", err)
 	}
 	defer resp.Body.Close()
@@ -239,17 +257,114 @@ func (s *Submitter) submitBundle(ctx context.Context, checks []map[string]any, c
 		return fmt.Errorf("read evidence response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		// Server rejected — cache for retry (may be transient)
+		if resp.StatusCode >= 500 {
+			log.Printf("[evidence] Server error %d, caching locally", resp.StatusCode)
+			_ = s.cacheBundle(body)
+		}
 		return fmt.Errorf("evidence submit returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
 		BundleID      string `json:"bundle_id"`
+		BundleHash    string `json:"bundle_hash"`
 		ChainPosition int    `json:"chain_position"`
 	}
 	if err := json.Unmarshal(respBody, &result); err == nil {
 		log.Printf("[evidence] Submitted: bundle=%s chain_pos=%d checks=%d compliant=%d/%d",
 			result.BundleID, result.ChainPosition, compliant+nonCompliant, compliant, compliant+nonCompliant)
+		// Record bundle hash for peer witnessing
+		if s.OnSubmitted != nil && result.BundleID != "" && result.BundleHash != "" {
+			s.OnSubmitted(result.BundleID, result.BundleHash)
+		}
 	}
 
 	return nil
+}
+
+// cacheBundle writes an evidence bundle to local disk for later submission.
+// Files are named by timestamp for FIFO ordering. The CacheDir is created
+// on first use. Max 1000 cached bundles (oldest dropped) to prevent disk fill.
+func (s *Submitter) cacheBundle(body []byte) error {
+	if s.CacheDir == "" {
+		return nil // no cache dir configured
+	}
+	if err := os.MkdirAll(s.CacheDir, 0o700); err != nil {
+		return fmt.Errorf("create cache dir: %w", err)
+	}
+
+	// Cap at 1000 cached bundles
+	entries, _ := os.ReadDir(s.CacheDir)
+	if len(entries) >= 1000 {
+		// Drop oldest
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		_ = os.Remove(filepath.Join(s.CacheDir, entries[0].Name()))
+	}
+
+	name := fmt.Sprintf("bundle-%s.json", time.Now().UTC().Format("20060102-150405.000"))
+	path := filepath.Join(s.CacheDir, name)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return fmt.Errorf("write cache file: %w", err)
+	}
+	log.Printf("[evidence] Cached locally: %s (%d bytes)", name, len(body))
+	return nil
+}
+
+// DrainCache submits any locally cached evidence bundles to Central Command.
+// Called after each successful checkin when the circuit breaker is closed.
+// Idempotent: the backend deduplicates by bundle_id (ON CONFLICT DO UPDATE).
+func (s *Submitter) DrainCache(ctx context.Context) int {
+	if s.CacheDir == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(s.CacheDir)
+	if err != nil || len(entries) == 0 {
+		return 0
+	}
+
+	url := s.apiEndpoint + "/api/evidence/sites/" + s.siteID + "/submit"
+	submitted := 0
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(s.CacheDir, entry.Name())
+		body, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("[evidence] Failed to read cache file %s: %v", entry.Name(), err)
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+s.apiKey)
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			log.Printf("[evidence] Cache drain failed (stopping): %v", err)
+			break // Server unreachable — stop draining, try next cycle
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusConflict {
+			_ = os.Remove(path)
+			submitted++
+		} else if resp.StatusCode >= 500 {
+			log.Printf("[evidence] Cache drain got %d (stopping)", resp.StatusCode)
+			break // Server error — stop, try next cycle
+		} else {
+			// 4xx — bad request, remove to avoid infinite retry
+			log.Printf("[evidence] Cache drain got %d for %s (removing)", resp.StatusCode, entry.Name())
+			_ = os.Remove(path)
+		}
+	}
+
+	if submitted > 0 {
+		log.Printf("[evidence] Drained %d cached bundles", submitted)
+	}
+	return submitted
 }

@@ -344,7 +344,15 @@ func New(cfg *Config) *Daemon {
 				cfg.SiteID, cfg.APIEndpoint, cfg.APIKey, sigKey, pubHex,
 			)
 			d.evidenceSubmitter.AllowFunc = d.serverBreaker.Allow
-			log.Printf("[daemon] Evidence submitter initialized (pubkey=%s...)", pubHex[:12])
+			d.evidenceSubmitter.CacheDir = filepath.Join(cfg.StateDir, "evidence_cache")
+			d.evidenceSubmitter.OnSubmitted = func(bundleID, hash string) {
+				d.state.AddBundleHash(BundleHashEntry{
+					BundleID:   bundleID,
+					BundleHash: hash,
+					CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+				})
+			}
+			log.Printf("[daemon] Evidence submitter initialized (pubkey=%s..., cache=%s, witnessing=on)", pubHex[:12], d.evidenceSubmitter.CacheDir)
 		}
 	}
 
@@ -600,6 +608,10 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	// Daemon runtime health — Go stdlib, zero deps
 	req.DaemonHealth = collectDaemonHealth(d.startTime)
 
+	// Peer witnessing: send recent bundle hashes + any pending attestations
+	req.BundleHashes = d.state.DrainBundleHashes()
+	req.WitnessAttestations = d.state.DrainWitnessAttestations()
+
 	resp, err := d.phoneCli.Checkin(ctx, &req)
 	if err != nil {
 		d.serverBreaker.RecordFailure()
@@ -618,6 +630,29 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	}
 
 	d.serverBreaker.RecordSuccess()
+
+	// Drain cached evidence bundles on successful checkin (CC is reachable)
+	if d.evidenceSubmitter != nil {
+		if n := d.evidenceSubmitter.DrainCache(ctx); n > 0 {
+			log.Printf("[daemon] Drained %d cached evidence bundles", n)
+		}
+	}
+
+	// Peer witnessing: counter-sign sibling bundle hashes delivered in response.
+	// Attestations are queued and sent in the next checkin cycle.
+	if len(resp.PeerBundleHashes) > 0 && d.evidenceSubmitter != nil {
+		for _, ph := range resp.PeerBundleHashes {
+			sig := evidence.Sign(d.evidenceSubmitter.SigningKey(), []byte(ph.BundleHash))
+			d.state.AddWitnessAttestation(WitnessAttestation{
+				BundleID:         ph.BundleID,
+				BundleHash:       ph.BundleHash,
+				WitnessSignature: sig,
+				WitnessPublicKey: d.agentPublicKey,
+				SourceAppliance:  ph.SourceAppliance,
+			})
+		}
+		log.Printf("[witness] Counter-signed %d peer bundle hashes", len(resp.PeerBundleHashes))
+	}
 
 	// Set appliance ID on telemetry reporter and order processor (received from Central Command)
 	if resp.ApplianceID != "" {

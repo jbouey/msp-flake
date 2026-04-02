@@ -64,6 +64,10 @@ type StateManager struct {
 	pendingDeployMu      sync.Mutex
 	pendingDeployResults []DeployResult
 
+	// Peer witnessing: bundle hashes + attestations (guarded by pendingDeployMu)
+	bundleHashes        []BundleHashEntry
+	witnessAttestations []WitnessAttestation
+
 	// gpoFixDone tracks whether the GPO firewall fix has been applied per DC.
 	// key = DC hostname, value = true
 	gpoFixDone sync.Map
@@ -515,6 +519,46 @@ func (sm *StateManager) DrainDeployResults() []DeployResult {
 	defer sm.pendingDeployMu.Unlock()
 	result := sm.pendingDeployResults
 	sm.pendingDeployResults = nil
+	return result
+}
+
+// ---------------------------------------------------------------------------
+// Peer witnessing state
+// ---------------------------------------------------------------------------
+
+// AddBundleHash records a recently submitted evidence bundle hash for peer exchange.
+// Keeps only the last 10 hashes to limit checkin payload size.
+func (sm *StateManager) AddBundleHash(h BundleHashEntry) {
+	sm.pendingDeployMu.Lock()
+	defer sm.pendingDeployMu.Unlock()
+	sm.bundleHashes = append(sm.bundleHashes, h)
+	if len(sm.bundleHashes) > 10 {
+		sm.bundleHashes = sm.bundleHashes[len(sm.bundleHashes)-10:]
+	}
+}
+
+// DrainBundleHashes returns and clears pending bundle hashes.
+func (sm *StateManager) DrainBundleHashes() []BundleHashEntry {
+	sm.pendingDeployMu.Lock()
+	defer sm.pendingDeployMu.Unlock()
+	result := sm.bundleHashes
+	sm.bundleHashes = nil
+	return result
+}
+
+// AddWitnessAttestation queues a counter-signature for the next checkin.
+func (sm *StateManager) AddWitnessAttestation(a WitnessAttestation) {
+	sm.pendingDeployMu.Lock()
+	defer sm.pendingDeployMu.Unlock()
+	sm.witnessAttestations = append(sm.witnessAttestations, a)
+}
+
+// DrainWitnessAttestations returns and clears pending attestations.
+func (sm *StateManager) DrainWitnessAttestations() []WitnessAttestation {
+	sm.pendingDeployMu.Lock()
+	defer sm.pendingDeployMu.Unlock()
+	result := sm.witnessAttestations
+	sm.witnessAttestations = nil
 	return result
 }
 
