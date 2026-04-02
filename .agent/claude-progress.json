@@ -1,6 +1,6 @@
 {
   "session": 191,
-  "updated": "2026-04-02T02:43:13.342874Z",
+  "updated": "2026-04-02T10:38:25.753801Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -31,7 +31,51 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "None. 4 production bugs fixed and deployed. Go daemon binary needs fleet order for archive fix.",
+  "current_blocker": "None. Multi-appliance architecture deployed. v0.3.66 live. Evidence chain 100% signed+chained.",
+  "session_192_work": {
+    "commits": 13,
+    "daemon_version": "0.3.66",
+    "summary": "Production audit → multi-appliance scan coordination → org-level inventory → evidence verification",
+    "round1_initial_bugs": [
+      "FIX: Incident resolution churn — 30-min grace period (main.py)",
+      "FIX: go_agents os_version column mapping (sites.py + routes.py)",
+      "FIX: Stale incident auto-resolve in health_monitor",
+      "FIX: security-events/archive missing site_id (devicelogs.go)",
+      "FIX: resolution_tier CHECK constraint violation",
+      "MIGRATION: 112 incident reopen_count"
+    ],
+    "round2_linux_healing": [
+      "FIX: isSelfHost() didn't match IPs — root cause of ALL Linux healing 0%",
+      "FIX: 6 keyword fallback runbook IDs didn't exist in daemon registry",
+      "FIX: linux_encryption added to MONITORING_ONLY",
+      "MIGRATION: 113 device_sync indexes (device/sync 64s → 103ms)"
+    ],
+    "round3_flywheel": [
+      "FIX: Deleted 716 dead CVE rules + 20 orphans (864→128 l1_rules)",
+      "FIX: Platform promotion threshold 5→1 orgs, builtin dedup check"
+    ],
+    "round4_multi_appliance": [
+      "FEAT: Org-level credential inheritance (sites.py)",
+      "FEAT: Discovery-filtered credential delivery",
+      "FEAT: Cross-appliance incident dedup by hostname across org",
+      "FEAT: Discovery-based scan ownership (migration 114)",
+      "FEAT: Device ownership transfer when appliance moves subnets",
+      "FEAT: Org-level backend endpoints (devices/workstations/agents)",
+      "FEAT: Partner portal org inventory endpoints (3 new)",
+      "FEAT: Client portal org-overview endpoint (PHI-safe)",
+      "FEAT: OrgBanner shared component on site pages",
+      "FIX: Stale escalated incidents auto-resolve regardless of telemetry",
+      "DRY: OrgBanner extracted from 3 inline copies to shared component"
+    ],
+    "evidence_audit": {
+      "agent_signature": "100% signed (last 7 days, both sites)",
+      "signature_valid": "100% verified",
+      "hash_chained": "100%",
+      "ots_anchored": "127700 proofs anchored",
+      "legacy_signature_column": "historical only — active pipeline uses agent_signature"
+    },
+    "openclaw": "Fixed — API key was disabled on Anthropic console. Re-enabled + restart. Updated to v2026.4.1"
+  },
   "openclaw_server": {
     "host": "178.156.243.221",
     "url": "https://openclaw.osiriscare.net",
