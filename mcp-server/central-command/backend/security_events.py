@@ -129,13 +129,20 @@ async def archive_security_events(request: Request):
             if len(message) > MAX_MESSAGE_LEN:
                 message = message[:MAX_MESSAGE_LEN]
 
+            # Parse timestamp — Go daemon sends ISO8601 strings with fractional
+            # seconds and Z suffix. asyncpg needs datetime objects, not strings.
+            try:
+                event_ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                event_ts = datetime.now(timezone.utc)
+
             # Derive category and severity from event ID
             category = ev.get("category") or EVENT_CATEGORIES.get(event_id, "other")
             severity = ev.get("severity") or EVENT_SEVERITY.get(event_id, "info")
             source_host = ev.get("source_host", hostname)
 
             rows.append((
-                site_id, hostname, event_id, timestamp_str,
+                site_id, hostname, event_id, event_ts,
                 message, source_host, category, severity
             ))
 
@@ -145,7 +152,7 @@ async def archive_security_events(request: Request):
                     """INSERT INTO security_events
                        (site_id, hostname, event_id, event_timestamp,
                         message, source_host, category, severity)
-                       VALUES ($1, $2, $3, $4::timestamptz, $5, $6, $7, $8)""",
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
                     rows
                 )
                 archived = len(rows)

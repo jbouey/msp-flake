@@ -148,6 +148,21 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                 if device.mac_address in bridge_macs:
                     device.mac_address = None
 
+        # Batch prefetch: active Go agents for this site (eliminates N+1 per-device query)
+        _agent_hosts = set()
+        try:
+            _agent_rows = await conn.fetch(
+                "SELECT hostname, ip_address FROM go_agents WHERE site_id = $1 AND status IN ('active', 'connected')",
+                report.site_id,
+            )
+            for ar in _agent_rows:
+                if ar['hostname']:
+                    _agent_hosts.add(ar['hostname'].lower())
+                if ar['ip_address']:
+                    _agent_hosts.add(str(ar['ip_address']))
+        except Exception:
+            pass
+
         # Process each device
         for device in report.devices:
             try:
@@ -316,17 +331,10 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                 if current_status not in MANAGED_STATES:
                     new_device_status: Optional[str] = None
                     if device.ad_joined:
-                        # Check for active go_agent coverage
-                        agent_active = await conn.fetchval(
-                            """
-                            SELECT COUNT(*) FROM go_agents
-                            WHERE site_id = $1
-                            AND (hostname = $2 OR ip_address::text = $3)
-                            AND status IN ('active', 'connected')
-                            """,
-                            report.site_id,
-                            device.hostname or "",
-                            device.ip_address,
+                        # Check for active go_agent coverage (batched — no per-device query)
+                        agent_active = (
+                            (device.hostname and device.hostname.lower() in _agent_hosts)
+                            or (device.ip_address and device.ip_address in _agent_hosts)
                         )
                         if not agent_active:
                             new_device_status = "ad_managed"
