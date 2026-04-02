@@ -10,19 +10,25 @@ import (
 )
 
 const (
-	agentStaleTimeout   = 10 * time.Minute
-	maxRedeployAttempts = 3
-	selfHealInterval    = 5 * time.Minute
+	agentStaleTimeout = 10 * time.Minute
+	selfHealInterval  = 5 * time.Minute
+	// Cooldown between redeploy attempts. Escalates with consecutive failures:
+	// attempt 1-3: 10 min, attempt 4-6: 30 min, attempt 7+: 2 hours.
+	// Never gives up — end clients restore VMs, reimage, do unpredictable things.
+	redeployCooldownBase    = 10 * time.Minute
+	redeployCooldownMedium  = 30 * time.Minute
+	redeployCooldownBackoff = 2 * time.Hour
 )
 
 // agentHealthEntry tracks a known agent's health status.
 type agentHealthEntry struct {
-	Hostname       string
-	IPAddress      string
-	LastHeartbeat  time.Time
-	DeployAttempts int
-	Escalated      bool
-	OSType         string
+	Hostname        string
+	IPAddress       string
+	LastHeartbeat   time.Time
+	DeployAttempts  int
+	LastDeployAt    time.Time // when the last deploy was attempted
+	LastSuccessAt   time.Time // when the last heartbeat was received (for recovery detection)
+	OSType          string
 }
 
 // selfHealer monitors agent heartbeats and auto-redeploys dead agents.
@@ -80,60 +86,48 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 	sh.lastRun = time.Now()
 
 	for hostname, entry := range sh.agents {
-		// Skip redeploy if agent heartbeated recently (avoids redeploy loop
-		// where agent re-registers with new ID but disk-loaded entry is stale)
+		// Agent heartbeating recently — healthy, reset any failure counters
 		if !entry.LastHeartbeat.IsZero() && time.Since(entry.LastHeartbeat) < 5*time.Minute {
-			if entry.Escalated {
-				// Agent recovered after escalation (e.g., VM restored and agent restarted).
-				// Reset escalation so future outages get fresh redeploy attempts.
-				log.Printf("[selfheal] Agent %s heartbeating again after escalation — resetting", hostname)
-				entry.Escalated = false
+			if entry.DeployAttempts > 0 {
+				log.Printf("[selfheal] Agent %s recovered (heartbeating after %d deploys)", hostname, entry.DeployAttempts)
 				entry.DeployAttempts = 0
 			}
+			entry.LastSuccessAt = entry.LastHeartbeat
 			continue
 		}
 
-		if entry.Escalated {
-			// Escalated but not heartbeating — check if host came back online.
-			// VM restores, reimages, and reboots can make a host reachable again
-			// days after escalation. Give it a fresh chance.
-			if entry.IPAddress != "" {
-				probe := probeHost(ctx, entry.IPAddress)
-				if probe.SSHOpen || probe.WinRMOpen {
-					log.Printf("[selfheal] Escalated agent %s is reachable again — resetting for fresh redeploy", hostname)
-					entry.Escalated = false
-					entry.DeployAttempts = 0
-					// Fall through to normal stale handling below
-				} else {
-					continue // still unreachable, stay escalated
-				}
-			} else {
-				continue
+		// Not heartbeating — check if actually stale
+		if !entry.LastHeartbeat.IsZero() && time.Since(entry.LastHeartbeat) < agentStaleTimeout {
+			continue // not stale yet
+		}
+
+		// Cooldown: don't hammer with deploys. Backoff increases with failures.
+		if !entry.LastDeployAt.IsZero() {
+			cooldown := redeployCooldownBase
+			if entry.DeployAttempts > 6 {
+				cooldown = redeployCooldownBackoff
+			} else if entry.DeployAttempts > 3 {
+				cooldown = redeployCooldownMedium
+			}
+			if time.Since(entry.LastDeployAt) < cooldown {
+				continue // still in cooldown
 			}
 		}
 
-		// Guard against zero-time heartbeats (never heartbeated)
-		if entry.LastHeartbeat.IsZero() {
-			log.Printf("[selfheal] Agent %s has never heartbeated — treating as stale", hostname)
-		} else {
-			staleDuration := time.Since(entry.LastHeartbeat)
-			if staleDuration < agentStaleTimeout {
-				continue // agent is healthy
-			}
-		}
 		staleDuration := time.Since(entry.LastHeartbeat)
 		if entry.LastHeartbeat.IsZero() {
-			staleDuration = agentStaleTimeout + time.Minute // treat as just past threshold
+			staleDuration = agentStaleTimeout + time.Minute
 		}
 
-		log.Printf("[selfheal] Agent %s stale for %v, checking...", hostname, staleDuration.Round(time.Second))
+		log.Printf("[selfheal] Agent %s stale for %v (attempt %d), checking...",
+			hostname, staleDuration.Round(time.Second), entry.DeployAttempts+1)
 
-		// Probe: is the host reachable at all?
+		// Probe: is the host reachable?
 		probeAddr := entry.IPAddress
 		if probeAddr == "" {
 			probeAddr = sh.resolveAgentIP(hostname)
 			if probeAddr == "" {
-				log.Printf("[selfheal] Agent %s has no IP (creds/DNS/AD all failed) — skipping", hostname)
+				log.Printf("[selfheal] Agent %s has no IP — skipping", hostname)
 				continue
 			}
 			entry.IPAddress = probeAddr
@@ -141,20 +135,24 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 		}
 		probe := probeHost(ctx, probeAddr)
 		if !probe.SSHOpen && !probe.WinRMOpen {
-			log.Printf("[selfheal] Host %s (%s) unreachable — skipping (host may be powered off)", hostname, probeAddr)
+			log.Printf("[selfheal] Host %s (%s) unreachable — powered off or network down", hostname, probeAddr)
 			continue
 		}
 
-		// Host is up but agent is silent — attempt redeploy.
+		// Host is up but agent is silent — redeploy.
+		// Never give up. Cooldown prevents flood. End users restore VMs,
+		// reimage, move machines — the agent must always come back.
 		entry.DeployAttempts++
-		if entry.DeployAttempts > maxRedeployAttempts {
-			log.Printf("[selfheal] Agent %s failed %d redeploys — escalating to L3", hostname, entry.DeployAttempts)
-			entry.Escalated = true
+		entry.LastDeployAt = time.Now()
+
+		// Report incident on first failure and periodically (every 6 attempts)
+		// so the dashboard shows the issue, but don't stop retrying.
+		if entry.DeployAttempts == 1 || entry.DeployAttempts%6 == 0 {
 			sh.daemon.scanner.reportDrift(&driftFinding{
 				Hostname:     hostname,
 				CheckType:    "AGENT-REDEPLOY-EXHAUSTED",
 				Expected:     "Agent responding to heartbeat",
-				Actual:       fmt.Sprintf("Agent silent for %v, %d redeploy attempts failed", staleDuration.Round(time.Second), entry.DeployAttempts),
+				Actual:       fmt.Sprintf("Agent silent for %v, %d redeploy attempts", staleDuration.Round(time.Second), entry.DeployAttempts),
 				HIPAAControl: "164.312(a)(1)",
 				Severity:     "high",
 				Details: map[string]string{
@@ -164,7 +162,6 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 					"stale_duration":  staleDuration.Round(time.Second).String(),
 				},
 			})
-			continue
 		}
 
 		// Infer OS type from probe results if not set (pre-v0.3.28 agents).
