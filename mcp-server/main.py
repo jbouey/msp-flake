@@ -144,6 +144,8 @@ MONITORING_ONLY_CHECKS = {
     # Agent deploy exhausted — max retries hit, needs human investigation
     "AGENT-REDEPLOY-EXHAUSTED",
     "WIN-DEPLOY-UNREACHABLE",
+    # Linux encryption — LUKS cannot be enabled remotely on a running system
+    "linux_encryption",
 }
 
 # ============================================================================
@@ -2083,18 +2085,20 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         type_lower = incident.incident_type.lower()
         check_type = incident.check_type or ""
 
+        # Keyword fallback: maps incident_type keywords to runbook IDs.
+        # IDs MUST exist in the Go daemon's runbooks.json registry (122 entries).
+        # Verified 2026-04-01: RB-BACKUP-001, RB-CERT-001, RB-DISK-001,
+        # RB-PATCH-001, RB-SERVICE-001, RB-FIREWALL-001 do NOT exist — use RB-WIN-* variants.
         runbook_map = {
-            "backup": "RB-BACKUP-001",
-            "certificate": "RB-CERT-001",
-            "cert": "RB-CERT-001",
-            "disk": "RB-DISK-001",
-            "storage": "RB-DISK-001",
-            "service": "RB-SERVICE-001",
+            "backup": "RB-WIN-BACKUP-001",
+            "certificate": "RB-WIN-CERT-001",
+            "cert": "RB-WIN-CERT-001",
             "drift": "RB-DRIFT-001",
             "configuration": "RB-DRIFT-001",
-            "firewall": "RB-FIREWALL-001",
-            "patching": "RB-PATCH-001",
-            "update": "RB-PATCH-001",
+            "service": "RB-WIN-SVC-001",
+            "firewall": "RB-WIN-FIREWALL-001",
+            "patching": "RB-WIN-PATCH-001",
+            "update": "RB-WIN-PATCH-001",
             "audit": "RB-WIN-SEC-002",
             "defender": "RB-WIN-AV-001",
             "registry": "RB-WIN-SEC-019",

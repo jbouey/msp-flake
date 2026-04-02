@@ -14,6 +14,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -339,9 +341,27 @@ func (d *Daemon) buildHealingSSHTarget(hostID string) *sshexec.Target {
 }
 
 // isSelfHost returns true if the hostID refers to this appliance.
+// Matches site-derived hostname, localhost, loopback, actual hostname,
+// and any local IP address — the Linux scan target is typically an IP.
 func (d *Daemon) isSelfHost(hostID string) bool {
 	applianceHostname := d.config.SiteID + "-appliance"
-	return hostID == applianceHostname || hostID == "localhost" || hostID == "127.0.0.1"
+	if hostID == applianceHostname || hostID == "localhost" || hostID == "127.0.0.1" {
+		return true
+	}
+	if hn, err := os.Hostname(); err == nil && hostID == hn {
+		return true
+	}
+	// Check against local network interfaces — Linux scan targets use IPs
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.String() == hostID {
+			return true
+		}
+	}
+	return false
 }
 
 // localExecResult mirrors the SSH executor result for local execution.

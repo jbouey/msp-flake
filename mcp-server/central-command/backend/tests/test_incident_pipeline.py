@@ -383,7 +383,7 @@ class TestIncidentKeywordFallback:
 
     @pytest.mark.asyncio
     async def test_backup_keyword_matches_runbook(self):
-        """incident_type containing 'backup' should match RB-BACKUP-001."""
+        """incident_type containing 'backup' should match RB-WIN-BACKUP-001."""
         import main
 
         appliance_uuid = str(uuid.uuid4())
@@ -426,7 +426,7 @@ class TestIncidentKeywordFallback:
 
         assert result["status"] == "received"
         assert result["resolution_tier"] == "L1"
-        assert result["runbook_id"] == "RB-BACKUP-001"
+        assert result["runbook_id"] == "RB-WIN-BACKUP-001"
         assert result["order_id"] is not None
 
 

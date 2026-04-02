@@ -70,6 +70,8 @@ MONITORING_ONLY_CHECKS = {
     # Agent deploy exhausted — max retries hit, needs human investigation
     "AGENT-REDEPLOY-EXHAUSTED",
     "WIN-DEPLOY-UNREACHABLE",
+    # Linux encryption — LUKS cannot be enabled remotely on a running system
+    "linux_encryption",
 }
 
 
