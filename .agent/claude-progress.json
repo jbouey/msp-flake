@@ -1,6 +1,6 @@
 {
   "session": 191,
-  "updated": "2026-04-02T10:38:25.753801Z",
+  "updated": "2026-04-02T13:47:32.700272Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -35,9 +35,9 @@
   "session_192_work": {
     "commits": 13,
     "daemon_version": "0.3.66",
-    "summary": "Production audit → multi-appliance scan coordination → org-level inventory → evidence verification",
+    "summary": "Production audit \u2192 multi-appliance scan coordination \u2192 org-level inventory \u2192 evidence verification",
     "round1_initial_bugs": [
-      "FIX: Incident resolution churn — 30-min grace period (main.py)",
+      "FIX: Incident resolution churn \u2014 30-min grace period (main.py)",
       "FIX: go_agents os_version column mapping (sites.py + routes.py)",
       "FIX: Stale incident auto-resolve in health_monitor",
       "FIX: security-events/archive missing site_id (devicelogs.go)",
@@ -45,14 +45,14 @@
       "MIGRATION: 112 incident reopen_count"
     ],
     "round2_linux_healing": [
-      "FIX: isSelfHost() didn't match IPs — root cause of ALL Linux healing 0%",
+      "FIX: isSelfHost() didn't match IPs \u2014 root cause of ALL Linux healing 0%",
       "FIX: 6 keyword fallback runbook IDs didn't exist in daemon registry",
       "FIX: linux_encryption added to MONITORING_ONLY",
-      "MIGRATION: 113 device_sync indexes (device/sync 64s → 103ms)"
+      "MIGRATION: 113 device_sync indexes (device/sync 64s \u2192 103ms)"
     ],
     "round3_flywheel": [
-      "FIX: Deleted 716 dead CVE rules + 20 orphans (864→128 l1_rules)",
-      "FIX: Platform promotion threshold 5→1 orgs, builtin dedup check"
+      "FIX: Deleted 716 dead CVE rules + 20 orphans (864\u2192128 l1_rules)",
+      "FIX: Platform promotion threshold 5\u21921 orgs, builtin dedup check"
     ],
     "round4_multi_appliance": [
       "FEAT: Org-level credential inheritance (sites.py)",
@@ -72,9 +72,25 @@
       "signature_valid": "100% verified",
       "hash_chained": "100%",
       "ots_anchored": "127700 proofs anchored",
-      "legacy_signature_column": "historical only — active pipeline uses agent_signature"
+      "legacy_signature_column": "historical only \u2014 active pipeline uses agent_signature"
     },
-    "openclaw": "Fixed — API key was disabled on Anthropic console. Re-enabled + restart. Updated to v2026.4.1"
+    "openclaw": "Fixed — API key was disabled on Anthropic console. Re-enabled + restart. Updated to v2026.4.1",
+    "round5_deploy_and_ui": [
+      "FEAT: Production deploy script with validation (scripts/deploy.sh)",
+      "FIX: Frontend deploying to wrong path (frontend-dist vs frontend_dist)",
+      "FIX: Org health category query timeout — DISTINCT ON replaces correlated subquery",
+      "FIX: Fleet Posture attention rows grey in dark mode — bg-red-50 → bg-health-critical/10",
+      "INDEX: idx_compliance_bundles_site_type_checked for category query"
+    ],
+    "nv_appliance_status": {
+      "healing_3h": "73% (74/101)",
+      "bundles": 42,
+      "credential_inheritance": "3 Windows + 2 SSH from org siblings",
+      "remaining_issues": [
+        "Linux healing on .236 fails (SSH target not self, needs investigation)",
+        "NVDC01 DNS resolution fails from NV appliance (uses router DNS without AD records)"
+      ]
+    }
   },
   "openclaw_server": {
     "host": "178.156.243.221",
