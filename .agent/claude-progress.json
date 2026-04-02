@@ -1,6 +1,6 @@
 {
   "session": 191,
-  "updated": "2026-04-01T17:45:13.143003Z",
+  "updated": "2026-04-02T02:43:13.342874Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -13,7 +13,7 @@
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
     "learning_flywheel": "flywheel_incident_type_fixed_pattern_sig_consistent_l2_haiku_redis_circuit_breaker",
-    "incident_resolution": "pipeline_93pct_windows_healing_linux_polkit_fixed_adaptive_5min",
+    "incident_resolution": "pipeline_93pct_grace_period_fix_stale_cleanup_reopen_tracking",
     "evidence_pipeline": "end_to_end_live_heartbeats_site_appliances",
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "127529_anchored_15_pending_verify_endpoint_chain_health_daily_integrity_check",
@@ -31,7 +31,7 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "None. All 7 concerns addressed. Linux healing deploying v0.3.65.",
+  "current_blocker": "None. 4 production bugs fixed and deployed. Go daemon binary needs fleet order for archive fix.",
   "openclaw_server": {
     "host": "178.156.243.221",
     "url": "https://openclaw.osiriscare.net",
@@ -313,6 +313,19 @@
     "Escalate/suppress 500 fix: i.hostname \u2192 i.details->>'hostname'",
     "Agent binaries staged on appliance (linux-amd64 + darwin-amd64)",
     "Chaos lab VM snapshot fix in progress (replacing 4GB snapshots with 6GB+)"
+  ],
+  "session_192_audit_fixes": [
+    "AUDIT: Full production audit \u2014 VPS DB state, docker logs, endpoint verification",
+    "FIX: Incident resolution churn \u2014 30-min grace period prevents resolve\u2192reopen\u2192resolve cycle (main.py:1916)",
+    "FIX: go_agents column mapping \u2014 os_version stored in os_name, query read wrong column (sites.py + routes.py)",
+    "FIX: Stale incident auto-resolve \u2014 health_monitor cleans >7d stuck incidents with no recent healing (health_monitor.py)",
+    "FIX: security-events/archive 401 \u2014 added site_id to archive payload (devicelogs.go)",
+    "FIX: resolution_tier CHECK constraint \u2014 stale cleanup uses 'monitoring' not 'auto_stale'",
+    "MIGRATION: 112_incident_reopen_count.sql \u2014 tracks incident reopen cycles",
+    "BACKFILL: go_agents os_version column populated from os_name for 3 existing agents",
+    "VERIFIED: rogue_scheduled_tasks resolved and STAYING resolved (grace period working)",
+    "VERIFIED: 292 Python tests pass, 18 Go packages pass, 0 failures",
+    "DEPLOY: 2 commits pushed, VPS container rebuilt, migration applied"
   ],
   "completed_this_session": [
     "FIX: 3 wrong credential IPs + Fernet encryption + fail-fast on missing key",
