@@ -1872,6 +1872,8 @@ class ApplianceCheckin(BaseModel):
     wg_connected: bool = False  # Whether WireGuard tunnel is active
     wg_ip: Optional[str] = None  # WireGuard VPN IP (10.100.0.x)
     daemon_health: Optional[Dict[str, Any]] = None  # Go runtime stats (goroutines, heap, GC)
+    bundle_hashes: Optional[List[Dict[str, str]]] = None  # Recent evidence bundle hashes for peer witnessing
+    witness_attestations: Optional[List[Dict[str, str]]] = None  # Counter-signatures of sibling bundle hashes
 
 
 def normalize_mac(mac: str) -> str:
@@ -2680,6 +2682,62 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 import logging as _log
                 _log.warning(f"Failed to process discovery results: {e}")
 
+        # === STEP 3.9: Peer witness hash exchange ===
+        # Store incoming witness attestations and bundle hashes.
+        # Retrieve sibling bundle hashes to deliver in response.
+        peer_bundle_hashes = []
+        try:
+            async with conn.transaction():
+                # Store witness attestations (counter-signatures from this appliance)
+                if checkin.witness_attestations:
+                    for att in checkin.witness_attestations:
+                        await conn.execute("""
+                            INSERT INTO witness_attestations
+                                (bundle_id, bundle_hash, source_appliance, witness_appliance,
+                                 witness_public_key, witness_signature)
+                            VALUES ($1, $2, $3, $4, $5, $6)
+                            ON CONFLICT (bundle_id, witness_appliance) DO NOTHING
+                        """,
+                            att.get('bundle_id', ''),
+                            att.get('bundle_hash', ''),
+                            att.get('source_appliance', ''),
+                            canonical_id,
+                            att.get('witness_public_key', ''),
+                            att.get('witness_signature', ''),
+                        )
+                    logger.info(f"Checkin {checkin.site_id}: stored {len(checkin.witness_attestations)} witness attestation(s)")
+
+                # Fetch sibling bundle hashes for this appliance to counter-sign.
+                # Get recent bundles from OTHER appliances in the same org.
+                sibling_rows = await conn.fetch("""
+                    SELECT cb.bundle_id, cb.bundle_hash, sa.appliance_id as source_appliance,
+                           sa.agent_public_key as source_public_key
+                    FROM compliance_bundles cb
+                    JOIN site_appliances sa ON cb.site_id = sa.site_id
+                    JOIN sites s ON cb.site_id = s.site_id
+                    WHERE s.client_org_id = (SELECT client_org_id FROM sites WHERE site_id = $1)
+                    AND sa.appliance_id != $2
+                    AND cb.checked_at > NOW() - INTERVAL '30 minutes'
+                    AND cb.bundle_hash IS NOT NULL
+                    AND NOT EXISTS (
+                        SELECT 1 FROM witness_attestations wa
+                        WHERE wa.bundle_id = cb.bundle_id AND wa.witness_appliance = $2
+                    )
+                    ORDER BY cb.checked_at DESC
+                    LIMIT 10
+                """, checkin.site_id, canonical_id)
+
+                for r in sibling_rows:
+                    peer_bundle_hashes.append({
+                        "bundle_id": r['bundle_id'],
+                        "bundle_hash": r['bundle_hash'],
+                        "source_appliance": r['source_appliance'],
+                        "source_public_key": r['source_public_key'] or "",
+                    })
+        except Exception as e:
+            import logging
+            logging.debug(f"Witness exchange during checkin: {e}")
+
         # === STEP 4: Get pending orders for this appliance ===
         # Check admin_orders table (fleet management orders)
         order_rows = await conn.fetch("""
@@ -3172,6 +3230,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # Default 0.8 for production safety (higher than the 0.6 hardcoded in daemon).
         # Will be made per-site configurable via site_drift_config in a future update.
         "l2_confidence_threshold": 0.8,
+        "peer_bundle_hashes": peer_bundle_hashes,
     }
 
 
