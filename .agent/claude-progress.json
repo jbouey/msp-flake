@@ -1,6 +1,6 @@
 {
   "session": 191,
-  "updated": "2026-04-02T13:47:32.700272Z",
+  "updated": "2026-04-02T14:41:37.787183Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -74,23 +74,32 @@
       "ots_anchored": "127700 proofs anchored",
       "legacy_signature_column": "historical only \u2014 active pipeline uses agent_signature"
     },
-    "openclaw": "Fixed — API key was disabled on Anthropic console. Re-enabled + restart. Updated to v2026.4.1",
+    "openclaw": "Fixed \u2014 API key was disabled on Anthropic console. Re-enabled + restart. Updated to v2026.4.1",
     "round5_deploy_and_ui": [
       "FEAT: Production deploy script with validation (scripts/deploy.sh)",
       "FIX: Frontend deploying to wrong path (frontend-dist vs frontend_dist)",
-      "FIX: Org health category query timeout — DISTINCT ON replaces correlated subquery",
-      "FIX: Fleet Posture attention rows grey in dark mode — bg-red-50 → bg-health-critical/10",
+      "FIX: Org health category query timeout \u2014 DISTINCT ON replaces correlated subquery",
+      "FIX: Fleet Posture attention rows grey in dark mode \u2014 bg-red-50 \u2192 bg-health-critical/10",
       "INDEX: idx_compliance_bundles_site_type_checked for category query"
     ],
     "nv_appliance_status": {
-      "healing_3h": "73% (74/101)",
-      "bundles": 42,
+      "healing_3h": "100% (13/13 in last hour)",
+      "bundles": 102,
       "credential_inheritance": "3 Windows + 2 SSH from org siblings",
       "remaining_issues": [
-        "Linux healing on .236 fails (SSH target not self, needs investigation)",
-        "NVDC01 DNS resolution fails from NV appliance (uses router DNS without AD records)"
+        "Linux healing on .236 fails (SSH to separate Linux host, empty error)",
+        "NVDC01 DNS resolution fails from NV appliance (router DNS lacks AD records)"
       ]
-    }
+    },
+    "round6_agent_resilience": [
+      "FIX: security-events/archive 500 — parse ISO8601 timestamps to datetime (security_events.py)",
+      "FIX: device/sync N+1 batch — go_agents query batched to single prefetch (61s → 146ms)",
+      "FIX: selfheal never gives up — cooldown-based retry replaces permanent escalation",
+      "FIX: Chaos lab crons wired through alert_on_failure.py for email on failure",
+      "FIX: iMac reverse SSH tunnel restored",
+      "ARCH: Agent recovery handles VM restore, reimage, any end-client scenario",
+      "DEPLOY: v0.3.67 fleet order active, deploy script validated"
+    ]
   },
   "openclaw_server": {
     "host": "178.156.243.221",
