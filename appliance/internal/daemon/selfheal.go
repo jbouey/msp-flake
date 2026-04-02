@@ -80,14 +80,36 @@ func (sh *selfHealer) runSelfHealIfNeeded(ctx context.Context) {
 	sh.lastRun = time.Now()
 
 	for hostname, entry := range sh.agents {
-		if entry.Escalated {
-			continue // already escalated, don't retry
-		}
-
 		// Skip redeploy if agent heartbeated recently (avoids redeploy loop
 		// where agent re-registers with new ID but disk-loaded entry is stale)
 		if !entry.LastHeartbeat.IsZero() && time.Since(entry.LastHeartbeat) < 5*time.Minute {
+			if entry.Escalated {
+				// Agent recovered after escalation (e.g., VM restored and agent restarted).
+				// Reset escalation so future outages get fresh redeploy attempts.
+				log.Printf("[selfheal] Agent %s heartbeating again after escalation — resetting", hostname)
+				entry.Escalated = false
+				entry.DeployAttempts = 0
+			}
 			continue
+		}
+
+		if entry.Escalated {
+			// Escalated but not heartbeating — check if host came back online.
+			// VM restores, reimages, and reboots can make a host reachable again
+			// days after escalation. Give it a fresh chance.
+			if entry.IPAddress != "" {
+				probe := probeHost(ctx, entry.IPAddress)
+				if probe.SSHOpen || probe.WinRMOpen {
+					log.Printf("[selfheal] Escalated agent %s is reachable again — resetting for fresh redeploy", hostname)
+					entry.Escalated = false
+					entry.DeployAttempts = 0
+					// Fall through to normal stale handling below
+				} else {
+					continue // still unreachable, stay escalated
+				}
+			} else {
+				continue
+			}
 		}
 
 		// Guard against zero-time heartbeats (never heartbeated)
