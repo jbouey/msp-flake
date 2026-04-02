@@ -3758,21 +3758,23 @@ async def get_organization_health(
     """), {"site_ids": site_ids})
     fleet = fleet_result.fetchone()
 
-    # Per-category compliance breakdown
+    # Per-category compliance breakdown — uses DISTINCT ON to get the latest
+    # bundle per (site_id, check_type) instead of a correlated subquery that
+    # times out on 200K+ rows.
     cat_result = await db.execute(text("""
-        SELECT
-            cb.check_type,
-            COUNT(*) FILTER (WHERE cb.check_result = 'pass') as passes,
-            COUNT(*) FILTER (WHERE cb.check_result = 'fail') as fails,
+        SELECT check_type,
+            COUNT(*) FILTER (WHERE check_result = 'pass') as passes,
+            COUNT(*) FILTER (WHERE check_result = 'fail') as fails,
             COUNT(*) as total
-        FROM compliance_bundles cb
-        WHERE cb.site_id = ANY(:site_ids)
-          AND cb.checked_at = (
-              SELECT MAX(cb2.checked_at) FROM compliance_bundles cb2
-              WHERE cb2.site_id = cb.site_id AND cb2.check_type = cb.check_type
-          )
-        GROUP BY cb.check_type
-        ORDER BY cb.check_type
+        FROM (
+            SELECT DISTINCT ON (site_id, check_type)
+                site_id, check_type, check_result
+            FROM compliance_bundles
+            WHERE site_id = ANY(:site_ids)
+            ORDER BY site_id, check_type, checked_at DESC
+        ) latest
+        GROUP BY check_type
+        ORDER BY check_type
     """), {"site_ids": site_ids})
     categories = {}
     for row in cat_result.fetchall():
