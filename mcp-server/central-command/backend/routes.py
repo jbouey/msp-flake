@@ -6136,6 +6136,67 @@ async def get_agent_health(
 
 
 # =============================================================================
+# EVIDENCE WITNESS STATUS
+# =============================================================================
+
+@router.get("/admin/evidence-witness")
+async def get_evidence_witness_status(
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Evidence witness attestation stats for the admin dashboard."""
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Total attestations
+        total = await conn.fetchval("SELECT count(*) FROM witness_attestations")
+
+        # Attestations by witness appliance
+        by_witness = await conn.fetch("""
+            SELECT witness_appliance, count(*) as cnt, max(created_at) as latest
+            FROM witness_attestations
+            GROUP BY witness_appliance
+            ORDER BY cnt DESC
+        """)
+
+        # Recent attestation rate (last 24h)
+        recent = await conn.fetchval(
+            "SELECT count(*) FROM witness_attestations WHERE created_at > NOW() - interval '24h'"
+        )
+
+        # Bundles with vs without witnesses (last 24h)
+        coverage = await conn.fetchrow("""
+            SELECT
+                count(DISTINCT cb.bundle_id) as total_bundles,
+                count(DISTINCT wa.bundle_id) as witnessed_bundles
+            FROM compliance_bundles cb
+            LEFT JOIN witness_attestations wa ON wa.bundle_id = cb.bundle_id
+            WHERE cb.checked_at > NOW() - interval '24h'
+        """)
+
+    total_b = coverage['total_bundles'] or 0
+    witnessed_b = coverage['witnessed_bundles'] or 0
+
+    return {
+        "total_attestations": total,
+        "attestations_24h": recent,
+        "witness_coverage_24h": {
+            "total_bundles": total_b,
+            "witnessed_bundles": witnessed_b,
+            "coverage_pct": round(witnessed_b / total_b * 100, 1) if total_b > 0 else 0,
+        },
+        "by_witness": [
+            {
+                "witness_appliance": r['witness_appliance'],
+                "attestation_count": r['cnt'],
+                "latest": r['latest'].isoformat() if r['latest'] else None,
+            }
+            for r in by_witness
+        ],
+    }
+
+
+# =============================================================================
 # HEALING TELEMETRY (execution_telemetry breakdown)
 # =============================================================================
 

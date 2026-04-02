@@ -63,6 +63,16 @@ interface TargetHealthResponse {
   summary: { total_targets: number; healthy: number; unhealthy: number };
 }
 
+interface WitnessStatus {
+  total_attestations: number;
+  attestations_24h: number;
+  witness_coverage_24h: {
+    total_bundles: number;
+    witnessed_bundles: number;
+    coverage_pct: number;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -194,6 +204,12 @@ export const PipelineHealth: React.FC = () => {
     refetchInterval: 30_000,
   });
 
+  const { data: witnessData } = useQuery<WitnessStatus>({
+    queryKey: ['pipeline-witness-status'],
+    queryFn: () => apiFetch<WitnessStatus>('/admin/evidence-witness'),
+    refetchInterval: 60_000,
+  });
+
   // Target health — fetch per-site for each known site then merge.
   // We derive site list from agent data to avoid an extra round-trip.
   const siteIds = React.useMemo(() => {
@@ -286,7 +302,7 @@ export const PipelineHealth: React.FC = () => {
       {/* ================================================================= */}
       {/* Hero Stats Row                                                     */}
       {/* ================================================================= */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 stagger-list">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 stagger-list">
         <StatCard
           label="Healing Rate"
           value={healingLoading ? '--' : `${healingRate ?? 0}%`}
@@ -329,6 +345,17 @@ export const PipelineHealth: React.FC = () => {
           value={lastScanCycle ? formatTimeAgo(lastScanCycle) : '--'}
           icon={<ClockIcon className="w-[18px] h-[18px] text-ios-orange" />}
           color="#FF9500"
+        />
+        <StatCard
+          label="Evidence Witnesses"
+          value={witnessData ? `${witnessData.witness_coverage_24h.coverage_pct}%` : '--'}
+          icon={<ShieldCheckIcon className="w-[18px] h-[18px] text-health-healthy" />}
+          color="#30D158"
+          trend={witnessData ? {
+            direction: witnessData.attestations_24h > 0 ? 'up' : 'flat',
+            value: `${witnessData.attestations_24h} attestations`,
+            positive: witnessData.attestations_24h > 0 ? true : undefined,
+          } : undefined}
         />
       </div>
 
