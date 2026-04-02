@@ -2800,6 +2800,22 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         scan_ips = owned_ips or discovered_ips
         has_discoveries = len(scan_ips) > 0
 
+        # Build hostname→IP lookup from discovered devices for credential delivery.
+        # Credentials may store hostnames (e.g., "NVDC01") that some appliances
+        # can't DNS resolve (router DNS without AD records). Map them to IPs
+        # using discovery data so the daemon gets reachable targets.
+        hostname_to_ip = {}
+        try:
+            hn_rows = await conn.fetch("""
+                SELECT DISTINCT hostname, ip_address FROM discovered_devices
+                WHERE appliance_id = $1 AND hostname IS NOT NULL AND hostname != ''
+                AND ip_address IS NOT NULL
+            """, appliance_db_id)
+            for hr in hn_rows:
+                hostname_to_ip[hr['hostname'].lower()] = hr['ip_address']
+        except Exception:
+            pass
+
         windows_targets = []
         if should_send_creds:
             try:
@@ -2854,12 +2870,19 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         continue  # No usable credential data
 
                     if hostname:
+                        # Resolve hostname to IP if the credential uses a name that
+                        # the appliance may not be able to DNS-resolve (e.g., "NVDC01"
+                        # on an appliance using router DNS without AD records).
+                        resolved = hostname
+                        if hostname_to_ip and hostname.lower() in hostname_to_ip:
+                            resolved = hostname_to_ip[hostname.lower()]
+
                         # Discovery filter: only deliver targets this appliance has discovered.
-                        # Skip filter on first checkin (no discoveries yet) to bootstrap scanning.
-                        if has_discoveries and hostname not in scan_ips:
+                        # Check both the original hostname and the resolved IP.
+                        if has_discoveries and hostname not in scan_ips and resolved not in scan_ips:
                             continue
                         windows_targets.append({
-                            "hostname": hostname,
+                            "hostname": resolved,
                             "username": username,
                             "password": password,
                             "use_ssl": use_ssl,
@@ -2923,8 +2946,14 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                             if cred_data.get('label'):
                                 target_entry["label"] = cred_data['label']
                             if hostname:
-                                # Discovery filter (same as Windows targets)
-                                if has_discoveries and hostname not in scan_ips:
+                                # Resolve hostname→IP (same as Windows targets)
+                                resolved = hostname
+                                if hostname_to_ip and hostname.lower() in hostname_to_ip:
+                                    resolved = hostname_to_ip[hostname.lower()]
+                                    target_entry["hostname"] = resolved
+
+                                # Discovery filter: check hostname + resolved IP
+                                if has_discoveries and hostname not in scan_ips and resolved not in scan_ips:
                                     continue
                                 linux_targets.append(target_entry)
                         except json.JSONDecodeError as e:
