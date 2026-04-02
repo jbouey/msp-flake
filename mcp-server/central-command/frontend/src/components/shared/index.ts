@@ -19,3 +19,4 @@ export { OnboardingChecklist } from './OnboardingChecklist';
 export { NotificationBell } from './NotificationBell';
 export { Tooltip, InfoTip } from './Tooltip';
 export { WelcomeModal } from './WelcomeModal';
+export { OrgBanner } from './OrgBanner';

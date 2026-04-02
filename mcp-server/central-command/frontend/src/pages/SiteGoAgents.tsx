@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { GlassCard, Spinner, Badge } from '../components/shared';
-import { useSiteGoAgents, useUpdateGoAgentTier, useTriggerGoAgentCheck, useRemoveGoAgent, useSite } from '../hooks';
+import { GlassCard, Spinner, Badge, OrgBanner } from '../components/shared';
+import { useSiteGoAgents, useUpdateGoAgentTier, useTriggerGoAgentCheck, useRemoveGoAgent } from '../hooks';
 import type {
   GoAgent,
   SiteGoAgentSummary,
@@ -13,21 +13,6 @@ import {
   GO_AGENT_CHECK_HIPAA,
 } from '../types';
 import { formatTimeAgo, getScoreStatus } from '../constants';
-
-const OrgBanner: React.FC<{ siteId: string }> = ({ siteId }) => {
-  const { data: site } = useSite(siteId);
-  if (!site?.client_org_id) return null;
-  return (
-    <div className="bg-accent-primary/10 border border-accent-primary/20 rounded-ios px-4 py-2 flex items-center justify-between">
-      <span className="text-sm text-label-secondary">
-        Part of <span className="font-medium text-label-primary">{site.org_name || 'organization'}</span> — viewing this site only
-      </span>
-      <Link to={`/organizations/${site.client_org_id}`} className="text-sm text-accent-primary hover:underline font-medium">
-        View all org sites
-      </Link>
-    </div>
-  );
-};
 
 const formatRelativeTime = formatTimeAgo;
 

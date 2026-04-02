@@ -582,6 +582,7 @@ async def _resolve_stale_incidents():
 
     pool = await get_pool()
     async with admin_connection(pool) as conn:
+        # Resolve open/resolving incidents >7d with no recent healing attempts
         result = await conn.fetch("""
             UPDATE incidents SET
                 status = 'resolved',
@@ -589,7 +590,7 @@ async def _resolve_stale_incidents():
                 resolution_tier = 'monitoring'
             WHERE id IN (
                 SELECT i.id FROM incidents i
-                WHERE i.status IN ('open', 'resolving', 'escalated')
+                WHERE i.status IN ('open', 'resolving')
                 AND i.created_at < NOW() - INTERVAL '7 days'
                 AND NOT EXISTS (
                     SELECT 1 FROM execution_telemetry et
@@ -599,6 +600,22 @@ async def _resolve_stale_incidents():
             )
             RETURNING id, incident_type
         """)
+
+        # Escalated incidents already exhausted L1/L2/L3. If stuck >7 days,
+        # they won't self-heal — resolve them regardless of recent telemetry.
+        escalated_result = await conn.fetch("""
+            UPDATE incidents SET
+                status = 'resolved',
+                resolved_at = NOW(),
+                resolution_tier = 'L3'
+            WHERE id IN (
+                SELECT i.id FROM incidents i
+                WHERE i.status = 'escalated'
+                AND i.created_at < NOW() - INTERVAL '7 days'
+            )
+            RETURNING id, incident_type
+        """)
+        result = list(result) + list(escalated_result)
 
         if result:
             for row in result:
