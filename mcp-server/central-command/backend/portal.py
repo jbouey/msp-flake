@@ -1192,6 +1192,17 @@ async def get_client_org_overview(
             FROM incidents WHERE site_id = ANY($1)
         """, site_ids)
 
+        # Witness attestation coverage (PHI-safe — just counts)
+        witness_att = await conn.fetchval("""
+            SELECT count(*) FROM witness_attestations wa
+            WHERE wa.created_at > NOW() - interval '24h'
+            AND wa.bundle_id IN (SELECT bundle_id FROM compliance_bundles WHERE site_id = ANY($1))
+        """, site_ids) or 0
+        witness_bundles = await conn.fetchval("""
+            SELECT count(DISTINCT bundle_id) FROM compliance_bundles
+            WHERE site_id = ANY($1) AND checked_at > NOW() - interval '24h'
+        """, site_ids) or 0
+
     total_devices = compliance['total_devices'] or 0
     total_ws = workstations['total'] or 0
 
@@ -1219,6 +1230,8 @@ async def get_client_org_overview(
             "active_incidents": incidents['active'] or 0,
             "resolved_24h": incidents['resolved_24h'] or 0,
             "incidents_7d": incidents['total_7d'] or 0,
+            "evidence_attestations_24h": witness_att,
+            "evidence_witness_coverage_pct": round(witness_att / witness_bundles * 100, 1) if witness_bundles > 0 else 0,
         },
     }
 

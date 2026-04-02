@@ -226,7 +226,7 @@ export const OrgDashboard: React.FC = () => {
       </div>
 
       {/* Inventory Row — org-level aggregated */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <GlassCard padding="md" className="text-center">
           <p className="text-2xl font-bold text-accent-primary">{sites.length}</p>
           <p className="text-xs text-label-tertiary">Sites</p>
@@ -246,6 +246,14 @@ export const OrgDashboard: React.FC = () => {
         <GlassCard padding="md" className="text-center">
           <p className="text-2xl font-bold text-label-primary">{orgDevices?.summary?.site_count ?? '—'}</p>
           <p className="text-xs text-label-tertiary">Subnets Covered</p>
+        </GlassCard>
+        <GlassCard padding="md" className="text-center">
+          <p className={`text-2xl font-bold ${(health?.evidence_witnesses?.coverage_pct ?? 0) >= 50 ? 'text-health-healthy' : 'text-label-primary'}`}>
+            {health?.evidence_witnesses?.coverage_pct != null ? `${health.evidence_witnesses.coverage_pct}%` : '—'}
+          </p>
+          <p className="text-xs text-label-tertiary">
+            Evidence Witnessed {health?.evidence_witnesses?.attestations_24h ? `(${health.evidence_witnesses.attestations_24h})` : ''}
+          </p>
         </GlassCard>
       </div>
 

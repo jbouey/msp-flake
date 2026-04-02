@@ -763,6 +763,12 @@ export interface OrgHealth {
     total: number;
     score: number;
   }>;
+  evidence_witnesses?: {
+    total_attestations: number;
+    witnessed_bundles: number;
+    attestations_24h: number;
+    coverage_pct: number;
+  };
 }
 
 export const appliancesApi = {

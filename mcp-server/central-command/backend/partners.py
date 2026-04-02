@@ -825,6 +825,50 @@ async def get_partner_org_agents(
     return {"agents": agents, "summary": {**summary, "total": len(agents)}}
 
 
+@router.get("/me/orgs/{org_id}/evidence-witnesses")
+async def get_partner_org_witnesses(
+    org_id: str,
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Witness attestation stats for a partner's org."""
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        org = await conn.fetchrow(
+            "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
+            org_id, partner['id']
+        )
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        site_ids = [r['site_id'] for r in await conn.fetch(
+            "SELECT site_id FROM sites WHERE client_org_id = $1 AND partner_id = $2",
+            org_id, partner['id']
+        )]
+
+        total_att = await conn.fetchval("""
+            SELECT count(*) FROM witness_attestations wa
+            WHERE wa.bundle_id IN (SELECT bundle_id FROM compliance_bundles WHERE site_id = ANY($1))
+        """, site_ids) or 0
+
+        recent = await conn.fetchval("""
+            SELECT count(*) FROM witness_attestations wa
+            WHERE wa.created_at > NOW() - interval '24h'
+            AND wa.bundle_id IN (SELECT bundle_id FROM compliance_bundles WHERE site_id = ANY($1))
+        """, site_ids) or 0
+
+        total_bundles = await conn.fetchval("""
+            SELECT count(DISTINCT bundle_id) FROM compliance_bundles
+            WHERE site_id = ANY($1) AND checked_at > NOW() - interval '24h'
+        """, site_ids) or 0
+
+    return {
+        "total_attestations": total_att,
+        "attestations_24h": recent,
+        "coverage_pct": round(recent / total_bundles * 100, 1) if total_bundles > 0 else 0,
+        "total_bundles_24h": total_bundles,
+    }
+
+
 @router.post("/me/provisions")
 async def create_provision_code(
     request: Request,

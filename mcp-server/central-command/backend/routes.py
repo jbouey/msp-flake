@@ -3860,7 +3860,38 @@ async def get_organization_health(
             "offline": fleet.offline,
         },
         "categories": categories,
+        "evidence_witnesses": await _get_org_witness_stats(db, site_ids),
     }
+
+
+async def _get_org_witness_stats(db, site_ids: list) -> dict:
+    """Witness attestation stats for an org's sites."""
+    try:
+        result = await db.execute(text("""
+            SELECT
+                count(DISTINCT wa.bundle_id) as witnessed_bundles,
+                count(*) as total_attestations,
+                count(*) FILTER (WHERE wa.created_at > NOW() - interval '24h') as attestations_24h
+            FROM witness_attestations wa
+            WHERE wa.bundle_id IN (
+                SELECT bundle_id FROM compliance_bundles WHERE site_id = ANY(:site_ids)
+            )
+        """), {"site_ids": site_ids})
+        row = result.fetchone()
+        total_bundles_result = await db.execute(text("""
+            SELECT count(DISTINCT bundle_id) FROM compliance_bundles
+            WHERE site_id = ANY(:site_ids) AND checked_at > NOW() - interval '24h'
+        """), {"site_ids": site_ids})
+        total_24h = total_bundles_result.scalar() or 0
+        witnessed_24h = row.attestations_24h if row else 0
+        return {
+            "total_attestations": row.total_attestations if row else 0,
+            "witnessed_bundles": row.witnessed_bundles if row else 0,
+            "attestations_24h": witnessed_24h,
+            "coverage_pct": round(witnessed_24h / total_24h * 100, 1) if total_24h > 0 else 0,
+        }
+    except Exception:
+        return {"total_attestations": 0, "witnessed_bundles": 0, "attestations_24h": 0, "coverage_pct": 0}
 
 
 @router.get("/organizations/{org_id}/incidents")
