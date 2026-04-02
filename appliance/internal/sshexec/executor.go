@@ -136,12 +136,28 @@ func (e *Executor) Execute(ctx context.Context, target *Target, script, runbookI
 		}
 
 		elapsed := time.Since(start).Seconds()
+		errMsg := ""
+		if exitCode != 0 {
+			// Script ran but returned non-zero — extract stdout/stderr from output map.
+			if stdout, ok := output["stdout"].(string); ok && stdout != "" {
+				errMsg = stdout
+			} else if stderr, ok := output["stderr"].(string); ok && stderr != "" {
+				errMsg = stderr
+			}
+			if len(errMsg) > 500 {
+				errMsg = errMsg[len(errMsg)-500:]
+			}
+			if errMsg == "" {
+				errMsg = fmt.Sprintf("exit code %d (no output)", exitCode)
+			}
+		}
 		return &ExecutionResult{
 			Success:       exitCode == 0,
 			RunbookID:     runbookID,
 			Target:        target.Hostname,
 			Phase:         phase,
 			Output:        output,
+			Error:         errMsg,
 			DurationSecs:  elapsed,
 			Timestamp:     start.Format(time.RFC3339),
 			OutputHash:    hashOutput(output),

@@ -332,12 +332,10 @@ func (d *Daemon) buildHealingSSHTarget(hostID string) *sshexec.Target {
 		}
 	}
 
-	// Fallback for unknown hosts
-	return &sshexec.Target{
-		Hostname: hostID,
-		Port:     22,
-		Username: "root",
-	}
+	// No credentials found — return nil so the caller reports a clear error
+	// instead of attempting SSH with empty auth (which fails silently).
+	log.Printf("[healing] No SSH credentials found for host %s (%d targets checked)", hostID, len(targets))
+	return nil
 }
 
 // isSelfHost returns true if the hostID refers to this appliance.
