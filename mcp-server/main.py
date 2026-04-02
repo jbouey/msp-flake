@@ -815,9 +815,9 @@ async def _flywheel_promotion_loop():
                                distinct_orgs, total_occurrences, success_rate
                         FROM platform_pattern_stats
                         WHERE promoted_at IS NULL
-                          AND distinct_orgs >= 5
+                          AND distinct_orgs >= 1
                           AND success_rate >= 0.90
-                          AND total_occurrences >= 20
+                          AND total_occurrences >= 10
                         ORDER BY distinct_orgs DESC, total_occurrences DESC
                         LIMIT :remaining
                     """), {"remaining": remaining})
@@ -834,8 +834,26 @@ async def _flywheel_promotion_loop():
                         row.runbook_id for row in valid_rb_result.fetchall()
                     }
 
+                    # Fetch incident_types already covered by enabled builtin/synced rules
+                    # to avoid promoting duplicates that will never match (builtins fire first)
+                    existing_result = await db.execute(text("""
+                        SELECT DISTINCT incident_pattern->>'incident_type'
+                        FROM l1_rules
+                        WHERE enabled = true AND source IN ('builtin', 'synced')
+                        AND incident_pattern->>'incident_type' IS NOT NULL
+                    """))
+                    covered_types = {r[0] for r in existing_result.fetchall()}
+
                     platform_promoted = 0
                     for pc in platform_candidates:
+                        # Skip if builtin/synced rule already covers this type
+                        if pc.incident_type in covered_types:
+                            logger.debug(
+                                "Skipping promotion: builtin/synced rule already covers type",
+                                incident_type=pc.incident_type,
+                            )
+                            continue
+
                         # Validate runbook_id exists in DB or matches known embedded prefix
                         if pc.runbook_id not in valid_runbook_ids and not _EMBEDDED_RUNBOOK_RE.match(pc.runbook_id):
                             logger.warning(
