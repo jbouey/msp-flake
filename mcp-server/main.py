@@ -2677,6 +2677,48 @@ async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(
     return {"status": "resolved", "incident_id": str(row[0])}
 
 
+@app.post("/api/witness/submit")
+async def submit_witness_attestations(request: Request, auth_site_id: str = Depends(require_appliance_bearer)):
+    """Phase 3: Same-cycle witness attestation submission.
+
+    Appliances counter-sign sibling bundle hashes and POST attestations
+    immediately — no queuing for next checkin cycle.
+    """
+    body = await request.json()
+    attestations = body.get("attestations", [])
+    if not attestations:
+        return {"status": "ok", "stored": 0}
+
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+    pool = await get_pool()
+    stored = 0
+    async with admin_connection(pool) as conn:
+        for att in attestations:
+            try:
+                await conn.execute("""
+                    INSERT INTO witness_attestations
+                        (bundle_id, bundle_hash, source_appliance, witness_appliance,
+                         witness_public_key, witness_signature)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (bundle_id, witness_appliance) DO NOTHING
+                """,
+                    att.get('bundle_id', ''),
+                    att.get('bundle_hash', ''),
+                    att.get('source_appliance', ''),
+                    auth_site_id,  # witness is the authenticated appliance
+                    att.get('witness_public_key', ''),
+                    att.get('witness_signature', ''),
+                )
+                stored += 1
+            except Exception:
+                pass
+
+    if stored > 0:
+        logger.info(f"Witness attestations submitted: site={auth_site_id} count={stored}")
+    return {"status": "ok", "stored": stored}
+
+
 @app.post("/drift")
 async def report_drift(drift: DriftReport, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """Report drift detection results."""

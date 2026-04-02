@@ -638,12 +638,14 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		}
 	}
 
-	// Peer witnessing: counter-sign sibling bundle hashes delivered in response.
-	// Attestations are queued and sent in the next checkin cycle.
+	// Peer witnessing: counter-sign sibling bundle hashes and submit immediately.
+	// Phase 3: attestations are sent in the SAME cycle via direct HTTP POST,
+	// not queued for the next checkin. This eliminates the 1-cycle latency.
 	if len(resp.PeerBundleHashes) > 0 && d.evidenceSubmitter != nil {
+		var attestations []WitnessAttestation
 		for _, ph := range resp.PeerBundleHashes {
 			sig := evidence.Sign(d.evidenceSubmitter.SigningKey(), []byte(ph.BundleHash))
-			d.state.AddWitnessAttestation(WitnessAttestation{
+			attestations = append(attestations, WitnessAttestation{
 				BundleID:         ph.BundleID,
 				BundleHash:       ph.BundleHash,
 				WitnessSignature: sig,
@@ -651,8 +653,19 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 				SourceAppliance:  ph.SourceAppliance,
 			})
 		}
-		log.Printf("[witness] Counter-signed %d peer bundle hashes", len(resp.PeerBundleHashes))
+		// Submit attestations immediately (same cycle, no queuing)
+		if err := d.submitWitnessAttestations(ctx, attestations); err != nil {
+			// Fallback: queue for next checkin cycle
+			for _, a := range attestations {
+				d.state.AddWitnessAttestation(a)
+			}
+			log.Printf("[witness] Immediate submit failed, queued %d for next cycle: %v", len(attestations), err)
+		} else {
+			log.Printf("[witness] Counter-signed + submitted %d attestations (same cycle)", len(attestations))
+		}
 	}
+
+	// submitWitnessAttestations is defined below the runCheckin method.
 
 	// Set appliance ID on telemetry reporter and order processor (received from Central Command)
 	if resp.ApplianceID != "" {
@@ -800,6 +813,38 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 }
 
 // LookupWinTarget delegates to StateManager.
+// submitWitnessAttestations POSTs counter-signed attestations directly to Central Command.
+// Phase 3: same-cycle submission — no queuing for next checkin.
+func (d *Daemon) submitWitnessAttestations(ctx context.Context, attestations []WitnessAttestation) error {
+	if len(attestations) == 0 || d.config.APIEndpoint == "" {
+		return nil
+	}
+	payload := map[string]interface{}{
+		"site_id":      d.config.SiteID,
+		"attestations": attestations,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	url := strings.TrimRight(d.config.APIEndpoint, "/") + "/api/witness/submit"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+d.config.APIKey)
+	resp, err := d.phoneCli.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("witness submit returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (d *Daemon) LookupWinTarget(hostname string) (winTarget, bool) {
 	return d.state.LookupWinTarget(hostname)
 }
