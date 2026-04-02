@@ -2735,9 +2735,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         "source_appliance": r['source_appliance'],
                         "source_public_key": r['source_public_key'] or "",
                     })
+                if peer_bundle_hashes:
+                    logger.info(f"Checkin {checkin.site_id}: delivering {len(peer_bundle_hashes)} peer bundle hash(es) for witnessing")
         except Exception as e:
-            import logging
-            logging.debug(f"Witness exchange during checkin: {e}")
+            logger.warning(f"Witness exchange during checkin: {e}")
 
         # === STEP 4: Get pending orders for this appliance ===
         # Check admin_orders table (fleet management orders)
