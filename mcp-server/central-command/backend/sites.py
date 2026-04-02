@@ -2712,7 +2712,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 async with admin_connection(pool) as admin_conn:
                     sibling_rows = await admin_conn.fetch("""
                         SELECT cb.bundle_id, cb.bundle_hash, sa.appliance_id as source_appliance,
-                               sa.agent_public_key as source_public_key
+                               s.agent_public_key as source_public_key
                         FROM compliance_bundles cb
                         JOIN site_appliances sa ON cb.site_id = sa.site_id
                         JOIN sites s ON cb.site_id = s.site_id
