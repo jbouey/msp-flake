@@ -131,6 +131,9 @@ type Daemon struct {
 
 	// credentialProbeOnce ensures the startup credential connectivity probe runs exactly once.
 	credentialProbeOnce sync.Once
+
+	// startTime tracks daemon boot for uptime reporting
+	startTime time.Time
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
@@ -163,7 +166,8 @@ func New(cfg *Config) *Daemon {
 		registry:      grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
 		state:         NewStateManager(),
 		healTracker:   newHealingRateTracker(),
-		serverBreaker: NewCircuitBreaker(5, 5*time.Minute), // 5 consecutive checkin failures → stop secondary traffic for 5min
+		serverBreaker: NewCircuitBreaker(5, 5*time.Minute),
+		startTime:     time.Now(),
 	}
 
 	// Initialize WinRM cert pin store + executor (must be before L1 engine)
@@ -592,6 +596,9 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	if dr := d.state.DrainDeployResults(); len(dr) > 0 {
 		req.DeployResults = dr
 	}
+
+	// Daemon runtime health — Go stdlib, zero deps
+	req.DaemonHealth = collectDaemonHealth(d.startTime)
 
 	resp, err := d.phoneCli.Checkin(ctx, &req)
 	if err != nil {

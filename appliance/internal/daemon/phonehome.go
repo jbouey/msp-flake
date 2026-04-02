@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -210,6 +211,19 @@ type CheckinRequest struct {
 	DiscoveryResults    map[string]interface{}   `json:"discovery_results,omitempty"`
 	EncryptionPublicKey string                   `json:"encryption_public_key,omitempty"`
 	DeployResults       []DeployResult           `json:"deploy_results,omitempty"`
+	DaemonHealth        *DaemonHealth            `json:"daemon_health,omitempty"`
+}
+
+// DaemonHealth reports runtime stats from the Go daemon.
+// Uses Go's stdlib runtime package — zero external dependencies.
+type DaemonHealth struct {
+	Goroutines    int     `json:"goroutines"`
+	HeapAllocMB   float64 `json:"heap_alloc_mb"`
+	HeapSysMB     float64 `json:"heap_sys_mb"`
+	GCPauseMs     float64 `json:"gc_pause_ms"`       // last GC pause duration
+	GCCycles      uint32  `json:"gc_cycles"`
+	NumCPU        int     `json:"num_cpu"`
+	UptimeSeconds int64   `json:"uptime_seconds_daemon"`
 }
 
 // ConnectedAgent represents a Go agent connected to this appliance via gRPC.
@@ -225,6 +239,25 @@ type ConnectedAgent struct {
 	DriftCount    int64  `json:"drift_count"`
 	ChecksPassed  int64  `json:"checks_passed"`
 	ChecksTotal   int64  `json:"checks_total"`
+}
+
+// collectDaemonHealth reads Go runtime stats — zero external dependencies.
+func collectDaemonHealth(startTime time.Time) *DaemonHealth {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	var lastPauseMs float64
+	if m.NumGC > 0 {
+		lastPauseMs = float64(m.PauseNs[(m.NumGC+255)%256]) / 1e6
+	}
+	return &DaemonHealth{
+		Goroutines:    runtime.NumGoroutine(),
+		HeapAllocMB:   float64(m.HeapAlloc) / (1024 * 1024),
+		HeapSysMB:     float64(m.HeapSys) / (1024 * 1024),
+		GCPauseMs:     lastPauseMs,
+		GCCycles:      m.NumGC,
+		NumCPU:        runtime.NumCPU(),
+		UptimeSeconds: int64(time.Since(startTime).Seconds()),
+	}
 }
 
 // WireguardConfig holds the hub-side WireGuard parameters delivered by Central Command.

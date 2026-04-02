@@ -1871,6 +1871,7 @@ class ApplianceCheckin(BaseModel):
     deploy_results: Optional[list[Dict[str, Any]]] = None  # Results from previous deploy attempts
     wg_connected: bool = False  # Whether WireGuard tunnel is active
     wg_ip: Optional[str] = None  # WireGuard VPN IP (10.100.0.x)
+    daemon_health: Optional[Dict[str, Any]] = None  # Go runtime stats (goroutines, heap, GC)
 
 
 def normalize_mac(mac: str) -> str:
@@ -2400,8 +2401,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             INSERT INTO site_appliances (
                 site_id, appliance_id, hostname, mac_address, ip_addresses,
                 agent_version, nixos_version, status, uptime_seconds,
-                first_checkin, last_checkin
-            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, 'online', $8, $9, $10)
+                first_checkin, last_checkin, daemon_health
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, 'online', $8, $9, $10, $11::jsonb)
             ON CONFLICT (appliance_id) DO UPDATE SET
                 hostname = EXCLUDED.hostname,
                 mac_address = EXCLUDED.mac_address,
@@ -2411,6 +2412,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 status = 'online',
                 uptime_seconds = EXCLUDED.uptime_seconds,
                 last_checkin = EXCLUDED.last_checkin,
+                daemon_health = COALESCE(EXCLUDED.daemon_health, site_appliances.daemon_health),
                 offline_since = NULL,
                 offline_notified = false
         """,
@@ -2423,7 +2425,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             checkin.nixos_version,
             checkin.uptime_seconds,
             earliest_first_checkin,
-            now
+            now,
+            json.dumps(checkin.daemon_health) if checkin.daemon_health else None,
         )
 
         # === STEP 3.5: Also update appliances table for Fleet Updates ===
