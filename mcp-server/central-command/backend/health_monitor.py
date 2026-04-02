@@ -623,3 +623,28 @@ async def _resolve_stale_incidents():
                             incident_id=str(row["id"]),
                             incident_type=row["incident_type"])
             logger.info(f"Resolved {len(result)} stale incidents (>7d, no recent healing)")
+
+        # Transfer device ownership when owning appliance can't see the device anymore.
+        # If appliance A owned a device but hasn't updated its last_seen_at in >30 min,
+        # and appliance B has seen it recently, transfer ownership to B.
+        try:
+            transferred = await conn.fetch("""
+                UPDATE discovered_devices d1
+                SET owner_appliance_id = d2.appliance_id::uuid, owned_since = NOW()
+                FROM discovered_devices d2
+                WHERE d1.ip_address = d2.ip_address
+                AND d1.site_id != d2.site_id
+                AND d1.owner_appliance_id IS NOT NULL
+                AND d1.owner_appliance_id != d2.appliance_id::uuid
+                AND d1.last_seen_at < NOW() - INTERVAL '30 minutes'
+                AND d2.last_seen_at > NOW() - INTERVAL '15 minutes'
+                RETURNING d1.ip_address, d1.site_id as from_site, d2.site_id as to_site
+            """)
+            if transferred:
+                for t in transferred:
+                    logger.info("Device ownership transferred",
+                                ip=t["ip_address"],
+                                from_site=t["from_site"],
+                                to_site=t["to_site"])
+        except Exception as e:
+            logger.debug(f"Device ownership transfer check: {e}")
