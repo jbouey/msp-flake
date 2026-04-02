@@ -120,6 +120,20 @@ export const OrgDashboard: React.FC = () => {
     refetchInterval: 30000,
   });
 
+  const { data: orgDevices } = useQuery({
+    queryKey: ['org-devices', orgId],
+    queryFn: () => organizationsApi.getOrgDevices(orgId!),
+    enabled: !!orgId,
+    refetchInterval: 60000,
+  });
+
+  const { data: orgAgents } = useQuery({
+    queryKey: ['org-agents', orgId],
+    queryFn: () => organizationsApi.getOrgAgents(orgId!),
+    enabled: !!orgId,
+    refetchInterval: 30000,
+  });
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -184,7 +198,7 @@ export const OrgDashboard: React.FC = () => {
       </div>
 
       {/* KPI Row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <GlassCard padding="md" className="text-center">
           <p className={`text-2xl font-bold ${(health?.compliance.score ?? avgCompliance) >= 80 ? 'text-health-healthy' : (health?.compliance.score ?? avgCompliance) >= 50 ? 'text-health-warning' : 'text-label-primary'}`}>
             {(health?.compliance.score ?? avgCompliance) > 0 ? `${Math.round(health?.compliance.score ?? avgCompliance)}%` : 'N/A'}
@@ -204,14 +218,34 @@ export const OrgDashboard: React.FC = () => {
           <p className="text-xs text-label-tertiary">Healing Rate</p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
-          <p className="text-2xl font-bold text-accent-primary">{sites.length}</p>
-          <p className="text-xs text-label-tertiary">Sites</p>
-        </GlassCard>
-        <GlassCard padding="md" className="text-center">
           <p className="text-2xl font-bold text-label-primary">
             {health ? `${health.fleet.online}/${health.fleet.total}` : `${totalOnlineAppliances}/${totalAppliances}`}
           </p>
           <p className="text-xs text-label-tertiary">Appliances Online</p>
+        </GlassCard>
+      </div>
+
+      {/* Inventory Row — org-level aggregated */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <GlassCard padding="md" className="text-center">
+          <p className="text-2xl font-bold text-accent-primary">{sites.length}</p>
+          <p className="text-xs text-label-tertiary">Sites</p>
+        </GlassCard>
+        <GlassCard padding="md" className="text-center">
+          <p className="text-2xl font-bold text-label-primary">{orgDevices?.summary?.total ?? '—'}</p>
+          <p className="text-xs text-label-tertiary">
+            Devices {orgDevices?.summary?.compliance_rate != null ? `(${orgDevices.summary.compliance_rate}% compliant)` : ''}
+          </p>
+        </GlassCard>
+        <GlassCard padding="md" className="text-center">
+          <p className="text-2xl font-bold text-label-primary">
+            {orgAgents?.summary?.active ?? 0}/{orgAgents?.summary?.total ?? 0}
+          </p>
+          <p className="text-xs text-label-tertiary">Agents Active</p>
+        </GlassCard>
+        <GlassCard padding="md" className="text-center">
+          <p className="text-2xl font-bold text-label-primary">{orgDevices?.summary?.site_count ?? '—'}</p>
+          <p className="text-xs text-label-tertiary">Subnets Covered</p>
         </GlassCard>
       </div>
 

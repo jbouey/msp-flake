@@ -3930,6 +3930,222 @@ async def get_organization_incidents(
 
 
 # =============================================================================
+# ORG-LEVEL INVENTORY (multi-appliance aggregation)
+# =============================================================================
+
+@router.get("/organizations/{org_id}/devices")
+async def get_organization_devices(
+    org_id: str,
+    user: dict = Depends(auth_module.require_auth),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """Aggregate device inventory across all sites in an organization."""
+    auth_module._check_org_access(user, org_id)
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        site_ids = [r['site_id'] for r in await conn.fetch(
+            "SELECT site_id FROM sites WHERE client_org_id = $1", org_id
+        )]
+        if not site_ids:
+            return {"devices": [], "summary": {}, "total": 0}
+
+        devices = await conn.fetch("""
+            SELECT d.id, d.site_id, s.clinic_name, d.hostname, d.ip_address,
+                   d.mac_address, d.device_type, d.os_name, d.compliance_status,
+                   d.device_status, d.last_seen_at, d.owner_appliance_id,
+                   a_owner.site_id as owner_site_id
+            FROM discovered_devices d
+            JOIN sites s ON d.site_id = s.site_id
+            LEFT JOIN appliances a_owner ON d.owner_appliance_id = a_owner.id
+            WHERE d.site_id = ANY($1)
+            ORDER BY d.ip_address
+            LIMIT $2 OFFSET $3
+        """, site_ids, limit, offset)
+
+        total = await conn.fetchval(
+            "SELECT count(*) FROM discovered_devices WHERE site_id = ANY($1)", site_ids
+        )
+
+        summary = await conn.fetchrow("""
+            SELECT count(*) as total,
+                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant,
+                count(*) FILTER (WHERE compliance_status = 'drifted') as drifted,
+                count(*) FILTER (WHERE compliance_status = 'unknown' OR compliance_status IS NULL) as unknown,
+                count(DISTINCT site_id) as site_count
+            FROM discovered_devices WHERE site_id = ANY($1)
+        """, site_ids)
+
+    return {
+        "devices": [
+            {
+                "id": str(d['id']),
+                "site_id": d['site_id'],
+                "clinic_name": d['clinic_name'],
+                "hostname": d['hostname'],
+                "ip_address": d['ip_address'],
+                "mac_address": d['mac_address'],
+                "device_type": d['device_type'],
+                "os_name": d['os_name'],
+                "compliance_status": d['compliance_status'] or 'unknown',
+                "device_status": d['device_status'],
+                "last_seen": d['last_seen_at'].isoformat() if d['last_seen_at'] else None,
+                "owner_site_id": d['owner_site_id'],
+            }
+            for d in devices
+        ],
+        "summary": {
+            "total": summary['total'],
+            "compliant": summary['compliant'],
+            "drifted": summary['drifted'],
+            "unknown": summary['unknown'],
+            "site_count": summary['site_count'],
+            "compliance_rate": round(summary['compliant'] / summary['total'] * 100, 1) if summary['total'] > 0 else 0,
+        },
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/organizations/{org_id}/workstations")
+async def get_organization_workstations(
+    org_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Aggregate workstation compliance across all sites in an organization."""
+    auth_module._check_org_access(user, org_id)
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        site_ids = [r['site_id'] for r in await conn.fetch(
+            "SELECT site_id FROM sites WHERE client_org_id = $1", org_id
+        )]
+        if not site_ids:
+            return {"workstations": [], "summary": None}
+
+        ws_rows = await conn.fetch("""
+            SELECT w.id, w.site_id, s.clinic_name, w.hostname, w.ip_address,
+                   w.os_name, w.online, w.compliance_status, w.last_compliance_check,
+                   w.compliance_percentage, w.last_seen
+            FROM workstations w
+            JOIN sites s ON w.site_id = s.site_id
+            WHERE w.site_id = ANY($1)
+            ORDER BY w.hostname
+        """, site_ids)
+
+        summary_row = await conn.fetchrow("""
+            SELECT count(*) as total,
+                count(*) FILTER (WHERE online) as online,
+                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant,
+                count(*) FILTER (WHERE compliance_status = 'drifted') as drifted,
+                count(*) FILTER (WHERE compliance_status = 'error') as error,
+                count(*) FILTER (WHERE compliance_status IS NULL OR compliance_status = 'unknown') as unknown
+            FROM workstations WHERE site_id = ANY($1)
+        """, site_ids)
+
+        total = summary_row['total'] or 0
+        compliant = summary_row['compliant'] or 0
+
+    return {
+        "workstations": [
+            {
+                "id": str(ws['id']),
+                "site_id": ws['site_id'],
+                "clinic_name": ws['clinic_name'],
+                "hostname": ws['hostname'],
+                "ip_address": ws['ip_address'],
+                "os_name": ws['os_name'],
+                "online": ws['online'],
+                "compliance_status": ws['compliance_status'] or 'unknown',
+                "last_compliance_check": ws['last_compliance_check'].isoformat() if ws['last_compliance_check'] else None,
+                "compliance_percentage": float(ws['compliance_percentage'] or 0),
+                "last_seen": ws['last_seen'].isoformat() if ws['last_seen'] else None,
+            }
+            for ws in ws_rows
+        ],
+        "summary": {
+            "total_workstations": total,
+            "online_workstations": summary_row['online'] or 0,
+            "compliant_workstations": compliant,
+            "drifted_workstations": summary_row['drifted'] or 0,
+            "error_workstations": summary_row['error'] or 0,
+            "unknown_workstations": summary_row['unknown'] or 0,
+            "overall_compliance_rate": round(compliant / total * 100, 1) if total > 0 else 0,
+        },
+    }
+
+
+@router.get("/organizations/{org_id}/agents")
+async def get_organization_agents(
+    org_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Aggregate Go agent status across all sites in an organization."""
+    auth_module._check_org_access(user, org_id)
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        site_ids = [r['site_id'] for r in await conn.fetch(
+            "SELECT site_id FROM sites WHERE client_org_id = $1", org_id
+        )]
+        if not site_ids:
+            return {"agents": [], "summary": {"total": 0, "active": 0, "offline": 0}}
+
+        now = datetime.now(timezone.utc)
+        rows = await conn.fetch("""
+            SELECT g.agent_id, g.hostname, g.ip_address, g.site_id,
+                   s.clinic_name,
+                   COALESCE(NULLIF(g.os_version, ''), g.os_name) AS os_version,
+                   g.agent_version, g.status, g.last_heartbeat,
+                   g.checks_passed, g.checks_total, g.compliance_percentage
+            FROM go_agents g
+            JOIN sites s ON g.site_id = s.site_id
+            WHERE g.site_id = ANY($1)
+            ORDER BY g.last_heartbeat DESC NULLS LAST
+        """, site_ids)
+
+    agents = []
+    summary = {"active": 0, "stale": 0, "offline": 0, "never": 0}
+    for r in rows:
+        hb = r['last_heartbeat']
+        if hb is None:
+            derived = "never"
+        else:
+            if hb.tzinfo is None:
+                hb = hb.replace(tzinfo=timezone.utc)
+            age = now - hb
+            if age < timedelta(minutes=5):
+                derived = "active"
+            elif age < timedelta(hours=1):
+                derived = "stale"
+            else:
+                derived = "offline"
+        summary[derived] += 1
+        agents.append({
+            "agent_id": r['agent_id'],
+            "hostname": r['hostname'],
+            "ip_address": r['ip_address'],
+            "site_id": r['site_id'],
+            "clinic_name": r['clinic_name'],
+            "os_version": r['os_version'],
+            "agent_version": r['agent_version'],
+            "derived_status": derived,
+            "last_heartbeat": r['last_heartbeat'].isoformat() if r['last_heartbeat'] else None,
+            "compliance_percentage": float(r['compliance_percentage'] or 0),
+        })
+
+    return {
+        "agents": agents,
+        "summary": {**summary, "total": len(agents)},
+    }
+
+
+# =============================================================================
 # DRIFT CONFIG ENDPOINTS
 # =============================================================================
 

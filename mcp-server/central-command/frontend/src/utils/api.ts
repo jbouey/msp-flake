@@ -846,6 +846,48 @@ export const organizationsApi = {
 
   getOrgHealth: (orgId: string) =>
     fetchApi<OrgHealth>(`/organizations/${orgId}/health`),
+
+  getOrgDevices: (orgId: string, limit = 100, offset = 0) =>
+    fetchApi<{
+      devices: Array<{
+        id: string; site_id: string; clinic_name: string; hostname: string;
+        ip_address: string; mac_address: string; device_type: string;
+        os_name: string; compliance_status: string; device_status: string;
+        last_seen: string | null; owner_site_id: string | null;
+      }>;
+      summary: {
+        total: number; compliant: number; drifted: number; unknown: number;
+        site_count: number; compliance_rate: number;
+      };
+      total: number;
+    }>(`/organizations/${orgId}/devices?limit=${limit}&offset=${offset}`),
+
+  getOrgWorkstations: (orgId: string) =>
+    fetchApi<{
+      workstations: Array<{
+        id: string; site_id: string; clinic_name: string; hostname: string;
+        ip_address: string; os_name: string; online: boolean;
+        compliance_status: string; last_compliance_check: string | null;
+        compliance_percentage: number; last_seen: string | null;
+      }>;
+      summary: {
+        total_workstations: number; online_workstations: number;
+        compliant_workstations: number; drifted_workstations: number;
+        error_workstations: number; unknown_workstations: number;
+        overall_compliance_rate: number;
+      } | null;
+    }>(`/organizations/${orgId}/workstations`),
+
+  getOrgAgents: (orgId: string) =>
+    fetchApi<{
+      agents: Array<{
+        agent_id: string; hostname: string; ip_address: string; site_id: string;
+        clinic_name: string; os_version: string | null; agent_version: string | null;
+        derived_status: string; last_heartbeat: string | null;
+        compliance_percentage: number;
+      }>;
+      summary: { total: number; active: number; stale: number; offline: number; never: number };
+    }>(`/organizations/${orgId}/agents`),
 };
 
 // =============================================================================
