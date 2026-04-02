@@ -2708,24 +2708,25 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     logger.info(f"Checkin {checkin.site_id}: stored {len(checkin.witness_attestations)} witness attestation(s)")
 
                 # Fetch sibling bundle hashes for this appliance to counter-sign.
-                # Get recent bundles from OTHER appliances in the same org.
-                sibling_rows = await conn.fetch("""
-                    SELECT cb.bundle_id, cb.bundle_hash, sa.appliance_id as source_appliance,
-                           sa.agent_public_key as source_public_key
-                    FROM compliance_bundles cb
-                    JOIN site_appliances sa ON cb.site_id = sa.site_id
-                    JOIN sites s ON cb.site_id = s.site_id
-                    WHERE s.client_org_id = (SELECT client_org_id FROM sites WHERE site_id = $1)
-                    AND sa.appliance_id != $2
-                    AND cb.checked_at > NOW() - INTERVAL '30 minutes'
-                    AND cb.bundle_hash IS NOT NULL
-                    AND NOT EXISTS (
-                        SELECT 1 FROM witness_attestations wa
-                        WHERE wa.bundle_id = cb.bundle_id AND wa.witness_appliance = $2
-                    )
-                    ORDER BY cb.checked_at DESC
-                    LIMIT 10
-                """, checkin.site_id, canonical_id)
+                # Uses admin_connection for cross-site org JOIN (RLS blocks it in tenant conn).
+                async with admin_connection(pool) as admin_conn:
+                    sibling_rows = await admin_conn.fetch("""
+                        SELECT cb.bundle_id, cb.bundle_hash, sa.appliance_id as source_appliance,
+                               sa.agent_public_key as source_public_key
+                        FROM compliance_bundles cb
+                        JOIN site_appliances sa ON cb.site_id = sa.site_id
+                        JOIN sites s ON cb.site_id = s.site_id
+                        WHERE s.client_org_id = (SELECT client_org_id FROM sites WHERE site_id = $1)
+                        AND sa.appliance_id != $2
+                        AND cb.checked_at > NOW() - INTERVAL '30 minutes'
+                        AND cb.bundle_hash IS NOT NULL
+                        AND NOT EXISTS (
+                            SELECT 1 FROM witness_attestations wa
+                            WHERE wa.bundle_id = cb.bundle_id AND wa.witness_appliance = $2
+                        )
+                        ORDER BY cb.checked_at DESC
+                        LIMIT 10
+                    """, checkin.site_id, canonical_id)
 
                 for r in sibling_rows:
                     peer_bundle_hashes.append({

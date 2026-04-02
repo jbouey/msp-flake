@@ -270,6 +270,7 @@ class EvidenceBundleSubmit(BaseModel):
 class EvidenceSubmitResponse(BaseModel):
     """Response after evidence submission."""
     bundle_id: str
+    bundle_hash: str = ""  # SHA256 of the bundle content (for peer witnessing)
     chain_position: int
     prev_hash: Optional[str]
     current_hash: str
@@ -1076,6 +1077,7 @@ async def submit_evidence(
 
     return EvidenceSubmitResponse(
         bundle_id=bundle.bundle_id,
+        bundle_hash=bundle.bundle_hash or chain_hash,
         chain_position=chain_position,
         prev_hash=prev_hash,
         current_hash=chain_hash,
