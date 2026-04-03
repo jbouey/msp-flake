@@ -1073,8 +1073,18 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 	}
 	log.Printf("[orders] Binary SHA256 verified: %s (%d bytes)", actualHex, len(data))
 
-	// Write to state dir
+	// Write to state dir — save last-known-good before replacing
 	binaryPath := filepath.Join(p.stateDir, "appliance-daemon")
+	backupPath := binaryPath + ".last-good"
+	if _, err := os.Stat(binaryPath); err == nil {
+		// Backup current binary as rollback target
+		if copyErr := copyFile(binaryPath, backupPath); copyErr != nil {
+			log.Printf("[orders] Warning: could not backup current binary: %v", copyErr)
+		} else {
+			log.Printf("[orders] Backed up current binary to %s", backupPath)
+		}
+	}
+
 	tmpPath := binaryPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o755); err != nil {
 		return nil, fmt.Errorf("write binary: %w", err)
@@ -1118,20 +1128,60 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 	}
 	log.Printf("[orders] Systemd override installed to %s via systemd-run", overrideDir)
 
-	log.Printf("[orders] Scheduling daemon restart in 10 seconds (version=%s)", version)
+	// Schedule restart with health check + rollback.
+	// 1. Restart with new binary
+	// 2. Wait 30s for the new daemon to checkin
+	// 3. If no checkin (crash loop), rollback to last-known-good
+	log.Printf("[orders] Scheduling daemon restart in 10 seconds (version=%s) with health check", version)
 	go func() {
 		time.Sleep(10 * time.Second)
-		// Use systemd-run to escape the ProtectSystem=strict sandbox.
-		// NixOS: systemctl may not be in the daemon's PATH; systemd-run
-		// sets an explicit PATH so the restart command can find it.
+		bashPath := "/run/current-system/sw/bin/bash"
+		envPath := "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
+
+		// Restart with new binary
 		cmd := exec.CommandContext(context.Background(), "systemd-run",
 			"--unit=msp-daemon-restart-"+unitSuffix, "--collect",
 			"--property=TimeoutStartSec=30",
-			"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
-			"/run/current-system/sw/bin/bash", "-c",
+			"--setenv="+envPath,
+			bashPath, "-c",
 			"systemctl restart appliance-daemon")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			log.Printf("[orders] Daemon restart failed: %v\n%s", err, string(out))
+			return
+		}
+
+		// Health check: wait 60s then verify the daemon is running the new version.
+		// If it crashed and fell back to the NixOS base binary, rollback to last-good.
+		time.Sleep(60 * time.Second)
+		checkCmd := exec.CommandContext(context.Background(), "systemd-run",
+			"--unit=msp-daemon-healthcheck-"+unitSuffix, "--wait", "--pipe", "--collect",
+			"--property=TimeoutStartSec=15",
+			"--setenv="+envPath,
+			bashPath, "-c",
+			fmt.Sprintf("systemctl is-active appliance-daemon && readlink -f /proc/$(systemctl show -p MainPID --value appliance-daemon)/exe | grep -q '%s'", binaryPath))
+		if hcOut, hcErr := checkCmd.CombinedOutput(); hcErr != nil {
+			log.Printf("[orders] HEALTH CHECK FAILED: new daemon not running from %s: %v\n%s", binaryPath, hcErr, string(hcOut))
+
+			// Rollback to last-known-good
+			if _, statErr := os.Stat(backupPath); statErr == nil {
+				log.Printf("[orders] ROLLING BACK to %s", backupPath)
+				_ = copyFile(backupPath, binaryPath)
+				rollbackCmd := exec.CommandContext(context.Background(), "systemd-run",
+					"--unit=msp-daemon-rollback-"+unitSuffix, "--collect",
+					"--property=TimeoutStartSec=30",
+					"--setenv="+envPath,
+					bashPath, "-c",
+					"systemctl restart appliance-daemon")
+				if rbOut, rbErr := rollbackCmd.CombinedOutput(); rbErr != nil {
+					log.Printf("[orders] Rollback restart failed: %v\n%s", rbErr, string(rbOut))
+				} else {
+					log.Printf("[orders] Rollback complete — daemon restarted with last-known-good binary")
+				}
+			} else {
+				log.Printf("[orders] No last-known-good binary to rollback to")
+			}
+		} else {
+			log.Printf("[orders] Health check passed — daemon running version %s from %s", version, binaryPath)
 		}
 	}()
 
@@ -1462,4 +1512,17 @@ Get-NetAdapter | ForEach-Object {
 
 	log.Printf("[orders] ISOLATE_HOST for %s: %d actions queued", hostname, len(actions))
 	return results, nil
+}
+
+// copyFile copies src to dst, preserving permissions.
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, info.Mode())
 }
