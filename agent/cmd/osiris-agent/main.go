@@ -327,6 +327,10 @@ func reconnectLoop(ctx context.Context, cfg *config.Config, client *transport.GR
 
 		log.Printf("[reconnect] Attempting gRPC reconnect to %s...", cfg.ApplianceAddr)
 		if err := client.Reconnect(ctx); err != nil {
+			client.RecordFailure()
+			errClass := transport.ClassifyConnectionError(err)
+			failures := client.ConsecutiveFailures()
+
 			// Detect TOFU pin mismatch — appliance may have regenerated its
 			// self-signed cert on restart. After threshold consecutive failures,
 			// clear the stale pin so the next attempt re-enrolls via TOFU.
@@ -342,13 +346,30 @@ func reconnectLoop(ctx context.Context, cfg *config.Config, client *transport.GR
 					continue
 				}
 			}
-			log.Printf("[reconnect] Failed: %v (retry in %s)", err, backoff)
+
+			// Detect cert expiry/rejection — after repeated auth failures,
+			// force cert re-enrollment (agent equivalent of appliance auto-rekey).
+			if errClass == "auth_rejected" || errClass == "tls_error" {
+				if client.NeedsCertReEnrollment() {
+					log.Printf("[reconnect] Auth rejected %d times — forcing cert re-enrollment", failures)
+					if reErr := client.ForceReEnrollment(); reErr != nil {
+						log.Printf("[reconnect] WARNING: cert re-enrollment prep failed: %v", reErr)
+					}
+					backoff = 5 * time.Second
+					continue
+				}
+			}
+
+			log.Printf("[reconnect] Failed (%s, consecutive=%d): %v (retry in %s)",
+				errClass, failures, err, backoff)
 			backoff = backoff * 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
 			}
 			continue
 		}
+
+		client.RecordSuccess()
 
 		// Connected — register and set up streams
 		regResp := tryRegisterAndSetup(ctx, client, upd)

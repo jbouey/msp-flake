@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -42,6 +43,68 @@ const pinMismatchAutoRecoverThreshold = 3
 // sentinel to trigger auto-recovery in the reconnect loop.
 var ErrPinMismatch = fmt.Errorf("TOFU certificate pin mismatch")
 
+// ErrCertExpired is returned when the agent's client certificate has expired
+// or been revoked, requiring re-enrollment.
+var ErrCertExpired = fmt.Errorf("client certificate expired or rejected")
+
+// ClassifyConnectionError categorizes a connection error for structured logging
+// and targeted recovery. Returns a short label for the error class.
+func ClassifyConnectionError(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	msg := err.Error()
+
+	if errors.Is(err, ErrPinMismatch) {
+		return "tls_pin_mismatch"
+	}
+	if errors.Is(err, ErrCertExpired) {
+		return "cert_expired"
+	}
+
+	// DNS failures
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		if dnsErr.IsNotFound {
+			return "dns_not_found"
+		}
+		return "dns_error"
+	}
+
+	// Connection refused — appliance is down but network is up
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if opErr.Op == "dial" {
+			if strings.Contains(msg, "connection refused") {
+				return "appliance_down"
+			}
+			if strings.Contains(msg, "no route to host") || strings.Contains(msg, "network is unreachable") {
+				return "network_down"
+			}
+		}
+	}
+
+	// Timeouts
+	if os.IsTimeout(err) || strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "context deadline") {
+		return "timeout"
+	}
+
+	// TLS errors
+	if strings.Contains(msg, "tls:") || strings.Contains(msg, "certificate") || strings.Contains(msg, "x509:") {
+		return "tls_error"
+	}
+
+	// gRPC status errors
+	if strings.Contains(msg, "Unavailable") {
+		return "appliance_unavailable"
+	}
+	if strings.Contains(msg, "PermissionDenied") || strings.Contains(msg, "Unauthenticated") {
+		return "auth_rejected"
+	}
+
+	return "unknown"
+}
+
 // GRPCClient manages the gRPC connection to the appliance
 type GRPCClient struct {
 	conn       *grpc.ClientConn
@@ -68,6 +131,45 @@ type GRPCClient struct {
 
 	// For fallback HTTP mode
 	httpEndpoint string
+
+	// consecutiveFailures tracks connection failures for structured diagnostics.
+	consecutiveFailures atomic.Int32
+}
+
+// ConsecutiveFailures returns the current consecutive failure count.
+func (c *GRPCClient) ConsecutiveFailures() int {
+	return int(c.consecutiveFailures.Load())
+}
+
+// RecordFailure increments the failure counter.
+func (c *GRPCClient) RecordFailure() {
+	c.consecutiveFailures.Add(1)
+}
+
+// RecordSuccess resets the failure counter.
+func (c *GRPCClient) RecordSuccess() {
+	c.consecutiveFailures.Store(0)
+}
+
+// NeedsCertReEnrollment returns true if the agent should attempt cert re-enrollment.
+// Triggered after repeated auth rejections (cert expired/revoked).
+func (c *GRPCClient) NeedsCertReEnrollment() bool {
+	return c.consecutiveFailures.Load() >= 5
+}
+
+// ForceReEnrollment deletes existing certs so the next connection attempt
+// triggers fresh enrollment via the TOFU flow.
+func (c *GRPCClient) ForceReEnrollment() error {
+	files := []string{c.config.CertFile, c.config.KeyFile}
+	for _, f := range files {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", f, err)
+		}
+	}
+	c.needsCerts = true
+	c.consecutiveFailures.Store(0)
+	log.Println("[gRPC] Deleted client certs for re-enrollment — next connect will request new certs")
+	return nil
 }
 
 // NewGRPCClient creates a new gRPC client. version is the agent's build version.
