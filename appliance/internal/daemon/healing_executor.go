@@ -304,6 +304,10 @@ func (d *Daemon) buildHealingSSHTarget(hostID string) *sshexec.Target {
 			pk := lt.PrivateKey
 			t.PrivateKey = &pk
 		}
+		if lt.SudoPassword != "" {
+			sp := lt.SudoPassword
+			t.SudoPassword = &sp
+		}
 		return t
 	}
 
@@ -331,6 +335,31 @@ func (d *Daemon) buildHealingSSHTarget(hostID string) *sshexec.Target {
 				if lt.Hostname == agent.IPAddress {
 					return buildFromLT(lt)
 				}
+			}
+		}
+	}
+
+	// 4. Netscan fallback — if credential IP changed via DHCP, the netscan may
+	// know the new IP. Check if any credential's hostname is an IP that the netscan
+	// has seen move, and use the discovered IP instead.
+	if d.netScan != nil {
+		if discoveredIP, ok := d.netScan.LookupDeviceByHostname(hostID); ok {
+			// Found the host in netscan — look up credentials by the discovered IP
+			for _, lt := range targets {
+				if lt.Hostname == discoveredIP {
+					log.Printf("[healing] Using netscan-discovered IP %s for %s (credential stored %s)",
+						discoveredIP, hostID, lt.Hostname)
+					return buildFromLT(lt)
+				}
+			}
+			// No credential at the discovered IP, but we can try connecting to it
+			// with the first available Linux credential
+			if len(targets) > 0 {
+				lt := targets[0]
+				lt.Hostname = discoveredIP
+				log.Printf("[healing] Using netscan-discovered IP %s for %s (borrowing creds from %s)",
+					discoveredIP, hostID, targets[0].Hostname)
+				return buildFromLT(lt)
 			}
 		}
 	}

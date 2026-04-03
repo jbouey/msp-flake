@@ -549,6 +549,53 @@ EOF
   };
 
   # ============================================================================
+  # DNS: Extra hosts + AD DNS from config.yaml (survives rebuilds)
+  # Reads "extra_hosts" map and "ad_dns_server" from config.yaml.
+  # Writes entries to /etc/hosts (replacing NixOS symlink if needed).
+  # Example config.yaml:
+  #   ad_dns_server: "192.168.88.250"
+  #   extra_hosts:
+  #     NVDC01: "192.168.88.250"
+  #     NVSRV01: "192.168.88.251"
+  # ============================================================================
+  systemd.services.msp-dns-hosts = {
+    description = "MSP DNS/Hosts from config.yaml";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+
+    path = with pkgs; [ yq coreutils gnused ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+
+    script = ''
+      CONFIG="/var/lib/msp/config.yaml"
+      [ -f "$CONFIG" ] || exit 0
+
+      # Read extra_hosts map from config.yaml
+      EXTRA_HOSTS=$(yq -r '.extra_hosts // {} | to_entries[] | .value + " " + .key' "$CONFIG" 2>/dev/null)
+      [ -z "$EXTRA_HOSTS" ] && exit 0
+
+      # Ensure /etc/hosts is a regular file (NixOS makes it a symlink)
+      if [ -L /etc/hosts ]; then
+        cp "$(readlink -f /etc/hosts)" /etc/hosts.tmp
+        rm /etc/hosts
+        mv /etc/hosts.tmp /etc/hosts
+      fi
+
+      # Remove old MSP-managed entries and append new ones
+      sed -i '/# MSP-MANAGED/d' /etc/hosts
+      echo "$EXTRA_HOSTS" | while read -r line; do
+        echo "$line # MSP-MANAGED" >> /etc/hosts
+      done
+
+      echo "Applied extra hosts from config.yaml"
+    '';
+  };
+
+  # ============================================================================
   # Persistent storage
   # ============================================================================
 

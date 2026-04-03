@@ -289,15 +289,15 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 				wsPass = wt.Password
 				connectHost = wt.Hostname // use the IP from credential if available
 			} else {
-				// Resolve hostname to IP and retry lookup
-				if addrs, err := net.DefaultResolver.LookupHost(ctx, hostname); err == nil && len(addrs) > 0 {
-					for _, addr := range addrs {
-						if wt2, ok2 := ds.svc.Targets.LookupWinTarget(addr); ok2 && wt2.Role != "domain_admin" {
-							wsUser = wt2.Username
-							wsPass = wt2.Password
-							connectHost = addr
-							break
-						}
+				// Resolve hostname to IP and retry lookup.
+				// Uses AD DNS fallback when system resolver can't find AD hostnames.
+				if resolved, err := resolveHostnameWithFallback(ctx, hostname, cfg.ADDNSServer); err == nil {
+					if wt2, ok2 := ds.svc.Targets.LookupWinTarget(resolved); ok2 && wt2.Role != "domain_admin" {
+						wsUser = wt2.Username
+						wsPass = wt2.Password
+						connectHost = resolved
+					} else {
+						connectHost = resolved
 					}
 				}
 			}
@@ -387,6 +387,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 
 	var allFindings []driftFinding
 	var scannedHosts []string
+	unreachableCount := 0
 
 	for _, t := range targets {
 		select {
@@ -405,6 +406,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		for i := range drifts {
 			if drifts[i].CheckType == "device_unreachable" {
 				wasUnreachable = true
+				unreachableCount++
 				// Feature 2: If unreachable host is domain-joined, log GPO hint.
 				// The next autodeploy cycle's ensureWinRMViaGPO() will handle enablement.
 				if ds.daemon.deployer != nil {
@@ -414,11 +416,36 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 					}
 				}
 			}
+		}
+
+		// Subnet-dark detection: if ≥80% of targets are unreachable (and ≥3 total),
+		// suppress individual device_unreachable incidents to prevent alert storms.
+		// Report a single "subnet_dark" finding instead.
+		subnetDark := len(targets) >= 3 && unreachableCount*100/len(targets) >= 80
+
+		for i := range drifts {
+			if drifts[i].CheckType == "device_unreachable" && subnetDark {
+				// Suppress individual unreachable — will be replaced by aggregate below
+				continue
+			}
 			ds.reportDrift(&drifts[i])
 		}
 		if !wasUnreachable {
 			ds.daemon.state.RecordSuccessfulScan(t.hostname)
 		}
+	}
+
+	// Report a single aggregate finding when subnet appears dark
+	if len(targets) >= 3 && unreachableCount*100/len(targets) >= 80 {
+		log.Printf("[driftscan] SUBNET DARK: %d/%d targets unreachable — suppressing individual incidents",
+			unreachableCount, len(targets))
+		ds.reportDrift(&driftFinding{
+			Hostname:     "network",
+			CheckType:    "subnet_dark",
+			Expected:     fmt.Sprintf("%d targets responding", len(targets)),
+			Actual:       fmt.Sprintf("%d/%d targets unreachable — possible network infrastructure issue", unreachableCount, len(targets)),
+			HIPAAControl: "164.312(a)(1)",
+		})
 	}
 
 	// Feature 1: Check for stale credentials — hosts that haven't had a
@@ -1750,4 +1777,35 @@ func dnsReResolve(ctx context.Context, credName, storedIP string) string {
 	log.Printf("[driftscan] DNS mismatch for credential %q: stored=%s, DNS=%s (possible DHCP change)",
 		credName, storedIP, addrs[0])
 	return addrs[0]
+}
+
+// resolveHostnameWithFallback resolves a hostname using the system resolver first,
+// then falls back to the AD DNS server if configured and the system resolver fails.
+// This handles the common case where the MikroTik router doesn't know AD hostnames.
+func resolveHostnameWithFallback(ctx context.Context, hostname, adDNSServer string) (string, error) {
+	// Try system resolver first
+	addrs, err := net.DefaultResolver.LookupHost(ctx, hostname)
+	if err == nil && len(addrs) > 0 {
+		return addrs[0], nil
+	}
+
+	// Fall back to AD DNS server if configured
+	if adDNSServer == "" {
+		return "", fmt.Errorf("resolve %s: %w (no AD DNS fallback configured)", hostname, err)
+	}
+
+	adResolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 5 * time.Second}
+			return d.DialContext(ctx, "udp", adDNSServer+":53")
+		},
+	}
+	addrs, err2 := adResolver.LookupHost(ctx, hostname)
+	if err2 != nil || len(addrs) == 0 {
+		return "", fmt.Errorf("resolve %s: system=%v, ad_dns=%v", hostname, err, err2)
+	}
+
+	log.Printf("[driftscan] Resolved %s via AD DNS (%s) → %s", hostname, adDNSServer, addrs[0])
+	return addrs[0], nil
 }

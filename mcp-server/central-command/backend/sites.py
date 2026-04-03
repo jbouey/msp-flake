@@ -4234,3 +4234,55 @@ async def remove_go_agent(site_id: str, agent_id: str, user: dict = Depends(requ
         """, agent_id)
 
         return {'status': 'success', 'agent_id': agent_id}
+
+
+# =============================================================================
+# CREDENTIAL IP UPDATE
+# =============================================================================
+
+@router.post("/credentials/{credential_id}/update-host")
+async def update_credential_host(
+    credential_id: str,
+    body: dict,
+    user: dict = Depends(require_auth),
+):
+    """Update the host/IP in a credential. Used when DHCP changes a device IP.
+
+    Body: {"new_host": "192.168.88.233"}
+    """
+    import json as _json
+    from .credential_crypto import decrypt_credential, encrypt_credential
+
+    new_host = body.get("new_host")
+    if not new_host:
+        raise HTTPException(status_code=400, detail="new_host is required")
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow("""
+            SELECT id, site_id, credential_name, encrypted_data
+            FROM site_credentials WHERE id = $1
+        """, credential_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Credential not found")
+
+        try:
+            cred_json = decrypt_credential(row["encrypted_data"])
+            cred_data = _json.loads(cred_json)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Failed to decrypt credential")
+
+        old_host = cred_data.get("host") or cred_data.get("target_host")
+        cred_data["host"] = new_host
+        if "target_host" in cred_data:
+            cred_data["target_host"] = new_host
+
+        new_encrypted = encrypt_credential(_json.dumps(cred_data))
+        await conn.execute("""
+            UPDATE site_credentials SET encrypted_data = $1, updated_at = NOW()
+            WHERE id = $2
+        """, new_encrypted, credential_id)
+
+        logger.info(f"Credential {credential_id} host updated: {old_host} → {new_host} by {user.get('username')}")
+
+    return {"status": "updated", "old_host": old_host, "new_host": new_host}

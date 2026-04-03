@@ -68,6 +68,11 @@ type Config struct {
 	// Feature flag for Go daemon rollout
 	UseGoDaemon bool `yaml:"use_go_daemon"`
 
+	// DNS: AD domain controller for hostname resolution fallback.
+	// When set, hostname lookups that fail against the system resolver
+	// are retried against this server (e.g., for NVDC01 → 192.168.88.250).
+	ADDNSServer string `yaml:"ad_dns_server"`
+
 	// Security: reject unsigned L1 rules when a server public key is configured
 	RequireSignedRules bool `yaml:"require_signed_rules"`
 

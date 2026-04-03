@@ -189,6 +189,11 @@ func (e *Executor) executeOnce(ctx context.Context, target *Target, script strin
 
 	var cmd string
 	if useSudo && target.Username != "root" {
+		// Warn if sudo is needed but no password is available — this will fail
+		// on hosts that require password-based sudo (most non-root users).
+		if target.SudoPassword == nil || *target.SudoPassword == "" {
+			log.Printf("[ssh] WARNING: sudo requested for %s@%s but no SudoPassword set — passwordless sudo required", target.Username, target.Hostname)
+		}
 		// Use `sudo env` to pass environment vars through sudo barrier.
 		// SYSTEMD_PAGER= prevents systemctl from paging output.
 		// DEBIAN_FRONTEND=noninteractive prevents apt/dpkg prompts.

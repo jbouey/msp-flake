@@ -108,7 +108,9 @@ async def _check_appliance_health():
         warn_appliances = await conn.fetch("""
             SELECT sa.appliance_id, sa.site_id, sa.hostname, sa.last_checkin,
                    sa.offline_since, sa.agent_version, sa.ip_addresses,
-                   s.clinic_name as site_name
+                   s.clinic_name as site_name,
+                   COALESCE(sa.auth_failure_count, 0) as auth_failure_count,
+                   sa.auth_failure_since
             FROM site_appliances sa
             LEFT JOIN sites s ON s.site_id = sa.site_id
             WHERE sa.offline_since IS NOT NULL
@@ -118,6 +120,10 @@ async def _check_appliance_health():
 
         for row in warn_appliances:
             minutes_offline = int((now - row["offline_since"]).total_seconds() / 60)
+            # Classify root cause for actionable alerts
+            root_cause = None
+            if row["auth_failure_count"] and row["auth_failure_count"] >= 3:
+                root_cause = "auth_failure"
             await _send_offline_notification(
                 conn=conn,
                 severity="warning",
@@ -128,6 +134,7 @@ async def _check_appliance_health():
                 last_checkin=row["last_checkin"],
                 minutes_offline=minutes_offline,
                 agent_version=row["agent_version"],
+                root_cause=root_cause,
             )
             # Mark as notified (warning sent)
             await conn.execute("""
@@ -208,6 +215,7 @@ async def _send_offline_notification(
     last_checkin: datetime,
     minutes_offline: int,
     agent_version: str,
+    root_cause: str = None,
 ):
     """Insert an offline notification into the notifications table."""
     import json
@@ -219,22 +227,28 @@ async def _send_offline_notification(
 
     site_label = site_name or site_id
 
+    # Root cause context for actionable alerts
+    cause_hint = ""
+    if root_cause == "auth_failure":
+        cause_hint = " Root cause: API key authentication failure — auto-rekey is in progress."
+
     if severity == "critical":
         title = f"CRITICAL: {hostname} offline for {duration_str}"
         message = (
             f"Appliance {hostname} at site {site_label} has been offline for {duration_str}. "
             f"Last check-in at {last_checkin.strftime('%Y-%m-%d %H:%M UTC')}. "
             f"Agent version: {agent_version}. "
-            f"Compliance monitoring and healing are suspended. Investigate immediately."
+            f"Compliance monitoring and healing are suspended.{cause_hint}"
         )
     else:
         title = f"Appliance {hostname} offline for {duration_str}"
         message = (
             f"Appliance {hostname} at site {site_label} has not checked in for {duration_str}. "
             f"Last check-in at {last_checkin.strftime('%Y-%m-%d %H:%M UTC')}. "
-            f"Agent version: {agent_version}. "
-            f"If the appliance does not recover within 2 hours, this will escalate to critical."
+            f"Agent version: {agent_version}.{cause_hint}"
         )
+        if not root_cause:
+            message += " If the appliance does not recover within 2 hours, this will escalate to critical."
 
     metadata = json.dumps({
         "appliance_id": appliance_id,
@@ -242,6 +256,7 @@ async def _send_offline_notification(
         "last_checkin": last_checkin.isoformat(),
         "minutes_offline": minutes_offline,
         "agent_version": agent_version,
+        "root_cause": root_cause,
     })
 
     # State-based dedup: update existing unread notification instead of creating duplicates
@@ -283,6 +298,9 @@ async def _send_offline_notification(
                 "agent_version": agent_version,
             },
             recommended_action=(
+                "Auto-rekey should resolve this automatically within minutes. "
+                "If it persists > 10 min, SSH to appliance and check /var/lib/msp/config.yaml."
+            ) if root_cause == "auth_failure" else (
                 "Check network connectivity and power status of the appliance. "
                 "If the appliance is unreachable, a site visit may be required."
             ),
@@ -551,7 +569,7 @@ async def _check_device_reachability():
             # Check dedup: don't re-notify within 24h
             existing = await conn.fetchval("""
                 SELECT 1 FROM notifications
-                WHERE category = 'device_unreachable'
+                WHERE category IN ('device_unreachable', 'network_outage')
                   AND site_id = $1
                   AND created_at > NOW() - INTERVAL '24 hours'
                 LIMIT 1
@@ -561,16 +579,45 @@ async def _check_device_reachability():
                 continue
 
             hosts = [h for h in (row["hosts"] or []) if h]
-            await conn.execute("""
-                INSERT INTO notifications (site_id, severity, category, title, message, metadata)
-                VALUES ($1, 'warning', 'device_unreachable', $2, $3, $4::jsonb)
-            """,
-                row["site_id"],
-                f"{row['unreachable_count']} device(s) unreachable at {row['clinic_name']}",
-                f"Devices not responding: {', '.join(hosts[:5])}",
-                json.dumps({"hosts": hosts, "count": row["unreachable_count"]}),
+
+            # Mass unreachable detection: if ≥50% of monitored devices at a site
+            # are unreachable, this is likely a network issue, not individual failures.
+            total_monitored = await conn.fetchval("""
+                SELECT COUNT(DISTINCT details->>'hostname')
+                FROM incidents
+                WHERE site_id = $1 AND created_at > NOW() - INTERVAL '24 hours'
+            """, row["site_id"]) or 1
+
+            is_mass_outage = (
+                row["unreachable_count"] >= 3
+                and row["unreachable_count"] * 100 / max(total_monitored, 1) >= 50
             )
-            logger.warning(f"[health] {row['unreachable_count']} unreachable devices at {row['clinic_name']}")
+
+            if is_mass_outage:
+                # Network infrastructure issue — single aggregate notification
+                await conn.execute("""
+                    INSERT INTO notifications (site_id, severity, category, title, message, metadata)
+                    VALUES ($1, 'warning', 'network_outage', $2, $3, $4::jsonb)
+                """,
+                    row["site_id"],
+                    f"Network outage suspected at {row['clinic_name']}",
+                    f"{row['unreachable_count']} devices unreachable simultaneously — "
+                    f"likely network infrastructure issue, not individual device failures. "
+                    f"Affected: {', '.join(hosts[:5])}",
+                    json.dumps({"hosts": hosts, "count": row["unreachable_count"], "likely_cause": "network_infrastructure"}),
+                )
+                logger.warning(f"[health] Network outage suspected at {row['clinic_name']}: {row['unreachable_count']} devices")
+            else:
+                await conn.execute("""
+                    INSERT INTO notifications (site_id, severity, category, title, message, metadata)
+                    VALUES ($1, 'warning', 'device_unreachable', $2, $3, $4::jsonb)
+                """,
+                    row["site_id"],
+                    f"{row['unreachable_count']} device(s) unreachable at {row['clinic_name']}",
+                    f"Devices not responding: {', '.join(hosts[:5])}",
+                    json.dumps({"hosts": hosts, "count": row["unreachable_count"]}),
+                )
+                logger.warning(f"[health] {row['unreachable_count']} unreachable devices at {row['clinic_name']}")
 
 
 async def _resolve_stale_incidents():
