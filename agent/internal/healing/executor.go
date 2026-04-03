@@ -47,6 +47,8 @@ func Execute(ctx context.Context, cmd *pb.HealCommand) *Result {
 		res = healWinRM(execCtx, cmd)
 	case "dns_service":
 		res = healDNS(execCtx, cmd)
+	case "windows_update":
+		res = healWindowsUpdate(execCtx, cmd)
 	default:
 		res = &Result{
 			CommandID: cmd.CommandId,
@@ -309,4 +311,62 @@ func saveBitLockerKey(protectorID, key string) error {
 	path := filepath.Join(bitlockerKeyDir, safe+".key")
 	content := fmt.Sprintf("Protector: %s\nRecoveryKey: %s\n", protectorID, key)
 	return os.WriteFile(path, []byte(content), 0600)
+}
+
+// healWindowsUpdate installs pending critical/security updates via Windows Update.
+// Uses the COM-based Windows Update Agent API (no external modules required).
+// Idempotent: if no updates are pending, reports success with no changes.
+func healWindowsUpdate(ctx context.Context, cmd *pb.HealCommand) *Result {
+	script := `
+try {
+    $Session = New-Object -ComObject Microsoft.Update.Session
+    $Searcher = $Session.CreateUpdateSearcher()
+    $SearchResult = $Searcher.Search("IsInstalled=0 and Type='Software' and IsHidden=0")
+
+    $Critical = @($SearchResult.Updates | Where-Object {
+        $_.MsrcSeverity -eq 'Critical' -or $_.MsrcSeverity -eq 'Important'
+    })
+
+    if ($Critical.Count -eq 0) {
+        Write-Output "NO_UPDATES_PENDING"
+        exit 0
+    }
+
+    $ToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
+    foreach ($u in $Critical) { $ToInstall.Add($u) | Out-Null }
+
+    $Downloader = $Session.CreateUpdateDownloader()
+    $Downloader.Updates = $ToInstall
+    $Downloader.Download() | Out-Null
+
+    $Installer = $Session.CreateUpdateInstaller()
+    $Installer.Updates = $ToInstall
+    $Result = $Installer.Install()
+    Write-Output "INSTALLED:$($Critical.Count) REBOOT:$($Result.RebootRequired)"
+} catch {
+    Write-Output "ERROR:$($_.Exception.Message)"
+    exit 1
+}
+`
+	out, err := runPS(ctx, script)
+	if err != nil {
+		return &Result{
+			CommandID: cmd.CommandId,
+			CheckType: cmd.CheckType,
+			Success:   false,
+			Error:     fmt.Sprintf("windows update failed: %v — %s", err, out),
+		}
+	}
+
+	artifacts := map[string]string{"output": out}
+	if strings.Contains(out, "REBOOT:True") {
+		artifacts["reboot_required"] = "true"
+	}
+
+	return &Result{
+		CommandID: cmd.CommandId,
+		CheckType: cmd.CheckType,
+		Success:   true,
+		Artifacts: artifacts,
+	}
 }

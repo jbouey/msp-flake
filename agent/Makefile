@@ -28,18 +28,17 @@ build-windows-nocgo:
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
 		go build $(LDFLAGS) -o bin/osiris-agent-nocgo.exe ./cmd/osiris-agent
 
-# Build for macOS (universal binary: amd64 + arm64)
-# Uses Go 1.22 if available — Go 1.26+ requires macOS 12 (SecTrustCopyCertificateChain).
-# Many healthcare Macs still run macOS 11 (Big Sur), so we need backwards compat.
-GO_DARWIN := $(shell which go1.22.12 2>/dev/null || echo "go")
+# Build for macOS (separate amd64 + arm64 binaries)
+# amd64: Go 1.24 (last version supporting macOS 11 Big Sur — no SecTrustCopyCertificateChain)
+# arm64: Go 1.26 (M-series Macs all run macOS 12+, so SecTrust is available)
+# Universal (lipo) binary not used — the manifest system serves the right arch per agent.
+GO_DARWIN_AMD64 := $(shell which go1.24.4 2>/dev/null || which go1.24.3 2>/dev/null || which go1.24.2 2>/dev/null || echo "go")
+GO_DARWIN_ARM64 := go
 build-darwin:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
-		$(GO_DARWIN) build $(LDFLAGS) -o bin/osiris-agent-darwin-amd64 ./cmd/osiris-agent
+		$(GO_DARWIN_AMD64) build $(LDFLAGS) -o bin/osiris-agent-darwin-amd64 ./cmd/osiris-agent
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
-		$(GO_DARWIN) build $(LDFLAGS) -o bin/osiris-agent-darwin-arm64 ./cmd/osiris-agent
-	lipo -create -output bin/osiris-agent-darwin \
-		bin/osiris-agent-darwin-amd64 bin/osiris-agent-darwin-arm64 2>/dev/null \
-		|| cp bin/osiris-agent-darwin-arm64 bin/osiris-agent-darwin
+		$(GO_DARWIN_ARM64) build $(LDFLAGS) -o bin/osiris-agent-darwin-arm64 ./cmd/osiris-agent
 
 # Build macOS .pkg installer
 build-pkg: build-darwin

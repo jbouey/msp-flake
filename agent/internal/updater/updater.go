@@ -132,6 +132,13 @@ func (u *Updater) CheckAndUpdate(ctx context.Context, updateVersion, updateURL, 
 
 	log.Printf("[updater] Download verified: SHA256=%s size OK", actualHash[:16])
 
+	// Validate binary matches current platform (prevents cross-platform update errors)
+	if err := validateBinaryPlatform(newPath); err != nil {
+		os.Remove(newPath)
+		u.recordFailure()
+		return fmt.Errorf("platform mismatch: %w", err)
+	}
+
 	// Apply the update (platform-specific rename + restart)
 	if err := u.applyUpdate(updateVersion, updateSHA256); err != nil {
 		u.recordFailure()
@@ -271,6 +278,13 @@ func (u *Updater) downloadBinary(ctx context.Context, url, destPath string) erro
 	}
 
 	log.Printf("[updater] Downloaded %d bytes to %s", n, destPath)
+
+	// Ensure binary is executable (os.Create defaults to 0666/umask)
+	if err := os.Chmod(destPath, 0755); err != nil {
+		os.Remove(destPath)
+		return fmt.Errorf("chmod +x: %w", err)
+	}
+
 	return nil
 }
 
@@ -294,4 +308,53 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// validateBinaryPlatform checks that a downloaded binary matches the current OS.
+// Returns nil if the binary is compatible, an error describing the mismatch otherwise.
+// This prevents cross-platform update errors (e.g., Windows PE on macOS).
+func validateBinaryPlatform(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open binary: %w", err)
+	}
+	defer f.Close()
+
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(f, magic); err != nil {
+		return fmt.Errorf("read magic: %w", err)
+	}
+
+	currentOS := runtime.GOOS
+	switch {
+	case magic[0] == 'M' && magic[1] == 'Z':
+		// PE (Windows) executable
+		if currentOS != "windows" {
+			return fmt.Errorf("binary is Windows PE but running on %s", currentOS)
+		}
+	case magic[0] == 0xCF && magic[1] == 0xFA && magic[2] == 0xED && magic[3] == 0xFE:
+		// Mach-O 64-bit little-endian (macOS)
+		if currentOS != "darwin" {
+			return fmt.Errorf("binary is macOS Mach-O but running on %s", currentOS)
+		}
+	case magic[0] == 0xFE && magic[1] == 0xED && magic[2] == 0xFA && magic[3] == 0xCF:
+		// Mach-O 64-bit big-endian (macOS)
+		if currentOS != "darwin" {
+			return fmt.Errorf("binary is macOS Mach-O but running on %s", currentOS)
+		}
+	case magic[0] == 0xCA && magic[1] == 0xFE && magic[2] == 0xBA && magic[3] == 0xBE:
+		// Mach-O universal/fat binary (macOS)
+		if currentOS != "darwin" {
+			return fmt.Errorf("binary is macOS universal but running on %s", currentOS)
+		}
+	case magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F':
+		// ELF (Linux)
+		if currentOS != "linux" {
+			return fmt.Errorf("binary is Linux ELF but running on %s", currentOS)
+		}
+	default:
+		return fmt.Errorf("unrecognized binary format (magic: %x)", magic)
+	}
+
+	return nil
 }

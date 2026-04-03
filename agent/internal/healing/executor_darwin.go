@@ -41,6 +41,10 @@ func Execute(ctx context.Context, cmd *pb.HealCommand) *Result {
 		res = healMacFileSharing(execCtx, cmd)
 	case "macos_gatekeeper":
 		res = healMacGatekeeper(execCtx, cmd)
+	case "macos_filevault":
+		res = healMacFileVault(execCtx, cmd)
+	case "macos_time_machine":
+		res = healMacTimeMachine(execCtx, cmd)
 	default:
 		res = &Result{
 			CommandID: cmd.CommandId,
@@ -171,5 +175,69 @@ func healMacGatekeeper(ctx context.Context, cmd *pb.HealCommand) *Result {
 		CommandID: cmd.CommandId,
 		CheckType: cmd.CheckType,
 		Success:   true,
+	}
+}
+
+// healMacFileVault enables FileVault using deferred enablement.
+// Deferred mode queues encryption for the next user login — no interactive password needed.
+// If already enabled, this is a no-op.
+func healMacFileVault(ctx context.Context, cmd *pb.HealCommand) *Result {
+	script := `FV_STATUS=$(fdesetup status 2>&1)
+if echo "$FV_STATUS" | grep -q "FileVault is On"; then
+    echo "FileVault already enabled"
+    exit 0
+fi
+# Attempt deferred enablement (queues for next login).
+# Requires institutional recovery key or MDM escrow to be pre-configured.
+if fdesetup enable -defer /var/db/FileVaultDeferred.plist -forcerestart 0 2>&1; then
+    echo "FileVault deferred enablement configured — will activate at next user login"
+else
+    echo "FileVault deferred enablement failed — requires MDM profile or manual setup"
+    exit 1
+fi`
+
+	out, err := runShell(ctx, script)
+	if err != nil {
+		return &Result{
+			CommandID: cmd.CommandId,
+			CheckType: cmd.CheckType,
+			Success:   false,
+			Error:     fmt.Sprintf("filevault enable failed: %v — %s", err, out),
+		}
+	}
+	return &Result{
+		CommandID: cmd.CommandId,
+		CheckType: cmd.CheckType,
+		Success:   true,
+		Artifacts: map[string]string{"output": out},
+	}
+}
+
+// healMacTimeMachine enables Time Machine if a backup destination is already configured.
+// Does NOT create or configure a backup destination (requires user interaction).
+func healMacTimeMachine(ctx context.Context, cmd *pb.HealCommand) *Result {
+	script := `DEST=$(tmutil destinationinfo 2>/dev/null)
+if [ -z "$DEST" ] || echo "$DEST" | grep -q "No destinations configured"; then
+    echo "No backup destination configured — cannot enable Time Machine without a target disk"
+    exit 1
+fi
+tmutil enable
+defaults write /Library/Preferences/com.apple.TimeMachine AutoBackup -bool true
+echo "Time Machine enabled with auto-backup"`
+
+	out, err := runShell(ctx, script)
+	if err != nil {
+		return &Result{
+			CommandID: cmd.CommandId,
+			CheckType: cmd.CheckType,
+			Success:   false,
+			Error:     fmt.Sprintf("time machine enable failed: %v — %s", err, out),
+		}
+	}
+	return &Result{
+		CommandID: cmd.CommandId,
+		CheckType: cmd.CheckType,
+		Success:   true,
+		Artifacts: map[string]string{"output": out},
 	}
 }

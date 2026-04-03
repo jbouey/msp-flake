@@ -1,13 +1,13 @@
 {
-  "session": 191,
-  "updated": "2026-04-03T00:48:16.358008Z",
+  "session": 193,
+  "updated": "2026-04-03T13:39:57.945967Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "redesigned_hero_compliance_merged_attention_sidebar_sections_dark_badges",
-    "physical_appliance": "go_daemon_v0.3.65_push_agents_live_bom_fix_polkit_fix",
+    "physical_appliance": "go_daemon_v0.3.76_auto_rekey_12pt_hardening_subnet_dark_ad_dns",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
@@ -27,11 +27,106 @@
     "compliance_infographic": "client_portal_plus_admin_sitedetail_clickthrough_to_incidents_category_filter",
     "l4_escalation": "partner_escalate_to_l4_admin_queue_recurrence_detection_migration_077",
     "portal_auth": "email_password_login_all_portals_totp_2fa_all_portals_security_hardened",
-    "macos_scanning": "scan_timer_fixed_wol_added_credential_delivery_fixed_pending_tls_pin_clear",
+    "macos_scanning": "agent_v0.4.2_live_9pass_3fail_tls_reenrolled_manifest_registered_go124_compat",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "None. v0.3.74. Fleet update has backup+healthcheck+rollback. Both appliances online.",
+  "current_blocker": "MikroTik DHCP reservations need admin creds. iMac SSH port 2222 still broken (use reverse tunnel via VPS:2250).",
+  "session_193_work": {
+    "commits": 5,
+    "daemon_version": "0.3.76",
+    "agent_version": "0.4.2",
+    "summary": "Appliance offline → auto-rekey → 12-point hardening → agent error classification → network diagnosis → chaos lab fix → iMac agent recovery",
+    "incident_diagnosis": [
+      "Appliance .241 reported offline \u2014 DHCP assigned new IP .235 after reboot",
+      "Root cause: API key mismatch (401) not IP change",
+      "ARP scan from Mac found appliance at .235 via MAC 7C:D3:0A:7C:55:18",
+      "Manual rekey restored checkins immediately"
+    ],
+    "auto_rekey_feature": [
+      "BACKEND: POST /api/provision/rekey \u2014 unauthenticated, MAC+site_id+hardware_id identity",
+      "BACKEND: shared.py tracks auth_failure_count on site_appliances for known appliances",
+      "BACKEND: calculate_live_status() returns 'auth_failed' on 3+ consecutive failures",
+      "BACKEND: health_monitor alerts on 5+ consecutive auth failures",
+      "DAEMON: ErrAuthFailed typed error from Checkin() on 401",
+      "DAEMON: attemptRekey() after 3 consecutive 401s \u2014 calls /api/provision/rekey",
+      "DAEMON: UpdateAPIKey() atomically writes new key to config.yaml",
+      "DAEMON: classifyConnectivityError() returns 'auth_failed' for 401s",
+      "FRONTEND: 'auth_failed' status badge (orange) in status.ts + copy.ts",
+      "MIGRATION 118: auth_failure_since, auth_failure_count, last_auth_failure on site_appliances",
+      "CSRF: /api/provision/ prefix exempted (machine-to-machine)",
+      "AUDIT: rekey events logged to audit_log"
+    ],
+    "security_model": "Same trust model as initial provisioning \u2014 MAC+site_id+hardware_id. Rate limited 1/hour. Old keys deactivated on rekey.",
+    "fleet_order": "v0.3.75 fleet order active (ID: 46139006), expires 2026-04-04"
+  },
+  "session_193_hardening": {
+    "p0_fixes": [
+      "healing_executor: SudoPassword propagation (unblocks all Linux healing)",
+      "health_monitor: root cause classification in offline alerts (auth_failure vs network)"
+    ],
+    "p1_fixes": [
+      "sshexec: warn when sudo requested without SudoPassword",
+      "driftscan: ad_dns_server fallback resolver for AD hostnames (fixes NXDOMAIN)",
+      "driftscan: subnet-dark detection — single incident when ≥80% targets unreachable",
+      "healing_executor: netscan IP fallback — healing survives DHCP changes"
+    ],
+    "p2_fixes": [
+      "device_sync: credential IP auto-update for ssh_key + org_credentials (was WinRM only)",
+      "appliance-disk-image.nix: msp-dns-hosts systemd service (survives rebuilds)",
+      "sites.py: POST /credentials/{id}/update-host endpoint (one-click IP fix)",
+      "health_monitor: network_outage detection — mass unreachable → single notification"
+    ],
+    "agent_hardening": [
+      "transport/grpc.go: ClassifyConnectionError() — 10 error categories",
+      "transport/grpc.go: consecutive failure counter + NeedsCertReEnrollment()",
+      "transport/grpc.go: ForceReEnrollment() — deletes stale certs for TOFU re-enrollment",
+      "main.go: structured reconnect logging with error class + cert auto-recovery"
+    ],
+    "network_fixes": [
+      "Linux VM .236→.233: credential updated, promiscuous mode fixed",
+      "NVDC01 DNS: /etc/hosts entry + ad_dns_server in config.yaml",
+      "CI/CD: new deploy SSH keypair, deploys green",
+      "NV appliance: API key restored, v0.3.76 deployed"
+    ]
+  },
+  "session_193_chaos_lab_and_agent": {
+    "chaos_lab_fixes": [
+      "IP updates: .246→.235 (appliance), .242→.233 (linux) in 3 scripts",
+      "Service name: compliance-agent→appliance-daemon in cadence + chaos_lab.sh",
+      "SSH host key: cleared stale .246, added .235 on iMac known_hosts",
+      "Cadence script: complete rewrite for Go daemon log patterns (8 regex patterns, 7 checks)"
+    ],
+    "imac_agent_root_causes": [
+      "Binary was Windows PE32+ (updater downloaded osiris-agent.exe from appliance HTTP, wrong platform)",
+      "updater.go bug: os.Create() → 0644 perms, missing os.Chmod(0755) after download",
+      "Config+plist pointed to old appliance IP .241 (should be .235)",
+      "Stale TLS certs from old appliance CA (pre-DHCP change)",
+      "Go 1.26 binary requires macOS 12+, iMac runs 11.7 (SecTrustCopyCertificateChain)"
+    ],
+    "imac_agent_fixes": [
+      "FIX: updater.go — os.Chmod(destPath, 0755) after download",
+      "FIX: config.json + plist → .235:50051",
+      "FIX: cleared stale TLS certs, TOFU re-enrolled",
+      "BUILD: amd64 with Go 1.24.4 (macOS 11+ compat), arm64 with Go 1.26 (M-series)",
+      "DEPLOY: both darwin binaries to appliance /var/lib/msp/bin/, manifest registered",
+      "DEPLOY: v0.4.2 running on iMac, registered, drift streaming",
+      "TEST: 12 new updater tests (chmod, SHA256, HTTP errors, concurrency, backoff)",
+      "Makefile: updated for split Go toolchains (Go 1.24 amd64, Go 1.26 arm64)"
+    ],
+    "verified": [
+      "Chaos lab cadence: 6/6 checks PASSED",
+      "iMac agent v0.4.2: 9 pass, 3 fail (screen_lock, firewall, time_machine)",
+      "Appliance manifest: darwin/amd64 + darwin/arm64 registered",
+      "Go agent tests: 4 packages, 0 failures"
+    ]
+  },
+  "test_results_193": {
+    "go_daemon": "18 packages passed, 0 failures (v0.3.76)",
+    "go_agent": "4 packages passed, 0 failures (checks, transport, updater, wmi)",
+    "python_backend": "1160 passed, 33 pre-existing failures (ModuleNotFoundError)",
+    "frontend": "tsc 0 errors"
+  },
   "session_192_work": {
     "commits": 39,
     "daemon_version": "0.3.66",
@@ -396,41 +491,7 @@
     "VERIFIED: 292 Python tests pass, 18 Go packages pass, 0 failures",
     "DEPLOY: 2 commits pushed, VPS container rebuilt, migration applied"
   ],
-  "completed_this_session": [
-    "FIX: 3 wrong credential IPs + Fernet encryption + fail-fast on missing key",
-    "FIX: SSH session leak + mutex deadlock (3-phase lock/unlock in getConnection)",
-    "FIX: SSH getConnection 5s timeout on half-open NewSession",
-    "FIX: TLS TOFU auto-recovery (3-strike pin clear)",
-    "FIX: isKnownTarget missing gRPC registry check for Windows (86 failures)",
-    "FIX: Go agent check types unmapped: screen_lock, bitlocker L1 rules added",
-    "FIX: config.json UTF-8 BOM \u2014 root cause of ALL Go agent gRPC failures since Mar 24",
-    "FIX: Linux sudo polkit \u2014 SYSTEMD_PAGER + DEBIAN_FRONTEND via sudo env",
-    "FIX: wuauserv StartType Automatic + runbook updated",
-    "FIX: BitLocker TPM-less VM fallback + screen_lock InactivityTimeoutSecs",
-    "FIX: firewall_dangerous_rules two-pass runbook",
-    "FIX: Chaos lab cron replaced \u2014 telemetry-based reports, no snapshot restores",
-    "FIX: DC VM snapshot deleted (was destroying production twice daily)",
-    "FIX: Windows service recovery (restart 5/10/30s on failure)",
-    "FIX: autodeploy config.json BOM prevention (WriteAllText no BOM)",
-    "FIX: compliance-packet POST\u2192GET for CSRF",
-    "FEAT: Startup credential probe + error classification (6 categories)",
-    "FEAT: Adaptive scan interval (5min for drifting hosts)",
-    "FEAT: Healing rate tracker + production healing report script",
-    "FEAT: Agent health + healing telemetry + target health APIs",
-    "FEAT: PipelineHealth.tsx operational dashboard + sidebar nav",
-    "FEAT: Chaos quicktest (inject\u2192detect\u2192heal from dashboard)",
-    "FEAT: Agent auto-update via heartbeat version check",
-    "FEAT: Healing SLA background task + email alerting",
-    "FEAT: Compliance evidence packet endpoint",
-    "INFRA: Go agents as Windows services with gRPC push (BOM fixed)",
-    "INFRA: Reverse SSH tunnel to iMac (permanent LaunchDaemon)",
-    "INFRA: Fernet key backed up",
-    "INFRA: MikroTik HW offload disabled (didn't fix WiFi but cleaned up)",
-    "INFRA: Rollback binaries preserved on VPS (v0.3.46-v0.3.65)",
-    "ROOT CAUSE: UTF-8 BOM in config.json broke Go agent gRPC since Mar 24",
-    "ROOT CAUSE: Ubuntu polkit blocks systemctl in non-interactive sudo sessions",
-    "ROOT CAUSE: macOS Big Sur WiFi drops all inbound TCP (not router)"
-  ],
+  "completed_this_session": [],
   "session_189_earlier": [
     "AUDIT: Full production healing pipeline audit (DB queries, docker logs, code trace)",
     "FIX: Removed bitlocker, bitlocker_status, screen_lock, screen_lock_policy, backup_status from MONITORING_ONLY (main.py + agent_api.py)",
