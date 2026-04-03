@@ -527,12 +527,15 @@ async def get_pending_orders(site_id: str, appliance_id: str):
 # SITE LISTING ENDPOINTS
 # =============================================================================
 
-def calculate_live_status(last_checkin):
-    """Calculate live status based on last checkin time."""
+def calculate_live_status(last_checkin, auth_failure_count=0):
+    """Calculate live status based on last checkin time and auth state."""
     if last_checkin is None:
         return 'pending'
     now = datetime.now(timezone.utc)
     age = now - last_checkin
+    # Auth failures take priority — appliance is reaching us but can't authenticate
+    if auth_failure_count and auth_failure_count >= 3 and age >= timedelta(minutes=5):
+        return 'auth_failed'
     if age < timedelta(minutes=15):
         return 'online'
     elif age < timedelta(hours=1):
@@ -564,6 +567,7 @@ async def list_sites(
                 MIN(sa.first_checkin) as created_at,
                 MAX(sa.last_checkin) as updated_at,
                 array_agg(DISTINCT COALESCE(sa.status, 'pending')) as statuses,
+                COALESCE(MAX(sa.auth_failure_count), 0) as auth_failure_count,
                 s.clinic_name,
                 s.tier,
                 s.onboarding_stage,
@@ -598,10 +602,10 @@ async def list_sites(
 
         # Build site objects and compute live_status in Python (depends on time calc)
         all_sites = []
-        status_counts = {"online": 0, "stale": 0, "offline": 0, "pending": 0}
+        status_counts = {"online": 0, "stale": 0, "offline": 0, "pending": 0, "auth_failed": 0}
         for row in rows:
             last_checkin = row['last_checkin']
-            live_status = calculate_live_status(last_checkin)
+            live_status = calculate_live_status(last_checkin, row.get('auth_failure_count', 0))
             status_counts[live_status] = status_counts.get(live_status, 0) + 1
 
             # Filter by status if provided
@@ -665,10 +669,11 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
     async with tenant_connection(pool, site_id=site_id) as conn:
         # Get appliances for this site
         appliance_rows = await conn.fetch("""
-            SELECT 
+            SELECT
                 appliance_id, hostname, mac_address, ip_addresses,
                 agent_version, nixos_version, status, first_checkin,
-                last_checkin, uptime_seconds
+                last_checkin, uptime_seconds,
+                COALESCE(auth_failure_count, 0) as auth_failure_count
             FROM site_appliances
             WHERE site_id = $1
             ORDER BY hostname
@@ -699,8 +704,8 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
                 if earliest_checkin is None or first_checkin < earliest_checkin:
                     earliest_checkin = first_checkin
             
-            live_status = calculate_live_status(last_checkin)
-            
+            live_status = calculate_live_status(last_checkin, row.get('auth_failure_count', 0))
+
             appliances.append({
                 'appliance_id': row['appliance_id'],
                 'hostname': row['hostname'],
@@ -714,9 +719,10 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
                 'last_checkin': last_checkin.isoformat() if last_checkin else None,
                 'uptime_seconds': row['uptime_seconds'],
             })
-        
-        # Determine overall site live status
-        live_status = calculate_live_status(latest_checkin)
+
+        # Determine overall site live status (worst case from appliances)
+        max_auth_failures = max((a.get('auth_failure_count', 0) for a in appliance_rows), default=0) if appliance_rows else 0
+        live_status = calculate_live_status(latest_checkin, max_auth_failures)
 
         # Fetch credentials (without exposing passwords)
         cred_rows = await conn.fetch("""
@@ -1183,16 +1189,17 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 agent_version, nixos_version, status, first_checkin,
                 last_checkin, uptime_seconds,
                 COALESCE(l2_mode, 'auto') as l2_mode,
-                offline_since
+                offline_since,
+                COALESCE(auth_failure_count, 0) as auth_failure_count
             FROM site_appliances
             WHERE site_id = $1
             ORDER BY hostname
         """, site_id)
-        
+
         appliances = []
         for row in rows:
             last_checkin = row['last_checkin']
-            live_status = calculate_live_status(last_checkin)
+            live_status = calculate_live_status(last_checkin, row.get('auth_failure_count', 0))
             
             appliances.append({
                 'appliance_id': row['appliance_id'],

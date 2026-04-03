@@ -20,6 +20,9 @@ type Config struct {
 	// API connection
 	APIEndpoint string `yaml:"api_endpoint"`
 
+	// ConfigPath is the file path this config was loaded from (set by LoadConfig, not YAML).
+	ConfigPath string `yaml:"-"`
+
 	// Timing
 	PollInterval int `yaml:"poll_interval"` // seconds
 
@@ -144,7 +147,40 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.PollInterval = 3600
 	}
 
+	cfg.ConfigPath = path
 	return &cfg, nil
+}
+
+// UpdateAPIKey atomically updates the api_key in the config YAML file.
+// Writes to a temp file then renames to avoid partial writes.
+func UpdateAPIKey(path string, newKey string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read config for rekey: %w", err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "api_key:") {
+			lines[i] = "api_key: " + newKey
+			found = true
+			break
+		}
+	}
+	if !found {
+		lines = append(lines, "api_key: "+newKey)
+	}
+
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename config: %w", err)
+	}
+	return nil
 }
 
 // EvidenceDir returns the evidence storage directory.

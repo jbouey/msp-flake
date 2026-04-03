@@ -68,6 +68,13 @@ async def health_monitor_loop():
         except Exception as e:
             logger.error(f"Stale incident cleanup error: {e}", exc_info=True)
 
+        try:
+            await _check_auth_failures()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Auth failure check error: {e}", exc_info=True)
+
         await asyncio.sleep(300)  # Every 5 minutes
 
 
@@ -648,3 +655,53 @@ async def _resolve_stale_incidents():
                                 to_site=t["to_site"])
         except Exception as e:
             logger.debug(f"Device ownership transfer check: {e}")
+
+
+async def _check_auth_failures():
+    """Detect appliances with persistent auth failures and send alerts."""
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+    now = datetime.now(timezone.utc)
+
+    async with admin_connection(pool) as conn:
+        # Find appliances with 5+ auth failures that haven't been alerted yet
+        failing = await conn.fetch("""
+            SELECT sa.appliance_id, sa.site_id, sa.hostname,
+                   sa.auth_failure_count, sa.auth_failure_since,
+                   s.clinic_name as site_name
+            FROM site_appliances sa
+            LEFT JOIN sites s ON s.site_id = sa.site_id
+            WHERE sa.auth_failure_count >= 5
+              AND sa.auth_failure_since IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM notifications n
+                  WHERE n.site_id = sa.site_id
+                    AND n.category = 'appliance_auth_failed'
+                    AND n.created_at > sa.auth_failure_since
+              )
+        """)
+
+        for row in failing:
+            minutes_failing = int((now - row["auth_failure_since"]).total_seconds() / 60)
+            severity = "critical" if minutes_failing >= 30 else "warning"
+            site_name = row["site_name"] or row["site_id"]
+
+            await conn.execute("""
+                INSERT INTO notifications (
+                    site_id, category, severity, title, message, created_at
+                ) VALUES ($1, 'appliance_auth_failed', $2, $3, $4, NOW())
+            """,
+                row["site_id"],
+                severity,
+                f"Appliance auth failure: {row['hostname'] or row['appliance_id']}",
+                f"Appliance {row['hostname'] or row['appliance_id']} at {site_name} "
+                f"has failed authentication {row['auth_failure_count']} times "
+                f"over {minutes_failing} minutes. The API key may be invalid. "
+                f"Auto-rekey should resolve this automatically.",
+            )
+            logger.warning(
+                f"Auth failure alert: {row['appliance_id']} "
+                f"({row['auth_failure_count']} failures, {minutes_failing}min)"
+            )

@@ -85,6 +85,14 @@ class ProvisionStatusRequest(BaseModel):
     message: Optional[str] = None
 
 
+class RekeyRequest(BaseModel):
+    """Request to re-key an appliance that lost its API key."""
+    site_id: str
+    mac_address: str
+    hostname: Optional[str] = None
+    hardware_id: Optional[str] = None
+
+
 class HeartbeatRequest(BaseModel):
     """Heartbeat from provisioning appliance."""
     mac_address: str
@@ -601,3 +609,109 @@ async def get_appliance_config(appliance_id: str):
             "clinic_name": appliance['clinic_name'],
             "config": config,
         }
+
+
+# =============================================================================
+# REKEY — Auto-recovery when appliance loses its API key
+# =============================================================================
+
+# In-memory rate limit: {appliance_id: last_rekey_time}
+_rekey_cooldowns: dict[str, float] = {}
+REKEY_COOLDOWN_SECONDS = 3600  # 1 hour
+
+@router.post("/rekey")
+async def rekey_appliance(req: RekeyRequest, request: Request):
+    """Re-key an appliance that has a mismatched API key.
+
+    Trust model: same as initial provisioning — MAC + site_id identify the
+    appliance. hardware_id is verified if available in the DB.
+    Rate limited to 1 rekey per appliance per hour.
+    """
+    import hashlib
+
+    pool = await get_pool()
+    mac_normalized = normalize_mac(req.mac_address)
+    appliance_id = f"{req.site_id}-{mac_normalized}"
+
+    # Rate limit check
+    last_rekey = _rekey_cooldowns.get(appliance_id, 0)
+    if time.time() - last_rekey < REKEY_COOLDOWN_SECONDS:
+        remaining = int(REKEY_COOLDOWN_SECONDS - (time.time() - last_rekey))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rekey rate limited. Retry in {remaining}s"
+        )
+
+    async with admin_connection(pool) as conn:
+        # Verify appliance exists and was previously provisioned
+        appliance = await conn.fetchrow("""
+            SELECT sa.appliance_id, sa.site_id, sa.first_checkin, sa.mac_address,
+                   s.hardware_id
+            FROM site_appliances sa
+            LEFT JOIN sites s ON s.site_id = sa.site_id
+            WHERE sa.appliance_id = $1
+              AND sa.site_id = $2
+        """, appliance_id, req.site_id)
+
+        if not appliance:
+            logger.warning(f"Rekey rejected: unknown appliance {appliance_id}")
+            raise HTTPException(status_code=404, detail="Unknown appliance")
+
+        if not appliance['first_checkin']:
+            logger.warning(f"Rekey rejected: appliance {appliance_id} never provisioned")
+            raise HTTPException(status_code=404, detail="Appliance not provisioned")
+
+        # Verify hardware_id if stored and provided
+        if appliance['hardware_id'] and req.hardware_id:
+            if appliance['hardware_id'] != req.hardware_id:
+                logger.warning(
+                    f"Rekey rejected: hardware_id mismatch for {appliance_id} "
+                    f"(expected={appliance['hardware_id']}, got={req.hardware_id})"
+                )
+                raise HTTPException(status_code=403, detail="Hardware ID mismatch")
+
+        # Generate new API key
+        raw_api_key = secrets.token_urlsafe(32)
+        api_key_hash = hashlib.sha256(raw_api_key.encode()).hexdigest()
+
+        # Deactivate old keys for this site
+        deactivated = await conn.execute("""
+            UPDATE api_keys SET active = false
+            WHERE site_id = $1 AND active = true
+        """, req.site_id)
+        logger.info(f"Rekey: deactivated old keys for {req.site_id}: {deactivated}")
+
+        # Insert new key
+        await conn.execute("""
+            INSERT INTO api_keys (site_id, key_hash, key_prefix, description, active, created_at)
+            VALUES ($1, $2, $3, 'Auto-rekeyed after auth failure', true, NOW())
+        """, req.site_id, api_key_hash, raw_api_key[:8])
+
+        # Clear auth failure tracking
+        await conn.execute("""
+            UPDATE site_appliances
+            SET auth_failure_since = NULL,
+                auth_failure_count = 0,
+                last_auth_failure = NULL
+            WHERE appliance_id = $1
+        """, appliance_id)
+
+        # Audit log
+        client_ip = request.client.host if request.client else None
+        await conn.execute("""
+            INSERT INTO audit_log (action, actor, details, ip_address, created_at)
+            VALUES ('appliance.rekeyed', $1, $2, $3, NOW())
+        """,
+            appliance_id,
+            f"Auto-rekeyed for site {req.site_id} (MAC={mac_normalized})",
+            client_ip,
+        )
+
+    _rekey_cooldowns[appliance_id] = time.time()
+    logger.info(f"Rekey successful: {appliance_id} (site={req.site_id})")
+
+    return {
+        "status": "rekeyed",
+        "api_key": raw_api_key,
+        "appliance_id": appliance_id,
+    }

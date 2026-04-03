@@ -62,6 +62,13 @@ const STATUS_MAP: Record<string, StatusConfig> = {
     dotColor: 'bg-label-tertiary',
     type: 'neutral',
   },
+  auth_failed: {
+    label: STATUS_LABELS.auth_failed,
+    color: 'text-ios-orange',
+    bgColor: 'bg-orange-100 dark:bg-orange-900/20',
+    dotColor: 'bg-ios-orange',
+    type: 'warning',
+  },
 
   // Compliance statuses
   pass: {

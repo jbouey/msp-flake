@@ -24,6 +24,10 @@ import (
 	"github.com/osiriscare/appliance/internal/phiscrub"
 )
 
+// ErrAuthFailed is returned when the server responds with 401 (API key mismatch).
+// The daemon uses this to trigger the auto-rekey flow.
+var ErrAuthFailed = errors.New("authentication failed")
+
 // PhoneHomeClient handles communication with Central Command.
 type PhoneHomeClient struct {
 	config              *Config
@@ -357,6 +361,9 @@ func (c *PhoneHomeClient) Checkin(ctx context.Context, req *CheckinRequest) (*Ch
 		if c.consecutiveFailures >= c.maxFailuresBeforeReset {
 			c.RecreateClient()
 		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w: checkin returned %d: %s", ErrAuthFailed, resp.StatusCode, string(respBody))
+		}
 		return nil, fmt.Errorf("checkin returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -476,12 +483,90 @@ func classifyConnectivityError(err error) string {
 		return "tls_error"
 	}
 
+	// Auth failure (401)
+	if errors.Is(err, ErrAuthFailed) || strings.Contains(msg, "returned 401") {
+		return "auth_failed"
+	}
+
 	// HTTP status codes (embedded in error message)
 	if strings.Contains(msg, "returned 5") {
 		return "server_error"
 	}
 
 	return "unknown"
+}
+
+// rekeyRequest is the JSON body for POST /api/provision/rekey.
+type rekeyRequest struct {
+	SiteID     string `json:"site_id"`
+	MACAddress string `json:"mac_address"`
+	Hostname   string `json:"hostname,omitempty"`
+	HardwareID string `json:"hardware_id,omitempty"`
+}
+
+// rekeyResponse is the JSON response from /api/provision/rekey.
+type rekeyResponse struct {
+	Status      string `json:"status"`
+	APIKey      string `json:"api_key"`
+	ApplianceID string `json:"appliance_id"`
+}
+
+// RequestRekey calls the rekey endpoint to get a new API key.
+// This is used when the daemon detects persistent 401 auth failures.
+func (c *PhoneHomeClient) RequestRekey(ctx context.Context) (*rekeyResponse, error) {
+	hostname := getHostname()
+	mac := getMACAddress()
+	hwID := getHardwareID()
+
+	reqBody := rekeyRequest{
+		SiteID:     c.config.SiteID,
+		MACAddress: mac,
+		Hostname:   hostname,
+		HardwareID: hwID,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal rekey request: %w", err)
+	}
+
+	url := strings.TrimRight(c.config.APIEndpoint, "/") + "/api/provision/rekey"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create rekey request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", "OsirisCare-Appliance/Go")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("rekey request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read rekey response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("rekey returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result rekeyResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("parse rekey response: %w", err)
+	}
+	return &result, nil
+}
+
+// getHardwareID reads the SMBIOS/DMI product UUID.
+func getHardwareID() string {
+	data, err := os.ReadFile("/sys/class/dmi/id/product_uuid")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // SystemInfo gathers system information for the checkin request.

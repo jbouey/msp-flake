@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -134,6 +135,12 @@ type Daemon struct {
 
 	// startTime tracks daemon boot for uptime reporting
 	startTime time.Time
+
+	// consecutiveAuthFailures tracks persistent 401s for auto-rekey
+	consecutiveAuthFailures int
+
+	// configPath is the path to config.yaml (for atomic API key updates)
+	configPath string
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
@@ -150,6 +157,37 @@ func (d *Daemon) safeGo(name string, f func()) {
 		}()
 		f()
 	}()
+}
+
+// attemptRekey requests a new API key from Central Command when persistent
+// 401 auth failures indicate the current key is invalid. On success, updates
+// both the in-memory config and the config.yaml file atomically.
+func (d *Daemon) attemptRekey(ctx context.Context) {
+	log.Printf("[daemon] AUTH FAILED %d consecutive times — requesting rekey from Central Command",
+		d.consecutiveAuthFailures)
+
+	resp, err := d.phoneCli.RequestRekey(ctx)
+	if err != nil {
+		log.Printf("[daemon] Rekey failed: %v", err)
+		return
+	}
+
+	// Update config.yaml on disk
+	configPath := d.config.ConfigPath
+	if configPath == "" {
+		configPath = "/var/lib/msp/config.yaml"
+	}
+	if err := UpdateAPIKey(configPath, resp.APIKey); err != nil {
+		log.Printf("[daemon] Rekey: failed to update config file: %v", err)
+		return
+	}
+
+	// Update in-memory config and recreate HTTP client with new key
+	d.config.APIKey = resp.APIKey
+	d.phoneCli = NewPhoneHomeClient(d.config)
+	d.consecutiveAuthFailures = 0
+
+	log.Printf("[daemon] Rekey successful — new API key written to %s, client recreated", configPath)
 }
 
 // isSubscriptionActive returns true if healing should be allowed.
@@ -616,8 +654,19 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	if err != nil {
 		d.serverBreaker.RecordFailure()
 		failures := d.phoneCli.ConsecutiveFailures()
+		errClass := classifyConnectivityError(err)
 		log.Printf("[daemon] Checkin failed (%s, consecutive=%d, circuit=%s): %v",
-			classifyConnectivityError(err), failures, d.serverBreaker.State(), err)
+			errClass, failures, d.serverBreaker.State(), err)
+
+		// Auto-rekey: if we're getting persistent 401s, request a new API key
+		if errors.Is(err, ErrAuthFailed) {
+			d.consecutiveAuthFailures++
+			if d.consecutiveAuthFailures >= 3 {
+				d.attemptRekey(ctx)
+			}
+		} else {
+			d.consecutiveAuthFailures = 0
+		}
 
 		// Fallback: poll for fleet orders directly when checkin is broken
 		if failures >= 1 && d.orderProc.ApplianceID() != "" {
@@ -630,6 +679,7 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	}
 
 	d.serverBreaker.RecordSuccess()
+	d.consecutiveAuthFailures = 0
 
 	// Drain cached evidence bundles on successful checkin (CC is reachable)
 	if d.evidenceSubmitter != nil {

@@ -23,6 +23,7 @@ export const STATUS_LABELS = {
   stale: 'Stale',
   pending: 'Pending',
   inactive: 'Decommissioned',
+  auth_failed: 'Auth Failed',
 
   // Onboarding stages
   lead: 'Lead',

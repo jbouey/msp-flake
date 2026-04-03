@@ -254,6 +254,10 @@ async def require_appliance_bearer(request: Request) -> str:
 
     Validates that the Bearer token is a valid API key in the api_keys table.
     Returns the site_id associated with the key.
+
+    On failure for a known appliance (identifiable by site_id + mac_address in
+    the request body), tracks auth_failure_count so the dashboard can show
+    "Auth Failed" instead of generic "Offline", and the daemon can self-rekey.
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -279,5 +283,42 @@ async def require_appliance_bearer(request: Request) -> str:
 
     if row:
         return row.site_id
+
+    # Auth failed — try to identify the appliance from the request body
+    # so we can track auth failures for dashboard visibility.
+    try:
+        body_bytes = await request.body()
+        import json as _json
+        body = _json.loads(body_bytes)
+        site_id = body.get("site_id")
+        mac = body.get("mac_address")
+        if site_id and mac:
+            from dashboard_api.provisioning import normalize_mac
+            mac_norm = normalize_mac(mac)
+            appliance_id = f"{site_id}-{mac_norm}"
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                await conn.execute("""
+                    UPDATE site_appliances
+                    SET auth_failure_count = COALESCE(auth_failure_count, 0) + 1,
+                        last_auth_failure = NOW(),
+                        auth_failure_since = COALESCE(auth_failure_since, NOW())
+                    WHERE appliance_id = $1
+                """, appliance_id)
+            logger.warning(
+                "Auth failed for known appliance",
+                appliance_id=appliance_id,
+                site_id=site_id,
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "API key mismatch", "code": "AUTH_KEY_MISMATCH"}
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Body parsing failed — fall through to generic 401
 
     raise HTTPException(status_code=401, detail="Invalid API key")

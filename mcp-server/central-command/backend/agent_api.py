@@ -2407,7 +2407,10 @@ async def appliances_checkin(
                 status = 'online',
                 last_checkin = EXCLUDED.last_checkin,
                 uptime_seconds = EXCLUDED.uptime_seconds,
-                queue_depth = EXCLUDED.queue_depth
+                queue_depth = EXCLUDED.queue_depth,
+                auth_failure_since = NULL,
+                auth_failure_count = 0,
+                last_auth_failure = NULL
         """), {
             "site_id": req.site_id,
             "appliance_id": appliance_id,
