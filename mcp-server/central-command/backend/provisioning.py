@@ -697,13 +697,14 @@ async def rekey_appliance(req: RekeyRequest, request: Request):
         """, appliance_id)
 
         # Audit log
+        import json as _json
         client_ip = request.client.host if request.client else None
         await conn.execute("""
-            INSERT INTO audit_log (action, actor, details, ip_address, created_at)
-            VALUES ('appliance.rekeyed', $1, $2, $3, NOW())
+            INSERT INTO audit_log (event_type, actor, details, ip_address)
+            VALUES ('appliance.rekeyed', $1, $2, $3)
         """,
             appliance_id,
-            f"Auto-rekeyed for site {req.site_id} (MAC={mac_normalized})",
+            _json.dumps({"site_id": req.site_id, "mac": mac_normalized, "reason": "auto-rekey after auth failure"}),
             client_ip,
         )
 

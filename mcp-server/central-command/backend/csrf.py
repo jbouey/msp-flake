@@ -101,6 +101,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # --- Machine-to-machine / API-key auth (no browser session) ---
         "/api/appliances/",
         "/api/agent/",           # Agent sync endpoints use API-key auth
+        "/api/provision/",       # Appliance provisioning + rekey (machine-to-machine)
         "/api/orders/",          # Order acknowledgement from appliances
         "/api/evidence/",        # Evidence chain - appliance submissions + admin ops
         "/api/security-events/", # WORM archival - admin-only (require_auth)
