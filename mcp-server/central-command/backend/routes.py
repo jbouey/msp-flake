@@ -6617,3 +6617,172 @@ async def generate_site_compliance_packet(
             "Content-Disposition": f'attachment; filename="compliance-packet-{site_id}-{now.strftime("%Y%m%d")}.json"',
         },
     )
+
+
+@router.get("/organizations/{org_id}/compliance-packet")
+async def generate_org_compliance_packet(
+    org_id: str,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Generate an org-level compliance evidence packet with witness attestations.
+
+    Aggregates compliance, healing, evidence, incidents, and witness
+    attestations across all sites in the org. Audit-ready JSON.
+    """
+    auth_module._check_org_access(user, org_id)
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        org = await conn.fetchrow("SELECT id, name, practice_type FROM client_orgs WHERE id = $1", org_id)
+        if not org:
+            raise HTTPException(404, "Organization not found")
+
+        site_ids = [r['site_id'] for r in await conn.fetch(
+            "SELECT site_id FROM sites WHERE client_org_id = $1", org_id
+        )]
+        if not site_ids:
+            raise HTTPException(404, "No sites in organization")
+
+        sites = await conn.fetch("""
+            SELECT s.site_id, s.clinic_name, sa.agent_version, sa.last_checkin
+            FROM sites s LEFT JOIN site_appliances sa ON s.site_id = sa.site_id
+            WHERE s.client_org_id = $1 ORDER BY s.clinic_name
+        """, org_id)
+
+        # Compliance (DISTINCT ON for latest per site+type)
+        compliance = await conn.fetchrow("""
+            SELECT count(*) FILTER (WHERE check_result = 'pass') as passes,
+                   count(*) FILTER (WHERE check_result = 'fail') as fails,
+                   count(*) as total
+            FROM (
+                SELECT DISTINCT ON (site_id, check_type) check_result
+                FROM compliance_bundles WHERE site_id = ANY($1)
+                ORDER BY site_id, check_type, checked_at DESC
+            ) latest
+        """, site_ids)
+
+        # Healing
+        healing = await conn.fetchrow("""
+            SELECT count(*) FILTER (WHERE success) as succeeded,
+                   count(*) as total
+            FROM execution_telemetry
+            WHERE site_id = ANY($1) AND created_at > NOW() - interval '30 days'
+        """, site_ids)
+
+        # Evidence chain summary
+        evidence = await conn.fetchrow("""
+            SELECT count(*) as total_bundles,
+                   count(*) FILTER (WHERE agent_signature IS NOT NULL) as signed,
+                   count(*) FILTER (WHERE signature_valid) as verified
+            FROM compliance_bundles
+            WHERE site_id = ANY($1) AND checked_at > NOW() - interval '30 days'
+        """, site_ids)
+
+        # Witness attestations
+        witnesses = await conn.fetch("""
+            SELECT wa.bundle_id, wa.witness_appliance, wa.witness_signature,
+                   wa.witness_public_key, wa.created_at
+            FROM witness_attestations wa
+            WHERE wa.bundle_id IN (
+                SELECT bundle_id FROM compliance_bundles WHERE site_id = ANY($1)
+            )
+            ORDER BY wa.created_at DESC
+            LIMIT 100
+        """, site_ids)
+
+        witness_summary = await conn.fetchrow("""
+            SELECT count(*) as total,
+                   count(DISTINCT bundle_id) as witnessed_bundles,
+                   count(DISTINCT witness_appliance) as witness_count
+            FROM witness_attestations
+            WHERE bundle_id IN (
+                SELECT bundle_id FROM compliance_bundles WHERE site_id = ANY($1)
+            )
+        """, site_ids)
+
+        # Incidents
+        incidents = await conn.fetchrow("""
+            SELECT count(*) FILTER (WHERE status != 'resolved') as open,
+                   count(*) FILTER (WHERE status = 'resolved') as resolved,
+                   count(*) as total
+            FROM incidents WHERE site_id = ANY($1)
+            AND created_at > NOW() - interval '30 days'
+        """, site_ids)
+
+    now = datetime.now(timezone.utc)
+    total_c = compliance['total'] or 0
+    passes = compliance['passes'] or 0
+    h_total = healing['total'] or 0
+    h_ok = healing['succeeded'] or 0
+
+    packet = {
+        "packet_type": "org_compliance_evidence",
+        "generated_at": now.isoformat(),
+        "period": "last_30_days",
+
+        "organization": {
+            "id": str(org['id']),
+            "name": org['name'],
+            "practice_type": org['practice_type'],
+            "site_count": len(site_ids),
+            "sites": [
+                {
+                    "site_id": s['site_id'],
+                    "clinic_name": s['clinic_name'],
+                    "agent_version": s['agent_version'],
+                    "last_checkin": s['last_checkin'].isoformat() if s['last_checkin'] else None,
+                }
+                for s in sites
+            ],
+        },
+
+        "compliance": {
+            "score": round(passes / total_c * 100, 1) if total_c > 0 else 0,
+            "total_checks": total_c,
+            "passes": passes,
+            "fails": compliance['fails'] or 0,
+        },
+
+        "healing": {
+            "total_attempts_30d": h_total,
+            "successful_heals_30d": h_ok,
+            "healing_rate_30d": round(h_ok / h_total * 100, 1) if h_total > 0 else 0,
+        },
+
+        "evidence_chain": {
+            "total_bundles": evidence['total_bundles'] or 0,
+            "signed": evidence['signed'] or 0,
+            "verified": evidence['verified'] or 0,
+            "signing_coverage_pct": round((evidence['signed'] or 0) / (evidence['total_bundles'] or 1) * 100, 1),
+        },
+
+        "witness_attestations": {
+            "total_attestations": witness_summary['total'] or 0,
+            "witnessed_bundles": witness_summary['witnessed_bundles'] or 0,
+            "witness_appliance_count": witness_summary['witness_count'] or 0,
+            "recent_attestations": [
+                {
+                    "bundle_id": w['bundle_id'],
+                    "witness_appliance": w['witness_appliance'],
+                    "witness_signature": w['witness_signature'][:32] + "...",
+                    "created_at": w['created_at'].isoformat() if w['created_at'] else None,
+                }
+                for w in witnesses[:20]
+            ],
+        },
+
+        "incidents": {
+            "open": incidents['open'] or 0,
+            "resolved": incidents['resolved'] or 0,
+            "total": incidents['total'] or 0,
+        },
+    }
+
+    return Response(
+        content=json.dumps(packet, indent=2, default=str),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="compliance-packet-org-{org_id[:8]}-{now.strftime("%Y%m%d")}.json"',
+        },
+    )
