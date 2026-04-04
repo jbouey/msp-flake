@@ -1675,7 +1675,7 @@ async def get_healing_metrics_for_site(db: AsyncSession, site_id: str) -> Dict[s
 
     return {
         "healing_success_rate": round(healing_rate, 1),
-        "order_execution_rate": round(order_rate, 1),
+        "order_execution_rate": round(order_rate, 1) if order_rate is not None else 0.0,
         "incidents_24h": inc_row.last_24h if inc_row else 0,
         "last_incident": inc_row.last_incident if inc_row else None,
     }
@@ -1734,7 +1734,7 @@ async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]
 
         results[site_id] = {
             "healing_success_rate": round(healing_rate, 1),
-            "order_execution_rate": round(order_rate, 1),
+            "order_execution_rate": round(order_rate, 1) if order_rate is not None else 0.0,
             "incidents_24h": inc.last_24h if inc else 0,
             "last_incident": inc.last_incident if inc else None,
         }
@@ -1774,7 +1774,7 @@ async def get_global_healing_metrics(db: AsyncSession) -> Dict[str, Any]:
 
     return {
         "healing_success_rate": round(healing_rate, 1),
-        "order_execution_rate": round(order_rate, 1),
+        "order_execution_rate": round(order_rate, 1) if order_rate is not None else 0.0,
         "incidents_24h": inc_row.last_24h if inc_row else 0,
         "total_incidents": total_incidents,
         "total_orders": total_orders,

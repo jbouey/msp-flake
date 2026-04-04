@@ -1342,9 +1342,28 @@ async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version:
     except Exception:
         pass  # Non-critical — worst case is order doesn't retry this cycle
 
-    # Get active, non-expired fleet orders that this appliance hasn't
-    # completed or skipped. Failed completions are auto-expired above,
-    # so the order will reappear after 1 hour.
+    # Clean up stale "skipped" completions where the appliance has regressed
+    # to an older version (e.g., NixOS reboot restores original binary).
+    # This allows the fleet order to re-deliver after version regression.
+    if agent_version:
+        try:
+            await conn.execute("""
+                DELETE FROM fleet_order_completions foc
+                USING fleet_orders fo
+                WHERE foc.fleet_order_id = fo.id
+                AND foc.appliance_id = $1
+                AND foc.status = 'skipped'
+                AND fo.status = 'active'
+                AND fo.expires_at > NOW()
+                AND fo.skip_version IS NOT NULL
+                AND fo.skip_version != $2
+            """, appliance_id, agent_version)
+        except Exception:
+            pass  # Non-critical — worst case order doesn't re-deliver this cycle
+
+    # Get active, non-expired fleet orders that this appliance hasn't completed.
+    # "skipped" completions are cleaned up above on version regression,
+    # so they will reappear automatically. Failed completions expire after 1 hour.
     fleet_rows = await conn.fetch("""
         SELECT fo.id, fo.order_type, fo.parameters, fo.skip_version, fo.created_at, fo.expires_at,
                fo.nonce, fo.signature, fo.signed_payload
@@ -1364,7 +1383,7 @@ async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version:
     for row in fleet_rows:
         # Skip if appliance already at target version
         if row["skip_version"] and agent_version and agent_version == row["skip_version"]:
-            # Record as skipped so we don't check again
+            # Record as skipped so we don't re-evaluate every checkin
             try:
                 await conn.execute("""
                     INSERT INTO fleet_order_completions (fleet_order_id, appliance_id, status)
