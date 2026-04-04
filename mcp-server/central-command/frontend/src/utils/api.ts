@@ -717,6 +717,11 @@ export const applianceApi = {
         to_site_id: toSiteId,
       }),
     }),
+  setMeshTopology: (siteId: string, topology: 'auto' | 'independent') =>
+    fetchApi<{ site_id: string; mesh_topology: string }>(`/sites/${siteId}/mesh-topology`, {
+      method: 'PUT',
+      body: JSON.stringify({ mesh_topology: topology }),
+    }),
 };
 
 // =============================================================================

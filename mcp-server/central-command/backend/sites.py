@@ -1304,6 +1304,40 @@ async def delete_appliance(site_id: str, appliance_id: str, user: dict = Depends
         }
 
 
+class MeshTopologyRequest(BaseModel):
+    """Set mesh topology mode for a site."""
+    mesh_topology: str  # 'auto' or 'independent'
+
+
+@router.put("/{site_id}/mesh-topology")
+async def set_mesh_topology(site_id: str, req: MeshTopologyRequest, user: dict = Depends(require_auth)):
+    """Set mesh topology mode. 'independent' suppresses mesh alerts for sites
+    with consumer-grade routers where cross-subnet routing is impossible."""
+    if req.mesh_topology not in ('auto', 'independent'):
+        raise HTTPException(status_code=400, detail="mesh_topology must be 'auto' or 'independent'")
+
+    pool = await get_pool()
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        await conn.execute(
+            "UPDATE sites SET mesh_topology = $1 WHERE site_id = $2",
+            req.mesh_topology, site_id,
+        )
+
+    return {'site_id': site_id, 'mesh_topology': req.mesh_topology}
+
+
+@router.get("/{site_id}/mesh-topology")
+async def get_mesh_topology(site_id: str, user: dict = Depends(require_auth)):
+    """Get mesh topology mode for a site."""
+    pool = await get_pool()
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        val = await conn.fetchval(
+            "SELECT COALESCE(mesh_topology, 'auto') FROM sites WHERE site_id = $1",
+            site_id,
+        )
+    return {'site_id': site_id, 'mesh_topology': val or 'auto'}
+
+
 class ApplianceMoveRequest(BaseModel):
     """Request to move an appliance to a different site."""
     target_site_id: str

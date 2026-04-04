@@ -79,7 +79,9 @@ const ApplianceCard: React.FC<{
   onUpdateL2Mode: (applianceId: string, mode: string) => void;
   onMove?: (applianceId: string) => void;
   isLoading?: boolean;
-}> = ({ appliance, latestVersion, onCreateOrder, onDelete, onUpdateL2Mode, onMove, isLoading }) => {
+  siteId?: string;
+  applianceCount?: number;
+}> = ({ appliance, latestVersion, onCreateOrder, onDelete, onUpdateL2Mode, onMove, isLoading, siteId, applianceCount }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
 
@@ -164,18 +166,32 @@ const ApplianceCard: React.FC<{
       </div>
 
       {/* Mesh Coordination */}
-      {appliance.mesh_ring_size > 1 && (
+      {(appliance.mesh_ring_size > 1 || ((applianceCount ?? 0) >= 2 && appliance.mesh_peer_count === 0 && appliance.mesh_ring_size >= 1)) && (
         <div className="mt-3 pt-3 border-t border-separator-light">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${appliance.mesh_peer_count > 0 ? 'bg-health-healthy' : 'bg-health-warning'}`} />
               <p className="text-xs text-label-tertiary">Scan Coordination</p>
             </div>
-            <p className="text-xs text-label-secondary">
-              {appliance.mesh_peer_count > 0
-                ? `${appliance.mesh_ring_size} appliances coordinating`
-                : 'No peers detected'}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-label-secondary">
+                {appliance.mesh_peer_count > 0
+                  ? `${appliance.mesh_ring_size} appliances coordinating`
+                  : 'No peers detected'}
+              </p>
+              {appliance.mesh_peer_count === 0 && (applianceCount ?? 0) >= 2 && siteId && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await applianceApi.setMeshTopology(siteId, 'independent');
+                    } catch { /* ignore */ }
+                  }}
+                  className="px-2 py-0.5 text-xs rounded bg-fill-secondary text-label-tertiary hover:text-label-primary hover:bg-fill-tertiary transition-colors"
+                >
+                  Acknowledge
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1571,6 +1587,8 @@ export const SiteDetail: React.FC = () => {
                     onUpdateL2Mode={handleUpdateL2Mode}
                     onMove={(id) => setShowMoveApplianceModal(id)}
                     isLoading={isOrderLoading}
+                    siteId={site.site_id}
+                    applianceCount={site.appliances.length}
                   />
                 ))}
               </div>

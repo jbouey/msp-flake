@@ -907,8 +907,48 @@ async def _check_mesh_isolation():
                         )
                         logger.warning(f"Mesh split-brain: {site_id} — {details}")
 
-            # === Isolation alerts (P1-6: include sibling IPs) ===
+            # === Isolation alerts ===
+            # Respects: mesh_topology=independent (suppresses), 24h auto-reclassify,
+            # graduated cadence (4h first 24h, then 24h).
             if isolated:
+                # Check if site has mesh_topology=independent (consumer router, suppress alerts)
+                mesh_topo = await conn.fetchval(
+                    "SELECT COALESCE(mesh_topology, 'auto') FROM sites WHERE site_id = $1",
+                    site_id
+                )
+                if mesh_topo == 'independent':
+                    continue  # Site declared independent topology, no mesh alerts
+
+                # Check oldest unresolved isolation alert for this site
+                oldest_isolation = await conn.fetchval("""
+                    SELECT MIN(created_at) FROM notifications
+                    WHERE site_id = $1 AND category IN ('mesh_isolation', 'mesh_topology_limitation')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM notifications n2
+                          WHERE n2.site_id = $1 AND n2.category = 'mesh_isolation_resolved'
+                            AND n2.created_at > notifications.created_at
+                      )
+                """, site_id)
+
+                # Determine severity and cadence based on how long isolation has persisted
+                from datetime import datetime, timezone
+                now_utc = datetime.now(timezone.utc)
+                if oldest_isolation and (now_utc - oldest_isolation).total_seconds() > 86400:
+                    # >24h persistent isolation — reclassify as topology limitation
+                    alert_category = 'mesh_topology_limitation'
+                    alert_severity = 'info'
+                    dedup_interval = '24 hours'
+                elif oldest_isolation and (now_utc - oldest_isolation).total_seconds() > 14400:
+                    # 4-24h — reduce to 4h cadence
+                    alert_category = 'mesh_isolation'
+                    alert_severity = 'warning'
+                    dedup_interval = '4 hours'
+                else:
+                    # First 4h — 4h cadence (not hourly to avoid fatigue)
+                    alert_category = 'mesh_isolation'
+                    alert_severity = 'warning'
+                    dedup_interval = '4 hours'
+
                 # Build sibling IP list for troubleshooting context
                 sibling_ips = []
                 for app in appliances:
@@ -921,29 +961,41 @@ async def _check_mesh_isolation():
                             sibling_ips.append(f"{hn}: {', '.join(str(ip) for ip in app_ips)}")
 
                 for app in isolated:
-                    existing = await conn.fetchval("""
+                    existing = await conn.fetchval(f"""
                         SELECT 1 FROM notifications
                         WHERE site_id = $1
-                          AND category = 'mesh_isolation'
+                          AND category IN ('mesh_isolation', 'mesh_topology_limitation')
                           AND message LIKE '%' || $2 || '%'
-                          AND created_at > NOW() - INTERVAL '1 hour'
+                          AND created_at > NOW() - INTERVAL '{dedup_interval}'
                     """, site_id, app["appliance_id"])
 
                     if not existing:
                         hostname = app["hostname"] or app["appliance_id"]
                         sibling_info = (" Sibling IPs to check: " + "; ".join(sibling_ips)) if sibling_ips else ""
+                        if alert_category == 'mesh_topology_limitation':
+                            msg = (
+                                f"Appliance {hostname} at {site_name} has been unable to "
+                                f"reach mesh peers for over 24 hours. This appears to be a "
+                                f"permanent network topology limitation (e.g. consumer router "
+                                f"without inter-VLAN routing), not a transient failure. "
+                                f"Compliance scanning continues normally — each appliance "
+                                f"scans all targets independently.{sibling_info}"
+                            )
+                            title = f"Topology: {hostname} (independent mode)"
+                        else:
+                            msg = (
+                                f"Appliance {hostname} ({app['appliance_id']}) at {site_name} "
+                                f"has {site_row['online_count']} online siblings but cannot "
+                                f"see any mesh peers. Targets may be scanned by multiple "
+                                f"appliances. Ensure TCP port 50051 is open between subnets."
+                                f"{sibling_info}"
+                            )
+                            title = f"Mesh isolation: {hostname}"
+
                         await conn.execute("""
                             INSERT INTO notifications (
                                 site_id, category, severity, title, message, created_at
-                            ) VALUES ($1, 'mesh_isolation', 'warning', $2, $3, NOW())
-                        """,
-                            site_id,
-                            f"Mesh isolation: {hostname}",
-                            f"Appliance {hostname} ({app['appliance_id']}) at {site_name} "
-                            f"has {site_row['online_count']} online siblings but cannot "
-                            f"see any mesh peers. Targets may be scanned by multiple "
-                            f"appliances. Ensure TCP port 50051 is open between subnets."
-                            f"{sibling_info}",
-                        )
-                        logger.warning(f"Mesh isolation: {app['appliance_id']} at {site_id} "
-                                       f"({site_row['online_count']} online, 0 peers)")
+                            ) VALUES ($1, $2, $3, $4, $5, NOW())
+                        """, site_id, alert_category, alert_severity, title, msg)
+                        logger.warning(f"{alert_category}: {app['appliance_id']} at {site_id} "
+                                       f"(severity={alert_severity})")
