@@ -44,10 +44,44 @@ The iMac agent was dead since March 26 (8 days). Five cascading failures:
 - Appliance sees agent: `agents=1` in cycle, drift streaming active
 - Go tests: 4 packages, 0 failures (checks, transport, updater, wmi)
 
+## Phase 2: Runbook Coverage + Agent Hardening
+
+**4 commits, agent v0.4.4, daemon v0.3.77**
+
+### Sub-project A: Linux L1 Executor (0% → 100%)
+- `executor_linux.go`: 7 heal functions (SSH, firewall, upgrades, SUID, audit, users, NTP)
+- Cross-distro: apt/dnf/yum for upgrades, ufw/firewalld/nftables for firewall
+- Idempotent scripts, HIPAA audit rules, safe SUID allowlist
+- `executor_linux_test.go`: 9 tests
+
+### Sub-project B: Agent Updater Hardening
+- `validateBinaryPlatform()`: magic number check (PE/Mach-O/ELF) before swap
+- 4 new platform validation tests
+- `MarkDisconnected()` + heartbeat loop exits after 3 consecutive failures
+- reconnectLoop detects disconnect → full reconnect cycle (fixes stuck agent after daemon restart)
+
+### Sub-project C: macOS/Windows Healing Additions
+- macOS FileVault deferred enablement (queues for next login)
+- macOS Time Machine auto-enable (if backup destination exists)
+- Windows Update L1 healing (COM API, critical/important only)
+- `executor_darwin_test.go` + `executor_windows_test.go`
+
+### Infrastructure Fixes
+- healMap expanded: 6 Windows + 8 macOS + 6 Linux check types in gRPC drift ACKs
+- LIN-PATCH-001 runbook fix: `apt-daily-upgrade.timer` (was `unattended-upgrades.timer`)
+- Windows exe deployed to `/var/lib/msp/agent/` (fixes autodeploy 404)
+- Appliance manifest: darwin-amd64, darwin-arm64, linux-amd64 all v0.4.3
+
+### Verified
+- `[gRPC] Immediate heal for MaCs-iMac.local: macos_time_machine/enable` → `success=true`
+- Linux unattended_upgrades: **healed in 3.6s** (was failing before timer name fix)
+- Healing rate: **88% (30/34 in 24h)**
+- Agent tests: 5 packages, 0 failures
+- Appliance tests: 18 packages, 0 failures
+- Coverage: **22/27 (81%)** across all platforms (was 12/27 = 44%)
+
 ## Open Items
 
+- MikroTik DHCP reservations need admin creds (appliance .235 + linux .233)
 - iMac SSH port 2222 still broken (use reverse tunnel: VPS:2250)
-- MikroTik DHCP reservations need admin creds
-- macos_firewall check failing — firewall disabled on iMac
-- macos_screen_lock — askForPassword not set
-- macos_time_machine — no backup disk configured
+- NVDC01 Windows agent config still points to .241:50051 (low priority — WinRM scanning works)
