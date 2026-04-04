@@ -1,13 +1,13 @@
 {
   "session": 193,
-  "updated": "2026-04-04T11:15:00.000000Z",
+  "updated": "2026-04-04T12:20:00.000000Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "redesigned_hero_compliance_merged_attention_sidebar_sections_dark_badges",
-    "physical_appliance": "go_daemon_v0.3.78_mesh_scan_coord_per_appliance_auth_multi_appliance",
+    "physical_appliance": "go_daemon_v0.3.79_mesh_scan_coord_per_appliance_auth_device_registration_profiles_hardened",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
