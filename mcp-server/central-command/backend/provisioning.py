@@ -674,18 +674,19 @@ async def rekey_appliance(req: RekeyRequest, request: Request):
         raw_api_key = secrets.token_urlsafe(32)
         api_key_hash = hashlib.sha256(raw_api_key.encode()).hexdigest()
 
-        # Deactivate old keys for this site
+        # Deactivate old keys for THIS APPLIANCE only (not the whole site).
+        # This is the key fix for multi-appliance sites — siblings keep their keys.
         deactivated = await conn.execute("""
             UPDATE api_keys SET active = false
-            WHERE site_id = $1 AND active = true
-        """, req.site_id)
-        logger.info(f"Rekey: deactivated old keys for {req.site_id}: {deactivated}")
+            WHERE site_id = $1 AND appliance_id = $2 AND active = true
+        """, req.site_id, appliance_id)
+        logger.info(f"Rekey: deactivated {deactivated} old keys for appliance {appliance_id}")
 
-        # Insert new key
+        # Insert new per-appliance key
         await conn.execute("""
-            INSERT INTO api_keys (site_id, key_hash, key_prefix, description, active, created_at)
-            VALUES ($1, $2, $3, 'Auto-rekeyed after auth failure', true, NOW())
-        """, req.site_id, api_key_hash, raw_api_key[:8])
+            INSERT INTO api_keys (site_id, appliance_id, key_hash, key_prefix, description, active, created_at)
+            VALUES ($1, $2, $3, $4, 'Auto-rekeyed after auth failure', true, NOW())
+        """, req.site_id, appliance_id, api_key_hash, raw_api_key[:8])
 
         # Clear auth failure tracking
         await conn.execute("""

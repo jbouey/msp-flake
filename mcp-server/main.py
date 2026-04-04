@@ -1466,42 +1466,9 @@ from dashboard_api.auth import require_auth
 
 
 async def require_appliance_bearer(request: Request) -> str:
-    """Validate appliance Bearer token from Authorization header.
-
-    Unlike require_appliance_auth in sites.py (which reads the request body
-    to extract site_id), this dependency only validates that the Bearer token
-    is a valid API key in the api_keys table. It returns the site_id
-    associated with the key.
-
-    This is suitable for main.py endpoints where FastAPI/Pydantic already
-    parses the request body.
-    """
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-
-    api_key = auth_header[7:]  # Strip "Bearer "
-    if not api_key:
-        raise HTTPException(status_code=401, detail="Empty API key")
-
-    # Hash the key and look it up in the api_keys table
-    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-
-    async with async_session() as db:
-        result = await db.execute(
-            text("""
-                SELECT ak.site_id FROM api_keys ak
-                WHERE ak.key_hash = :key_hash AND ak.active = true
-                LIMIT 1
-            """),
-            {"key_hash": key_hash}
-        )
-        row = result.fetchone()
-
-    if row:
-        return row.site_id
-
-    raise HTTPException(status_code=401, detail="Invalid API key")
+    """Validate appliance Bearer token. Delegates to shared implementation."""
+    from dashboard_api.shared import require_appliance_bearer as _shared_auth
+    return await _shared_auth(request)
 
 
 # ============================================================================

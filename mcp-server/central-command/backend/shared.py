@@ -252,7 +252,8 @@ def load_runbooks():
 async def require_appliance_bearer(request: Request) -> str:
     """Validate appliance Bearer token from Authorization header.
 
-    Validates that the Bearer token is a valid API key in the api_keys table.
+    Auth lookup: api_keys table keyed by key_hash. The appliance_id column
+    distinguishes per-appliance keys from legacy site-level keys.
     Returns the site_id associated with the key.
 
     On failure for a known appliance (identifiable by site_id + mac_address in
@@ -273,7 +274,7 @@ async def require_appliance_bearer(request: Request) -> str:
     async with async_session() as db:
         result = await db.execute(
             text("""
-                SELECT ak.site_id FROM api_keys ak
+                SELECT ak.site_id, ak.appliance_id FROM api_keys ak
                 WHERE ak.key_hash = :key_hash AND ak.active = true
                 LIMIT 1
             """),
@@ -282,6 +283,23 @@ async def require_appliance_bearer(request: Request) -> str:
         row = result.fetchone()
 
     if row:
+        # Clear auth failure tracking on successful auth
+        if row.appliance_id:
+            try:
+                from dashboard_api.fleet import get_pool
+                from dashboard_api.tenant_middleware import admin_connection
+                pool = await get_pool()
+                async with admin_connection(pool) as conn:
+                    await conn.execute("""
+                        UPDATE site_appliances
+                        SET auth_failure_count = 0,
+                            auth_failure_since = NULL,
+                            last_auth_failure = NULL
+                        WHERE appliance_id = $1
+                          AND auth_failure_count > 0
+                    """, row.appliance_id)
+            except Exception:
+                pass  # Non-critical
         return row.site_id
 
     # Auth failed — try to identify the appliance from the request body
