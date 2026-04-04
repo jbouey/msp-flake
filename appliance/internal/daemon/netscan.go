@@ -34,6 +34,7 @@ type discoveredDevice struct {
 	OSFingerprint string `json:"os_fingerprint,omitempty"`
 	ProbeSSH      bool   `json:"probe_ssh"`
 	ProbeWinRM    bool   `json:"probe_winrm"`
+	ProbeGRPC     bool   `json:"probe_grpc"`
 	ADJoined      bool   `json:"ad_joined"`
 	HasAgent      bool   `json:"has_agent"`
 	// Topology field
