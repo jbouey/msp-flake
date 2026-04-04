@@ -31,7 +31,7 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "MikroTik DHCP reservations need admin creds (appliance .235 + linux .233 will drift on reboot). iMac SSH port 2222 still broken (use reverse tunnel via VPS:2250).",
+  "current_blocker": "Need 3rd physical appliance to test per-appliance auth (no spare power adapters). MikroTik DHCP reservations need admin creds. Pilot DB record needs site_id alignment. iMac SSH port 2222 still broken (use reverse tunnel via VPS:2250).",
   "session_193_work": {
     "commits": 5,
     "daemon_version": "0.3.76",
