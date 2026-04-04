@@ -192,16 +192,36 @@ var checkTypeMap = map[string]string{
 }
 
 // healMap defines immediate heal actions for known check types.
+// When an agent reports a FAIL drift event, the ACK includes a HealCommand
+// so the agent can self-heal without SSH. Covers all three platforms.
 var healMap = map[string]struct {
 	Action  string
 	Timeout int64
 }{
-	"firewall":    {"enable", 60},
-	"defender":    {"start", 60},
-	"bitlocker":   {"enable", 120},
-	"screenlock":  {"configure", 30},
-	"winrm":       {"restore", 60},
-	"dns_service": {"restart", 30},
+	// Windows
+	"firewall":       {"enable", 60},
+	"defender":       {"start", 60},
+	"bitlocker":      {"enable", 120},
+	"screenlock":     {"configure", 30},
+	"winrm":          {"restore", 60},
+	"dns_service":    {"restart", 30},
+	"windows_update": {"install", 300},
+	// macOS
+	"macos_firewall":     {"enable", 60},
+	"macos_auto_update":  {"enable", 30},
+	"macos_screen_lock":  {"configure", 30},
+	"macos_ntp_sync":     {"enable", 30},
+	"macos_file_sharing": {"disable", 30},
+	"macos_gatekeeper":   {"enable", 30},
+	"macos_filevault":    {"enable", 120},
+	"macos_time_machine": {"enable", 60},
+	// Linux (agent-side healing)
+	"linux_ssh_config":          {"harden", 60},
+	"linux_firewall":            {"enable", 60},
+	"linux_unattended_upgrades": {"enable", 120},
+	"linux_suid_binaries":       {"cleanup", 60},
+	"linux_audit_logging":       {"enable", 60},
+	"linux_ntp_sync":            {"enable", 30},
 }
 
 func (s *servicer) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
