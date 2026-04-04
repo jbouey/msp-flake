@@ -80,8 +80,39 @@ The iMac agent was dead since March 26 (8 days). Five cascading failures:
 - Appliance tests: 18 packages, 0 failures
 - Coverage: **22/27 (81%)** across all platforms (was 12/27 = 44%)
 
+## Phase 3: Multi-Appliance Architecture
+
+**4 more commits, daemon v0.3.78, 12 total commits this session**
+
+### Per-Appliance API Keys (Migration 119)
+- `api_keys.appliance_id` column — each appliance gets its own key
+- Auth lookup unchanged (key_hash match), returns appliance_id for tracking
+- Rekey scoped to requesting appliance only — siblings keep their keys
+- main.py `require_appliance_bearer` DRY'd — delegates to shared.py
+- Fleet order version regression fix — stale "skipped" completions cleaned up when appliance reverts to older version
+- Dashboard `/api/dashboard/fleet` 500 fix — `round(None)` → `0.0`
+
+### Checkin Dedup Fix
+- Root cause: hostname match in dedup query caused false merges when both appliances had hostname "osiriscare"
+- Fix: dedup matches on MAC only — hostname is informational, not identity
+
+### Mesh Scan Coordination
+- `mesh.go`: consistent hash ring with 64 virtual nodes per physical node (195 lines)
+- `mesh_test.go`: 10 unit tests (single/multi node, balance, remove/re-add stability, grace period, peer discovery)
+- Peer discovery: ARP table + gRPC port (50051) probe
+- 10-minute grace period before redistributing lost peer's targets
+- Single appliance = ring of 1 = scans everything (backward compatible)
+- Wired into driftscan.go (Windows) + linuxscan.go (Linux) + netscan.go (peer updates)
+
+### Verified
+- Both appliances at v0.3.78, mesh initialized, separate rows, independent checkins
+- Two appliances currently on different subnets — mesh active but no peers to split with (correct)
+
 ## Open Items
 
-- MikroTik DHCP reservations need admin creds (appliance .235 + linux .233)
+- Co-locate appliances on same subnet to test mesh peer discovery + target splitting
+- MikroTik DHCP reservations need admin creds
+- Stale `physical-appliance-pilot-1aea78` row in site_appliances (cleanup)
 - iMac SSH port 2222 still broken (use reverse tunnel: VPS:2250)
-- NVDC01 Windows agent config still points to .241:50051 (low priority — WinRM scanning works)
+- Layer 3 (incident/evidence cross-appliance dedup) — partially built session 192
+- Layer 4 (dashboard multi-appliance UX) — not started

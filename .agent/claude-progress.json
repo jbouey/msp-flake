@@ -1,13 +1,13 @@
 {
   "session": 193,
-  "updated": "2026-04-04T02:55:00.000000Z",
+  "updated": "2026-04-04T11:15:00.000000Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "redesigned_hero_compliance_merged_attention_sidebar_sections_dark_badges",
-    "physical_appliance": "go_daemon_v0.3.77_healmap_3_platforms_runbook_fix_auto_reconnect",
+    "physical_appliance": "go_daemon_v0.3.78_mesh_scan_coord_per_appliance_auth_multi_appliance",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
@@ -31,7 +31,7 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "Need 3rd physical appliance to test per-appliance auth (no spare power adapters). MikroTik DHCP reservations need admin creds. Pilot DB record needs site_id alignment. iMac SSH port 2222 still broken (use reverse tunnel via VPS:2250).",
+  "current_blocker": "Two appliances on different subnets (.88 and .0) — mesh peer discovery only works on same subnet. Need to co-locate to test mesh target splitting. MikroTik DHCP reservations need admin creds. Stale pilot row (physical-appliance-pilot-1aea78) in site_appliances needs cleanup. iMac SSH port 2222 still broken (use reverse tunnel via VPS:2250).",
   "session_193_work": {
     "commits": 5,
     "daemon_version": "0.3.76",
