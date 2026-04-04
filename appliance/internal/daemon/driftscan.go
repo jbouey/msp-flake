@@ -385,6 +385,25 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		})
 	}
 
+	// Mesh filter: only scan targets this appliance owns on the hash ring.
+	// Single appliance (no peers) owns everything — no filtering applied.
+	if ds.svc.Mesh != nil && ds.svc.Mesh.PeerCount() > 0 {
+		var owned []scanTarget
+		for _, t := range targets {
+			ip := t.hostname
+			if t.target != nil {
+				ip = t.target.Hostname
+			}
+			if ds.svc.Mesh.OwnsTarget(ip) {
+				owned = append(owned, t)
+			}
+		}
+		if len(owned) < len(targets) {
+			log.Printf("[driftscan] Mesh filter: %d/%d Windows targets owned by this appliance", len(owned), len(targets))
+		}
+		targets = owned
+	}
+
 	var allFindings []driftFinding
 	var scannedHosts []string
 	unreachableCount := 0

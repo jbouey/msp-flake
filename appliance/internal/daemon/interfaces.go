@@ -49,4 +49,5 @@ type Services struct {
 	Registry  *grpcserver.AgentRegistry
 	RunCtx    context.Context
 	SiteID    string
+	Mesh      *Mesh
 }

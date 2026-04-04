@@ -217,12 +217,21 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 		// Cross-reference with AD host cache to detect AD-joined Linux machines
 		adHostnames := ns.daemon.getADHostnames()
 
+		grpcPort := ns.svc.Config.GRPCPort
 		for i, p := range probes {
 			devices[i].OSType = p.OSType
 			devices[i].Distro = p.Distro
 			devices[i].OSFingerprint = p.OSFingerprint
 			devices[i].ProbeSSH = p.SSHOpen
 			devices[i].ProbeWinRM = p.WinRMOpen
+			// Probe gRPC port to detect sibling appliances for mesh coordination
+			if grpcPort > 0 {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", devices[i].IPAddress, grpcPort), 2*time.Second)
+				if err == nil {
+					conn.Close()
+					devices[i].ProbeGRPC = true
+				}
+			}
 			if classifyADJoined(p, adHostnames) {
 				devices[i].ADJoined = true
 			}
@@ -233,6 +242,11 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeSSH }),
 			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeWinRM }),
 			adJoinedCount)
+	}
+
+	// Update mesh peer list from discovered devices
+	if ns.svc.Mesh != nil {
+		ns.svc.Mesh.UpdatePeers(devices)
 	}
 
 	// Populate Subnet field for each device

@@ -452,6 +452,20 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 	// Remote Linux targets from checkin response
 	targets := ds.svc.Targets.GetLinuxTargets()
 
+	// Mesh filter: only scan targets this appliance owns on the hash ring.
+	if ds.svc.Mesh != nil && ds.svc.Mesh.PeerCount() > 0 {
+		var owned []linuxTarget
+		for _, lt := range targets {
+			if ds.svc.Mesh.OwnsTarget(lt.Hostname) {
+				owned = append(owned, lt)
+			}
+		}
+		if len(owned) < len(targets) {
+			log.Printf("[linuxscan] Mesh filter: %d/%d Linux targets owned by this appliance", len(owned), len(targets))
+		}
+		targets = owned
+	}
+
 	for _, lt := range targets {
 		select {
 		case <-scanCtx.Done():

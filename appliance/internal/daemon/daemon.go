@@ -133,6 +133,9 @@ type Daemon struct {
 	// credentialProbeOnce ensures the startup credential connectivity probe runs exactly once.
 	credentialProbeOnce sync.Once
 
+	// Mesh: consistent hash ring for multi-appliance scan target distribution
+	mesh *Mesh
+
 	// startTime tracks daemon boot for uptime reporting
 	startTime time.Time
 
@@ -451,6 +454,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 		log.Printf("[daemon] Agent manifest scan failed: %v", err)
 	} else {
 		log.Printf("[daemon] Agent manifest: %d binaries registered", d.agentManifest.Count())
+	}
+
+	// Initialize mesh for multi-appliance scan coordination.
+	// Single appliance = ring of 1 = scans everything (no behavior change).
+	// When peers are discovered via ARP + gRPC probe, targets are split via consistent hashing.
+	selfMAC := getMACAddress()
+	if selfMAC != "" {
+		d.mesh = NewMesh(selfMAC, d.config.SiteID, d.config.GRPCPort)
+		d.svc.Mesh = d.mesh
+		log.Printf("[daemon] Mesh initialized: self=%s, site=%s, grpc_port=%d", selfMAC, d.config.SiteID, d.config.GRPCPort)
 	}
 
 	// Start HTTP file server for agent binary distribution.
