@@ -26,21 +26,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/protection-profiles", tags=["protection-profiles"])
 
 
+def _parse_uuid(value: str, label: str = "ID") -> _uuid.UUID:
+    """Parse a UUID string, raising 400 instead of 500 on invalid format."""
+    try:
+        return _uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(400, f"Invalid {label} format: {value}")
+
+
 # =============================================================================
 # Pydantic Models
 # =============================================================================
 
 class ProfileCreate(BaseModel):
     site_id: str
-    name: str
-    description: Optional[str] = None
+    name: str = Field(..., max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
     template_id: Optional[str] = None
 
 
 class ProfileUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
+    # Status is NOT settable via PATCH — use dedicated endpoints:
+    # POST /discover, POST /lock-baseline, PATCH /pause, PATCH /resume
 
 
 class AssetToggle(BaseModel):
@@ -248,7 +257,7 @@ async def get_profile(
 ):
     """Get profile with all assets and rules."""
     pool = await get_pool()
-    pid = _uuid.UUID(profile_id)
+    pid = _parse_uuid(profile_id, "profile ID")
 
     async with admin_connection(pool) as conn:
         await require_site_access(conn, user, site_id)
@@ -312,9 +321,9 @@ async def update_profile(
     site_id: str = Query(..., description="Site ID co-constraint for tenant isolation"),
     user: Dict[str, Any] = Depends(require_auth),
 ):
-    """Update profile name, description, or status."""
+    """Update profile name or description. Status changes use dedicated endpoints."""
     pool = await get_pool()
-    pid = _uuid.UUID(profile_id)
+    pid = _parse_uuid(profile_id, "profile ID")
     now = datetime.now(timezone.utc)
 
     sets = ["updated_at = $2"]
@@ -328,13 +337,6 @@ async def update_profile(
     if body.description is not None:
         sets.append(f"description = ${idx}")
         params.append(body.description)
-        idx += 1
-    if body.status is not None:
-        valid = {"draft", "discovering", "discovered", "baseline_locked", "active", "paused", "archived"}
-        if body.status not in valid:
-            raise HTTPException(400, f"Invalid status. Must be one of: {', '.join(sorted(valid))}")
-        sets.append(f"status = ${idx}")
-        params.append(body.status)
         idx += 1
 
     async with admin_connection(pool) as conn:
@@ -366,7 +368,7 @@ async def delete_profile(
 ):
     """Archive a profile (soft delete). Also disables its L1 rules."""
     pool = await get_pool()
-    pid = _uuid.UUID(profile_id)
+    pid = _parse_uuid(profile_id, "profile ID")
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:
@@ -414,7 +416,7 @@ async def trigger_discovery(
     The appliance runs discovery and reports results in next checkin.
     """
     pool = await get_pool()
-    pid = _uuid.UUID(profile_id)
+    pid = _parse_uuid(profile_id, "profile ID")
 
     async with admin_connection(pool) as conn:
         await require_site_access(conn, user, site_id)
@@ -425,9 +427,10 @@ async def trigger_discovery(
         if not profile:
             raise HTTPException(404, "Profile not found")
 
-        if profile["status"] not in ("draft", "discovered"):
+        # Allow retry from 'discovering' state (handles stuck discoveries when appliance was offline)
+        if profile["status"] not in ("draft", "discovered", "discovering"):
             raise HTTPException(
-                400, f"Cannot discover in status '{profile['status']}'. Must be draft or discovered."
+                400, f"Cannot discover in status '{profile['status']}'. Must be draft, discovered, or discovering."
             )
 
         # Get discovery hints from template if available
@@ -517,7 +520,7 @@ async def receive_discovery_results(
     Results are stored and assets are created for review.
     """
     pool = await get_pool()
-    pid = _uuid.UUID(profile_id)
+    pid = _parse_uuid(profile_id, "profile ID")
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:
@@ -577,7 +580,7 @@ async def toggle_asset(
 ):
     """Enable or disable an asset for baseline protection."""
     pool = await get_pool()
-    pid = _uuid.UUID(profile_id)
+    pid = _parse_uuid(profile_id, "profile ID")
     aid = _uuid.UUID(asset_id)
 
     async with admin_connection(pool) as conn:
@@ -617,7 +620,7 @@ async def lock_baseline(
     via the existing sync_rules mechanism.
     """
     pool = await get_pool()
-    pid = _uuid.UUID(profile_id)
+    pid = _parse_uuid(profile_id, "profile ID")
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:
@@ -767,7 +770,7 @@ async def create_from_template(
 ):
     """Create a new profile pre-populated from a template."""
     pool = await get_pool()
-    tid = _uuid.UUID(template_id)
+    tid = _parse_uuid(template_id, "template ID")
 
     async with admin_connection(pool) as conn:
         await require_site_access(conn, user, site_id)
@@ -780,13 +783,14 @@ async def create_from_template(
         profile_name = name or tmpl["name"]
         profile_id = _uuid.uuid4()
         now = datetime.now(timezone.utc)
+        created_by = user.get("username") or user.get("email") or "unknown"
 
         try:
             await conn.execute("""
                 INSERT INTO app_protection_profiles
-                    (id, site_id, name, description, status, created_at, updated_at, template_id)
-                VALUES ($1, $2, $3, $4, 'draft', $5, $5, $6)
-            """, profile_id, site_id, profile_name, tmpl["description"], now, tid)
+                    (id, site_id, name, description, status, created_by, created_at, updated_at, template_id)
+                VALUES ($1, $2, $3, $4, 'draft', $5, $6, $6, $7)
+            """, profile_id, site_id, profile_name, tmpl["description"], created_by, now, tid)
         except Exception as e:
             if "unique" in str(e).lower():
                 raise HTTPException(409, f"Profile '{profile_name}' already exists for this site")
@@ -812,7 +816,7 @@ async def pause_profile(
 ):
     """Pause protection — disables all L1 rules without deleting them."""
     pool = await get_pool()
-    pid = _uuid.UUID(profile_id)
+    pid = _parse_uuid(profile_id, "profile ID")
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:
@@ -853,7 +857,7 @@ async def resume_profile(
 ):
     """Resume protection — re-enables all L1 rules."""
     pool = await get_pool()
-    pid = _uuid.UUID(profile_id)
+    pid = _parse_uuid(profile_id, "profile ID")
     now = datetime.now(timezone.utc)
 
     async with admin_connection(pool) as conn:

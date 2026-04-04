@@ -2659,13 +2659,17 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     pid = _uuid.UUID(profile_id)
                     now_disc = datetime.now(timezone.utc)
 
+                    # Site_id guard: only allow the appliance to update profiles for its own site
                     await conn.execute(
-                        "UPDATE app_protection_profiles SET discovery_data = $2::jsonb, status = 'discovered', updated_at = $3 WHERE id = $1",
-                        pid, json.dumps(assets_data), now_disc,
+                        "UPDATE app_protection_profiles SET discovery_data = $2::jsonb, status = 'discovered', updated_at = $3 WHERE id = $1 AND site_id = $4",
+                        pid, json.dumps(assets_data), now_disc, checkin.site_id,
                     )
 
                     # Clear previous assets and re-create from discovery
-                    await conn.execute("DELETE FROM app_profile_assets WHERE profile_id = $1", pid)
+                    await conn.execute(
+                        "DELETE FROM app_profile_assets WHERE profile_id = $1 AND profile_id IN (SELECT id FROM app_protection_profiles WHERE site_id = $2)",
+                        pid, checkin.site_id,
+                    )
                     from .protection_profiles import ASSET_RUNBOOK_MAP
                     for asset_type, items in assets_data.items():
                         runbook_id = ASSET_RUNBOOK_MAP.get(asset_type)
