@@ -1190,7 +1190,8 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 last_checkin, uptime_seconds,
                 COALESCE(l2_mode, 'auto') as l2_mode,
                 offline_since,
-                COALESCE(auth_failure_count, 0) as auth_failure_count
+                COALESCE(auth_failure_count, 0) as auth_failure_count,
+                daemon_health
             FROM site_appliances
             WHERE site_id = $1
             ORDER BY hostname
@@ -1201,6 +1202,17 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
             last_checkin = row['last_checkin']
             live_status = calculate_live_status(last_checkin, row.get('auth_failure_count', 0))
             
+            # Extract mesh stats from daemon_health JSONB
+            dh = row.get('daemon_health')
+            if isinstance(dh, str):
+                try:
+                    dh = json.loads(dh)
+                except (json.JSONDecodeError, TypeError):
+                    dh = None
+            mesh_peer_count = dh.get('mesh_peer_count', 0) if dh else 0
+            mesh_ring_size = dh.get('mesh_ring_size', 0) if dh else 0
+            mesh_peer_macs = dh.get('mesh_peer_macs', []) if dh else []
+
             appliances.append({
                 'appliance_id': row['appliance_id'],
                 'hostname': row['hostname'],
@@ -1215,12 +1227,56 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 'uptime_seconds': row['uptime_seconds'],
                 'l2_mode': row['l2_mode'],
                 'offline_since': row['offline_since'].isoformat() if row['offline_since'] else None,
+                'mesh_peer_count': mesh_peer_count,
+                'mesh_ring_size': mesh_ring_size,
+                'mesh_peer_macs': mesh_peer_macs,
             })
         
         return {
             'site_id': site_id,
             'appliances': appliances,
             'count': len(appliances)
+        }
+
+
+@router.get("/{site_id}/appliances/mesh/assignments")
+async def get_mesh_scan_assignments(site_id: str, user: dict = Depends(require_auth)):
+    """Get per-target scan assignments across appliances (mesh debug view).
+
+    Returns which appliance owns each discovered device, based on the
+    owner_appliance_id from the discovered_devices table (set by first-discovery).
+    """
+    pool = await get_pool()
+
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        rows = await conn.fetch("""
+            SELECT dd.ip_address, dd.hostname, dd.os_name,
+                   dd.owner_appliance_id,
+                   sa.hostname as appliance_hostname,
+                   sa.mac_address as appliance_mac,
+                   dd.last_seen
+            FROM discovered_devices dd
+            LEFT JOIN site_appliances sa ON dd.owner_appliance_id = sa.id
+            WHERE dd.site_id = $1
+              AND dd.ip_address IS NOT NULL
+            ORDER BY dd.ip_address
+        """, site_id)
+
+        assignments = []
+        for row in rows:
+            assignments.append({
+                'target_ip': row['ip_address'],
+                'target_hostname': row['hostname'],
+                'target_os': row['os_name'],
+                'scanned_by': row['appliance_hostname'] or (row['owner_appliance_id'] or 'unassigned'),
+                'appliance_mac': row['appliance_mac'],
+                'last_seen': row['last_seen'].isoformat() if row['last_seen'] else None,
+            })
+
+        return {
+            'site_id': site_id,
+            'assignments': assignments,
+            'count': len(assignments),
         }
 
 
@@ -2693,6 +2749,39 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 import logging as _log
                 _log.warning(f"Failed to process discovery results: {e}")
 
+        # === STEP 3.8b: Mesh peer discovery (cross-subnet) ===
+        # Deliver sibling appliance IPs + MACs so daemon can probe them directly,
+        # enabling mesh target splitting across subnets (ARP only works on same L2).
+        mesh_peers = []
+        try:
+            async with conn.transaction():
+                sibling_rows = await conn.fetch("""
+                    SELECT mac_address, ip_addresses
+                    FROM site_appliances
+                    WHERE site_id = $1
+                    AND appliance_id != $2
+                    AND status = 'online'
+                    AND last_checkin > NOW() - INTERVAL '5 minutes'
+                """, checkin.site_id, canonical_id)
+                for row in sibling_rows:
+                    ips = row['ip_addresses']
+                    if isinstance(ips, str):
+                        ips = json.loads(ips)
+                    # Filter out WireGuard/tunnel IPs (10.x.x.x) — mesh probes
+                    # should only use LAN IPs. Tunnel IPs cross org boundaries
+                    # on the shared VPS hub and must not be used for peer discovery.
+                    if ips:
+                        ips = [ip for ip in ips if not ip.startswith('10.')]
+                    if ips and row['mac_address']:
+                        mesh_peers.append({
+                            "mac": row['mac_address'],
+                            "ips": ips,
+                        })
+                if mesh_peers:
+                    logger.info(f"Checkin {checkin.site_id}: delivering {len(mesh_peers)} mesh peer(s) for cross-subnet discovery")
+        except Exception as e:
+            logger.warning(f"Checkin {checkin.site_id}: mesh peer lookup failed: {e}")
+
         # === STEP 3.9: Peer witness hash exchange ===
         # Store incoming witness attestations and bundle hashes.
         # Retrieve sibling bundle hashes to deliver in response.
@@ -3244,6 +3333,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # Will be made per-site configurable via site_drift_config in a future update.
         "l2_confidence_threshold": 0.8,
         "peer_bundle_hashes": peer_bundle_hashes,
+        "mesh_peers": mesh_peers,
     }
 
 

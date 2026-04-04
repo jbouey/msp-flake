@@ -75,6 +75,13 @@ async def health_monitor_loop():
         except Exception as e:
             logger.error(f"Auth failure check error: {e}", exc_info=True)
 
+        try:
+            await _check_mesh_isolation()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Mesh isolation check error: {e}", exc_info=True)
+
         await asyncio.sleep(300)  # Every 5 minutes
 
 
@@ -752,3 +759,191 @@ async def _check_auth_failures():
                 f"Auth failure alert: {row['appliance_id']} "
                 f"({row['auth_failure_count']} failures, {minutes_failing}min)"
             )
+
+
+async def _check_mesh_isolation():
+    """Mesh health monitoring for multi-appliance sites.
+
+    Handles:
+    - P0-3: Mesh formation notification (first time peers connect)
+    - P1-5: Auto-resolve isolation alerts when mesh reconnects
+    - P1-6: Include sibling IPs in isolation alerts for troubleshooting
+    - P2-14: Ring convergence monitoring (split-brain detection)
+    """
+    import json as _json
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # Find sites with 2+ online appliances
+        multi_sites = await conn.fetch("""
+            SELECT site_id, COUNT(*) as online_count
+            FROM site_appliances
+            WHERE status = 'online'
+              AND last_checkin > NOW() - INTERVAL '5 minutes'
+            GROUP BY site_id
+            HAVING COUNT(*) >= 2
+        """)
+
+        for site_row in multi_sites:
+            site_id = site_row["site_id"]
+
+            appliances = await conn.fetch("""
+                SELECT appliance_id, hostname, daemon_health, ip_addresses
+                FROM site_appliances
+                WHERE site_id = $1
+                  AND status = 'online'
+                  AND last_checkin > NOW() - INTERVAL '5 minutes'
+            """, site_id)
+
+            def _parse_dh(app):
+                dh = app["daemon_health"]
+                if isinstance(dh, str):
+                    try:
+                        dh = _json.loads(dh)
+                    except (ValueError, TypeError):
+                        dh = None
+                return dh or {}
+
+            isolated = []
+            connected = []
+            for app in appliances:
+                dh = _parse_dh(app)
+                peer_count = dh.get("mesh_peer_count", 0)
+                ring_size = dh.get("mesh_ring_size", 0)
+                if ring_size > 0 and peer_count == 0:
+                    isolated.append(app)
+                elif peer_count > 0:
+                    connected.append(app)
+
+            # Skip pre-mesh firmware (no ring_size reported by anyone)
+            any_has_mesh = any(
+                _parse_dh(a).get("mesh_ring_size", 0) > 0 for a in appliances
+            )
+            if not any_has_mesh:
+                continue
+
+            site_name = await conn.fetchval(
+                "SELECT clinic_name FROM sites WHERE site_id = $1", site_id
+            ) or site_id
+
+            # === P0-3: Mesh formation notification ===
+            # If ALL mesh-capable appliances see peers, check if we've notified about formation
+            if connected and not isolated:
+                existing_formation = await conn.fetchval("""
+                    SELECT 1 FROM notifications
+                    WHERE site_id = $1 AND category = 'mesh_formed'
+                      AND created_at > NOW() - INTERVAL '24 hours'
+                """, site_id)
+                if not existing_formation:
+                    app_names = [a["hostname"] or a["appliance_id"][:12] for a in appliances]
+                    await conn.execute("""
+                        INSERT INTO notifications (
+                            site_id, category, severity, title, message, created_at
+                        ) VALUES ($1, 'mesh_formed', 'info', $2, $3, NOW())
+                    """,
+                        site_id,
+                        f"Mesh active: {len(appliances)} appliances coordinating",
+                        f"Appliances at {site_name} are now coordinating scans via mesh. "
+                        f"Nodes: {', '.join(app_names)}. "
+                        f"Targets are automatically split — no duplicate scanning.",
+                    )
+                    logger.info(f"Mesh formed: {site_id} ({len(appliances)} appliances)")
+
+            # === P1-5: Auto-resolve previous isolation alerts ===
+            if connected and not isolated:
+                await conn.execute("""
+                    INSERT INTO notifications (
+                        site_id, category, severity, title, message, created_at
+                    )
+                    SELECT $1, 'mesh_isolation_resolved', 'info',
+                           'Mesh isolation resolved',
+                           'All appliances at ' || $2 || ' can now see their mesh peers. '
+                           || 'Scan coordination restored.',
+                           NOW()
+                    WHERE EXISTS (
+                        SELECT 1 FROM notifications
+                        WHERE site_id = $1 AND category = 'mesh_isolation'
+                          AND created_at > NOW() - INTERVAL '24 hours'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM notifications n2
+                              WHERE n2.site_id = $1 AND n2.category = 'mesh_isolation_resolved'
+                                AND n2.created_at > notifications.created_at
+                          )
+                    )
+                """, site_id, site_name)
+
+            # === P2-14: Ring convergence monitoring ===
+            if len(connected) >= 2:
+                peer_sets = {}
+                for app in connected:
+                    dh = _parse_dh(app)
+                    macs = set(dh.get("mesh_peer_macs", []))
+                    peer_sets[app["appliance_id"]] = macs
+                # Check if all appliances agree on ring membership
+                all_sets = list(peer_sets.values())
+                if all_sets and any(s != all_sets[0] for s in all_sets[1:]):
+                    existing = await conn.fetchval("""
+                        SELECT 1 FROM notifications
+                        WHERE site_id = $1 AND category = 'mesh_split_brain'
+                          AND created_at > NOW() - INTERVAL '1 hour'
+                    """, site_id)
+                    if not existing:
+                        details = "; ".join(
+                            f"{aid[:12]}: sees {','.join(sorted(macs)) or 'none'}"
+                            for aid, macs in peer_sets.items()
+                        )
+                        await conn.execute("""
+                            INSERT INTO notifications (
+                                site_id, category, severity, title, message, created_at
+                            ) VALUES ($1, 'mesh_split_brain', 'warning', $2, $3, NOW())
+                        """,
+                            site_id,
+                            f"Mesh split-brain at {site_name}",
+                            f"Appliances disagree on ring membership. "
+                            f"This may cause uneven target distribution. {details}",
+                        )
+                        logger.warning(f"Mesh split-brain: {site_id} — {details}")
+
+            # === Isolation alerts (P1-6: include sibling IPs) ===
+            if isolated:
+                # Build sibling IP list for troubleshooting context
+                sibling_ips = []
+                for app in appliances:
+                    if app not in isolated:
+                        app_ips = app["ip_addresses"]
+                        if isinstance(app_ips, str):
+                            app_ips = _json.loads(app_ips)
+                        if app_ips:
+                            hn = app["hostname"] or app["appliance_id"][:12]
+                            sibling_ips.append(f"{hn}: {', '.join(str(ip) for ip in app_ips)}")
+
+                for app in isolated:
+                    existing = await conn.fetchval("""
+                        SELECT 1 FROM notifications
+                        WHERE site_id = $1
+                          AND category = 'mesh_isolation'
+                          AND message LIKE '%' || $2 || '%'
+                          AND created_at > NOW() - INTERVAL '1 hour'
+                    """, site_id, app["appliance_id"])
+
+                    if not existing:
+                        hostname = app["hostname"] or app["appliance_id"]
+                        sibling_info = (" Sibling IPs to check: " + "; ".join(sibling_ips)) if sibling_ips else ""
+                        await conn.execute("""
+                            INSERT INTO notifications (
+                                site_id, category, severity, title, message, created_at
+                            ) VALUES ($1, 'mesh_isolation', 'warning', $2, $3, NOW())
+                        """,
+                            site_id,
+                            f"Mesh isolation: {hostname}",
+                            f"Appliance {hostname} ({app['appliance_id']}) at {site_name} "
+                            f"has {site_row['online_count']} online siblings but cannot "
+                            f"see any mesh peers. Targets may be scanned by multiple "
+                            f"appliances. Ensure TCP port 50051 is open between subnets."
+                            f"{sibling_info}",
+                        )
+                        logger.warning(f"Mesh isolation: {app['appliance_id']} at {site_id} "
+                                       f"({site_row['online_count']} online, 0 peers)")

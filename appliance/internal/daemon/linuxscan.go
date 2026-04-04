@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -453,10 +454,17 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 	targets := ds.svc.Targets.GetLinuxTargets()
 
 	// Mesh filter: only scan targets this appliance owns on the hash ring.
+	// Key canonicalized to IP to prevent hostname/IP hash divergence between appliances.
 	if ds.svc.Mesh != nil && ds.svc.Mesh.PeerCount() > 0 {
 		var owned []linuxTarget
 		for _, lt := range targets {
-			if ds.svc.Mesh.OwnsTarget(lt.Hostname) {
+			key := lt.Hostname
+			if net.ParseIP(key) == nil {
+				if addrs, err := net.LookupHost(key); err == nil && len(addrs) > 0 {
+					key = addrs[0]
+				}
+			}
+			if ds.svc.Mesh.OwnsTarget(key) {
 				owned = append(owned, lt)
 			}
 		}

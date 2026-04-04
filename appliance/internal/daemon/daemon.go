@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -463,6 +464,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if selfMAC != "" {
 		d.mesh = NewMesh(selfMAC, d.config.SiteID, d.config.GRPCPort)
 		d.svc.Mesh = d.mesh
+		// Set CA cert pool for TLS-verified peer probes (P1-4)
+		if d.agentCA != nil {
+			if caPEM, err := d.agentCA.CACertPEM(); err == nil {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(caPEM) {
+					d.mesh.SetCACertPool(pool)
+					log.Printf("[mesh] TLS peer verification enabled (CA cert loaded)")
+				}
+			}
+		}
 		log.Printf("[daemon] Mesh initialized: self=%s, site=%s, grpc_port=%d", selfMAC, d.config.SiteID, d.config.GRPCPort)
 
 		// Immediate peer discovery at startup — don't wait for the 10-min netscan cycle.
@@ -677,7 +688,7 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	}
 
 	// Daemon runtime health — Go stdlib, zero deps
-	req.DaemonHealth = collectDaemonHealth(d.startTime)
+	req.DaemonHealth = collectDaemonHealth(d.startTime, d.mesh)
 
 	// Peer witnessing: send recent bundle hashes + any pending attestations
 	req.BundleHashes = d.state.DrainBundleHashes()
@@ -875,6 +886,15 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	// Drain queued telemetry entries (network is known-good after successful checkin)
 	if d.telemetry != nil {
 		d.telemetry.DrainQueue()
+	}
+
+	// Update mesh with backend-seeded peers (enables cross-subnet target splitting).
+	// Runs in a goroutine because gRPC probes take up to 2s per peer IP.
+	if d.mesh != nil && len(resp.MeshPeers) > 0 {
+		peers := resp.MeshPeers
+		d.safeGo("meshBackendPeers", func() {
+			d.mesh.UpdateBackendPeers(peers, nil)
+		})
 	}
 
 	// Update self-healer with current agent heartbeat data from gRPC registry

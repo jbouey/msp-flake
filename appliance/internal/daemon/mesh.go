@@ -2,9 +2,12 @@ package daemon
 
 import (
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"fmt"
 	"log"
+	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -150,6 +153,7 @@ type Mesh struct {
 	ring        *HashRing
 	peers       map[string]*meshPeer // MAC → peer
 	gracePeriod time.Duration
+	caCertPool  *x509.CertPool       // for TLS-verified peer probes (nil = TCP fallback)
 }
 
 type meshPeer struct {
@@ -181,12 +185,48 @@ func (m *Mesh) OwnsTarget(targetIP string) bool {
 
 // PeerCount returns the number of peers (excluding self).
 func (m *Mesh) PeerCount() int {
-	return m.ring.NodeCount() - 1
+	n := m.ring.NodeCount() - 1
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // SelfMAC returns this appliance's MAC on the ring.
 func (m *Mesh) SelfMAC() string {
 	return m.selfMAC
+}
+
+// MeshStats holds an atomic snapshot of mesh state for telemetry.
+type MeshStats struct {
+	PeerCount int
+	RingSize  int
+	PeerMACs  []string
+}
+
+// Stats returns an atomic snapshot of mesh state under a single lock acquisition.
+// Prevents inconsistency between peer count and MAC list.
+func (m *Mesh) Stats() MeshStats {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	nodes := m.ring.Nodes()
+	var peerMACs []string
+	for _, mac := range nodes {
+		if mac != m.selfMAC {
+			peerMACs = append(peerMACs, mac)
+		}
+	}
+	ringSize := len(nodes)
+	peerCount := ringSize - 1
+	if peerCount < 0 {
+		peerCount = 0
+	}
+	return MeshStats{
+		PeerCount: peerCount,
+		RingSize:  ringSize,
+		PeerMACs:  peerMACs,
+	}
 }
 
 // UpdatePeers scans the ARP table for sibling appliances and updates the ring.
@@ -232,5 +272,136 @@ func (m *Mesh) UpdatePeers(arpDevices []discoveredDevice) {
 			m.ring.RemoveNode(mac)
 			log.Printf("[mesh] Peer lost (grace expired): %s (ring size: %d)", mac, m.ring.NodeCount())
 		}
+	}
+}
+
+// SetCACertPool sets the CA certificate pool for TLS-verified peer probes.
+// Called once at startup after CA initialization.
+func (m *Mesh) SetCACertPool(pool *x509.CertPool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.caCertPool = pool
+}
+
+// peerProbeResult holds the result of probing a single peer (used for parallel probing).
+type peerProbeResult struct {
+	MAC string
+	IP  string // empty if unreachable
+}
+
+// UpdateBackendPeers integrates sibling appliance info delivered by Central Command.
+// This enables mesh target splitting across subnets where ARP discovery can't reach.
+// Each peer's gRPC port is probed to confirm liveness before adding to the ring.
+// Peers NOT in the current delivery AND past grace period are expired (prevents black holes).
+// Probes run concurrently (one goroutine per peer) to cap latency at max(IPs)*2s.
+// The probeFunc parameter allows test injection; pass nil for production (TLS with CA fallback to TCP).
+func (m *Mesh) UpdateBackendPeers(peers []MeshPeerInfo, probeFunc func(ip string, port int) bool) {
+	probe := probeFunc
+	if probe == nil {
+		probe = m.defaultProbe()
+	}
+
+	// Probe all peers concurrently (I/O bound — network dials)
+	results := make([]peerProbeResult, len(peers))
+	var wg sync.WaitGroup
+	for i, p := range peers {
+		mac := normalizeMACForRing(p.MAC)
+		if mac == "" || mac == m.selfMAC {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, mac string, ips []string) {
+			defer wg.Done()
+			for _, ip := range ips {
+				if probe(ip, m.grpcPort) {
+					results[idx] = peerProbeResult{MAC: mac, IP: ip}
+					return
+				}
+			}
+			results[idx] = peerProbeResult{MAC: mac} // unreachable
+		}(i, mac, p.IPs)
+	}
+	wg.Wait()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	delivered := map[string]bool{m.selfMAC: true}
+
+	for _, r := range results {
+		if r.MAC == "" {
+			continue
+		}
+		delivered[r.MAC] = true
+
+		if r.IP == "" {
+			// Unreachable — don't add, but mark as delivered so expiry logic
+			// knows the backend still considers this peer active.
+			continue
+		}
+
+		peer, exists := m.peers[r.MAC]
+		if !exists {
+			peer = &meshPeer{MAC: r.MAC, IP: r.IP}
+			m.peers[r.MAC] = peer
+			m.ring.AddNode(r.MAC)
+			log.Printf("[mesh] Backend peer discovered: %s at %s (cross-subnet, ring size: %d)", r.MAC, r.IP, m.ring.NodeCount())
+		}
+		peer.LastSeen = now
+		peer.IP = r.IP
+		peer.Online = true
+	}
+
+	// Expire peers NOT in ARP seen set AND NOT in backend delivery AND past grace.
+	// This prevents permanent black holes when a cross-subnet peer is decommissioned.
+	for mac, peer := range m.peers {
+		if delivered[mac] {
+			continue
+		}
+		if peer.Online && now.Sub(peer.LastSeen) > m.gracePeriod {
+			peer.Online = false
+			m.ring.RemoveNode(mac)
+			log.Printf("[mesh] Backend peer expired (not in delivery, grace elapsed): %s (ring size: %d)", mac, m.ring.NodeCount())
+		}
+	}
+}
+
+// defaultProbe returns the production probe function.
+// Uses TLS with CA verification if available, falls back to TCP.
+func (m *Mesh) defaultProbe() func(ip string, port int) bool {
+	m.mu.RLock()
+	caPool := m.caCertPool
+	m.mu.RUnlock()
+
+	return func(ip string, port int) bool {
+		addr := fmt.Sprintf("%s:%d", ip, port)
+
+		// Prefer TLS with CA verification (confirms peer is a sibling appliance)
+		if caPool != nil {
+			conn, err := tls.DialWithDialer(
+				&net.Dialer{Timeout: 2 * time.Second},
+				"tcp", addr,
+				&tls.Config{
+					RootCAs:            caPool,
+					InsecureSkipVerify: false,
+					ServerName:         ip, // gRPC server cert has IP SAN
+				},
+			)
+			if err == nil {
+				conn.Close()
+				return true
+			}
+			// TLS failed — could be cert mismatch (different CA) or network error.
+			// Fall through to TCP for backward compat with pre-TLS peers.
+		}
+
+		// TCP fallback (for appliances running older firmware without TLS on gRPC)
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			return false
+		}
+		conn.Close()
+		return true
 	}
 }

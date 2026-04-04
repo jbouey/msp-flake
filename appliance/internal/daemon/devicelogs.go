@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -173,6 +174,30 @@ func eventPriority(eventID int) int {
 //
 // Returns all collected entries for cross-host correlation by the threat detector.
 func (ds *driftScanner) collectAndAnalyzeDeviceLogs(ctx context.Context, targets []scanTarget) []deviceLogEntry {
+	// Mesh filter: only collect logs from targets this appliance owns.
+	// Prevents duplicate WinRM pulls when multiple appliances serve the same site.
+	if ds.svc.Mesh != nil && ds.svc.Mesh.PeerCount() > 0 {
+		var owned []scanTarget
+		for _, t := range targets {
+			key := t.hostname
+			if t.target != nil {
+				key = t.target.Hostname
+			}
+			if net.ParseIP(key) == nil {
+				if addrs, err := net.LookupHost(key); err == nil && len(addrs) > 0 {
+					key = addrs[0]
+				}
+			}
+			if ds.svc.Mesh.OwnsTarget(key) {
+				owned = append(owned, t)
+			}
+		}
+		if len(owned) < len(targets) {
+			log.Printf("[devicelogs] Mesh filter: %d/%d targets owned by this appliance", len(owned), len(targets))
+		}
+		targets = owned
+	}
+
 	var allEntries []deviceLogEntry
 
 	for _, t := range targets {

@@ -248,6 +248,10 @@ type DaemonHealth struct {
 	GCCycles      uint32  `json:"gc_cycles"`
 	NumCPU        int     `json:"num_cpu"`
 	UptimeSeconds int64   `json:"uptime_seconds_daemon"`
+	// Mesh coordination stats
+	MeshPeerCount int      `json:"mesh_peer_count"`
+	MeshRingSize  int      `json:"mesh_ring_size"`  // total nodes including self
+	MeshPeerMACs  []string `json:"mesh_peer_macs,omitempty"`
 }
 
 // ConnectedAgent represents a Go agent connected to this appliance via gRPC.
@@ -266,14 +270,15 @@ type ConnectedAgent struct {
 }
 
 // collectDaemonHealth reads Go runtime stats — zero external dependencies.
-func collectDaemonHealth(startTime time.Time) *DaemonHealth {
+// mesh may be nil for single-appliance deployments.
+func collectDaemonHealth(startTime time.Time, mesh *Mesh) *DaemonHealth {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	var lastPauseMs float64
 	if m.NumGC > 0 {
 		lastPauseMs = float64(m.PauseNs[(m.NumGC+255)%256]) / 1e6
 	}
-	return &DaemonHealth{
+	h := &DaemonHealth{
 		Goroutines:    runtime.NumGoroutine(),
 		HeapAllocMB:   float64(m.HeapAlloc) / (1024 * 1024),
 		HeapSysMB:     float64(m.HeapSys) / (1024 * 1024),
@@ -282,6 +287,13 @@ func collectDaemonHealth(startTime time.Time) *DaemonHealth {
 		NumCPU:        runtime.NumCPU(),
 		UptimeSeconds: int64(time.Since(startTime).Seconds()),
 	}
+	if mesh != nil {
+		stats := mesh.Stats()
+		h.MeshPeerCount = stats.PeerCount
+		h.MeshRingSize = stats.RingSize
+		h.MeshPeerMACs = stats.PeerMACs
+	}
+	return h
 }
 
 // WireguardConfig holds the hub-side WireGuard parameters delivered by Central Command.
@@ -313,6 +325,15 @@ type CheckinResponse struct {
 	Wireguard            *WireguardConfig         `json:"wireguard,omitempty"`
 	// Peer witnessing: sibling appliance bundle hashes to counter-sign
 	PeerBundleHashes     []PeerBundleHash         `json:"peer_bundle_hashes,omitempty"`
+	// Mesh: sibling appliance IPs+MACs for cross-subnet peer discovery
+	MeshPeers            []MeshPeerInfo           `json:"mesh_peers,omitempty"`
+}
+
+// MeshPeerInfo is a sibling appliance's identity delivered by Central Command
+// for cross-subnet mesh peer discovery (ARP only works on same L2 segment).
+type MeshPeerInfo struct {
+	MAC string   `json:"mac"`
+	IPs []string `json:"ips"`
 }
 
 // PeerBundleHash is a sibling appliance's bundle hash delivered for witnessing.

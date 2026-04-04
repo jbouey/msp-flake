@@ -163,6 +163,23 @@ const ApplianceCard: React.FC<{
         </div>
       </div>
 
+      {/* Mesh Coordination */}
+      {appliance.mesh_ring_size > 1 && (
+        <div className="mt-3 pt-3 border-t border-separator-light">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${appliance.mesh_peer_count > 0 ? 'bg-health-healthy' : 'bg-health-warning'}`} />
+              <p className="text-xs text-label-tertiary">Scan Coordination</p>
+            </div>
+            <p className="text-xs text-label-secondary">
+              {appliance.mesh_peer_count > 0
+                ? `${appliance.mesh_ring_size} appliances coordinating`
+                : 'No peers detected'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* L2 Healing Mode */}
       <div className="mt-3 pt-3 border-t border-separator-light flex items-center justify-between">
         <div>

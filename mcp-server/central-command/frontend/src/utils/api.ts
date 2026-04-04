@@ -541,6 +541,9 @@ export interface SiteAppliance {
   last_checkin: string | null;
   uptime_seconds: number | null;
   l2_mode: 'auto' | 'manual' | 'disabled';
+  mesh_peer_count: number;
+  mesh_ring_size: number;
+  mesh_peer_macs: string[];
 }
 
 export interface SiteCredential {

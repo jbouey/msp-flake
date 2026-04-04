@@ -162,6 +162,159 @@ func TestMesh_UpdatePeers_IgnoresNonGRPC(t *testing.T) {
 	}
 }
 
+func TestMesh_UpdateBackendPeers_CrossSubnet(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+
+	// Simulate backend delivering a peer on a different subnet
+	alwaysReachable := func(ip string, port int) bool { return true }
+	m.UpdateBackendPeers([]MeshPeerInfo{
+		{MAC: "AA:BB:CC:DD:EE:02", IPs: []string{"192.168.0.11"}},
+	}, alwaysReachable)
+
+	if m.PeerCount() != 1 {
+		t.Errorf("expected 1 peer from backend, got %d", m.PeerCount())
+	}
+
+	// Targets should now be split
+	ownCount := 0
+	for i := 0; i < 256; i++ {
+		if m.OwnsTarget(fmt.Sprintf("192.168.88.%d", i)) {
+			ownCount++
+		}
+	}
+	if ownCount == 256 {
+		t.Error("with a backend peer, self should not own all targets")
+	}
+	if ownCount == 0 {
+		t.Error("self should still own some targets")
+	}
+}
+
+func TestMesh_UpdateBackendPeers_SkipsSelf(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+
+	alwaysReachable := func(ip string, port int) bool { return true }
+	m.UpdateBackendPeers([]MeshPeerInfo{
+		{MAC: "AA:BB:CC:DD:EE:01", IPs: []string{"192.168.88.241"}}, // self
+	}, alwaysReachable)
+
+	if m.PeerCount() != 0 {
+		t.Errorf("should not add self as peer, got %d", m.PeerCount())
+	}
+}
+
+func TestMesh_UpdateBackendPeers_UnreachableSkipped(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+
+	neverReachable := func(ip string, port int) bool { return false }
+	m.UpdateBackendPeers([]MeshPeerInfo{
+		{MAC: "AA:BB:CC:DD:EE:02", IPs: []string{"10.0.0.99"}},
+	}, neverReachable)
+
+	if m.PeerCount() != 0 {
+		t.Errorf("unreachable peer should not be added, got %d", m.PeerCount())
+	}
+}
+
+func TestMesh_UpdateBackendPeers_TriesMultipleIPs(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+
+	// First IP unreachable, second reachable
+	probed := []string{}
+	selectiveProbe := func(ip string, port int) bool {
+		probed = append(probed, ip)
+		return ip == "10.100.0.2" // only WireGuard IP works
+	}
+	m.UpdateBackendPeers([]MeshPeerInfo{
+		{MAC: "AA:BB:CC:DD:EE:02", IPs: []string{"192.168.0.11", "10.100.0.2"}},
+	}, selectiveProbe)
+
+	if m.PeerCount() != 1 {
+		t.Errorf("should find peer via second IP, got %d peers", m.PeerCount())
+	}
+	if len(probed) != 2 {
+		t.Errorf("should have probed both IPs, probed %d", len(probed))
+	}
+}
+
+func TestMesh_UpdateBackendPeers_MergesWithARPPeers(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+
+	// First: ARP discovers a peer on same subnet
+	m.UpdatePeers([]discoveredDevice{
+		{IPAddress: "192.168.88.100", MACAddress: "AA:BB:CC:DD:EE:02", ProbeGRPC: true},
+	})
+	if m.PeerCount() != 1 {
+		t.Fatal("ARP peer should be added")
+	}
+
+	// Then: backend delivers a different peer on another subnet
+	alwaysReachable := func(ip string, port int) bool { return true }
+	m.UpdateBackendPeers([]MeshPeerInfo{
+		{MAC: "AA:BB:CC:DD:EE:03", IPs: []string{"192.168.0.11"}},
+	}, alwaysReachable)
+
+	if m.PeerCount() != 2 {
+		t.Errorf("should have 2 peers (1 ARP + 1 backend), got %d", m.PeerCount())
+	}
+}
+
+func TestMesh_UpdateBackendPeers_ExpiresStaleBackendPeers(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+	m.gracePeriod = 100 * time.Millisecond
+
+	alwaysReachable := func(ip string, port int) bool { return true }
+
+	// Add peer via backend
+	m.UpdateBackendPeers([]MeshPeerInfo{
+		{MAC: "AA:BB:CC:DD:EE:02", IPs: []string{"192.168.0.11"}},
+	}, alwaysReachable)
+	if m.PeerCount() != 1 {
+		t.Fatal("backend peer should be added")
+	}
+
+	// Wait for grace to expire
+	time.Sleep(150 * time.Millisecond)
+
+	// Backend no longer delivers this peer (decommissioned)
+	m.UpdateBackendPeers([]MeshPeerInfo{}, alwaysReachable)
+
+	if m.PeerCount() != 0 {
+		t.Errorf("stale backend peer should be expired, got %d peers", m.PeerCount())
+	}
+}
+
+func TestMesh_Stats_AtomicSnapshot(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+
+	alwaysReachable := func(ip string, port int) bool { return true }
+	m.UpdateBackendPeers([]MeshPeerInfo{
+		{MAC: "AA:BB:CC:DD:EE:02", IPs: []string{"192.168.0.11"}},
+		{MAC: "AA:BB:CC:DD:EE:03", IPs: []string{"192.168.0.12"}},
+	}, alwaysReachable)
+
+	stats := m.Stats()
+	if stats.PeerCount != 2 {
+		t.Errorf("expected 2 peers, got %d", stats.PeerCount)
+	}
+	if stats.RingSize != 3 {
+		t.Errorf("expected ring size 3, got %d", stats.RingSize)
+	}
+	if len(stats.PeerMACs) != 2 {
+		t.Errorf("expected 2 peer MACs, got %d", len(stats.PeerMACs))
+	}
+}
+
+func TestMesh_UpdateBackendPeers_EmptySlice(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+	// Should be a no-op, no panic
+	m.UpdateBackendPeers(nil, nil)
+	m.UpdateBackendPeers([]MeshPeerInfo{}, nil)
+	if m.PeerCount() != 0 {
+		t.Errorf("empty updates should not add peers, got %d", m.PeerCount())
+	}
+}
+
 func TestMesh_GracePeriod_KeepsPeerInRing(t *testing.T) {
 	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
 	m.gracePeriod = 100 * time.Millisecond // short for testing

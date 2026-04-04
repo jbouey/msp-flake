@@ -387,14 +387,21 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 
 	// Mesh filter: only scan targets this appliance owns on the hash ring.
 	// Single appliance (no peers) owns everything — no filtering applied.
+	// Key is canonicalized to IP to prevent hostname/IP hash divergence between appliances.
 	if ds.svc.Mesh != nil && ds.svc.Mesh.PeerCount() > 0 {
 		var owned []scanTarget
 		for _, t := range targets {
-			ip := t.hostname
+			key := t.hostname
 			if t.target != nil {
-				ip = t.target.Hostname
+				key = t.target.Hostname
 			}
-			if ds.svc.Mesh.OwnsTarget(ip) {
+			// Canonicalize: if not already an IP, resolve to one
+			if net.ParseIP(key) == nil {
+				if addrs, err := net.LookupHost(key); err == nil && len(addrs) > 0 {
+					key = addrs[0]
+				}
+			}
+			if ds.svc.Mesh.OwnsTarget(key) {
 				owned = append(owned, t)
 			}
 		}
