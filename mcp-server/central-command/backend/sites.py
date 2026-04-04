@@ -2362,19 +2362,19 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 import logging
                 logging.warning(f"Checkin {checkin.site_id}: failed to process deploy results: {e}")
 
-        # === STEP 1: Find existing appliances with same MAC or hostname ===
-        # Use FOR UPDATE to prevent concurrent check-ins from racing
+        # === STEP 1: Find existing appliances with same MAC ===
+        # MAC is the primary identity for physical appliances. Hostname matching
+        # was removed because multiple appliances per site often share the same
+        # hostname (e.g., NixOS defaults to "osiriscare"), causing false merges.
+        # Use FOR UPDATE to prevent concurrent check-ins from racing.
         existing = await conn.fetch("""
             SELECT appliance_id, hostname, mac_address, first_checkin
             FROM site_appliances
             WHERE site_id = $1
-            AND (
-                UPPER(REPLACE(REPLACE(mac_address, ':', ''), '-', '')) = $2
-                OR LOWER(hostname) = $3
-            )
+            AND UPPER(REPLACE(REPLACE(mac_address, ':', ''), '-', '')) = $2
             ORDER BY last_checkin DESC NULLS LAST
             FOR UPDATE
-        """, checkin.site_id, mac_clean.upper(), hostname_lower)
+        """, checkin.site_id, mac_clean.upper())
 
         merge_from_ids = []
         canonical_id = appliance_id
