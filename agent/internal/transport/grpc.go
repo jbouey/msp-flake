@@ -649,6 +649,15 @@ func (c *GRPCClient) IsConnected() bool {
 	return c.connected
 }
 
+// MarkDisconnected sets the connection state to disconnected so the reconnect
+// loop can detect it and trigger a full reconnect. Called by the heartbeat loop
+// after consecutive failures indicate the server is unreachable.
+func (c *GRPCClient) MarkDisconnected() {
+	c.mu.Lock()
+	c.connected = false
+	c.mu.Unlock()
+}
+
 // GetAgentID returns the registered agent ID
 func (c *GRPCClient) GetAgentID() string {
 	c.mu.RLock()

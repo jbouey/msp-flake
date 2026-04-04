@@ -428,6 +428,7 @@ func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient, upd *up
 	defer ticker.Stop()
 
 	streamRetryCount := 0
+	heartbeatFailures := 0
 
 	log.Println("[heartbeat] Heartbeat loop started (60s interval)")
 	for {
@@ -438,9 +439,18 @@ func runHeartbeatLoop(ctx context.Context, client *transport.GRPCClient, upd *up
 		case <-ticker.C:
 			resp, err := client.SendHeartbeat(ctx)
 			if err != nil {
-				log.Printf("[heartbeat] Failed: %v", err)
+				heartbeatFailures++
+				log.Printf("[heartbeat] Failed (consecutive=%d): %v", heartbeatFailures, err)
+				// After 3 consecutive failures, mark disconnected so the reconnect
+				// loop triggers a full reconnect instead of endlessly failing here.
+				if heartbeatFailures >= 3 {
+					log.Printf("[heartbeat] %d consecutive failures — marking disconnected for reconnect", heartbeatFailures)
+					client.MarkDisconnected()
+					return // exit heartbeat loop; reconnect loop will restart it
+				}
 				continue
 			}
+			heartbeatFailures = 0 // reset on success
 			if resp.ConfigChanged {
 				log.Println("[heartbeat] Config changed — re-registration needed")
 			}
