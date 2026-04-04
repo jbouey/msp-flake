@@ -3718,6 +3718,13 @@ async def get_unregistered_devices(
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
 
+        # Exclude appliance IPs (they're infrastructure, not client devices)
+        appliance_ips = await conn.fetch(
+            "SELECT unnest(ip_addresses::text[]) as ip FROM site_appliances WHERE site_id = $1",
+            site_id
+        )
+        exclude_ips = {row["ip"].strip('"') for row in appliance_ips}
+
         devices = await conn.fetch("""
             SELECT dd.id, dd.ip_address, dd.mac_address, dd.hostname,
                    dd.os_name, dd.distro, dd.device_type, dd.device_status,
@@ -3728,8 +3735,16 @@ async def get_unregistered_devices(
             AND dd.device_status IN ('take_over_available', 'ad_managed')
             AND dd.device_type IN ('workstation', 'server', 'unknown')
             AND (dd.compliance_status IS NULL OR dd.compliance_status = 'unknown')
+            AND dd.hostname NOT LIKE '%router%'
             ORDER BY dd.last_seen_at DESC
         """, site_id)
+
+        # Filter out appliance IPs and .1 gateway addresses
+        devices = [
+            row for row in devices
+            if row["ip_address"] not in exclude_ips
+            and not row["ip_address"].endswith(".1")
+        ]
 
         return {
             "site_id": site_id,
