@@ -3684,3 +3684,194 @@ async def client_resolve_ticket(
             raise HTTPException(status_code=404, detail="Ticket not found or already resolved")
 
     return {"status": "resolved"}
+
+
+# =============================================================================
+# Unregistered Device Discovery & Registration
+# =============================================================================
+
+# Rational devices: servers and workstations with open management ports or AD membership.
+# Excludes IoT, printers, consumer devices (PlayStations, smart TVs, etc.)
+_RATIONAL_DEVICE_STATUSES = ("take_over_available", "ad_managed")
+_RATIONAL_DEVICE_TYPES = ("workstation", "server")
+
+
+@auth_router.get("/sites/{site_id}/unregistered-devices")
+async def get_unregistered_devices(
+    site_id: str,
+    user: dict = Depends(require_client_user),
+):
+    """List discovered devices that need client attention.
+
+    Only returns "rational" devices — servers and workstations with open
+    management ports (SSH/WinRM) or AD membership, but no agent and no
+    credentials. Consumer devices (IoT, printers, etc.) are excluded.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        # Verify site belongs to this org
+        site = await conn.fetchrow(
+            "SELECT site_id FROM sites WHERE site_id = $1", site_id
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        devices = await conn.fetch("""
+            SELECT dd.id, dd.ip_address, dd.mac_address, dd.hostname,
+                   dd.os_name, dd.distro, dd.device_type, dd.device_status,
+                   dd.probe_ssh, dd.probe_winrm, dd.ad_joined,
+                   dd.first_seen_at, dd.last_seen_at
+            FROM discovered_devices dd
+            WHERE dd.site_id = $1
+            AND dd.device_status IN ('take_over_available', 'ad_managed')
+            AND dd.device_type IN ('workstation', 'server', 'unknown')
+            AND (dd.compliance_status IS NULL OR dd.compliance_status = 'unknown')
+            ORDER BY dd.last_seen_at DESC
+        """, site_id)
+
+        return {
+            "site_id": site_id,
+            "devices": [
+                {
+                    "id": row["id"],
+                    "ip_address": row["ip_address"],
+                    "mac_address": row["mac_address"],
+                    "hostname": row["hostname"] or "",
+                    "os_name": row["os_name"] or "Unknown",
+                    "distro": row["distro"] or "",
+                    "device_type": row["device_type"] or "unknown",
+                    "device_status": row["device_status"],
+                    "probe_ssh": row["probe_ssh"] or False,
+                    "probe_winrm": row["probe_winrm"] or False,
+                    "ad_joined": row["ad_joined"] or False,
+                    "first_seen": row["first_seen_at"].isoformat() if row["first_seen_at"] else None,
+                    "last_seen": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
+                }
+                for row in devices
+            ],
+            "count": len(devices),
+        }
+
+
+class DeviceRegistration(BaseModel):
+    """Client submits credentials for an unregistered device."""
+    username: str
+    password: Optional[str] = None
+    private_key: Optional[str] = None
+    credential_type: Literal["ssh_key", "winrm", "local_admin"] = "ssh_key"
+    label: Optional[str] = None  # "linux", "windows", "macos"
+
+
+@auth_router.post("/sites/{site_id}/devices/{device_id}/register")
+async def register_device(
+    site_id: str,
+    device_id: int,
+    body: DeviceRegistration,
+    user: dict = Depends(require_client_user),
+):
+    """Register credentials for a discovered device.
+
+    Creates a site_credential for the device so the appliance can scan it.
+    Updates device_status to 'pending_deploy'.
+    """
+    import json as _json
+    from .credential_crypto import encrypt_credential
+
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        # Verify site + device belong to this org
+        device = await conn.fetchrow("""
+            SELECT id, ip_address, hostname, mac_address, device_status, probe_ssh, probe_winrm
+            FROM discovered_devices
+            WHERE id = $1 AND site_id = $2
+        """, device_id, site_id)
+
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+        if device["device_status"] in ("agent_active", "ignored"):
+            raise HTTPException(status_code=409, detail=f"Device already {device['device_status']}")
+
+        # Build credential JSON
+        host = device["ip_address"]
+        cred_data = {
+            "host": host,
+            "username": body.username,
+        }
+        if body.password:
+            cred_data["password"] = body.password
+        if body.private_key:
+            cred_data["private_key"] = body.private_key
+        if body.label:
+            cred_data["label"] = body.label
+
+        # Auto-detect credential type from probes if not specified
+        if body.credential_type == "ssh_key" and device["probe_winrm"] and not device["probe_ssh"]:
+            cred_data["use_ssl"] = False
+            cred_type = "winrm"
+        else:
+            cred_type = body.credential_type
+
+        encrypted = encrypt_credential(_json.dumps(cred_data))
+        cred_name = f"{device['hostname'] or host} ({cred_type})"
+
+        # Insert credential
+        await conn.execute("""
+            INSERT INTO site_credentials (site_id, credential_type, credential_name, encrypted_data, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, NOW(), NOW())
+        """, site_id, cred_type, cred_name, encrypted)
+
+        # Update device status
+        await conn.execute("""
+            UPDATE discovered_devices
+            SET device_status = 'pending_deploy',
+                sync_updated_at = NOW()
+            WHERE id = $1
+        """, device_id)
+
+        logger.info(
+            "Device registered by client",
+            extra={"site_id": site_id, "device_id": device_id, "host": host,
+                   "user": user.get("email"), "cred_type": cred_type}
+        )
+
+    return {"status": "registered", "device_id": device_id, "host": host}
+
+
+@auth_router.post("/sites/{site_id}/devices/{device_id}/ignore")
+async def ignore_device(
+    site_id: str,
+    device_id: int,
+    user: dict = Depends(require_client_user),
+):
+    """Mark a discovered device as expected/non-managed.
+
+    The device will no longer appear in unregistered device alerts.
+    Can be reversed by admin via the dashboard.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        result = await conn.execute("""
+            UPDATE discovered_devices
+            SET device_status = 'ignored',
+                device_tag = 'client_ignored',
+                sync_updated_at = NOW()
+            WHERE id = $1 AND site_id = $2
+            AND device_status NOT IN ('agent_active')
+        """, device_id, site_id)
+
+        if result == "UPDATE 0":
+            raise HTTPException(status_code=404, detail="Device not found or already managed")
+
+        logger.info(
+            "Device ignored by client",
+            extra={"site_id": site_id, "device_id": device_id, "user": user.get("email")}
+        )
+
+    return {"status": "ignored", "device_id": device_id}

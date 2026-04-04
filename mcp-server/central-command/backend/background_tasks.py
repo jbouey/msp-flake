@@ -556,6 +556,115 @@ async def expire_fleet_orders_loop():
         await asyncio.sleep(300)
 
 
+async def unregistered_device_alert_loop():
+    """Email clients about unregistered devices needing attention (daily at 9 AM UTC).
+
+    Only alerts for "rational" devices — servers and workstations with open
+    management ports (SSH/WinRM) or AD membership. Consumer devices, printers,
+    and IoT are excluded.
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.email_service import send_email
+
+    await asyncio.sleep(300)  # Wait for startup
+    while True:
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                # Find sites with unregistered rational devices + a client contact email
+                sites = await conn.fetch("""
+                    SELECT s.site_id, s.clinic_name, s.client_contact_email,
+                           COUNT(dd.id) as unregistered_count
+                    FROM sites s
+                    JOIN discovered_devices dd ON dd.site_id = s.site_id
+                    WHERE dd.device_status IN ('take_over_available', 'ad_managed')
+                    AND dd.device_type IN ('workstation', 'server', 'unknown')
+                    AND (dd.compliance_status IS NULL OR dd.compliance_status = 'unknown')
+                    AND s.client_contact_email IS NOT NULL
+                    AND s.client_contact_email != ''
+                    GROUP BY s.site_id, s.clinic_name, s.client_contact_email
+                    HAVING COUNT(dd.id) > 0
+                """)
+
+                for site in sites:
+                    # Check if we already alerted today (dedup by site + date)
+                    today = asyncio.get_event_loop().time()
+                    alert_key = f"unregistered_device_alert:{site['site_id']}"
+
+                    already_sent = await conn.fetchval("""
+                        SELECT COUNT(*) FROM audit_log
+                        WHERE event_type = 'unregistered_device_alert'
+                        AND details->>'site_id' = $1
+                        AND created_at > NOW() - INTERVAL '24 hours'
+                    """, site["site_id"])
+
+                    if already_sent and already_sent > 0:
+                        continue
+
+                    # Get device details for the email
+                    devices = await conn.fetch("""
+                        SELECT ip_address, hostname, os_name, device_type,
+                               probe_ssh, probe_winrm, ad_joined, first_seen_at
+                        FROM discovered_devices
+                        WHERE site_id = $1
+                        AND device_status IN ('take_over_available', 'ad_managed')
+                        AND device_type IN ('workstation', 'server', 'unknown')
+                        AND (compliance_status IS NULL OR compliance_status = 'unknown')
+                        ORDER BY first_seen_at DESC
+                        LIMIT 20
+                    """, site["site_id"])
+
+                    # Build email
+                    device_lines = []
+                    for d in devices:
+                        name = d["hostname"] or d["ip_address"]
+                        os_info = d["os_name"] or "Unknown OS"
+                        ports = []
+                        if d["probe_ssh"]:
+                            ports.append("SSH")
+                        if d["probe_winrm"]:
+                            ports.append("WinRM")
+                        if d["ad_joined"]:
+                            ports.append("AD-joined")
+                        device_lines.append(f"  - {name} ({os_info}) [{', '.join(ports)}]")
+
+                    count = site["unregistered_count"]
+                    clinic = site["clinic_name"]
+                    subject = f"[OsirisCare] {count} device(s) at {clinic} need your attention"
+                    body = (
+                        f"Hi,\n\n"
+                        f"Our compliance monitoring detected {count} device(s) on your network "
+                        f"at {clinic} that are not currently covered by your security monitoring.\n\n"
+                        f"These devices have open management ports and appear to be servers or "
+                        f"workstations that should be monitored for HIPAA compliance:\n\n"
+                        + "\n".join(device_lines) +
+                        f"\n\nTo register these devices and enable compliance monitoring, "
+                        f"please log in to your portal:\n"
+                        f"  https://api.osiriscare.net/client/login\n\n"
+                        f"If any of these devices are expected and don't need monitoring "
+                        f"(e.g., test equipment), you can mark them as 'Ignored' in the portal.\n\n"
+                        f"This is an automated message from OsirisCare compliance monitoring.\n"
+                    )
+
+                    sent = await send_email(site["client_contact_email"], subject, body)
+                    if sent:
+                        logger.info(f"Unregistered device alert sent: {clinic} ({count} devices) → {site['client_contact_email']}")
+                        # Record in audit log for daily dedup
+                        await conn.execute("""
+                            INSERT INTO audit_log (event_type, details, created_at)
+                            VALUES ('unregistered_device_alert',
+                                    $1::jsonb,
+                                    NOW())
+                        """, json.dumps({"site_id": site["site_id"], "count": count}))
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Unregistered device alert loop error: {e}")
+
+        await asyncio.sleep(3600)  # Check hourly, but only send once per day per site
+
+
 async def reconciliation_loop():
     """Periodically sync site_appliances from appliances when diverged (every 5 min)."""
     from dashboard_api.fleet import get_pool

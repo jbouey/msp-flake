@@ -1164,6 +1164,11 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Reconciliation loop error: {e}")
             await asyncio.sleep(300)  # 5 minutes
 
+    async def _unregistered_device_alert_loop():
+        """Email clients about unregistered devices needing attention."""
+        from dashboard_api.background_tasks import unregistered_device_alert_loop
+        await unregistered_device_alert_loop()
+
     async def _evidence_chain_check_loop():
         """Daily verification of evidence hash chain integrity per site."""
         await asyncio.sleep(600)  # 10-minute startup delay
@@ -1254,6 +1259,7 @@ async def lifespan(app: FastAPI):
         ("evidence_chain_check", _evidence_chain_check_loop),
         ("merkle_batch", _merkle_batch_loop),
         ("healing_sla", healing_sla_loop),
+        ("unregistered_device_alerts", _unregistered_device_alert_loop),
     ]
 
     for name, fn in task_defs:
