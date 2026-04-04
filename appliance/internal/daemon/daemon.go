@@ -464,6 +464,26 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.mesh = NewMesh(selfMAC, d.config.SiteID, d.config.GRPCPort)
 		d.svc.Mesh = d.mesh
 		log.Printf("[daemon] Mesh initialized: self=%s, site=%s, grpc_port=%d", selfMAC, d.config.SiteID, d.config.GRPCPort)
+
+		// Immediate peer discovery at startup — don't wait for the 10-min netscan cycle.
+		// This prevents duplicate scans in the first cycle when multiple appliances boot together.
+		d.safeGo("meshBootstrapDiscovery", func() {
+			devices := discoverARPDevices()
+			if len(devices) > 0 {
+				// Probe gRPC port on each device to identify siblings
+				for i := range devices {
+					conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", devices[i].IPAddress, d.config.GRPCPort), 2*time.Second)
+					if dialErr == nil {
+						conn.Close()
+						devices[i].ProbeGRPC = true
+					}
+				}
+				d.mesh.UpdatePeers(devices)
+				if d.mesh.PeerCount() > 0 {
+					log.Printf("[daemon] Mesh bootstrap: discovered %d peer(s) at startup", d.mesh.PeerCount())
+				}
+			}
+		})
 	}
 
 	// Start HTTP file server for agent binary distribution.
