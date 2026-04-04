@@ -55,9 +55,18 @@ export const LandingPage: React.FC = () => {
             <a href="#how-it-works" className="hover:text-slate-900 transition-colors">How It Works</a>
             <a href="#practices" className="hover:text-slate-900 transition-colors">For Practices</a>
             <a href="#partners" className="hover:text-slate-900 transition-colors">For Partners</a>
+            <a href="#contact" className="hover:text-slate-900 transition-colors">Contact</a>
           </div>
 
           <div className="flex items-center gap-3">
+            <a
+              href="https://calendly.com/jbouey-osiriscare"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:inline-flex text-sm font-medium px-4 py-2 rounded-lg border border-teal-600 text-teal-700 hover:bg-teal-50 transition-all font-body"
+            >
+              Book a Demo
+            </a>
             <Link
               to="/client/login"
               className="hidden sm:inline-flex text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors font-body"
@@ -126,6 +135,17 @@ export const LandingPage: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
                 </svg>
               </Link>
+              <a
+                href="https://calendly.com/jbouey-osiriscare"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center px-6 py-3.5 text-sm font-semibold rounded-lg text-teal-700 border-2 border-teal-500 hover:bg-teal-50 transition-all font-body"
+              >
+                Schedule a Demo
+                <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </a>
             </div>
           </div>
 
@@ -490,6 +510,46 @@ export const LandingPage: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
               </svg>
             </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ═══════════════ CONTACT / BOOK A DEMO ═══════════════ */}
+      <section id="contact" className="relative py-20 md:py-28">
+        <div className="max-w-7xl mx-auto px-6 text-center">
+          <h2 className="font-display text-3xl md:text-4xl text-slate-900 mb-4">
+            Ready to simplify compliance?
+          </h2>
+          <p className="text-lg text-slate-500 max-w-2xl mx-auto mb-10 font-body font-light">
+            See how OsirisCare can protect your practice in 30 minutes.
+            No commitment, no sales pitch — just a walkthrough of what automated
+            compliance monitoring looks like for your environment.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <a
+              href="https://calendly.com/jbouey-osiriscare"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center px-8 py-4 text-base font-semibold rounded-lg text-white transition-all font-body"
+              style={{
+                background: 'linear-gradient(135deg, #14A89E 0%, #0d9488 100%)',
+                boxShadow: '0 4px 24px rgba(20, 168, 158, 0.3)',
+              }}
+            >
+              Schedule a Demo
+              <svg className="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+            </a>
+            <a
+              href="mailto:jbouey@osiriscare.net"
+              className="inline-flex items-center justify-center px-8 py-4 text-base font-semibold rounded-lg text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all font-body"
+            >
+              Contact Us
+              <svg className="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </a>
           </div>
         </div>
       </section>
