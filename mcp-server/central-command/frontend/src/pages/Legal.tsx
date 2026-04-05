@@ -14,7 +14,7 @@ const LEGAL_CONTENT: Record<string, { title: string; content: string[] }> = {
       'Data Security: All evidence bundles are cryptographically signed (Ed25519), hash-chained (SHA-256), and blockchain-timestamped (OpenTimestamps). Data in transit is encrypted via TLS. Data at rest is encrypted. Multi-tenant isolation is enforced via row-level security across all database tables.',
       'Data Retention: Compliance evidence is retained for the duration of your subscription plus 7 years (matching HIPAA record retention requirements). You may request data export or deletion at any time.',
       'Your Rights: You may access, correct, or delete your data by contacting us. You may request a full data export at any time. There is no lock-in period.',
-      'Contact: administrator@osiriscare.net',
+      'Contact: legal@osiriscare.net',
     ],
   },
   terms: {
@@ -28,7 +28,7 @@ const LEGAL_CONTENT: Record<string, { title: string; content: string[] }> = {
       'Availability: We target 99.9% uptime for the central management platform. On-premise appliances operate independently and continue scanning during connectivity interruptions. Evidence is cached locally and synchronized when connectivity is restored.',
       'Limitation of Liability: OsirisCare\'s total liability is limited to the fees paid in the 12 months preceding the claim. We are not liable for regulatory penalties, audit findings, or compliance failures, as compliance responsibility rests with your organization.',
       'Termination: Either party may terminate with 30 days written notice. Upon termination, you may request a full data export. On-premise appliances are returned or decommissioned.',
-      'Contact: administrator@osiriscare.net',
+      'Contact: legal@osiriscare.net',
     ],
   },
   baa: {
