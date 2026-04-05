@@ -197,6 +197,8 @@ func (s *Submitter) submitBundle(ctx context.Context, checks []map[string]any, c
 		"compliant":     compliant,
 		"non_compliant": nonCompliant,
 		"scanned_hosts": len(scannedHosts),
+		"scan_method":   "deterministic", // L1 drift scan — not LLM-assessed
+		"confidence":    1.0,             // Deterministic scans have full confidence
 	}
 
 	// Build the signed_data string (must match backend verification)

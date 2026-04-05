@@ -27,6 +27,10 @@ type PlannerConfig struct {
 
 	// Guardrails (local safety checks on the appliance)
 	AllowedActions []string // nil = use defaults
+
+	// Schema validation (populated by daemon from runbook registry)
+	KnownRunbookIDs []string // nil = skip runbook validation
+	KnownHosts      []string // nil = skip host validation
 }
 
 // DefaultPlannerConfig returns a config with sane defaults.
@@ -43,14 +47,16 @@ func DefaultPlannerConfig() PlannerConfig {
 // Anthropic API key and calls the LLM. The appliance never needs the LLM key.
 //
 // PHI scrubbing runs locally BEFORE data leaves the device (defense in depth).
-// Guardrails run locally AFTER receiving the decision.
+// Schema validation + guardrails run locally AFTER receiving the decision.
 type Planner struct {
-	config    PlannerConfig
-	client    *http.Client
-	scrubber  *PHIScrubber
-	guardrail *Guardrails
-	budget    *BudgetTracker
-	telemetry *TelemetryReporter
+	config        PlannerConfig
+	client        *http.Client
+	scrubber      *PHIScrubber
+	guardrail     *Guardrails
+	budget        *BudgetTracker
+	telemetry     *TelemetryReporter
+	knownRunbooks map[string]bool
+	knownHosts    []string
 }
 
 // NewPlanner creates a new L2 planner.
@@ -62,14 +68,25 @@ func NewPlanner(cfg *PlannerConfig) *Planner {
 		cfg.APITimeout = 30 * time.Second
 	}
 
+	// Build known-runbooks map from config
+	var knownRunbooks map[string]bool
+	if len(cfg.KnownRunbookIDs) > 0 {
+		knownRunbooks = make(map[string]bool, len(cfg.KnownRunbookIDs))
+		for _, id := range cfg.KnownRunbookIDs {
+			knownRunbooks[id] = true
+		}
+	}
+
 	p := &Planner{
 		config: *cfg,
 		client: &http.Client{
 			Timeout: cfg.APITimeout,
 		},
-		scrubber:  NewPHIScrubber(),
-		guardrail: NewGuardrails(cfg.AllowedActions),
-		budget:    NewBudgetTracker(cfg.Budget),
+		scrubber:      NewPHIScrubber(),
+		guardrail:     NewGuardrails(cfg.AllowedActions),
+		budget:        NewBudgetTracker(cfg.Budget),
+		knownRunbooks: knownRunbooks,
+		knownHosts:    cfg.KnownHosts,
 	}
 
 	// Telemetry uses the same Central Command endpoint + key
@@ -190,7 +207,15 @@ func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, erro
 		ContextUsed:       planResp.ContextUsed,
 	}
 
-	// 8. Apply local guardrails (defense in depth)
+	// 8. Validate decision schema (catches hallucinated runbooks, bad hosts, etc.)
+	if err := ValidateDecision(decision, p.knownRunbooks, p.knownHosts); err != nil {
+		log.Printf("[l2planner] Decision failed validation: %v — escalating to L3", err)
+		decision.EscalateToL3 = true
+		decision.RequiresApproval = true
+		decision.Reasoning = fmt.Sprintf("Validation failed: %v. Original: %s", err, decision.Reasoning)
+	}
+
+	// 9. Apply local guardrails (defense in depth)
 	script := maputil.String(decision.ActionParams, "script")
 	check := p.guardrail.Check(decision.RecommendedAction, script, decision.Confidence)
 	if !check.Allowed {

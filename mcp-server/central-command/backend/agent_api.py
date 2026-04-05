@@ -1732,6 +1732,114 @@ async def report_execution_telemetry(
         raise HTTPException(status_code=500, detail=f"Failed to record telemetry: {e}")
 
 
+# ---------------------------------------------------------------------------
+# Hypothesis-driven L2 triage
+# ---------------------------------------------------------------------------
+# Deterministic root-cause hypothesis map keyed by incident_type.  Each entry
+# is a list of {cause, confidence, validation} dicts ordered by likelihood.
+# The hypotheses are injected into the LLM prompt so it can validate/rank
+# them, and stored alongside the L2 decision for flywheel analysis.
+# ---------------------------------------------------------------------------
+
+HYPOTHESIS_MAP: Dict[str, List[Dict[str, Any]]] = {
+    "windows_firewall": [
+        {"cause": "Firewall profile disabled by GPO change", "confidence": 0.7, "validation": "Check GPO applied policies"},
+        {"cause": "Firewall rule added by software installer", "confidence": 0.5, "validation": "Check recent software installs"},
+        {"cause": "Firewall service crashed", "confidence": 0.3, "validation": "Check Windows Firewall service status"},
+    ],
+    "windows_defender": [
+        {"cause": "Defender disabled by conflicting AV product", "confidence": 0.6, "validation": "Check installed AV products"},
+        {"cause": "Defender definitions outdated", "confidence": 0.7, "validation": "Check definition age"},
+        {"cause": "Defender real-time protection turned off by user", "confidence": 0.5, "validation": "Check protection settings"},
+    ],
+    "windows_update": [
+        {"cause": "WSUS server unreachable or misconfigured", "confidence": 0.6, "validation": "Check WSUS connectivity and GPO settings"},
+        {"cause": "Update service stopped or corrupted", "confidence": 0.7, "validation": "Check wuauserv service status and SoftwareDistribution folder"},
+        {"cause": "Pending reboot blocking new updates", "confidence": 0.5, "validation": "Check PendingReboot registry keys"},
+    ],
+    "audit_logging": [
+        {"cause": "Audit policy overridden by GPO", "confidence": 0.7, "validation": "Check effective audit policy via auditpol /get /category:*"},
+        {"cause": "Event log service stopped", "confidence": 0.5, "validation": "Check Windows Event Log service status"},
+        {"cause": "Log size limit reached and overwrite disabled", "confidence": 0.4, "validation": "Check Security log max size and retention settings"},
+    ],
+    "bitlocker_status": [
+        {"cause": "BitLocker suspended for maintenance and not resumed", "confidence": 0.7, "validation": "Check protection status via manage-bde -status"},
+        {"cause": "TPM ownership lost or cleared", "confidence": 0.4, "validation": "Check TPM status via Get-Tpm"},
+        {"cause": "Group Policy not enforcing BitLocker", "confidence": 0.5, "validation": "Check BitLocker GPO settings"},
+    ],
+    "linux_firewall": [
+        {"cause": "Firewall rules flushed by package upgrade", "confidence": 0.6, "validation": "Check iptables/nftables rule count and recent dpkg/rpm log"},
+        {"cause": "Firewall service not enabled on boot", "confidence": 0.7, "validation": "Check systemctl is-enabled for firewalld/ufw/nftables"},
+        {"cause": "Conflicting firewall manager overwriting rules", "confidence": 0.4, "validation": "Check if both ufw and firewalld are installed"},
+    ],
+    "linux_ssh_config": [
+        {"cause": "SSH config reverted by package update", "confidence": 0.6, "validation": "Check dpkg/rpm log for openssh-server updates"},
+        {"cause": "PermitRootLogin or PasswordAuthentication re-enabled", "confidence": 0.7, "validation": "Check sshd_config for insecure settings"},
+        {"cause": "SSH config include overriding main config", "confidence": 0.4, "validation": "Check /etc/ssh/sshd_config.d/ for overrides"},
+    ],
+    "linux_disk_space": [
+        {"cause": "Log files consuming excessive space", "confidence": 0.7, "validation": "Check /var/log size and journalctl --disk-usage"},
+        {"cause": "Old package versions or kernels not cleaned", "confidence": 0.5, "validation": "Check apt/yum autoremove candidates"},
+        {"cause": "Large core dumps or temp files", "confidence": 0.4, "validation": "Check /tmp, /var/tmp, /var/crash sizes"},
+    ],
+    "linux_unattended_upgrades": [
+        {"cause": "Unattended-upgrades package not installed", "confidence": 0.6, "validation": "Check dpkg -l unattended-upgrades"},
+        {"cause": "Auto-update timer disabled", "confidence": 0.7, "validation": "Check systemctl is-enabled apt-daily-upgrade.timer"},
+        {"cause": "Apt sources misconfigured blocking security repo", "confidence": 0.4, "validation": "Check /etc/apt/sources.list for security repository"},
+    ],
+    "macos_filevault": [
+        {"cause": "FileVault disabled by admin or MDM policy change", "confidence": 0.6, "validation": "Check fdesetup status and MDM profile list"},
+        {"cause": "FileVault encryption stalled mid-process", "confidence": 0.5, "validation": "Check fdesetup status for encryption progress"},
+        {"cause": "Institutional recovery key missing or expired", "confidence": 0.4, "validation": "Check fdesetup hasinstitutionalrecoverykey"},
+    ],
+    "macos_firewall": [
+        {"cause": "Application firewall disabled by user", "confidence": 0.7, "validation": "Check /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate"},
+        {"cause": "Stealth mode disabled", "confidence": 0.5, "validation": "Check socketfilterfw --getstealthmode"},
+        {"cause": "Firewall exceptions too permissive", "confidence": 0.4, "validation": "Check socketfilterfw --listapps"},
+    ],
+    "backup_not_configured": [
+        {"cause": "Backup agent not installed on endpoint", "confidence": 0.7, "validation": "Check for backup agent process or service"},
+        {"cause": "Backup schedule removed or never created", "confidence": 0.6, "validation": "Check backup job configuration in management console"},
+        {"cause": "Backup target storage unreachable", "confidence": 0.4, "validation": "Check network connectivity to backup destination"},
+    ],
+}
+
+
+def _generate_hypotheses(
+    incident_type: str,
+    raw_data: Dict[str, Any],
+    severity: str,
+) -> List[Dict[str, Any]]:
+    """Generate ranked root-cause hypotheses for an incident.
+
+    Deterministic — no LLM call.  Falls back to generic hypotheses when the
+    incident_type isn't in HYPOTHESIS_MAP.
+    """
+    # Direct match
+    hypotheses = HYPOTHESIS_MAP.get(incident_type)
+    if hypotheses:
+        return hypotheses
+
+    # Try the check_type field (sometimes more specific)
+    check_type = raw_data.get("check_type", "") if raw_data else ""
+    hypotheses = HYPOTHESIS_MAP.get(check_type)
+    if hypotheses:
+        return hypotheses
+
+    # Keyword fallback: scan incident_type for partial matches
+    type_lower = incident_type.lower()
+    for key, hyps in HYPOTHESIS_MAP.items():
+        if key in type_lower:
+            return hyps
+
+    # Generic fallback
+    return [
+        {"cause": "Configuration drift from baseline", "confidence": 0.5, "validation": "Compare current state against compliance baseline"},
+        {"cause": "Service or agent not running", "confidence": 0.4, "validation": "Check service/process status"},
+        {"cause": "Policy override by administrator", "confidence": 0.3, "validation": "Check recent admin activity and change logs"},
+    ]
+
+
 @router.post("/api/agent/l2/plan")
 async def agent_l2_plan(
     request: L2PlanRequest,
@@ -1882,11 +1990,16 @@ async def agent_l2_plan(
                 },
             }
 
+    # Step 1: Generate ranked root-cause hypotheses (deterministic, no LLM)
+    hypotheses = _generate_hypotheses(request.incident_type, request.raw_data, request.severity)
+    logger.info(f"L2 hypotheses generated: type={request.incident_type} count={len(hypotheses)}")
+
     hipaa_controls = None
     hipaa_ctrl = request.raw_data.get("hipaa_control")
     if hipaa_ctrl:
         hipaa_controls = [hipaa_ctrl] if isinstance(hipaa_ctrl, str) else hipaa_ctrl
 
+    # Step 2: Call LLM with hypotheses included in the prompt
     decision = await l2_analyze(
         incident_type=request.incident_type,
         severity=request.severity,
@@ -1894,10 +2007,16 @@ async def agent_l2_plan(
         details=request.raw_data,
         pre_state=request.raw_data.get("pre_state", {}),
         hipaa_controls=hipaa_controls,
+        hypotheses=hypotheses,
     )
 
+    # Step 3: Record decision with hypotheses for flywheel analysis
     try:
-        await record_l2_decision(db, request.incident_id, decision, incident_type=request.incident_type)
+        await record_l2_decision(
+            db, request.incident_id, decision,
+            incident_type=request.incident_type,
+            hypotheses=hypotheses,
+        )
         await db.commit()
     except Exception as e:
         logger.error(f"Failed to record L2 decision: {e}")
@@ -1930,6 +2049,7 @@ async def agent_l2_plan(
         "runbook_id": decision.runbook_id or "",
         "requires_approval": decision.requires_human_review,
         "escalate_to_l3": escalate,
+        "hypotheses": hypotheses,
         "context_used": {
             "llm_model": decision.llm_model,
             "llm_latency_ms": decision.llm_latency_ms,

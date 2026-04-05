@@ -1286,8 +1286,9 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 			telemetryRunbookID = rbID
 		}
 
-		// Journal: checkpoint before execution
+		// Journal: checkpoint before execution + audit trail
 		d.healJournal.StartHealing(incidentID, telemetryRunbookID, req.Hostname, platform, req.CheckType, "L1")
+		d.healJournal.SetAuditTrail(incidentID, "Deterministic L1 rule match", 1.0, match.Rule.Description)
 
 		result := d.l1Engine.Execute(match, d.config.SiteID, req.Hostname)
 
@@ -1389,6 +1390,8 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 			log.Printf("[daemon] L2 decision: %s (confidence=%.2f, approval=%v, runbook=%s) for %s/%s",
 				decision.RecommendedAction, decision.Confidence, decision.RequiresApproval, decision.RunbookID, req.Hostname, req.CheckType)
 			d.healJournal.StartHealing(incidentID, decision.RunbookID, req.Hostname, platform, req.CheckType, "L2")
+			// Record investigation audit trail — hypothesis, confidence, reasoning
+			d.healJournal.SetAuditTrail(incidentID, decision.Reasoning, decision.Confidence, decision.Reasoning)
 			l2Start := time.Now()
 			var l2Success bool
 			var l2Err string

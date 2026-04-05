@@ -31,6 +31,8 @@ const (
 )
 
 // HealingEntry records a single healing operation's lifecycle.
+// Serves as the investigation audit trail — captures the full chain of
+// reasoning from detection through resolution for auditor inspection.
 type HealingEntry struct {
 	ID          string        `json:"id"`
 	RunbookID   string        `json:"runbook_id"`
@@ -43,6 +45,10 @@ type HealingEntry struct {
 	StartedAt   time.Time     `json:"started_at"`
 	CompletedAt *time.Time    `json:"completed_at,omitempty"`
 	Error       string        `json:"error,omitempty"`
+	// Investigation audit trail fields (Blazytko pattern)
+	Hypothesis  string  `json:"hypothesis,omitempty"`   // Root cause hypothesis that was validated
+	Confidence  float64 `json:"confidence,omitempty"`   // 0-1, from L2 LLM or 1.0 for L1 deterministic
+	Reasoning   string  `json:"reasoning,omitempty"`    // Why this action was chosen (L2 LLM reasoning)
 }
 
 // HealingJournal persists healing operation state to disk for crash recovery.
@@ -85,6 +91,21 @@ func (j *HealingJournal) StartHealing(id, runbookID, hostname, platform, checkTy
 		StartedAt: time.Now(),
 	}
 	j.persistLocked()
+}
+
+// SetAuditTrail enriches a healing entry with investigation context.
+// Called after L2 planning to record the hypothesis, confidence, and reasoning
+// that led to the chosen action. L1 entries get confidence=1.0 implicitly.
+func (j *HealingJournal) SetAuditTrail(id, hypothesis string, confidence float64, reasoning string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if e, ok := j.entries[id]; ok {
+		e.Hypothesis = hypothesis
+		e.Confidence = confidence
+		e.Reasoning = reasoning
+		j.persistLocked()
+	}
 }
 
 // CompletePhase records that a phase (detect/remediate/verify) completed.
