@@ -339,7 +339,8 @@ def build_incident_prompt(
     check_type: Optional[str],
     details: Dict[str, Any],
     pre_state: Dict[str, Any],
-    hipaa_controls: Optional[List[str]]
+    hipaa_controls: Optional[List[str]],
+    hypotheses: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Build the incident analysis prompt with sanitized inputs."""
     safe_incident_type = _sanitize_field(incident_type)
@@ -348,6 +349,21 @@ def build_incident_prompt(
     safe_details = _sanitize_dict(details)
     safe_pre_state = _sanitize_dict(pre_state)
     safe_controls = [_sanitize_field(c) for c in (hipaa_controls or [])]
+
+    # Build hypotheses section if provided
+    hypotheses_section = ""
+    if hypotheses:
+        hyp_lines = []
+        for i, h in enumerate(hypotheses, 1):
+            hyp_lines.append(
+                f"  {i}. [{h.get('confidence', 0):.0%}] {h.get('cause', 'Unknown')} "
+                f"— Validate: {h.get('validation', 'N/A')}"
+            )
+        hypotheses_section = (
+            "\n\nRanked hypotheses for this incident:\n"
+            + "\n".join(hyp_lines)
+            + "\n\nValidate the most likely hypothesis and recommend action."
+        )
 
     return f"""Analyze this incident and recommend a runbook:
 
@@ -360,7 +376,7 @@ INCIDENT DETAILS:
 {json.dumps(safe_details, indent=2)}
 
 SYSTEM STATE BEFORE INCIDENT:
-{json.dumps(safe_pre_state, indent=2)}
+{json.dumps(safe_pre_state, indent=2)}{hypotheses_section}
 
 Select the most appropriate runbook from the available options."""
 
@@ -490,6 +506,7 @@ async def analyze_incident(
     details: Optional[Dict[str, Any]] = None,
     pre_state: Optional[Dict[str, Any]] = None,
     hipaa_controls: Optional[List[str]] = None,
+    hypotheses: Optional[List[Dict[str, Any]]] = None,
 ) -> L2Decision:
     """
     Analyze an incident using LLM and recommend a runbook.
@@ -523,7 +540,8 @@ async def analyze_incident(
 
     system_prompt = build_system_prompt(all_runbooks)
     user_prompt = build_incident_prompt(
-        incident_type, severity, check_type, details, pre_state, hipaa_controls
+        incident_type, severity, check_type, details, pre_state, hipaa_controls,
+        hypotheses=hypotheses,
     )
 
     llm_model = LLM_MODEL
@@ -628,12 +646,14 @@ async def record_l2_decision(
     incident_id: str,
     decision: L2Decision,
     incident_type: str = "unknown",
+    hypotheses: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """Record L2 decision for data flywheel analysis.
 
     Args:
         incident_type: The actual incident type (e.g. 'backup_verification').
             Critical for flywheel pattern tracking — do NOT pass 'unknown'.
+        hypotheses: Ranked root-cause hypotheses generated before the LLM call.
     """
     from sqlalchemy import text
 
@@ -641,11 +661,11 @@ async def record_l2_decision(
         INSERT INTO l2_decisions (
             incident_id, runbook_id, reasoning, confidence,
             pattern_signature, llm_model, llm_latency_ms,
-            requires_human_review, created_at
+            requires_human_review, hypotheses, created_at
         ) VALUES (
             :incident_id, :runbook_id, :reasoning, :confidence,
             :pattern_signature, :llm_model, :llm_latency_ms,
-            :requires_human_review, :created_at
+            :requires_human_review, :hypotheses, :created_at
         )
     """), {
         "incident_id": incident_id,
@@ -656,6 +676,7 @@ async def record_l2_decision(
         "llm_model": decision.llm_model,
         "llm_latency_ms": decision.llm_latency_ms,
         "requires_human_review": decision.requires_human_review,
+        "hypotheses": json.dumps(hypotheses) if hypotheses else None,
         "created_at": datetime.now(timezone.utc),
     })
 
