@@ -722,6 +722,13 @@ export const applianceApi = {
       method: 'PUT',
       body: JSON.stringify({ mesh_topology: topology }),
     }),
+  setNetworkMode: (siteId: string, mode: 'static_lease' | 'dynamic_mdns') =>
+    fetchApi<{ site_id: string; network_mode: string }>(`/sites/${siteId}/network-mode`, {
+      method: 'PUT',
+      body: JSON.stringify({ network_mode: mode }),
+    }),
+  getNetworkMode: (siteId: string) =>
+    fetchApi<{ site_id: string; network_mode: string }>(`/sites/${siteId}/network-mode`),
 };
 
 // =============================================================================

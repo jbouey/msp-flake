@@ -89,3 +89,22 @@ func DiscoverApplianceMDNSWithRetry(ctx context.Context, maxRetries int) (string
 	}
 	return "", fmt.Errorf("mDNS discovery failed after %d attempts: %w", maxRetries, lastErr)
 }
+
+// LinkLocalAddr is the deterministic secondary IP assigned to all OsirisCare appliances.
+// Used as a last-resort fallback when mDNS is blocked and DHCP drifts.
+const LinkLocalAddr = "169.254.88.1"
+
+// DiscoverApplianceLinkLocal probes the well-known link-local address.
+// Returns "host:port" if the gRPC port is reachable, error otherwise.
+func DiscoverApplianceLinkLocal(timeout time.Duration) (string, error) {
+	if timeout == 0 {
+		timeout = 2 * time.Second
+	}
+	addr := fmt.Sprintf("%s:%d", LinkLocalAddr, 50051)
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return "", fmt.Errorf("link-local probe %s failed: %w", addr, err)
+	}
+	conn.Close()
+	return addr, nil
+}

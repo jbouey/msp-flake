@@ -1338,6 +1338,40 @@ async def get_mesh_topology(site_id: str, user: dict = Depends(require_auth)):
     return {'site_id': site_id, 'mesh_topology': val or 'auto'}
 
 
+class NetworkModeRequest(BaseModel):
+    """Set network stability mode during onboarding."""
+    network_mode: str  # 'static_lease' or 'dynamic_mdns'
+
+
+@router.put("/{site_id}/network-mode")
+async def set_network_mode(site_id: str, req: NetworkModeRequest, user: dict = Depends(require_auth)):
+    """Set network stability mode. Onboarding gate — no site should operate
+    without an explicit network decision."""
+    if req.network_mode not in ('static_lease', 'dynamic_mdns', 'pending'):
+        raise HTTPException(status_code=400, detail="network_mode must be 'static_lease' or 'dynamic_mdns'")
+
+    pool = await get_pool()
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        await conn.execute(
+            "UPDATE sites SET network_mode = $1 WHERE site_id = $2",
+            req.network_mode, site_id,
+        )
+
+    return {'site_id': site_id, 'network_mode': req.network_mode}
+
+
+@router.get("/{site_id}/network-mode")
+async def get_network_mode(site_id: str, user: dict = Depends(require_auth)):
+    """Get network stability mode for a site."""
+    pool = await get_pool()
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        val = await conn.fetchval(
+            "SELECT COALESCE(network_mode, 'pending') FROM sites WHERE site_id = $1",
+            site_id,
+        )
+    return {'site_id': site_id, 'network_mode': val or 'pending'}
+
+
 class ApplianceMoveRequest(BaseModel):
     """Request to move an appliance to a different site."""
     target_site_id: str

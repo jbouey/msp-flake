@@ -1128,6 +1128,7 @@ export const SiteDetail: React.FC = () => {
   const [showMoveApplianceModal, setShowMoveApplianceModal] = useState<string | null>(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showDecommissionModal, setShowDecommissionModal] = useState(false);
+  const [networkMode, setNetworkMode] = useState<string>('pending');
 
   const { data: site, isLoading, error } = useSite(siteId || null);
   const { data: fleetStats } = useQuery<FleetStats>({
@@ -1160,6 +1161,13 @@ export const SiteDetail: React.FC = () => {
     const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
     return connectedAt > fiveMinAgo;
   })();
+
+  // Fetch network mode for onboarding gate
+  React.useEffect(() => {
+    if (siteId) {
+      applianceApi.getNetworkMode(siteId).then(r => setNetworkMode(r.network_mode)).catch(() => {});
+    }
+  }, [siteId]);
 
   const addCredential = useAddCredential();
   const createOrder = useCreateApplianceOrder();
@@ -1559,6 +1567,43 @@ export const SiteDetail: React.FC = () => {
             <h2 className="text-lg font-semibold mb-4">
               Appliances ({site.appliances.length})
             </h2>
+
+            {/* Network stability onboarding gate */}
+            {site.appliances.length >= 1 && networkMode === 'pending' && (
+              <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">
+                  Network Stability — Choose One
+                </p>
+                <p className="text-xs text-amber-600 dark:text-amber-300 mb-3">
+                  How is this appliance's IP managed? This prevents connectivity issues.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      try {
+                        await applianceApi.setNetworkMode(site.site_id, 'static_lease');
+                        setNetworkMode('static_lease');
+                      } catch { /* ignore */ }
+                    }}
+                    className="px-3 py-1.5 text-xs rounded-ios bg-accent-primary/10 text-accent-primary hover:bg-accent-primary/20 transition-colors"
+                  >
+                    Static DHCP Lease (configured on router)
+                  </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await applianceApi.setNetworkMode(site.site_id, 'dynamic_mdns');
+                        setNetworkMode('dynamic_mdns');
+                      } catch { /* ignore */ }
+                    }}
+                    className="px-3 py-1.5 text-xs rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary transition-colors"
+                  >
+                    Dynamic Network (mDNS auto-discovery)
+                  </button>
+                </div>
+              </div>
+            )}
+
             <SiteActionToolbar
               applianceCount={site.appliances.length}
               onBroadcast={handleBroadcast}

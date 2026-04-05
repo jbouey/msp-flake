@@ -149,7 +149,19 @@ func runAgent(ctx context.Context) error {
 				log.Printf("[discovery] Failed to cache config: %v", saveErr)
 			}
 		} else {
-			log.Printf("[discovery] mDNS failed: %v — falling back to DNS SRV", err)
+			log.Printf("[discovery] mDNS failed: %v — trying link-local fallback", err)
+			addr, err = discovery.DiscoverApplianceLinkLocal(2 * time.Second)
+			if err == nil {
+				cfg.ApplianceAddr = addr
+				log.Printf("[discovery] Link-local discovered appliance: %s", addr)
+				if saveErr := cfg.Save(); saveErr != nil {
+					log.Printf("[discovery] Failed to cache config: %v", saveErr)
+				}
+			} else {
+				log.Printf("[discovery] Link-local failed: %v — falling back to DNS SRV", err)
+			}
+		}
+		if cfg.ApplianceAddr == "" {
 			domain := cfg.Domain
 			if domain == "" {
 				domain = discovery.DiscoverDomain()
@@ -336,11 +348,16 @@ func reconnectLoop(ctx context.Context, cfg *config.Config, client *transport.GR
 			}
 		}
 
-		// After 3+ consecutive failures, try mDNS re-resolution — appliance may
+		// After 3+ consecutive failures, try mDNS/link-local re-resolution — appliance may
 		// have changed IP via DHCP. This is the key fix for DHCP drift resilience.
 		if client.ConsecutiveFailures() >= 3 {
 			if newAddr, err := discovery.DiscoverApplianceMDNS(ctx, 3*time.Second); err == nil && newAddr != cfg.ApplianceAddr {
 				log.Printf("[reconnect] mDNS re-resolved appliance: %s → %s", cfg.ApplianceAddr, newAddr)
+				cfg.ApplianceAddr = newAddr
+				client.UpdateAddress(newAddr)
+				_ = cfg.Save()
+			} else if newAddr, err := discovery.DiscoverApplianceLinkLocal(2 * time.Second); err == nil && newAddr != cfg.ApplianceAddr {
+				log.Printf("[reconnect] Link-local re-resolved appliance: %s → %s", cfg.ApplianceAddr, newAddr)
 				cfg.ApplianceAddr = newAddr
 				client.UpdateAddress(newAddr)
 				_ = cfg.Save()

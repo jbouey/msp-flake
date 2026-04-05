@@ -486,6 +486,21 @@ EOF
     };
   };
 
+  # Secondary link-local IP — deterministic fallback for agent connectivity.
+  # Agents can target 169.254.88.1:50051 when mDNS is blocked and DHCP drifts.
+  # Link-local (169.254.x.x) requires no router config and no collision risk.
+  systemd.services.appliance-static-ip = {
+    description = "Add secondary link-local IP for agent discovery";
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.iproute2}/bin/ip addr add 169.254.88.1/24 dev $(${pkgs.iproute2}/bin/ip -o route get 1.1.1.1 | ${pkgs.gawk}/bin/awk \"{print \\$5}\") 2>/dev/null || true'";
+    };
+  };
+
   services.avahi = {
     enable = true;
     nssmdns4 = true;
