@@ -288,10 +288,10 @@ export const LandingPage: React.FC = () => {
               </div>
               <h3 className="text-xl font-semibold text-slate-900 mb-3 font-body">Attest</h3>
               <p className="text-sm text-slate-500 leading-relaxed font-body">
-                Cryptographically signed evidence bundles. Monthly compliance
-                reports generated from continuous observation. Audit-ready
-                documentation available on demand — not assembled under
-                pressure before a review.
+                Cryptographically signed evidence bundles with blockchain
+                timestamps. Compliance monitoring summaries generated from
+                continuous observation. Audit-ready documentation available
+                on demand — not assembled under pressure before a review.
               </p>
             </div>
           </div>
@@ -320,8 +320,8 @@ export const LandingPage: React.FC = () => {
               <ul className="space-y-4 mb-10">
                 {[
                   'Real-time compliance dashboard with current drift status',
-                  'Monthly reports with control-by-control assessment',
-                  'Evidence archive with hash-chain integrity verification',
+                  'Monthly compliance monitoring summaries with control-level detail',
+                  'Evidence bundles with hash-chain integrity and blockchain timestamps',
                   'Notifications when issues are detected and when healing completes',
                   'Healing activity logs — see exactly what was remediated and when',
                   'No lock-in — your data is yours, and you can change partners anytime',
@@ -352,7 +352,7 @@ export const LandingPage: React.FC = () => {
                   Access Your Portal
                 </Link>
                 <p className="text-sm text-slate-400 font-body">
-                  Starting at <span className="font-semibold text-slate-600">$200</span>/month
+                  Starting at <span className="font-semibold text-slate-600">$499</span>/month
                 </p>
               </div>
             </div>
@@ -363,7 +363,7 @@ export const LandingPage: React.FC = () => {
                 <div className="p-6 rounded-2xl border border-slate-100 bg-white shadow-sm">
                   <div className="flex items-center justify-between mb-4">
                     <h4 className="text-sm font-semibold text-slate-900 font-body">Compliance Score</h4>
-                    <span className="text-xs font-medium text-slate-400 font-body">Last 24h</span>
+                    <span className="text-xs font-medium text-slate-300 italic font-body">Sample view</span>
                   </div>
                   <div className="flex items-end gap-3">
                     <span className="text-4xl font-bold tabular-nums font-body" style={{ color: '#0d9488' }}>96.4%</span>
@@ -461,7 +461,7 @@ export const LandingPage: React.FC = () => {
                   </svg>
                 ),
                 title: 'Automated reporting',
-                desc: 'Monthly compliance reports generated from continuous observation. Evidence bundles with cryptographic integrity for each client site.',
+                desc: 'Compliance monitoring summaries generated from continuous observation. Evidence bundles with cryptographic integrity for each client site.',
               },
               {
                 icon: (
@@ -470,7 +470,7 @@ export const LandingPage: React.FC = () => {
                   </svg>
                 ),
                 title: 'Revenue opportunity',
-                desc: 'Healthcare SMBs need compliance infrastructure and are willing to pay for it. Pricing from $200–$3,000/month per practice depending on scope.',
+                desc: 'Healthcare SMBs need compliance infrastructure and are willing to pay for it. Pricing from $499\u2013$1,299/month per practice depending on scope and healing depth.',
               },
               {
                 icon: (
@@ -588,9 +588,9 @@ export const LandingPage: React.FC = () => {
             <div>
               <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4 font-body">Legal</h4>
               <ul className="space-y-2.5">
-                <li><a href="#" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Privacy Policy</a></li>
-                <li><a href="#" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Terms of Service</a></li>
-                <li><a href="#" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">BAA</a></li>
+                <li><Link to="/legal/privacy" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Privacy Policy</Link></li>
+                <li><Link to="/legal/terms" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Terms of Service</Link></li>
+                <li><Link to="/legal/baa" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">BAA</Link></li>
               </ul>
             </div>
           </div>

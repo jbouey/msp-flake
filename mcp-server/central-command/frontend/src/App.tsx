@@ -48,6 +48,7 @@ const SetPassword = lazy(() => import('./pages/SetPassword'));
 const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
 const AdminOAuthSettings = lazy(() => import('./pages/AdminOAuthSettings'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
+const Legal = lazy(() => import('./pages/Legal'));
 const Organizations = lazy(() => import('./pages/Organizations').then(m => ({ default: m.Organizations })));
 const OrgDashboard = lazy(() => import('./pages/OrgDashboard').then(m => ({ default: m.OrgDashboard })));
 const ProtectionProfiles = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfiles })));
@@ -439,6 +440,9 @@ const App: React.FC = () => {
 
                 {/* Companion routes - session auth, companion role (lazy loaded module) */}
                 <Route path="/companion/*" element={<CompanionRoutes />} />
+
+                {/* Legal pages — accessible on both landing and dashboard domains */}
+                <Route path="/legal/:page" element={<Legal />} />
 
                 {/* www.osiriscare.net → landing page; dashboard.osiriscare.net → admin */}
                 <Route path="/*" element={isLandingSite ? <LandingPage /> : <AuthenticatedApp />} />
