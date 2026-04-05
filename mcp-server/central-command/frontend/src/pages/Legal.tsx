@@ -14,7 +14,7 @@ const LEGAL_CONTENT: Record<string, { title: string; content: string[] }> = {
       'Data Security: All evidence bundles are cryptographically signed (Ed25519), hash-chained (SHA-256), and blockchain-timestamped (OpenTimestamps). Data in transit is encrypted via TLS. Data at rest is encrypted. Multi-tenant isolation is enforced via row-level security across all database tables.',
       'Data Retention: Compliance evidence is retained for the duration of your subscription plus 7 years (matching HIPAA record retention requirements). You may request data export or deletion at any time.',
       'Your Rights: You may access, correct, or delete your data by contacting us. You may request a full data export at any time. There is no lock-in period.',
-      'Contact: privacy@osiriscare.net',
+      'Contact: administrator@osiriscare.net',
     ],
   },
   terms: {
@@ -28,7 +28,7 @@ const LEGAL_CONTENT: Record<string, { title: string; content: string[] }> = {
       'Availability: We target 99.9% uptime for the central management platform. On-premise appliances operate independently and continue scanning during connectivity interruptions. Evidence is cached locally and synchronized when connectivity is restored.',
       'Limitation of Liability: OsirisCare\'s total liability is limited to the fees paid in the 12 months preceding the claim. We are not liable for regulatory penalties, audit findings, or compliance failures, as compliance responsibility rests with your organization.',
       'Termination: Either party may terminate with 30 days written notice. Upon termination, you may request a full data export. On-premise appliances are returned or decommissioned.',
-      'Contact: legal@osiriscare.net',
+      'Contact: administrator@osiriscare.net',
     ],
   },
   baa: {
@@ -38,7 +38,7 @@ const LEGAL_CONTENT: Record<string, { title: string; content: string[] }> = {
       'Architecture Note: OsirisCare\'s platform is designed so that Protected Health Information (PHI) does not leave your premises. All data is scrubbed of PHI at the appliance level using 14 pattern-matching rules before transmission to our central servers. Our central infrastructure is engineered to be PHI-free by design.',
       'Despite this PHI-free architecture, we execute BAAs as a matter of best practice and to provide our clients with the contractual protections they expect from any vendor operating in healthcare IT.',
       'BAA Coverage: Our BAA covers the operation of on-premise monitoring appliances, central management infrastructure, evidence storage, and compliance reporting services. It includes standard provisions for breach notification, data safeguards, permitted uses, and termination.',
-      'To request a BAA or discuss specific terms, contact us at legal@osiriscare.net or schedule a call through our website.',
+      'To request a BAA or discuss specific terms, contact us at administrator@osiriscare.net or schedule a call through our website.',
       'Note: The availability of a BAA does not alter the fundamental responsibility structure \u2014 your organization remains the Covered Entity responsible for its HIPAA compliance program. OsirisCare operates as a Business Associate providing compliance monitoring tools.',
     ],
   },

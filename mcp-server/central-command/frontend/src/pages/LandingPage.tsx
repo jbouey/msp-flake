@@ -67,6 +67,7 @@ export const LandingPage: React.FC = () => {
             <a href="#how-it-works" className="hover:text-slate-900 transition-colors">How It Works</a>
             <a href="#practices" className="hover:text-slate-900 transition-colors">For Practices</a>
             <a href="#partners" className="hover:text-slate-900 transition-colors">For Partners</a>
+            <Link to="/pricing" className="hover:text-slate-900 transition-colors">Pricing</Link>
             <a href="#contact" className="hover:text-slate-900 transition-colors">Contact</a>
           </div>
 
@@ -562,7 +563,7 @@ export const LandingPage: React.FC = () => {
               </svg>
             </a>
             <a
-              href="mailto:jbouey@osiriscare.net"
+              href="mailto:administrator@osiriscare.net"
               className="inline-flex items-center justify-center px-8 py-4 text-base font-semibold rounded-lg text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all font-body"
             >
               Contact Us
