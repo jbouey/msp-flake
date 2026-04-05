@@ -2755,10 +2755,32 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         )
                     """, checkin.site_id)
 
+                    # Remove appliance IPs and gateway from workstation list
+                    # These are infrastructure devices, not compliance targets
+                    await conn.execute("""
+                        DELETE FROM workstations
+                        WHERE site_id = $1
+                        AND (
+                            hostname IN (SELECT DISTINCT unnest(string_to_array(
+                                regexp_replace(ip_addresses::text, '[\[\]" ]', '', 'g'), ','))
+                                FROM site_appliances WHERE site_id = $1)
+                            OR hostname = 'router.lan'
+                            OR hostname LIKE '%.1'
+                        )
+                    """, checkin.site_id)
+
                     # Expire stale: mark offline if no activity in 7 days
                     await conn.execute("""
                         UPDATE workstations SET online = false
                         WHERE site_id = $1 AND online = true
+                        AND last_seen < NOW() - INTERVAL '7 days'
+                    """, checkin.site_id)
+
+                    # Remove stale IP-only entries after 7 days (DHCP drift artifacts)
+                    await conn.execute("""
+                        DELETE FROM workstations
+                        WHERE site_id = $1
+                        AND hostname ~ '^\d+\.\d+\.\d+\.\d+$'
                         AND last_seen < NOW() - INTERVAL '7 days'
                     """, checkin.site_id)
 
