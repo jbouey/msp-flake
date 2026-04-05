@@ -497,6 +497,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		})
 	}
 
+	// Publish gRPC service via Avahi/mDNS for agent auto-discovery.
+	// Agents resolve _osiris-grpc._tcp.local instead of hardcoding appliance IP.
+	// Survives DHCP drift — agents re-resolve on disconnect.
+	d.publishAvahiService()
+
 	// Start HTTP file server for agent binary distribution.
 	// Domain controllers download the agent binary via Invoke-WebRequest
 	// instead of slow WinRM chunk uploads.

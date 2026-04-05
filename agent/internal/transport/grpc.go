@@ -698,6 +698,14 @@ func (c *GRPCClient) Close() error {
 	return nil
 }
 
+// UpdateAddress changes the target appliance address for subsequent connections.
+// Called when mDNS re-resolves the appliance to a new IP after DHCP drift.
+func (c *GRPCClient) UpdateAddress(addr string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.config.ApplianceAddr = addr
+}
+
 // Reconnect attempts to reconnect to the appliance.
 // Releases the mutex before waiting for the ack reader to prevent deadlock.
 func (c *GRPCClient) Reconnect(ctx context.Context) error {

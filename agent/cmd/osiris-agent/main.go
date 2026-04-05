@@ -137,30 +137,41 @@ func runAgent(ctx context.Context) error {
 	upd := updater.New(cfg.DataDir, installDir, Version, "OsirisCareAgent")
 	upd.CheckRollbackNeeded()
 
-	// DNS SRV discovery if no appliance address configured
+	// Auto-discovery if no appliance address configured.
+	// Priority: mDNS (local network, survives DHCP drift) → DNS SRV (AD domain)
 	if cfg.ApplianceAddr == "" {
-		log.Println("[discovery] No appliance address configured, attempting DNS SRV discovery...")
-		domain := cfg.Domain
-		if domain == "" {
-			domain = discovery.DiscoverDomain()
-			if domain != "" {
-				log.Printf("[discovery] Detected domain: %s", domain)
-				cfg.Domain = domain
-			}
-		}
-		if domain != "" {
-			addr, err := discovery.DiscoverApplianceWithRetry(domain, discovery.MaxRetries)
-			if err != nil {
-				log.Printf("[discovery] SRV discovery failed: %v (will start without appliance connection)", err)
-			} else {
-				cfg.ApplianceAddr = addr
-				log.Printf("[discovery] Discovered appliance: %s", addr)
-				if saveErr := cfg.Save(); saveErr != nil {
-					log.Printf("[discovery] Failed to cache config: %v", saveErr)
-				}
+		log.Println("[discovery] No appliance address configured, attempting mDNS discovery...")
+		addr, err := discovery.DiscoverApplianceMDNSWithRetry(ctx, 3)
+		if err == nil {
+			cfg.ApplianceAddr = addr
+			log.Printf("[discovery] mDNS discovered appliance: %s", addr)
+			if saveErr := cfg.Save(); saveErr != nil {
+				log.Printf("[discovery] Failed to cache config: %v", saveErr)
 			}
 		} else {
-			log.Println("[discovery] Could not detect AD domain — agent will operate offline")
+			log.Printf("[discovery] mDNS failed: %v — falling back to DNS SRV", err)
+			domain := cfg.Domain
+			if domain == "" {
+				domain = discovery.DiscoverDomain()
+				if domain != "" {
+					log.Printf("[discovery] Detected domain: %s", domain)
+					cfg.Domain = domain
+				}
+			}
+			if domain != "" {
+				addr, err := discovery.DiscoverApplianceWithRetry(domain, discovery.MaxRetries)
+				if err != nil {
+					log.Printf("[discovery] SRV discovery failed: %v (will start without appliance connection)", err)
+				} else {
+					cfg.ApplianceAddr = addr
+					log.Printf("[discovery] SRV discovered appliance: %s", addr)
+					if saveErr := cfg.Save(); saveErr != nil {
+						log.Printf("[discovery] Failed to cache config: %v", saveErr)
+					}
+				}
+			} else {
+				log.Println("[discovery] Could not detect AD domain — agent will operate offline")
+			}
 		}
 	}
 
@@ -322,6 +333,17 @@ func reconnectLoop(ctx context.Context, cfg *config.Config, client *transport.GR
 				return
 			case <-time.After(monitorInterval):
 				continue // re-check IsConnected on next iteration
+			}
+		}
+
+		// After 3+ consecutive failures, try mDNS re-resolution — appliance may
+		// have changed IP via DHCP. This is the key fix for DHCP drift resilience.
+		if client.ConsecutiveFailures() >= 3 {
+			if newAddr, err := discovery.DiscoverApplianceMDNS(ctx, 3*time.Second); err == nil && newAddr != cfg.ApplianceAddr {
+				log.Printf("[reconnect] mDNS re-resolved appliance: %s → %s", cfg.ApplianceAddr, newAddr)
+				cfg.ApplianceAddr = newAddr
+				client.UpdateAddress(newAddr)
+				_ = cfg.Save()
 			}
 		}
 

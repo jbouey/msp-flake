@@ -487,12 +487,25 @@ EOF
   };
 
   services.avahi = {
-    enable = true;  # Keep for mDNS resolution
+    enable = true;
     nssmdns4 = true;
     publish = {
-      enable = false;  # Don't advertise this appliance
-      addresses = false;
+      enable = true;   # Publish gRPC service for agent mDNS discovery
+      addresses = true; # Publish hostname.local → IP
       workstation = false;
+    };
+    extraServiceFiles = {
+      osiris-grpc = ''
+        <?xml version="1.0" standalone='no'?>
+        <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+        <service-group>
+          <name>OsirisCare Appliance</name>
+          <service>
+            <type>_osiris-grpc._tcp</type>
+            <port>50051</port>
+          </service>
+        </service-group>
+      '';
     };
   };
 
