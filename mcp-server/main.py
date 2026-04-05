@@ -1165,6 +1165,54 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Reconciliation loop error: {e}")
             await asyncio.sleep(300)  # 5 minutes
 
+    async def _compliance_packet_loop():
+        """Auto-generate monthly compliance packets on the 1st at 02:00 UTC.
+
+        Checks hourly if it's the 1st of the month between 02:00-03:00 UTC.
+        Generates packets for all active sites that don't already have one
+        for the previous month.
+        """
+        await asyncio.sleep(900)  # 15-minute startup delay
+        while True:
+            try:
+                now = datetime.now(timezone.utc)
+                # Only run on the 1st of the month, 02:00-03:00 UTC window
+                if now.day == 1 and now.hour == 2:
+                    prev_month = now.month - 1 if now.month > 1 else 12
+                    prev_year = now.year if now.month > 1 else now.year - 1
+
+                    pool = await get_pool()
+                    async with pool.acquire() as conn:
+                        # Get all active sites
+                        sites = await conn.fetch(
+                            "SELECT site_id FROM sites WHERE status != 'decommissioned'"
+                        )
+                        for site_row in sites:
+                            sid = site_row["site_id"]
+                            # Check if packet already exists for this month
+                            existing = await conn.fetchval(
+                                "SELECT 1 FROM compliance_packets WHERE site_id = $1 AND month = $2 AND year = $3",
+                                sid, prev_month, prev_year,
+                            )
+                            if existing:
+                                continue
+                            try:
+                                from dashboard_api.compliance_packet import CompliancePacket
+                                from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+                                engine = create_async_engine(os.getenv("DATABASE_URL", ""), echo=False)
+                                async_session = async_sessionmaker(engine, class_=AsyncSession)
+                                async with async_session() as session:
+                                    pkt = CompliancePacket(sid, prev_month, prev_year, session)
+                                    result = await pkt.generate_packet()
+                                    logger.info(f"Auto-generated compliance packet: {result['packet_id']}")
+                            except Exception as e:
+                                logger.warning(f"Compliance packet auto-gen failed for {sid}: {e}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Compliance packet loop error: {e}")
+            await asyncio.sleep(3600)  # Check hourly
+
     async def _unregistered_device_alert_loop():
         """Email clients about unregistered devices needing attention."""
         from dashboard_api.background_tasks import unregistered_device_alert_loop
@@ -1261,6 +1309,7 @@ async def lifespan(app: FastAPI):
         ("merkle_batch", _merkle_batch_loop),
         ("healing_sla", healing_sla_loop),
         ("unregistered_device_alerts", _unregistered_device_alert_loop),
+        ("compliance_packets", _compliance_packet_loop),
     ]
 
     for name, fn in task_defs:

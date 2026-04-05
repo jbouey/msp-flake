@@ -866,7 +866,23 @@ class CompliancePacket:
             {"control": "164.530(b)", "name": "Training", "category": "organizational"},
         ]
 
-        # Check if site has submitted attestations for these controls
+        # Companion module → HIPAA control mapping
+        # When a Companion module is "complete", it attests to these controls
+        MODULE_CONTROL_MAP = {
+            "sra": ["164.308(a)(1)(ii)(A)", "164.308(a)(1)(i)"],
+            "policies": ["164.316(a)", "164.316(b)(1)"],
+            "training": ["164.308(a)(5)(i)", "164.530(b)"],
+            "baas": ["164.308(b)(1)", "164.314(a)(1)"],
+            "ir-plan": ["164.308(a)(6)"],
+            "contingency": ["164.310(a)(2)(i)"],
+            "workforce": ["164.308(a)(3)", "164.308(a)(4)"],
+            "physical": ["164.310(a)(1)", "164.310(a)(2)(ii)", "164.310(a)(2)(iii)",
+                         "164.310(b)", "164.310(c)", "164.310(d)(1)"],
+            "officers": ["164.308(a)(2)"],
+            "gap-analysis": ["164.308(a)(8)"],
+        }
+
+        # Check explicit attestations from compliance_attestations table
         attested = set()
         try:
             result = await self.db.execute(
@@ -879,6 +895,59 @@ class CompliancePacket:
                 attested.add(row[0])
         except Exception:
             pass  # Table may not exist yet
+
+        # Also pull from Companion module completion status
+        # Find the org_id for this site, then check module status
+        try:
+            org_id = await self.db.execute(
+                text("SELECT client_org_id FROM sites WHERE site_id = :sid"),
+                {"sid": self.site_id},
+            )
+            org_row = org_id.fetchone()
+            if org_row and org_row[0]:
+                oid = str(org_row[0])
+                for module_key, controls in MODULE_CONTROL_MAP.items():
+                    # Check module-specific completion indicators
+                    is_complete = False
+                    try:
+                        if module_key == "sra":
+                            r = await self.db.execute(text(
+                                "SELECT 1 FROM hipaa_sra_assessments WHERE org_id = :oid AND status = 'completed' LIMIT 1"),
+                                {"oid": oid})
+                            is_complete = r.fetchone() is not None
+                        elif module_key == "officers":
+                            r = await self.db.execute(text(
+                                "SELECT 1 FROM hipaa_officers WHERE org_id = :oid AND role IN ('privacy_officer','security_officer') LIMIT 2"),
+                                {"oid": oid})
+                            is_complete = len(r.fetchall()) >= 2
+                        elif module_key == "ir-plan":
+                            r = await self.db.execute(text(
+                                "SELECT 1 FROM hipaa_ir_plan WHERE org_id = :oid AND status = 'active' LIMIT 1"),
+                                {"oid": oid})
+                            is_complete = r.fetchone() is not None
+                        elif module_key == "policies":
+                            r = await self.db.execute(text(
+                                "SELECT COUNT(*) FROM hipaa_policies WHERE org_id = :oid AND status = 'active'"),
+                                {"oid": oid})
+                            count = r.scalar() or 0
+                            is_complete = count >= 3  # At least 3 active policies
+                        elif module_key == "training":
+                            r = await self.db.execute(text(
+                                "SELECT COUNT(*) FROM hipaa_training WHERE org_id = :oid AND status = 'compliant'"),
+                                {"oid": oid})
+                            is_complete = (r.scalar() or 0) > 0
+                        elif module_key == "baas":
+                            r = await self.db.execute(text(
+                                "SELECT COUNT(*) FROM hipaa_baas WHERE org_id = :oid AND status = 'active'"),
+                                {"oid": oid})
+                            is_complete = (r.scalar() or 0) > 0
+                    except Exception:
+                        pass  # Table may not exist for this module
+
+                    if is_complete:
+                        attested.update(controls)
+        except Exception:
+            pass  # Org lookup or module check failed
 
         controls = []
         for c in ADMIN_CONTROLS:
