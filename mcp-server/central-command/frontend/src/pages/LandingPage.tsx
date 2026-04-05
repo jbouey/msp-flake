@@ -149,15 +149,37 @@ export const LandingPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Decorative element — vital-sign line */}
-          <div className="hidden lg:block absolute right-12 top-32 w-64 opacity-10">
-            <svg viewBox="0 0 256 128" fill="none" className="w-full">
+          {/* Decorative element — animated vital-sign line */}
+          <style>{`
+            @keyframes ecg-draw {
+              0% { stroke-dashoffset: 600; }
+              40% { stroke-dashoffset: 0; }
+              60% { stroke-dashoffset: 0; }
+              100% { stroke-dashoffset: -600; }
+            }
+            @keyframes ecg-glow {
+              0%, 100% { opacity: 0.08; }
+              30% { opacity: 0.18; }
+              50% { opacity: 0.12; }
+            }
+            .ecg-line {
+              stroke-dasharray: 600;
+              stroke-dashoffset: 600;
+              animation: ecg-draw 3.5s ease-in-out infinite;
+            }
+            .ecg-container {
+              animation: ecg-glow 3.5s ease-in-out infinite;
+            }
+          `}</style>
+          <div className="hidden lg:block absolute right-12 top-32 w-72 ecg-container">
+            <svg viewBox="0 0 320 128" fill="none" className="w-full">
               <path
-                d="M0 64 H80 L96 20 L112 108 L128 40 L144 88 L160 64 H256"
+                d="M0 64 H80 L96 20 L112 108 L128 40 L144 88 L160 64 H320"
                 stroke="#14A89E"
-                strokeWidth="2"
+                strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                className="ecg-line"
               />
             </svg>
           </div>
