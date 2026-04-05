@@ -1356,15 +1356,59 @@ async def download_evidence(
     token: str = Query(None, description="Portal access token"),
     portal_session: Optional[str] = Cookie(None)
 ):
-    """Get presigned URL for evidence bundle download."""
+    """Get presigned URL for evidence bundle download from MinIO WORM storage."""
     await validate_session(site_id, portal_session, token)
 
-    # In production, generate presigned MinIO URL
-    # For now, return placeholder
+    from dashboard_api.shared import get_minio_client, MINIO_BUCKET
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import tenant_connection
+
+    pool = await get_pool()
+
+    # Look up the MinIO object key from the database
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        row = await conn.fetchrow("""
+            SELECT minio_key, bundle_hash, size_bytes, generated_at
+            FROM evidence_bundles
+            WHERE bundle_id = $1 AND site_id = $2
+        """, bundle_id, site_id)
+
+    if not row or not row.get('minio_key'):
+        # Fallback: try compliance_bundles table (newer storage)
+        async with tenant_connection(pool, site_id=site_id) as conn:
+            row = await conn.fetchrow("""
+                SELECT bundle_id, bundle_hash, checked_at as generated_at
+                FROM compliance_bundles
+                WHERE bundle_id = $1 AND site_id = $2
+            """, bundle_id, site_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Evidence bundle not found")
+        # Construct expected MinIO key from convention
+        gen = row['generated_at']
+        minio_key = f"{site_id}/{gen.strftime('%Y/%m/%d')}/{bundle_id}.json"
+    else:
+        minio_key = row['minio_key']
+
+    client = get_minio_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Evidence storage not available")
+
+    try:
+        url = client.presigned_get_object(
+            bucket_name=MINIO_BUCKET,
+            object_name=minio_key,
+            expires=timedelta(hours=1),
+        )
+    except Exception as e:
+        logging.warning(f"MinIO presigned URL failed for {minio_key}: {e}")
+        raise HTTPException(status_code=503, detail="Failed to generate download URL")
+
     return {
-        "download_url": f"https://api.osiriscare.net/evidence/{site_id}/{bundle_id}",
+        "download_url": url,
         "expires_in": 3600,
-        "bundle_id": bundle_id
+        "bundle_id": bundle_id,
+        "bundle_hash": row.get('bundle_hash'),
+        "size_bytes": row.get('size_bytes'),
     }
 
 
