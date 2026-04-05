@@ -34,6 +34,18 @@ export const LandingPage: React.FC = () => {
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Serif+Display&display=swap');
         .font-display { font-family: 'DM Serif Display', Georgia, serif; }
         .font-body { font-family: 'DM Sans', 'Helvetica Neue', system-ui, sans-serif; }
+        @keyframes ecgDraw {
+          0% { stroke-dashoffset: 1; opacity: 0.06; }
+          15% { opacity: 0.2; }
+          50% { stroke-dashoffset: 0; opacity: 0.15; }
+          65% { opacity: 0.2; }
+          100% { stroke-dashoffset: -1; opacity: 0.06; }
+        }
+        @keyframes ecgGlow {
+          0%, 100% { opacity: 0.7; }
+          30% { opacity: 1; }
+          60% { opacity: 0.85; }
+        }
       `}</style>
 
       {/* ═══════════════ NAV ═══════════════ */}
@@ -150,28 +162,9 @@ export const LandingPage: React.FC = () => {
           </div>
 
           {/* Decorative element — animated vital-sign line */}
-          <style>{`
-            @keyframes ecg-draw {
-              0% { stroke-dashoffset: 600; }
-              40% { stroke-dashoffset: 0; }
-              60% { stroke-dashoffset: 0; }
-              100% { stroke-dashoffset: -600; }
-            }
-            @keyframes ecg-glow {
-              0%, 100% { opacity: 0.08; }
-              30% { opacity: 0.18; }
-              50% { opacity: 0.12; }
-            }
-            .ecg-line {
-              stroke-dasharray: 600;
-              stroke-dashoffset: 600;
-              animation: ecg-draw 3.5s ease-in-out infinite;
-            }
-            .ecg-container {
-              animation: ecg-glow 3.5s ease-in-out infinite;
-            }
-          `}</style>
-          <div className="hidden lg:block absolute right-12 top-32 w-72 ecg-container">
+          <div className="hidden lg:block absolute right-12 top-32 w-72" style={{
+            animation: 'ecgGlow 3.5s ease-in-out infinite',
+          }}>
             <svg viewBox="0 0 320 128" fill="none" className="w-full">
               <path
                 d="M0 64 H80 L96 20 L112 108 L128 40 L144 88 L160 64 H320"
@@ -179,7 +172,12 @@ export const LandingPage: React.FC = () => {
                 strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                className="ecg-line"
+                pathLength={1}
+                style={{
+                  strokeDasharray: 1,
+                  strokeDashoffset: 1,
+                  animation: 'ecgDraw 3s ease-in-out infinite',
+                }}
               />
             </svg>
           </div>
