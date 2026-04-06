@@ -1,13 +1,13 @@
 {
-  "session": 193,
-  "updated": "2026-04-04T12:20:00.000000Z",
+  "session": 195,
+  "updated": "2026-04-06T13:27:25.105121Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "redesigned_hero_compliance_merged_attention_sidebar_sections_dark_badges",
-    "physical_appliance": "go_daemon_v0.3.79_mesh_scan_coord_per_appliance_auth_device_registration_profiles_hardened",
+    "physical_appliance": "go_daemon_v0.3.81_mdns_mesh_avahi_link_local_hypothesis_l2_validation_gate",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
@@ -18,7 +18,11 @@
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "127529_anchored_15_pending_verify_endpoint_chain_health_daily_integrity_check",
     "evidence_verify": "production_verify_endpoint_chain_health_hash_recompute_ed25519_ots_blockchain",
-    "fleet_updates": "v0.3.52_deployed_circuit_breaker_dead_rules_purged_both_appliances_updated",
+    "fleet_updates": "v0.3.81_deployed_mdns_mesh_14pt_hardening_both_appliances",
+    "mesh_discovery": "cross_subnet_backend_seeded_mdns_avahi_link_local_169_254_88_1_tls_probe_ca_verify",
+    "landing_page": "pricing_499_legal_pages_ecg_animation_calendly_fixed_claims_qualified",
+    "l2_pipeline": "hypothesis_driven_triage_validation_gate_confidence_tagging_audit_trail",
+    "check_catalog": "58_checks_public_api_hipaa_mapping_no_remediation_scripts",
     "log_pipeline": "operational_35k_plus_entries_csrf_gzip_auth_fixed",
     "prometheus_metrics": "live_at_slash_metrics_7_gauges_counters",
     "offline_alerting": "partner_email_on_15min_offline",
@@ -27,16 +31,99 @@
     "compliance_infographic": "client_portal_plus_admin_sitedetail_clickthrough_to_incidents_category_filter",
     "l4_escalation": "partner_escalate_to_l4_admin_queue_recurrence_detection_migration_077",
     "portal_auth": "email_password_login_all_portals_totp_2fa_all_portals_security_hardened",
-    "macos_scanning": "agent_v0.4.2_live_9pass_3fail_tls_reenrolled_manifest_registered_go124_compat",
+    "macos_scanning": "agent_v0.4.5_mdns_discovery_link_local_fallback_reconnect_re_resolution",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "Two appliances on different subnets (.88 and .0) — mesh peer discovery only works on same subnet. Need to co-locate to test mesh target splitting. MikroTik DHCP reservations need admin creds. Stale pilot row (physical-appliance-pilot-1aea78) in site_appliances needs cleanup. iMac SSH port 2222 still broken (use reverse tunnel via VPS:2250).",
+  "current_blocker": "Mesh half-formed (asymmetric routing, consumer router — topology acknowledged). iMac SSH port 2222 still broken (reverse tunnel via VPS:2250).",
+  "session_195_work": {
+    "commits": 10,
+    "daemon_version": "0.3.81",
+    "agent_version": "0.4.5",
+    "summary": "Device sync fix, Ops Center page, audit readiness, docs expansion, demo guide v3, rogue task allowlist",
+    "device_sync_fix": [
+      "Root cause: bridge MAC causes UUID→IP device_id migration, competing slow sync reverts it",
+      "Fix: CASE expression prevents UUID overwriting IP-format local_device_id",
+      "Fix: GREATEST() prevents stale timestamps from going backwards",
+      "Fix: WHERE id=$1 for stable row matching instead of device_id",
+      "Fix: credential IP queries JOIN through appliances (was referencing nonexistent site_id column)",
+      "Diagnostic logging revealed 3 sync sources: 6-device netscan (IP), 12-device replay (UUID), 23-device home net (MAC)",
+      "Cleaned 16 stale/duplicate incidents, resolved false device_unreachable for reachable hosts",
+      "All 4 key devices (.250, .251, .50, .233) now updating with live scan data"
+    ],
+    "ops_center": [
+      "GET /api/ops/health — 5 traffic-light statuses (evidence chain, signing, OTS, healing, fleet)",
+      "GET /api/ops/health/{org_id} — partner-scoped variant",
+      "GET /api/ops/audit-readiness/{org_id} — per-org badge (green/yellow/red) + 6-check checklist + countdown",
+      "PUT /api/ops/audit-config/{org_id} — BAA status + next audit date management",
+      "Migration 124: baa_on_file, baa_uploaded_at, next_audit_date, next_audit_notes on client_orgs",
+      "56 unit tests for all threshold logic + badge computation",
+      "StatusLight.tsx component with traffic-light dots + pulse animation on red",
+      "OpsCenter.tsx page with expandable detail panels + manual refresh",
+      "Documentation.tsx expanded: 7 runbooks (RB-OPS-001-007) + 4 reference articles"
+    ],
+    "other_fixes": [
+      "Lanzaboote disabled in appliance-disk-image.nix (Secure Boot disabled in BIOS, keys preserved for future)",
+      "Rogue scheduled task allowlist: XblGameSaveTask + UserLogonTask (legitimate Windows tasks)",
+      "DC/SRV scan path allowlist aligned with workstation path",
+      "Sitemap updated with /pricing and /legal/* pages",
+      "Demo video guide v3 PDF generated (daemon v0.3.81, 58 checks, 5-min scans, rogue detection)"
+    ],
+    "evidence_pipeline_discovery": [
+      "compliance_bundles table has 231,649 entries (was querying wrong table — evidence_bundles is legacy)",
+      "94% Ed25519 signed, 56% BTC-anchored, chain position 137,069",
+      "Evidence submitting every scan cycle — pipeline is production-ready",
+      "127,814 OTS proofs anchored via Merkle batching"
+    ]
+  },
+  "session_194_work": {
+    "commits": 13,
+    "daemon_version": "0.3.81",
+    "agent_version": "0.4.5",
+    "summary": "Cross-subnet mesh + 14-point hardening + consumer-router handling + mDNS discovery + landing page overhaul + Blazytko roundtable patterns",
+    "mesh_discovery": [
+      "Backend-assisted peer discovery: checkin response delivers sibling IPs+MACs",
+      "Daemon probes peers via TLS (CA verify) with TCP fallback, adds to hash ring",
+      "Parallel probing (goroutine per peer), backend-peer expiry prevents black holes",
+      "WireGuard IPs filtered from mesh_peers (cross-org boundary protection)",
+      "14-point hardening: all P0/P1/P2 findings from SWE+PM+CCIE roundtable",
+      "Ring convergence monitoring, split-brain detection, mesh formation notification",
+      "Auto-reclassify persistent isolation (>24h) from warning to info",
+      "mesh_topology site config (auto/independent) for consumer routers",
+      "Acknowledge button on ApplianceCard for one-click topology declaration"
+    ],
+    "dhcp_drift_resilience": [
+      "mDNS: Avahi publishes _osiris-grpc._tcp.local on appliance, agent resolves by service name",
+      "Secondary static IP: 169.254.88.1/24 on appliance NIC (systemd oneshot)",
+      "Agent discovery chain: mDNS \u2192 link-local \u2192 DNS SRV \u2192 offline",
+      "Reconnect loop re-resolves via mDNS + link-local after 3 failures",
+      "Onboarding gate: network_mode (static_lease/dynamic_mdns) forced during site setup"
+    ],
+    "landing_page": [
+      "Pricing: $200 \u2192 $499/mo (roundtable consensus, pricing PDF in Downloads)",
+      "Legal pages: Privacy Policy, Terms of Service, BAA (were dead #href links)",
+      "Claims qualified: monthly reports \u2192 monitoring summaries, archive \u2192 bundles",
+      "Mock dashboard labeled 'Sample view', animated ECG heartbeat in hero",
+      "Calendly link fixed (was missing event type slug)"
+    ],
+    "blazytko_patterns": [
+      "Hypothesis-driven L2 triage: 12 incident types \u00d7 3-5 ranked root causes",
+      "L2 validation gate: schema check (real runbook, valid confidence, known host) \u2014 14 tests",
+      "Investigation audit trail: HealingEntry extended with hypothesis/confidence/reasoning",
+      "Confidence tagging: evidence bundles carry scan_method + confidence fields",
+      "Check catalog: /api/check-catalog \u2014 58 checks, HIPAA mapping, no remediation scripts"
+    ],
+    "data_quality": [
+      "Workstation cleanup: 17\u21929 (removed duplicates, appliance IPs, router, stale DHCP artifacts)",
+      "Backend prevention: appliance IP exclusion + 7-day IP-only cleanup runs every checkin",
+      "Cadence script IP fixed (.235 \u2192 .241), iMac agent config fixed (.235 \u2192 .241)"
+    ]
+  },
   "session_193_work": {
     "commits": 5,
     "daemon_version": "0.3.76",
     "agent_version": "0.4.2",
-    "summary": "Appliance offline → auto-rekey → 12-point hardening → agent error classification → network diagnosis → chaos lab fix → iMac agent recovery",
+    "summary": "Appliance offline \u2192 auto-rekey \u2192 12-point hardening \u2192 agent error classification \u2192 network diagnosis \u2192 chaos lab fix \u2192 iMac agent recovery",
     "incident_diagnosis": [
       "Appliance .241 reported offline \u2014 DHCP assigned new IP .235 after reboot",
       "Root cause: API key mismatch (401) not IP change",
@@ -68,23 +155,23 @@
     "p1_fixes": [
       "sshexec: warn when sudo requested without SudoPassword",
       "driftscan: ad_dns_server fallback resolver for AD hostnames (fixes NXDOMAIN)",
-      "driftscan: subnet-dark detection — single incident when ≥80% targets unreachable",
-      "healing_executor: netscan IP fallback — healing survives DHCP changes"
+      "driftscan: subnet-dark detection \u2014 single incident when \u226580% targets unreachable",
+      "healing_executor: netscan IP fallback \u2014 healing survives DHCP changes"
     ],
     "p2_fixes": [
       "device_sync: credential IP auto-update for ssh_key + org_credentials (was WinRM only)",
       "appliance-disk-image.nix: msp-dns-hosts systemd service (survives rebuilds)",
       "sites.py: POST /credentials/{id}/update-host endpoint (one-click IP fix)",
-      "health_monitor: network_outage detection — mass unreachable → single notification"
+      "health_monitor: network_outage detection \u2014 mass unreachable \u2192 single notification"
     ],
     "agent_hardening": [
-      "transport/grpc.go: ClassifyConnectionError() — 10 error categories",
+      "transport/grpc.go: ClassifyConnectionError() \u2014 10 error categories",
       "transport/grpc.go: consecutive failure counter + NeedsCertReEnrollment()",
-      "transport/grpc.go: ForceReEnrollment() — deletes stale certs for TOFU re-enrollment",
+      "transport/grpc.go: ForceReEnrollment() \u2014 deletes stale certs for TOFU re-enrollment",
       "main.go: structured reconnect logging with error class + cert auto-recovery"
     ],
     "network_fixes": [
-      "Linux VM .236→.233: credential updated, promiscuous mode fixed",
+      "Linux VM .236\u2192.233: credential updated, promiscuous mode fixed",
       "NVDC01 DNS: /etc/hosts entry + ad_dns_server in config.yaml",
       "CI/CD: new deploy SSH keypair, deploys green",
       "NV appliance: API key restored, v0.3.76 deployed"
@@ -92,21 +179,21 @@
   },
   "session_193_chaos_lab_and_agent": {
     "chaos_lab_fixes": [
-      "IP updates: .246→.235 (appliance), .242→.233 (linux) in 3 scripts",
-      "Service name: compliance-agent→appliance-daemon in cadence + chaos_lab.sh",
+      "IP updates: .246\u2192.235 (appliance), .242\u2192.233 (linux) in 3 scripts",
+      "Service name: compliance-agent\u2192appliance-daemon in cadence + chaos_lab.sh",
       "SSH host key: cleared stale .246, added .235 on iMac known_hosts",
       "Cadence script: complete rewrite for Go daemon log patterns (8 regex patterns, 7 checks)"
     ],
     "imac_agent_root_causes": [
       "Binary was Windows PE32+ (updater downloaded osiris-agent.exe from appliance HTTP, wrong platform)",
-      "updater.go bug: os.Create() → 0644 perms, missing os.Chmod(0755) after download",
+      "updater.go bug: os.Create() \u2192 0644 perms, missing os.Chmod(0755) after download",
       "Config+plist pointed to old appliance IP .241 (should be .235)",
       "Stale TLS certs from old appliance CA (pre-DHCP change)",
       "Go 1.26 binary requires macOS 12+, iMac runs 11.7 (SecTrustCopyCertificateChain)"
     ],
     "imac_agent_fixes": [
-      "FIX: updater.go — os.Chmod(destPath, 0755) after download",
-      "FIX: config.json + plist → .235:50051",
+      "FIX: updater.go \u2014 os.Chmod(destPath, 0755) after download",
+      "FIX: config.json + plist \u2192 .235:50051",
       "FIX: cleared stale TLS certs, TOFU re-enrolled",
       "BUILD: amd64 with Go 1.24.4 (macOS 11+ compat), arm64 with Go 1.26 (M-series)",
       "DEPLOY: both darwin binaries to appliance /var/lib/msp/bin/, manifest registered",
