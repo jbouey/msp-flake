@@ -34,7 +34,16 @@ jobs:
 
       - name: Run backend tests
         working-directory: mcp-server/central-command/backend
-        run: python -m pytest tests/ -v --tb=short
+        run: |
+          # Run each test file in its own subprocess to prevent stub contamination
+          # (test files stub sys.modules which leaks across files in same process)
+          failed=0
+          for f in tests/test_*.py; do
+            echo "::group::$f"
+            python -m pytest "$f" -v --tb=short || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
