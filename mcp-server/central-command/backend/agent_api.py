@@ -46,6 +46,7 @@ from .shared import (
     require_appliance_bearer,
     sign_data,
 )
+from dashboard_api.alert_router import classify_alert
 
 logger = structlog.get_logger()
 
@@ -1019,6 +1020,40 @@ async def report_incident(
                 )
         except Exception as e:
             logger.error(f"Failed to create notification: {e}")
+
+    # Enqueue client alert if applicable (non-fatal)
+    try:
+        org_row = await db.execute(
+            text("""SELECT co.id as org_id, co.client_alert_mode as org_mode,
+                           s.client_alert_mode as site_mode
+                    FROM sites s
+                    LEFT JOIN client_orgs co ON co.id = s.client_org_id
+                    WHERE s.site_id = :site_id"""),
+            {"site_id": incident.site_id}
+        )
+        org_info = org_row.fetchone()
+        if org_info and org_info[0]:
+            classification = classify_alert(incident.incident_type, incident.severity)
+            if classification["tier"] == "client":
+                effective_mode = org_info[2] or org_info[1] or "informed"
+                if effective_mode != "silent":
+                    from dashboard_api.alert_router import ALERT_SUMMARIES
+                    summary = ALERT_SUMMARIES.get(classification["alert_type"], "Compliance issue detected").format(count=1)
+                    await db.execute(
+                        text("""INSERT INTO pending_alerts (id, org_id, site_id, alert_type, severity, summary, incident_id)
+                                VALUES (:id, :org_id, :site_id, :alert_type, :severity, :summary, :incident_id)"""),
+                        {
+                            "id": str(uuid.uuid4()),
+                            "org_id": str(org_info[0]),
+                            "site_id": incident.site_id,
+                            "alert_type": classification["alert_type"],
+                            "severity": incident.severity,
+                            "summary": summary,
+                            "incident_id": incident_id,
+                        }
+                    )
+    except Exception as e:
+        logger.warning(f"Alert enqueue failed (non-fatal): {e}")
 
     return {
         "status": "received",

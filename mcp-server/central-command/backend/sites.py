@@ -3325,6 +3325,24 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         except Exception as e:
             logger.warning(f"Checkin {checkin.site_id}: drift config lookup failed: {e}")
 
+        # === STEP 6b-2: Resolve effective alert mode for daemon ===
+        client_alert_mode_site = None
+        client_alert_mode_org = None
+        try:
+            mode_row = await conn.fetchrow(
+                """SELECT s.client_alert_mode as site_mode, co.client_alert_mode as org_mode
+                   FROM sites s
+                   LEFT JOIN client_orgs co ON co.id = s.client_org_id
+                   WHERE s.site_id = $1""",
+                site_id
+            )
+            if mode_row:
+                client_alert_mode_site = mode_row["site_mode"]
+                client_alert_mode_org = mode_row["org_mode"]
+        except Exception:
+            pass
+        effective_alert_mode = client_alert_mode_site or client_alert_mode_org or "informed"
+
         # === STEP 6c: Get maintenance window (if active) ===
         maintenance_until = None
         try:
@@ -3492,6 +3510,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         "peer_bundle_hashes": peer_bundle_hashes,
         "mesh_peers": mesh_peers,
         "target_assignments": target_assignments,
+        "client_alert_mode": effective_alert_mode,
     }
 
 

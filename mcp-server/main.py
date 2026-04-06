@@ -61,6 +61,7 @@ from dashboard_api.log_ingest import router as log_ingest_router
 from dashboard_api.security_events import router as security_events_router
 from dashboard_api.email_alerts import create_notification_with_email
 from dashboard_api.health_monitor import health_monitor_loop
+from dashboard_api.alert_router import digest_sender_loop
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router, session_router as partner_session_router
 from dashboard_api.billing import router as billing_router
@@ -1312,6 +1313,7 @@ async def lifespan(app: FastAPI):
         ("healing_sla", healing_sla_loop),
         ("unregistered_device_alerts", _unregistered_device_alert_loop),
         ("compliance_packets", _compliance_packet_loop),
+        ("alert_digest", digest_sender_loop),
     ]
 
     for name, fn in task_defs:
