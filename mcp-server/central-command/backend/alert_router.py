@@ -24,6 +24,7 @@ logger = logging.getLogger("alert_router")
 
 PORTAL_URL = os.getenv("CLIENT_PORTAL_URL", "https://portal.osiriscare.net")
 DIGEST_INTERVAL_HOURS = int(os.getenv("ALERT_DIGEST_INTERVAL_HOURS", "4"))
+NON_ENGAGEMENT_HOURS = int(os.getenv("NON_ENGAGEMENT_HOURS", "48"))
 
 # ---------------------------------------------------------------------------
 # Classification maps
@@ -498,6 +499,16 @@ async def digest_sender_loop() -> None:
         except Exception as e:
             logger.error(f"Digest send error: {e}", exc_info=True)
 
+        # Check for client non-engagement
+        try:
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                await _check_non_engagement(conn)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Non-engagement check error: {e}")
+
         await asyncio.sleep(DIGEST_INTERVAL_HOURS * 3600)
 
 
@@ -541,6 +552,96 @@ async def _flush_critical_alerts(conn) -> None:
                 "UPDATE pending_alerts SET sent_at = NOW() WHERE id = $1",
                 row["id"],
             )
+
+
+async def _check_non_engagement(conn) -> None:
+    """Escalate to partner when client alerts go unacted for NON_ENGAGEMENT_HOURS."""
+    # Find orgs with unacted alerts past threshold
+    rows = await conn.fetch(
+        """
+        SELECT pa.org_id, co.name as org_name, co.current_partner_id,
+               COUNT(*) as unacted_count,
+               MIN(pa.created_at) as oldest_alert
+        FROM pending_alerts pa
+        JOIN client_orgs co ON co.id = pa.org_id
+        WHERE pa.sent_at IS NOT NULL
+          AND pa.dismissed_at IS NULL
+          AND pa.created_at < NOW() - INTERVAL '1 hour' * $1
+        GROUP BY pa.org_id, co.name, co.current_partner_id
+        HAVING COUNT(*) >= 1
+        """,
+        NON_ENGAGEMENT_HOURS,
+    )
+
+    if not rows:
+        return
+
+    for row in rows:
+        partner_id = row["current_partner_id"]
+        if not partner_id:
+            continue
+
+        # Dedup: don't re-escalate same org within 7 days
+        existing = await conn.fetchrow(
+            """SELECT id FROM partner_notifications
+               WHERE partner_id = $1 AND org_id = $2
+                 AND notification_type = 'non_engagement'
+                 AND created_at > NOW() - INTERVAL '7 days'""",
+            partner_id, row["org_id"],
+        )
+        if existing:
+            continue
+
+        summary = f"{row['org_name']} has {row['unacted_count']} unacted alert(s) ({NON_ENGAGEMENT_HOURS}h+)"
+
+        await conn.execute(
+            """INSERT INTO partner_notifications (id, partner_id, org_id, notification_type, summary)
+               VALUES (gen_random_uuid(), $1, $2, 'non_engagement', $3)""",
+            partner_id, row["org_id"], summary,
+        )
+
+        # Send email to partner
+        partner = await conn.fetchrow(
+            "SELECT name, email FROM partners WHERE id = $1", partner_id
+        )
+        if partner and partner["email"]:
+            try:
+                from dashboard_api.email_alerts import send_digest_email
+                html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+<div style="background:linear-gradient(135deg,#7c3aed,#4f46e5);padding:24px;border-radius:8px 8px 0 0;">
+  <h1 style="color:#fff;margin:0;font-size:20px;">Partner Alert</h1>
+  <p style="color:#c4b5fd;margin:4px 0 0;">Client Non-Engagement</p>
+</div>
+<div style="padding:20px;background:#fff;border:1px solid #e2e8f0;border-top:none;">
+  <p><strong>{row['org_name']}</strong> has <strong>{row['unacted_count']}</strong> unacted compliance alert(s) that have been pending for over {NON_ENGAGEMENT_HOURS} hours.</p>
+  <p style="color:#64748b;">The client was notified but has not taken action. Please follow up.</p>
+  <div style="margin-top:16px;text-align:center;">
+    <a href="https://dashboard.osiriscare.net/partners/orgs/{row['org_id']}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">View in Dashboard</a>
+  </div>
+</div>
+<div style="padding:12px;text-align:center;color:#94a3b8;font-size:11px;">OsirisCare Partner Alert</div>
+</body></html>"""
+                text = f"{row['org_name']} has {row['unacted_count']} unacted compliance alert(s) pending for over {NON_ENGAGEMENT_HOURS} hours. Please follow up."
+                send_digest_email(
+                    to_email=partner["email"],
+                    cc_email=None,
+                    subject=f"[OsirisCare Partner] Client non-engagement — {row['org_name']}",
+                    html_body=html,
+                    text_body=text,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send non-engagement email for org {row['org_id']}: {e}")
+
+        logger.info(
+            "Non-engagement escalation",
+            extra={
+                "org_id": str(row["org_id"]),
+                "partner_id": str(partner_id),
+                "count": row["unacted_count"],
+            },
+        )
 
 
 async def _send_all_org_digests(conn) -> None:
