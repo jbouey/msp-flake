@@ -2950,3 +2950,57 @@ async def validate_magic_link(request: MagicTokenValidate):
             "role": user['role'],
         },
     }
+
+
+# =============================================================================
+# NOTIFICATION ENDPOINTS
+# =============================================================================
+
+
+@router.get("/me/notifications")
+async def get_partner_notifications(
+    partner: dict = Depends(require_partner),
+):
+    """Get partner notifications (newest 50), with unread count."""
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch(
+            """SELECT id, org_id, notification_type, summary, created_at, read_at,
+                      escalated_to_admin_at
+               FROM partner_notifications
+               WHERE partner_id = $1
+               ORDER BY created_at DESC
+               LIMIT 50""",
+            partner["id"],
+        )
+        unread_count = sum(1 for r in rows if not r["read_at"])
+        return {
+            "notifications": [
+                {
+                    "id": str(r["id"]),
+                    "org_id": str(r["org_id"]) if r["org_id"] else None,
+                    "notification_type": r["notification_type"],
+                    "summary": r["summary"],
+                    "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                    "is_read": r["read_at"] is not None,
+                }
+                for r in rows
+            ],
+            "unread_count": unread_count,
+        }
+
+
+@router.put("/me/notifications/{notification_id}/read")
+async def mark_partner_notification_read(
+    notification_id: str,
+    partner: dict = Depends(require_partner),
+):
+    """Mark a partner notification as read."""
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        await conn.execute(
+            """UPDATE partner_notifications SET read_at = NOW()
+               WHERE id = $1 AND partner_id = $2 AND read_at IS NULL""",
+            notification_id, partner["id"],
+        )
+    return {"status": "ok"}

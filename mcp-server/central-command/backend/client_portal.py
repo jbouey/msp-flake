@@ -4036,3 +4036,96 @@ async def action_client_alert(
         "approval_id": approval_id,
         "incident_id": str(alert["incident_id"]) if alert["incident_id"] else None,
     }
+
+
+# =============================================================================
+# CREDENTIAL ENTRY ENDPOINT
+# =============================================================================
+
+
+@auth_router.post("/credentials")
+async def submit_client_credentials(
+    request: Request,
+    user: dict = Depends(require_client_user),
+):
+    """Client enters scan credentials for a site. Stored encrypted, delivered on next checkin."""
+    import json as _json
+    import uuid as _uuid
+    from .credential_crypto import encrypt_credential
+
+    body = await request.json()
+    site_id = body.get("site_id")
+    credential_type = body.get("credential_type")
+    credential_name = body.get("credential_name", "Client-provided credential")
+    data = body.get("data", {})
+
+    if not site_id or not credential_type:
+        raise HTTPException(status_code=422, detail="site_id and credential_type are required")
+
+    valid_types = {"winrm", "domain_admin", "ssh_key", "ssh_password"}
+    if credential_type not in valid_types:
+        raise HTTPException(status_code=422, detail=f"credential_type must be one of: {sorted(valid_types)}")
+
+    if not data.get("username"):
+        raise HTTPException(status_code=422, detail="data.username is required")
+
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        # Verify site belongs to this org
+        site = await conn.fetchrow(
+            "SELECT site_id FROM sites WHERE site_id = $1 AND client_org_id = $2",
+            site_id, org_id,
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        # Rate limit: max 10 per hour per org
+        recent_count = await conn.fetchval(
+            """SELECT COUNT(*) FROM site_credentials
+               WHERE site_id IN (SELECT site_id FROM sites WHERE client_org_id = $1)
+                 AND created_at > NOW() - INTERVAL '1 hour'""",
+            org_id,
+        )
+        if recent_count and recent_count >= 10:
+            raise HTTPException(status_code=429, detail="Rate limit: max 10 credentials per hour")
+
+        # Build credential data
+        cred_data = {"username": data["username"]}
+        if credential_type in ("winrm", "domain_admin", "ssh_password"):
+            cred_data["password"] = data.get("password", "")
+        if credential_type in ("winrm", "domain_admin"):
+            cred_data["domain"] = data.get("domain", "")
+            cred_data["use_ssl"] = data.get("use_ssl", False)
+        if credential_type == "ssh_key":
+            cred_data["private_key"] = data.get("private_key", "")
+            cred_data["passphrase"] = data.get("passphrase", "")
+        if data.get("host"):
+            cred_data["host"] = data["host"]
+
+        encrypted = encrypt_credential(_json.dumps(cred_data))
+        cred_id = str(_uuid.uuid4())
+
+        await conn.execute(
+            """INSERT INTO site_credentials (id, site_id, credential_type, credential_name, encrypted_data, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, NOW(), NOW())""",
+            cred_id, site_id, credential_type, credential_name, encrypted,
+        )
+
+        # Audit trail (only if triggered from an alert)
+        alert_id = body.get("alert_id")
+        if alert_id:
+            await conn.execute(
+                """INSERT INTO client_approvals (id, org_id, site_id, alert_id, action, acted_by, notes)
+                   VALUES ($1, $2, $3, $4, 'credentials_entered', $5, $6)""",
+                str(_uuid.uuid4()), org_id, site_id, alert_id, user["user_id"],
+                f"Credential type: {credential_type}, name: {credential_name}",
+            )
+
+        logger.info(
+            "Client credential submitted",
+            extra={"site_id": site_id, "credential_type": credential_type, "user_id": user["user_id"]},
+        )
+
+        return {"status": "ok", "credential_id": cred_id}
