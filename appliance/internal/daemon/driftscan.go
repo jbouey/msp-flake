@@ -587,7 +587,7 @@ try {
         $_.TaskPath -ne '\' -or
         ($_.TaskPath -eq '\' -and $_.TaskName -notmatch '^(MicrosoftEdge|GoogleUpdate|OneDrive|User_Feed)')
     } | ForEach-Object {
-        if ($_.TaskName -notmatch '^(OsirisCareAgent|OsirisCare|ForceTimeSync|CreateExplorerShellUnelevatedTask|klnagent)') {
+        if ($_.TaskName -notmatch '^(OsirisCareAgent|OsirisCare|ForceTimeSync|CreateExplorerShellUnelevatedTask|klnagent|XblGameSaveTask|UserLogonTask)') {
             $rogueTasks += @{
                 Name = $_.TaskName
                 Path = $_.TaskPath
@@ -1501,7 +1501,8 @@ $result = Invoke-Command -Session $session -ScriptBlock {
     $r.RogueTasks = @()
     try {
         Get-ScheduledTask -EA Stop | Where-Object {
-            $_.TaskPath -notlike '\Microsoft\Windows\*' -and $_.TaskName -ne 'OsirisCareAgent'
+            $_.TaskPath -notlike '\Microsoft\Windows\*' -and
+            $_.TaskName -notmatch '^(OsirisCareAgent|OsirisCare|ForceTimeSync|CreateExplorerShellUnelevatedTask|klnagent|XblGameSaveTask|UserLogonTask|GoogleUpdate|OneDrive|MicrosoftEdge)'
         } | ForEach-Object { $r.RogueTasks += @{Name=$_.TaskName;Path=$_.TaskPath;State=$_.State.ToString()} }
     } catch {}
     $r
