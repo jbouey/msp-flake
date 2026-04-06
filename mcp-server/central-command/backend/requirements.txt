@@ -2,6 +2,8 @@
 # Update deliberately — loose pins caused CI/CD pydantic v2 breakage
 fastapi==0.115.6
 pydantic==2.10.4
+pydantic-core==2.27.2
+pydantic-settings==2.7.0
 sqlalchemy==2.0.36
 asyncpg==0.30.0
 httpx==0.28.1
