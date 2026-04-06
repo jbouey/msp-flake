@@ -3258,12 +3258,14 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                             "assignment_epoch": epoch,
                         }
 
-                        # Persist assignment for observability
+                        # Persist assignment for observability (use appliance_id for reliable matching)
+                        canonical_mac = mac_normalized  # colon-separated, from normalize_mac()
+                        canonical_aid = f"{checkin.site_id}-{canonical_mac}"
                         await conn.execute("""
                             UPDATE site_appliances
                             SET assigned_targets = $1::jsonb, assignment_epoch = $2
-                            WHERE site_id = $3 AND mac_address = $4
-                        """, json.dumps(my_targets), epoch, checkin.site_id, checkin.mac_address)
+                            WHERE appliance_id = $3
+                        """, json.dumps(my_targets), epoch, canonical_aid)
 
                         logger.info(
                             "target_assignment site_id=%s appliance_mac=%s target_count=%d ring_size=%d epoch=%d",
