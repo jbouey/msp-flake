@@ -62,6 +62,9 @@ except ImportError:
 
 router = APIRouter(prefix="/api/partners", tags=["partners"])
 
+# Valid values for client_alert_mode on orgs and sites
+VALID_ALERT_MODES = {"self_service", "informed", "silent"}
+
 
 # =============================================================================
 # MODELS
@@ -633,6 +636,128 @@ async def update_partner_org_drift_config(
         )
 
         return {'status': 'updated', 'sites_updated': updated}
+
+
+# =============================================================================
+# ORG / SITE ALERT CONFIG (partner-managed client notification settings)
+# =============================================================================
+
+@router.get("/me/orgs/{org_id}/alert-config")
+async def get_partner_org_alert_config(
+    org_id: str,
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Return alert email config and per-site overrides for a partner org."""
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        org = await conn.fetchrow(
+            """SELECT alert_email, cc_email, client_alert_mode
+               FROM client_orgs
+               WHERE id = $1 AND current_partner_id = $2""",
+            org_id, partner['id']
+        )
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        site_rows = await conn.fetch(
+            """SELECT s.site_id, s.clinic_name AS name, s.client_alert_mode
+               FROM sites s
+               WHERE s.client_org_id = $1
+                 AND s.partner_id = $2
+                 AND s.client_alert_mode IS NOT NULL""",
+            org_id, partner['id']
+        )
+
+    return {
+        "alert_email": org["alert_email"],
+        "cc_email": org["cc_email"],
+        "client_alert_mode": org["client_alert_mode"],
+        "site_overrides": [
+            {
+                "site_id": r["site_id"],
+                "name": r["name"],
+                "client_alert_mode": r["client_alert_mode"],
+            }
+            for r in site_rows
+        ],
+    }
+
+
+@router.put("/me/orgs/{org_id}/alert-config")
+async def update_partner_org_alert_config(
+    org_id: str,
+    request: Request,
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Update alert email and/or client_alert_mode for a partner org."""
+    body = await request.json()
+
+    # Validate mode if provided
+    mode = body.get("client_alert_mode")
+    if mode is not None and mode not in VALID_ALERT_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"client_alert_mode must be one of: {', '.join(sorted(VALID_ALERT_MODES))}",
+        )
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        org = await conn.fetchrow(
+            "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
+            org_id, partner['id']
+        )
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        # Build dynamic UPDATE for only the provided fields
+        allowed_fields = {"alert_email", "cc_email", "client_alert_mode"}
+        updates = {k: v for k, v in body.items() if k in allowed_fields}
+        if updates:
+            set_clauses = ", ".join(
+                f"{col} = ${i + 1}" for i, col in enumerate(updates)
+            )
+            values = list(updates.values())
+            values.append(org_id)
+            await conn.execute(
+                f"UPDATE client_orgs SET {set_clauses}, updated_at = NOW() WHERE id = ${len(values)}",
+                *values,
+            )
+
+    return {"status": "updated"}
+
+
+@router.put("/me/sites/{site_id}/alert-config")
+async def update_partner_site_alert_config(
+    site_id: str,
+    request: Request,
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Set per-site client_alert_mode override (null = inherit from org)."""
+    body = await request.json()
+    mode = body.get("client_alert_mode")
+
+    # null is explicitly allowed (clears the override)
+    if mode is not None and mode not in VALID_ALERT_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"client_alert_mode must be one of: {', '.join(sorted(VALID_ALERT_MODES))} or null",
+        )
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        site = await conn.fetchrow(
+            "SELECT site_id FROM sites WHERE site_id = $1 AND partner_id = $2",
+            site_id, partner['id']
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
+
+        await conn.execute(
+            "UPDATE sites SET client_alert_mode = $1, updated_at = NOW() WHERE site_id = $2",
+            mode, site_id,
+        )
+
+    return {"status": "updated", "client_alert_mode": mode}
 
 
 # =============================================================================
