@@ -6,6 +6,7 @@ export { ClientDashboard } from './ClientDashboard';
 export { ClientEvidence } from './ClientEvidence';
 export { ClientReports } from './ClientReports';
 export { ClientNotifications } from './ClientNotifications';
+export { ClientAlerts } from './ClientAlerts';
 export { ClientSettings } from './ClientSettings';
 export { ClientSecurity } from './ClientSecurity';
 export { ClientHelp } from './ClientHelp';
