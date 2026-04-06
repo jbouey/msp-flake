@@ -1,13 +1,13 @@
 {
-  "session": 195,
-  "updated": "2026-04-06T13:27:25.105121Z",
+  "session": 196,
+  "updated": "2026-04-06T17:18:31.146995Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "redesigned_hero_compliance_merged_attention_sidebar_sections_dark_badges",
-    "physical_appliance": "go_daemon_v0.3.81_mdns_mesh_avahi_link_local_hypothesis_l2_validation_gate",
+    "physical_appliance": "go_daemon_v0.3.82_backend_authoritative_mesh_per_appliance_keys_display_names",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
@@ -18,8 +18,8 @@
     "compliance_packets": "live_56pct_compliance_15_hipaa_controls_real_data",
     "ots_proofs": "127529_anchored_15_pending_verify_endpoint_chain_health_daily_integrity_check",
     "evidence_verify": "production_verify_endpoint_chain_health_hash_recompute_ed25519_ots_blockchain",
-    "fleet_updates": "v0.3.81_deployed_mdns_mesh_14pt_hardening_both_appliances",
-    "mesh_discovery": "cross_subnet_backend_seeded_mdns_avahi_link_local_169_254_88_1_tls_probe_ca_verify",
+    "fleet_updates": "v0.3.82_deployed_backend_authoritative_mesh_3_appliances",
+    "mesh_discovery": "backend_authoritative_target_assignment_local_ring_failover_split_brain_eliminated",
     "landing_page": "pricing_499_legal_pages_ecg_animation_calendly_fixed_claims_qualified",
     "l2_pipeline": "hypothesis_driven_triage_validation_gate_confidence_tagging_audit_trail",
     "check_catalog": "58_checks_public_api_hipaa_mapping_no_remediation_scripts",
@@ -35,14 +35,48 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "Mesh half-formed (asymmetric routing, consumer router — topology acknowledged). iMac SSH port 2222 still broken (reverse tunnel via VPS:2250).",
+  "current_blocker": "iMac SSH port 2222 still broken (reverse tunnel via VPS:2250). T640 + T740 have 0 assigned scan targets (no credentials for their subnet devices yet).",
+  "session_196_work": {
+    "commits": 1,
+    "daemon_version": "0.3.82",
+    "agent_version": "0.4.5",
+    "summary": "Backend-authoritative mesh, per-appliance naming/keys, GUI fixes, evidence dedup, 3-node testbed",
+    "backend_authoritative_mesh": [
+      "Python hash ring matching Go exactly (SHA256, 64 replicas, cross-language test vectors)",
+      "Server-side target assignment in checkin response (STEP 3.8c)",
+      "Daemon v0.3.82: OwnsTarget() prefers server assignment, 15-min staleness fallback to local ring",
+      "Evidence deduplication: 15-min window prevents overlap during failover",
+      "Removed split-brain detection from health_monitor.py (single authority = impossible)",
+      "Removed Network Stability panel and independent mode UI",
+      "Removed mesh_topology site config and acknowledge button",
+      "3 appliances on 2 subnets: T640 (.0.11), Physical (.241), T740 (.232)"
+    ],
+    "per_appliance_identity": [
+      "Migration 125: display_name column with iterative naming (osiriscare, osiriscare-2, osiriscare-3)",
+      "Migration 126: per-appliance agent_public_key on site_appliances",
+      "Evidence chain verifies against per-appliance keys instead of single site-level key",
+      "Evidence rejection counts reset, all 3 appliances have registered keys"
+    ],
+    "gui_fixes": [
+      "Appliance cards unclickable: removed z-10 stacking context from GlassCard",
+      "Notification panel hiding behind sidebar: Header z-10 bumped to z-50",
+      "Chaos lab SSH default IP updated .246 to .235"
+    ],
+    "test_coverage": [
+      "9 Python hash ring tests (single/two/three node, balance, determinism, vectors)",
+      "7 Python target assignment tests (coverage, redistribution, overlap)",
+      "4 Python evidence dedup tests (hit/miss/no-commit/fault-tolerant)",
+      "3 Go server assignment tests (override, fallback, empty)",
+      "1 Go cross-language vector test (validates Go/Python parity)"
+    ]
+  },
   "session_195_work": {
     "commits": 10,
     "daemon_version": "0.3.81",
     "agent_version": "0.4.5",
     "summary": "Device sync fix, Ops Center page, audit readiness, docs expansion, demo guide v3, rogue task allowlist",
     "device_sync_fix": [
-      "Root cause: bridge MAC causes UUID→IP device_id migration, competing slow sync reverts it",
+      "Root cause: bridge MAC causes UUID\u2192IP device_id migration, competing slow sync reverts it",
       "Fix: CASE expression prevents UUID overwriting IP-format local_device_id",
       "Fix: GREATEST() prevents stale timestamps from going backwards",
       "Fix: WHERE id=$1 for stable row matching instead of device_id",
@@ -52,10 +86,10 @@
       "All 4 key devices (.250, .251, .50, .233) now updating with live scan data"
     ],
     "ops_center": [
-      "GET /api/ops/health — 5 traffic-light statuses (evidence chain, signing, OTS, healing, fleet)",
-      "GET /api/ops/health/{org_id} — partner-scoped variant",
-      "GET /api/ops/audit-readiness/{org_id} — per-org badge (green/yellow/red) + 6-check checklist + countdown",
-      "PUT /api/ops/audit-config/{org_id} — BAA status + next audit date management",
+      "GET /api/ops/health \u2014 5 traffic-light statuses (evidence chain, signing, OTS, healing, fleet)",
+      "GET /api/ops/health/{org_id} \u2014 partner-scoped variant",
+      "GET /api/ops/audit-readiness/{org_id} \u2014 per-org badge (green/yellow/red) + 6-check checklist + countdown",
+      "PUT /api/ops/audit-config/{org_id} \u2014 BAA status + next audit date management",
       "Migration 124: baa_on_file, baa_uploaded_at, next_audit_date, next_audit_notes on client_orgs",
       "56 unit tests for all threshold logic + badge computation",
       "StatusLight.tsx component with traffic-light dots + pulse animation on red",
@@ -70,9 +104,9 @@
       "Demo video guide v3 PDF generated (daemon v0.3.81, 58 checks, 5-min scans, rogue detection)"
     ],
     "evidence_pipeline_discovery": [
-      "compliance_bundles table has 231,649 entries (was querying wrong table — evidence_bundles is legacy)",
+      "compliance_bundles table has 231,649 entries (was querying wrong table \u2014 evidence_bundles is legacy)",
       "94% Ed25519 signed, 56% BTC-anchored, chain position 137,069",
-      "Evidence submitting every scan cycle — pipeline is production-ready",
+      "Evidence submitting every scan cycle \u2014 pipeline is production-ready",
       "127,814 OTS proofs anchored via Merkle batching"
     ]
   },
