@@ -113,6 +113,9 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
     devices_updated = 0
     devices_created = 0
     errors = []
+    device_ids_sample = [d.device_id for d in report.devices[:3]] if report.devices else []
+    logger.info("Device sync: site=%s devices=%d sample_ids=%s",
+                report.site_id, len(report.devices), device_ids_sample)
 
     async with admin_connection(pool) as conn:
         # Look up appliance by site_id (unique constraint)
@@ -187,13 +190,6 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                         appliance_db_id,
                         device.ip_address,
                     )
-                    if existing:
-                        # Update the local_device_id to the new format
-                        await conn.execute(
-                            "UPDATE discovered_devices SET local_device_id = $1 WHERE id = $2",
-                            device.device_id, existing["id"],
-                        )
-
                 if existing:
                     device_db_id = existing["id"]
                     # Determine last_probe_at: set to NOW() if any probe field is present
@@ -203,33 +199,41 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                             device.probe_snmp, device.ad_joined,
                         ]
                     )
-                    # Update existing device
+                    # Update existing device (use id for stable match after device_id migration).
+                    # Prefer IP-format device_id over UUID — bridge MAC filtering
+                    # switches device_id from MAC/UUID to IP, never go backwards.
                     await conn.execute(
                         """
                         UPDATE discovered_devices SET
-                            hostname = $3,
-                            ip_address = $4,
-                            mac_address = $5,
-                            device_type = $6,
-                            os_name = $7,
-                            os_version = $8,
-                            medical_device = $9,
-                            scan_policy = $10,
-                            manually_opted_in = $11,
-                            compliance_status = $12,
-                            open_ports = $13,
-                            discovery_source = $14,
-                            last_seen_at = $15,
-                            last_scan_at = $16,
-                            os_fingerprint = COALESCE($17, os_fingerprint),
-                            distro = COALESCE($18, distro),
-                            probe_ssh = COALESCE($19, probe_ssh),
-                            probe_winrm = COALESCE($20, probe_winrm),
-                            ad_joined = COALESCE($21, ad_joined),
-                            last_probe_at = CASE WHEN $22 THEN NOW() ELSE last_probe_at END,
+                            local_device_id = CASE
+                                WHEN $3 ~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' THEN $3
+                                WHEN local_device_id ~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' THEN local_device_id
+                                ELSE $3
+                            END,
+                            hostname = $4,
+                            ip_address = $5,
+                            mac_address = $6,
+                            device_type = $7,
+                            os_name = $8,
+                            os_version = $9,
+                            medical_device = $10,
+                            scan_policy = $11,
+                            manually_opted_in = $12,
+                            compliance_status = $13,
+                            open_ports = $14,
+                            discovery_source = $15,
+                            last_seen_at = $16,
+                            last_scan_at = $17,
+                            os_fingerprint = COALESCE($18, os_fingerprint),
+                            distro = COALESCE($19, distro),
+                            probe_ssh = COALESCE($20, probe_ssh),
+                            probe_winrm = COALESCE($21, probe_winrm),
+                            ad_joined = COALESCE($22, ad_joined),
+                            last_probe_at = CASE WHEN $23 THEN NOW() ELSE last_probe_at END,
                             sync_updated_at = NOW()
-                        WHERE appliance_id = $1 AND local_device_id = $2
+                        WHERE id = $1 AND appliance_id = $2
                         """,
+                        device_db_id,
                         appliance_db_id,
                         device.device_id,
                         device.hostname,
@@ -536,10 +540,11 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                         # Check if this device was previously at the credential's IP
                         # by looking at the DB record
                         prev = await cred_conn.fetchrow("""
-                            SELECT ip_address FROM discovered_devices
-                            WHERE site_id = $1 AND mac_address = $2
-                              AND ip_address != $3
-                            ORDER BY last_seen_at DESC LIMIT 1
+                            SELECT d.ip_address FROM discovered_devices d
+                            JOIN appliances a ON d.appliance_id = a.id
+                            WHERE a.site_id = $1 AND d.mac_address = $2
+                              AND d.ip_address != $3
+                            ORDER BY d.last_seen_at DESC LIMIT 1
                         """, report.site_id, device.mac_address, device.ip_address)
 
                         if prev and prev["ip_address"] == cred_host and device.ip_address != cred_host:
@@ -582,10 +587,11 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                         if not device.mac_address or not device.ip_address:
                             continue
                         prev = await org_conn.fetchrow("""
-                            SELECT ip_address FROM discovered_devices
-                            WHERE site_id = $1 AND mac_address = $2
-                              AND ip_address != $3
-                            ORDER BY last_seen_at DESC LIMIT 1
+                            SELECT d.ip_address FROM discovered_devices d
+                            JOIN appliances a ON d.appliance_id = a.id
+                            WHERE a.site_id = $1 AND d.mac_address = $2
+                              AND d.ip_address != $3
+                            ORDER BY d.last_seen_at DESC LIMIT 1
                         """, report.site_id, device.mac_address, device.ip_address)
                         if prev and prev["ip_address"] == cred_host and device.ip_address != cred_host:
                             cred_data["host"] = device.ip_address

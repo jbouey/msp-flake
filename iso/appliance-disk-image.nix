@@ -138,14 +138,18 @@ in
   # ============================================================================
   boot = {
     loader = {
-      systemd-boot.enable = lib.mkForce false;  # Lanzaboote replaces systemd-boot
+      systemd-boot.enable = true;
       efi.canTouchEfiVariables = false;
       timeout = 3;
     };
 
-    # UEFI Secure Boot via lanzaboote — signs EFI binaries with self-managed keys
+    # Lanzaboote Secure Boot: disabled until BIOS Secure Boot is enabled.
+    # Keys exist at /etc/secureboot/keys/ — re-enable once BIOS is configured:
+    #   1. Enable Secure Boot in BIOS
+    #   2. Run: sbctl enroll-keys --microsoft
+    #   3. Set boot.lanzaboote.enable = true, systemd-boot.enable = mkForce false
     lanzaboote = {
-      enable = true;
+      enable = false;
       pkiBundle = "/etc/secureboot";
     };
 
