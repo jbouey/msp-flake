@@ -336,11 +336,11 @@ async def send_digest_for_org(
     # Group by alert_type + site_id → aggregate counts
     site_names: dict[str, str] = {}
     site_rows = await conn.fetch(
-        "SELECT site_id, name FROM sites WHERE site_id = ANY($1::uuid[])",
+        "SELECT site_id, clinic_name FROM sites WHERE site_id = ANY($1::text[])",
         [str(r["site_id"]) for r in rows],
     )
     for sr in site_rows:
-        site_names[str(sr["site_id"])] = sr["name"]
+        site_names[str(sr["site_id"])] = sr["clinic_name"]
 
     # Build alerts_list collapsing by (alert_type, site_id)
     buckets: dict[tuple, dict] = {}
