@@ -42,7 +42,6 @@ CREATE POLICY client_approvals_org ON client_approvals
 -- ============================================================================
 
 GRANT ALL ON client_approvals TO mcp;
-GRANT ALL ON SEQUENCE client_approvals_id_seq TO mcp;
 GRANT SELECT, INSERT, UPDATE ON client_approvals TO mcp_app;
 
 SELECT 'Migration 132_client_approvals completed successfully' AS status;

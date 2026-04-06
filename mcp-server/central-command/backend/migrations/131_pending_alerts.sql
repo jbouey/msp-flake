@@ -43,7 +43,6 @@ CREATE POLICY pending_alerts_org ON pending_alerts
 -- ============================================================================
 
 GRANT ALL ON pending_alerts TO mcp;
-GRANT ALL ON SEQUENCE pending_alerts_id_seq TO mcp;
 GRANT SELECT, INSERT, UPDATE ON pending_alerts TO mcp_app;
 
 SELECT 'Migration 131_pending_alerts completed successfully' AS status;
