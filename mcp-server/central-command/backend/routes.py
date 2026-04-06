@@ -302,7 +302,8 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), us
     appliances_result = await db.execute(
         text("""
             SELECT id, appliance_id, hostname, ip_addresses, agent_version,
-                   status, last_checkin, first_checkin
+                   status, last_checkin, first_checkin, display_name,
+                   COALESCE(jsonb_array_length(assigned_targets), 0) as assigned_target_count
             FROM site_appliances
             WHERE site_id = :site_id
         """),
@@ -336,7 +337,7 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), us
         appliances.append(Appliance(
             id=str(a.appliance_id or i + 1),
             site_id=site_id,
-            hostname=a.hostname or "unknown",
+            hostname=a.display_name or a.hostname or "unknown",
             ip_address=ip_addr,
             agent_version=a.agent_version,
             tier=site.tier or "mid",
@@ -357,7 +358,9 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), us
                 overall=appliance_overall,
                 status=HealthStatus.HEALTHY if is_online and compliance_score >= 70 else HealthStatus.WARNING
             ),
-            created_at=a.first_checkin or datetime.now(timezone.utc)
+            created_at=a.first_checkin or datetime.now(timezone.utc),
+            display_name=a.display_name,
+            assigned_target_count=getattr(a, 'assigned_target_count', 0) or 0,
         ))
 
     # Calculate overall health

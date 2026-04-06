@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { GlassCard, Spinner } from '../components/shared';
 import { HealthGauge } from '../components/fleet';
@@ -17,6 +17,9 @@ export const ClientDetail: React.FC = () => {
   // Fetch client data
   const { data: client, isLoading, error } = useClient(siteId || null);
   const { data: incidents = [] } = useIncidents({ site_id: siteId, limit: 10 });
+
+  const [expandedAppliance, setExpandedAppliance] = useState<string | null>(null);
+  const [incidentFilter, setIncidentFilter] = useState<string>('all');
 
   const formatCheckName = (check: string): string => {
     return check.charAt(0).toUpperCase() + check.slice(1);
@@ -176,62 +179,189 @@ export const ClientDetail: React.FC = () => {
             No appliances registered for this client.
           </p>
         ) : (
-          <div className="space-y-3">
-            {client.appliances.map((appliance: Appliance) => (
-              <div
-                key={appliance.id}
-                className="flex items-center justify-between p-4 bg-separator-light/50 rounded-ios-md"
-              >
-                <div className="flex items-center gap-4">
-                  <div className={`w-3 h-3 rounded-full ${appliance.is_online ? 'bg-health-healthy' : 'bg-health-critical'}`} />
-                  <div>
-                    <p className="font-medium text-label-primary">{appliance.hostname}</p>
-                    <p className="text-xs text-label-tertiary">
-                      {appliance.ip_address || 'No IP'} | v{appliance.agent_version || '?'}
+          <div className="space-y-2">
+            {client.appliances.map((appliance: Appliance) => {
+              const appId = String(appliance.id);
+              const isExpanded = expandedAppliance === appId;
+              const complianceScore = appliance.health?.compliance?.score ?? 0;
+              const scoreStatus = getScoreStatus(complianceScore);
+
+              return (
+                <div key={appliance.id} className="border border-border-primary rounded-ios-md overflow-hidden">
+                  {/* Collapsed card row — always visible */}
+                  <div
+                    onClick={() => setExpandedAppliance(isExpanded ? null : appId)}
+                    className="flex items-center gap-3 p-3 cursor-pointer hover:bg-background-secondary/50 transition-colors"
+                  >
+                    {/* Status dot */}
+                    <div className={`w-2.5 h-2.5 flex-shrink-0 rounded-full ${appliance.is_online ? 'bg-health-healthy' : 'bg-health-critical'}`} />
+
+                    {/* Name */}
+                    <p className="font-medium text-label-primary text-sm flex-shrink-0 w-36 truncate">
+                      {appliance.hostname}
                     </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right text-xs text-label-tertiary">
-                    <p>Last check-in</p>
-                    <p className="font-medium text-label-secondary">
-                      {formatTimeAgo(appliance.last_checkin)}
+
+                    {/* Version + last checkin */}
+                    <p className="text-xs text-label-tertiary flex-shrink-0 hidden sm:block">
+                      v{appliance.agent_version || '?'} &middot; {formatTimeAgo(appliance.last_checkin)}
                     </p>
+
+                    {/* Mini compliance bar */}
+                    <div className="flex-1 flex items-center gap-2 min-w-0">
+                      <div className="flex-1 h-1.5 bg-separator-light rounded-full overflow-hidden min-w-[40px]">
+                        <div
+                          className={`h-full rounded-full ${scoreStatus.bgColor}`}
+                          style={{ width: `${complianceScore}%` }}
+                        />
+                      </div>
+                      <span className="text-xs font-medium text-label-secondary flex-shrink-0">
+                        {Math.round(complianceScore)}%
+                      </span>
+                    </div>
+
+                    {/* Target count badge */}
+                    {(appliance.assigned_target_count ?? 0) > 0 && (
+                      <span className="flex-shrink-0 text-xs bg-background-secondary text-label-secondary px-2 py-0.5 rounded-full border border-border-primary">
+                        {appliance.assigned_target_count} targets
+                      </span>
+                    )}
+
+                    {/* Chevron */}
+                    <svg
+                      className={`w-4 h-4 flex-shrink-0 text-label-tertiary transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
                   </div>
-                  {appliance.health && (
-                    <HealthGauge score={appliance.health.overall} size="sm" />
+
+                  {/* Expanded detail panel */}
+                  {isExpanded && (
+                    <div className="border-t border-border-primary bg-background-secondary/30 p-4 space-y-4">
+                      {/* Compliance grid */}
+                      {appliance.health?.compliance && (
+                        <div>
+                          <p className="text-xs font-semibold text-label-secondary uppercase tracking-wide mb-2">Compliance Checks</p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            {Object.entries(appliance.health.compliance)
+                              .filter(([k]) => k !== 'score')
+                              .map(([check, score]) => {
+                                const s = typeof score === 'number' ? score : 0;
+                                const st = getScoreStatus(s);
+                                return (
+                                  <div key={check} className="bg-background-secondary/50 rounded-ios-sm p-2">
+                                    <p className="text-xs text-label-tertiary capitalize mb-1">{formatCheckName(check)}</p>
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex-1 h-1.5 bg-separator-light rounded-full overflow-hidden">
+                                        <div className={`h-full rounded-full ${st.bgColor}`} style={{ width: `${s}%` }} />
+                                      </div>
+                                      <span className={`text-xs font-medium ${st.color}`}>{Math.round(s)}%</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Connectivity stats */}
+                      {appliance.health?.connectivity && (
+                        <div>
+                          <p className="text-xs font-semibold text-label-secondary uppercase tracking-wide mb-2">Connectivity</p>
+                          <div className="grid grid-cols-3 gap-3">
+                            {[
+                              { label: 'Check-in', value: appliance.health.connectivity.checkin_freshness },
+                              { label: 'Healing', value: appliance.health.connectivity.healing_success_rate },
+                              { label: 'Orders', value: appliance.health.connectivity.order_execution_rate },
+                            ].map(({ label, value }) => (
+                              <div key={label} className="bg-background-secondary/50 rounded-ios-sm p-2 text-center">
+                                <p className={`text-lg font-bold ${getScoreStatus(value).color}`}>{Math.round(value)}%</p>
+                                <p className="text-xs text-label-tertiary">{label}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* IP address */}
+                      {appliance.ip_address && (
+                        <div>
+                          <p className="text-xs font-semibold text-label-secondary uppercase tracking-wide mb-1">IP Address</p>
+                          <p className="text-sm font-mono text-label-primary">{appliance.ip_address}</p>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </GlassCard>
 
       {/* Recent Incidents */}
       <GlassCard>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold">Recent Incidents</h2>
           <span className="text-sm text-label-tertiary">Last 10</span>
         </div>
 
-        {incidents.length === 0 ? (
-          <div className="text-center py-8">
-            <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-health-healthy/10 flex items-center justify-center">
-              <svg className="w-6 h-6 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <p className="text-label-secondary font-medium">No recent incidents</p>
-            <p className="text-label-tertiary text-sm">This client has been running smoothly.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {incidents.map((incident) => (
-              <IncidentRow key={incident.id} incident={incident} />
+        {/* Appliance filter chips */}
+        {client.appliances.length > 1 && (
+          <div className="flex gap-2 mb-3 flex-wrap">
+            <button
+              onClick={() => setIncidentFilter('all')}
+              className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                incidentFilter === 'all'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'border-border-primary text-label-secondary hover:border-accent-primary'
+              }`}
+            >
+              All
+            </button>
+            {client.appliances.map((a: Appliance) => (
+              <button
+                key={a.id}
+                onClick={() => setIncidentFilter(a.hostname)}
+                className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                  incidentFilter === a.hostname
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'border-border-primary text-label-secondary hover:border-accent-primary'
+                }`}
+              >
+                {a.hostname}
+              </button>
             ))}
           </div>
         )}
+
+        {(() => {
+          const filteredIncidents = incidentFilter === 'all'
+            ? incidents
+            : incidents.filter((inc) => inc.hostname === incidentFilter);
+
+          return filteredIncidents.length === 0 ? (
+            <div className="text-center py-8">
+              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-health-healthy/10 flex items-center justify-center">
+                <svg className="w-6 h-6 text-health-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <p className="text-label-secondary font-medium">No recent incidents</p>
+              <p className="text-label-tertiary text-sm">
+                {incidentFilter === 'all'
+                  ? 'This client has been running smoothly.'
+                  : `No incidents found for ${incidentFilter}.`}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredIncidents.map((incident) => (
+                <IncidentRow key={incident.id} incident={incident} />
+              ))}
+            </div>
+          );
+        })()}
       </GlassCard>
 
       {/* Quick Stats */}

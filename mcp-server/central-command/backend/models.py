@@ -129,6 +129,8 @@ class Appliance(BaseModel):
     last_checkin: Optional[datetime] = None
     health: Optional[HealthMetrics] = None
     created_at: datetime
+    display_name: Optional[str] = None
+    assigned_target_count: int = 0
 
 
 class ClientOverview(BaseModel):

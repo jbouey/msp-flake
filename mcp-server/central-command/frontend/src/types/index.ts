@@ -96,6 +96,8 @@ export interface Appliance {
   last_checkin?: string;
   health?: HealthMetrics;
   created_at: string;
+  display_name?: string;
+  assigned_target_count?: number;
 }
 
 export interface ClientOverview {
