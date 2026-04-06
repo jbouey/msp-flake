@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GlassCard } from '../components/shared';
 
-type DocSection = 'overview' | 'operations' | 'onboarding' | 'appliance' | 'compliance' | 'portal' | 'troubleshooting';
+type DocSection = 'overview' | 'operations' | 'onboarding' | 'appliance' | 'compliance' | 'portal' | 'troubleshooting' | 'runbooks' | 'reference';
 
 interface DocItem {
   id: string;
@@ -2424,6 +2424,303 @@ OsirisCare Compliance Team`}
               <li>Attach relevant log excerpts</li>
               <li>Note any recent changes made</li>
             </ul>
+          </div>
+        ),
+      },
+    ],
+  },
+  runbooks: {
+    title: 'Maintenance Runbooks',
+    icon: '🔧',
+    items: [
+      {
+        id: 'rb-ops-001',
+        title: 'RB-OPS-001: Evidence Chain Stalled',
+        content: (
+          <div className="space-y-4">
+            <h4 className="font-semibold text-red-400">Symptom</h4>
+            <p>Evidence Chain status light is yellow (no submissions &gt;30min) or red (&gt;60min or chain gaps).</p>
+            <h4 className="font-semibold text-amber-400">Diagnosis</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li>Check appliance status on Sites page &mdash; is it online?</li>
+              <li>SSH to appliance: <code className="bg-fill-secondary px-1 rounded">ssh root@VPS</code> then <code className="bg-fill-secondary px-1 rounded">ssh root@10.100.0.2</code></li>
+              <li>Check daemon logs: <code className="bg-fill-secondary px-1 rounded">journalctl -u appliance-daemon -n 50 | grep evidence</code></li>
+              <li>Look for: circuit breaker open, API key rejection (401), or network timeouts</li>
+            </ol>
+            <h4 className="font-semibold text-emerald-400">Fix</h4>
+            <ul className="list-disc list-inside space-y-2 text-label-secondary">
+              <li><strong>If circuit breaker open:</strong> Check API endpoint connectivity from appliance: <code className="bg-fill-secondary px-1 rounded">curl -sf https://api.osiriscare.net/health</code></li>
+              <li><strong>If 401 key rejection:</strong> Appliance may have rotated signing key. Check <code className="bg-fill-secondary px-1 rounded">/var/lib/msp/keys/signing.key</code> exists. Restart daemon: <code className="bg-fill-secondary px-1 rounded">systemctl restart appliance-daemon</code></li>
+              <li><strong>If daemon not running:</strong> <code className="bg-fill-secondary px-1 rounded">systemctl start appliance-daemon && journalctl -u appliance-daemon -f</code></li>
+            </ul>
+            <h4 className="font-semibold text-blue-400">Verification</h4>
+            <p>Evidence Chain status light should return to green within 5 minutes. Check <code className="bg-fill-secondary px-1 rounded">/ops</code> page.</p>
+          </div>
+        ),
+      },
+      {
+        id: 'rb-ops-002',
+        title: 'RB-OPS-002: Signing Key Mismatch',
+        content: (
+          <div className="space-y-4">
+            <h4 className="font-semibold text-red-400">Symptom</h4>
+            <p>Signing status light red. Backend logs show &quot;Key mismatch: appliance key does not match registered key.&quot;</p>
+            <h4 className="font-semibold text-amber-400">Diagnosis</h4>
+            <p>The appliance regenerated its Ed25519 signing key (e.g., after a reinstall or key file deletion) but the backend still has the old public key registered.</p>
+            <h4 className="font-semibold text-emerald-400">Fix</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li>The daemon auto-recovers: on next checkin after key mismatch, it re-registers the new public key</li>
+              <li>If auto-recovery fails, manually clear the registered key: <code className="bg-fill-secondary px-1 rounded">UPDATE sites SET agent_public_key = NULL WHERE site_id = &apos;SITE_ID&apos;</code></li>
+              <li>Restart daemon: <code className="bg-fill-secondary px-1 rounded">systemctl restart appliance-daemon</code></li>
+            </ol>
+            <h4 className="font-semibold text-blue-400">Verification</h4>
+            <p>Next evidence submission should succeed (200 OK in backend logs). Signing status returns to green.</p>
+          </div>
+        ),
+      },
+      {
+        id: 'rb-ops-003',
+        title: 'RB-OPS-003: OTS Batch Stalled',
+        content: (
+          <div className="space-y-4">
+            <h4 className="font-semibold text-red-400">Symptom</h4>
+            <p>OTS Anchoring status light yellow/red. Many bundles in &quot;batching&quot; or &quot;pending&quot; state.</p>
+            <h4 className="font-semibold text-amber-400">Diagnosis</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li>Check OTS calendar server connectivity from VPS: <code className="bg-fill-secondary px-1 rounded">curl -sf https://a.pool.opentimestamps.org</code></li>
+              <li>Check background task logs: <code className="bg-fill-secondary px-1 rounded">docker logs mcp-server 2&gt;&amp;1 | grep -i ots | tail -20</code></li>
+              <li>Check pending count: <code className="bg-fill-secondary px-1 rounded">docker exec mcp-postgres psql -U mcp -d mcp -c &quot;SELECT status, COUNT(*) FROM ots_proofs GROUP BY status;&quot;</code></li>
+            </ol>
+            <h4 className="font-semibold text-emerald-400">Fix</h4>
+            <ul className="list-disc list-inside space-y-2 text-label-secondary">
+              <li><strong>If calendar server unreachable:</strong> Wait &mdash; OTS calendar servers have occasional downtime. Batching resumes automatically.</li>
+              <li><strong>If background task crashed:</strong> Restart the container: <code className="bg-fill-secondary px-1 rounded">cd /opt/mcp-server &amp;&amp; docker compose restart mcp-server</code></li>
+              <li><strong>If stuck in &quot;batching&quot;:</strong> The hourly Merkle batch job may have failed. Container restart triggers re-processing.</li>
+            </ul>
+            <h4 className="font-semibold text-blue-400">Verification</h4>
+            <p>Pending count should decrease over 1-2 hours. OTS status returns to green.</p>
+          </div>
+        ),
+      },
+      {
+        id: 'rb-ops-004',
+        title: 'RB-OPS-004: Witness Submit Failing',
+        content: (
+          <div className="space-y-4">
+            <h4 className="font-semibold text-red-400">Symptom</h4>
+            <p>Daemon logs show &quot;witness submit returned 500&quot; repeatedly.</p>
+            <h4 className="font-semibold text-amber-400">Diagnosis</h4>
+            <p>The peer witness endpoint on the backend is returning errors. This is the cross-appliance attestation layer &mdash; not critical for single-appliance deployments, but important for multi-appliance sites.</p>
+            <h4 className="font-semibold text-emerald-400">Fix</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li>Check backend logs for the witness endpoint error: <code className="bg-fill-secondary px-1 rounded">docker logs mcp-server 2&gt;&amp;1 | grep witness | tail -10</code></li>
+              <li>Common cause: missing database column or migration. Run migrations: <code className="bg-fill-secondary px-1 rounded">docker exec mcp-server python3 /app/dashboard_api/migrate.py up</code></li>
+              <li>If single-appliance deployment: this is non-critical. Evidence is single-appliance attested.</li>
+            </ol>
+            <h4 className="font-semibold text-blue-400">Verification</h4>
+            <p>Daemon logs should stop showing 500 errors. The Ops page attestation model shows &quot;Cross-witnessed&quot; if working.</p>
+          </div>
+        ),
+      },
+      {
+        id: 'rb-ops-005',
+        title: 'RB-OPS-005: Healing Pipeline Exhausted',
+        content: (
+          <div className="space-y-4">
+            <h4 className="font-semibold text-red-400">Symptom</h4>
+            <p>Healing Pipeline status light yellow/red. Multiple incidents show &quot;remediation_exhausted&quot;.</p>
+            <h4 className="font-semibold text-amber-400">Diagnosis</h4>
+            <p>L1 auto-healing attempted 3+ times and failed. The issue requires manual review or L2/L3 escalation.</p>
+            <h4 className="font-semibold text-emerald-400">Fix</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li>Navigate to Incidents page, filter by &quot;exhausted&quot; status</li>
+              <li>Click into each incident to see the remediation history</li>
+              <li>Common causes: target unreachable (VM powered off), credentials expired, OS-level lock</li>
+              <li>Resolve the root cause, then resolve the incident manually. The next scan will create a fresh incident if drift persists.</li>
+            </ol>
+            <h4 className="font-semibold text-blue-400">Verification</h4>
+            <p>Exhausted incident count drops. Healing rate recovers on next scan cycle.</p>
+          </div>
+        ),
+      },
+      {
+        id: 'rb-ops-006',
+        title: 'RB-OPS-006: Pre-Audit Preparation',
+        content: (
+          <div className="space-y-4">
+            <h4 className="font-semibold text-emerald-400">Checklist (30 days before audit)</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li>Navigate to <code className="bg-fill-secondary px-1 rounded">/ops</code> &mdash; all 5 status lights should be green</li>
+              <li>Set the audit date: Ops &rarr; Audit Readiness &rarr; enter date and notes</li>
+              <li>Verify BAA is on file (toggle in audit config)</li>
+              <li>Review open incidents &mdash; resolve or document any that will persist through audit</li>
+              <li>Download a compliance packet and verify it contains current data</li>
+              <li>Verify evidence chain: click into any bundle on the Evidence page &rarr; check signature valid + OTS anchored</li>
+              <li>Check the audit readiness badge is green for the org being audited</li>
+            </ol>
+            <h4 className="font-semibold text-amber-400">Day of Audit</h4>
+            <ul className="list-disc list-inside space-y-2 text-label-secondary">
+              <li>Download the Audit Readiness Report from the Ops page</li>
+              <li>Have the compliance packet PDF ready</li>
+              <li>Be prepared to show the live dashboard (auditors like seeing real-time data)</li>
+              <li>The Evidence page shows the full hash chain &mdash; auditors can verify any bundle</li>
+            </ul>
+          </div>
+        ),
+      },
+      {
+        id: 'rb-ops-007',
+        title: 'RB-OPS-007: Appliance Offline Recovery',
+        content: (
+          <div className="space-y-4">
+            <h4 className="font-semibold text-red-400">Symptom</h4>
+            <p>Fleet status light yellow/red. Appliance shows &quot;offline&quot; on Sites page.</p>
+            <h4 className="font-semibold text-amber-400">Diagnosis</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li>Check physical power and network connectivity</li>
+              <li>SSH via VPS tunnel: <code className="bg-fill-secondary px-1 rounded">ssh root@178.156.162.116</code> then <code className="bg-fill-secondary px-1 rounded">ssh root@10.100.0.2</code></li>
+              <li>Check daemon status: <code className="bg-fill-secondary px-1 rounded">systemctl status appliance-daemon</code></li>
+              <li>Check network: <code className="bg-fill-secondary px-1 rounded">curl -sf https://api.osiriscare.net/health</code></li>
+              <li>Check for DHCP IP change: <code className="bg-fill-secondary px-1 rounded">ip addr show</code> &mdash; compare with expected IP</li>
+            </ol>
+            <h4 className="font-semibold text-emerald-400">Fix</h4>
+            <ul className="list-disc list-inside space-y-2 text-label-secondary">
+              <li><strong>If daemon stopped:</strong> <code className="bg-fill-secondary px-1 rounded">systemctl start appliance-daemon</code></li>
+              <li><strong>If API key mismatch (401):</strong> Auto-rekey triggers after 3 failures. Wait 5 minutes or restart daemon.</li>
+              <li><strong>If DHCP changed IP:</strong> The daemon handles this via mDNS + link-local fallback. Restart if needed.</li>
+              <li><strong>If hardware issue:</strong> Check journalctl for kernel errors. May need physical access.</li>
+            </ul>
+            <h4 className="font-semibold text-blue-400">Verification</h4>
+            <p>Appliance shows &quot;online&quot; on Sites page within 5 minutes. Fleet status returns to green.</p>
+          </div>
+        ),
+      },
+    ],
+  },
+  reference: {
+    title: 'Technical Reference',
+    icon: '📖',
+    items: [
+      {
+        id: 'architecture',
+        title: 'Evidence Chain Architecture',
+        content: (
+          <div className="space-y-4">
+            <p>The OsirisCare evidence pipeline produces cryptographically verifiable compliance attestations anchored to the Bitcoin blockchain.</p>
+            <h4 className="font-semibold mt-4">Data Flow</h4>
+            <ol className="list-decimal list-inside space-y-2 text-label-secondary">
+              <li><strong>Drift Scan</strong> &mdash; Appliance daemon scans Windows/Linux/macOS targets every 5 minutes (adaptive interval)</li>
+              <li><strong>Bundle Construction</strong> &mdash; Findings are aggregated into a compliance bundle with check results, timestamps, and summary</li>
+              <li><strong>Ed25519 Signing</strong> &mdash; Bundle is signed with the appliance&apos;s private key. Signature covers site_id, checked_at, checks, and summary.</li>
+              <li><strong>PHI Scrubbing</strong> &mdash; All data is scrubbed of protected health information before leaving the appliance (14 regex patterns)</li>
+              <li><strong>Submission</strong> &mdash; Bundle POSTed to Central Command with signature + public key + signed_data</li>
+              <li><strong>Verification</strong> &mdash; Backend verifies Ed25519 signature against registered public key. Rejects if invalid.</li>
+              <li><strong>Hash Chain</strong> &mdash; Bundle inserted with hash linking to previous bundle (prev_hash + chain_position). Advisory lock serializes per site.</li>
+              <li><strong>Merkle Batching</strong> &mdash; Hourly batch groups bundle hashes into a Merkle tree. Tree root submitted to OpenTimestamps.</li>
+              <li><strong>Bitcoin Anchoring</strong> &mdash; OTS calendar server anchors the Merkle root to a Bitcoin block. Proof upgraded with block height.</li>
+              <li><strong>Compliance Packet</strong> &mdash; On-demand PDF/JSON export aggregates bundles with HIPAA control mappings and OTS proofs.</li>
+            </ol>
+          </div>
+        ),
+      },
+      {
+        id: 'glossary',
+        title: 'Glossary',
+        content: (
+          <div className="space-y-3">
+            <dl className="space-y-4 text-label-secondary">
+              <div><dt className="font-semibold text-label-primary">Ed25519</dt><dd>Elliptic curve digital signature algorithm. Each appliance has a keypair. Private key signs evidence bundles; public key registered with Central Command for verification.</dd></div>
+              <div><dt className="font-semibold text-label-primary">OpenTimestamps (OTS)</dt><dd>Protocol for proving a document existed at a specific time by anchoring its hash to the Bitcoin blockchain. Tamper-proof and independently verifiable.</dd></div>
+              <div><dt className="font-semibold text-label-primary">Merkle Tree</dt><dd>Binary hash tree structure. Multiple bundle hashes are combined into a single root hash for efficient OTS anchoring (one Bitcoin transaction per batch, not per bundle).</dd></div>
+              <div><dt className="font-semibold text-label-primary">Hash Chain</dt><dd>Each compliance bundle includes the hash of the previous bundle, creating an immutable sequence. Any tampering with a past bundle breaks the chain from that point forward.</dd></div>
+              <div><dt className="font-semibold text-label-primary">WORM Storage</dt><dd>Write Once Read Many. MinIO object lock prevents evidence bundles from being modified or deleted during the retention period (90 days).</dd></div>
+              <div><dt className="font-semibold text-label-primary">Compliance Bundle</dt><dd>A signed JSON document containing all check results from one scan cycle. Includes site_id, timestamp, individual check pass/fail results, summary statistics, and Ed25519 signature.</dd></div>
+              <div><dt className="font-semibold text-label-primary">L1 Deterministic</dt><dd>First-tier auto-healing. Rule-based remediation that runs in &lt;100ms at zero cost. Handles 70-80% of incidents (firewall restart, service recovery, etc.).</dd></div>
+              <div><dt className="font-semibold text-label-primary">L2 LLM-Assisted</dt><dd>Second-tier healing. Uses Claude Haiku to generate a hypothesis-driven remediation plan when L1 rules don&apos;t match. Costs ~$0.001 per invocation.</dd></div>
+              <div><dt className="font-semibold text-label-primary">L3 Human Escalation</dt><dd>Third-tier. Issues that cannot be auto-remediated are escalated to the operator or partner for manual review. Creates a ticket visible in the client portal.</dd></div>
+              <div><dt className="font-semibold text-label-primary">PHI Scrubbing</dt><dd>Protected Health Information is removed from all data before it leaves the appliance. 14 regex patterns detect and redact names, SSNs, MRNs, dates of birth, etc. Central Command is PHI-free by design.</dd></div>
+            </dl>
+          </div>
+        ),
+      },
+      {
+        id: 'hipaa-controls',
+        title: 'HIPAA Control Mapping',
+        content: (
+          <div className="space-y-4">
+            <p>Each drift check maps to one or more HIPAA Security Rule controls:</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/10">
+                    <th className="text-left py-2 pr-4 text-label-secondary font-medium">Check</th>
+                    <th className="text-left py-2 pr-4 text-label-secondary font-medium">HIPAA Control</th>
+                    <th className="text-left py-2 text-label-secondary font-medium">Requirement</th>
+                  </tr>
+                </thead>
+                <tbody className="text-label-secondary">
+                  <tr className="border-b border-white/5"><td className="py-2 pr-4">Firewall</td><td className="py-2 pr-4">164.312(e)(1)</td><td className="py-2">Transmission security</td></tr>
+                  <tr className="border-b border-white/5"><td className="py-2 pr-4">Encryption</td><td className="py-2 pr-4">164.312(a)(2)(iv)</td><td className="py-2">Encryption at rest</td></tr>
+                  <tr className="border-b border-white/5"><td className="py-2 pr-4">Antivirus</td><td className="py-2 pr-4">164.308(a)(5)(ii)(B)</td><td className="py-2">Protection from malicious software</td></tr>
+                  <tr className="border-b border-white/5"><td className="py-2 pr-4">Patching</td><td className="py-2 pr-4">164.308(a)(5)(ii)(A)</td><td className="py-2">Security awareness training / updates</td></tr>
+                  <tr className="border-b border-white/5"><td className="py-2 pr-4">Backup</td><td className="py-2 pr-4">164.308(a)(7)(ii)(A)</td><td className="py-2">Data backup plan</td></tr>
+                  <tr className="border-b border-white/5"><td className="py-2 pr-4">Audit Logging</td><td className="py-2 pr-4">164.312(b)</td><td className="py-2">Audit controls</td></tr>
+                  <tr className="border-b border-white/5"><td className="py-2 pr-4">Access Control</td><td className="py-2 pr-4">164.312(a)(1)</td><td className="py-2">Access control</td></tr>
+                  <tr className="border-b border-white/5"><td className="py-2 pr-4">Screen Lock</td><td className="py-2 pr-4">164.310(b)</td><td className="py-2">Workstation security</td></tr>
+                  <tr className="border-b border-white/5"><td className="py-2 pr-4">Rogue Tasks</td><td className="py-2 pr-4">164.308(a)(1)(ii)(D)</td><td className="py-2">Information system activity review</td></tr>
+                  <tr><td className="py-2 pr-4">SSH Config</td><td className="py-2 pr-4">164.312(d)</td><td className="py-2">Person or entity authentication</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-label-tertiary mt-2">Full check catalog (58 checks) available at <code className="bg-fill-secondary px-1 rounded">/api/check-catalog</code>.</p>
+          </div>
+        ),
+      },
+      {
+        id: 'check-catalog',
+        title: 'Check Catalog Summary',
+        content: (
+          <div className="space-y-4">
+            <p>The platform runs 58 compliance checks across 4 platforms:</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <h4 className="font-semibold mb-2">Windows (19 checks)</h4>
+                <ul className="list-disc list-inside text-sm text-label-secondary space-y-1">
+                  <li>Firewall, Defender, Windows Update</li>
+                  <li>BitLocker encryption (all volumes)</li>
+                  <li>Audit logging, admin users, guest account</li>
+                  <li>Rogue scheduled tasks, SMB signing</li>
+                  <li>Screen lock, RDP config, services</li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-semibold mb-2">Linux (15 checks)</h4>
+                <ul className="list-disc list-inside text-sm text-label-secondary space-y-1">
+                  <li>UFW/nftables firewall, SSH hardening</li>
+                  <li>LUKS encryption, unattended upgrades</li>
+                  <li>Audit logging, SUID files, kernel params</li>
+                  <li>Open ports, user accounts, cron jobs</li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-semibold mb-2">macOS (14 checks)</h4>
+                <ul className="list-disc list-inside text-sm text-label-secondary space-y-1">
+                  <li>FileVault, Gatekeeper, SIP</li>
+                  <li>Firewall, auto-updates, screen lock</li>
+                  <li>Remote login, file sharing, Time Machine</li>
+                  <li>NTP, admin users, disk space, certs</li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-semibold mb-2">Network (10 checks)</h4>
+                <ul className="list-disc list-inside text-sm text-label-secondary space-y-1">
+                  <li>Prohibited ports, encrypted services</li>
+                  <li>SNMP security, RDP exposure</li>
+                  <li>Database exposure, device inventory</li>
+                  <li>DNS resolution, host reachability</li>
+                </ul>
+              </div>
+            </div>
           </div>
         ),
       },

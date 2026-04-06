@@ -315,3 +315,24 @@ export function formatBytes(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
+
+
+// =============================================================================
+// OPS CENTER STATUS LIGHTS
+// =============================================================================
+
+export type OpsStatus = 'green' | 'yellow' | 'red';
+
+export interface OpsStatusConfig {
+  color: string;
+  bgColor: string;
+  ringColor: string;
+  pulseColor: string;
+  label: string;
+}
+
+export const OPS_STATUS_CONFIG: Record<OpsStatus, OpsStatusConfig> = {
+  green:  { color: 'text-emerald-400', bgColor: 'bg-emerald-400', ringColor: 'ring-emerald-400/30', pulseColor: 'bg-emerald-400/20', label: 'Healthy' },
+  yellow: { color: 'text-amber-400',   bgColor: 'bg-amber-400',   ringColor: 'ring-amber-400/30',   pulseColor: 'bg-amber-400/20',   label: 'Warning' },
+  red:    { color: 'text-red-400',     bgColor: 'bg-red-400',     ringColor: 'ring-red-400/30',     pulseColor: 'bg-red-400/20',     label: 'Critical' },
+};

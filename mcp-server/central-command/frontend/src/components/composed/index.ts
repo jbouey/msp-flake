@@ -5,3 +5,4 @@ export { PageShell } from './PageShell';
 export { DisclaimerFooter } from './DisclaimerFooter';
 export { ResponsiveTable } from './ResponsiveTable';
 export type { ResponsiveColumn } from './ResponsiveTable';
+export { StatusLight } from './StatusLight';

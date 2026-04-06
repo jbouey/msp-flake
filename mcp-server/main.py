@@ -55,6 +55,8 @@ from dashboard_api.frameworks import router as frameworks_router
 from dashboard_api.compliance_frameworks import router as compliance_frameworks_router, partner_router as compliance_partner_router
 from dashboard_api.fleet_updates import router as fleet_updates_router
 from dashboard_api.device_sync import device_sync_router
+from dashboard_api.ops_health import router as ops_health_router
+from dashboard_api.audit_report import router as audit_report_router
 from dashboard_api.log_ingest import router as log_ingest_router
 from dashboard_api.security_events import router as security_events_router
 from dashboard_api.email_alerts import create_notification_with_email
@@ -1441,6 +1443,8 @@ app.include_router(integrations_public_router)  # OAuth callback (no auth)
 app.include_router(frameworks_router)
 app.include_router(fleet_updates_router)
 app.include_router(device_sync_router)  # Device inventory sync from appliances
+app.include_router(ops_health_router)  # Ops center health + traffic lights
+app.include_router(audit_report_router)  # Audit readiness + BAA config
 app.include_router(oauth_public_router, prefix="/api/auth")  # OAuth login public endpoints
 app.include_router(oauth_router, prefix="/api/auth")  # OAuth authenticated endpoints
 app.include_router(oauth_admin_router, prefix="/api")  # OAuth admin endpoints

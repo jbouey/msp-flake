@@ -205,3 +205,21 @@ export const SSO_LABELS = {
   sso_deleted: 'SSO configuration removed.',
   sso_delete_confirm: 'Remove SSO configuration? Users will need to sign in with email/password or magic link.',
 } as const;
+
+// =============================================================================
+// OPS CENTER
+// =============================================================================
+
+export const OPS_LABELS: Record<string, { title: string; tooltip: string; docsAnchor: string }> = {
+  evidence_chain:   { title: 'Evidence Chain',   tooltip: 'Compliance bundle submission pipeline — Ed25519 signed, hash-chained',               docsAnchor: '#evidence-chain' },
+  signing:          { title: 'Signing',          tooltip: 'Ed25519 signature coverage and key health across all appliances',                    docsAnchor: '#signing' },
+  ots_anchoring:    { title: 'OTS Anchoring',    tooltip: 'OpenTimestamps Bitcoin proof pipeline — Merkle batched hourly',                      docsAnchor: '#ots' },
+  healing_pipeline: { title: 'Healing Pipeline', tooltip: 'L1/L2/L3 auto-remediation success rates and stuck incident detection',               docsAnchor: '#healing' },
+  fleet:            { title: 'Fleet',            tooltip: 'Appliance connectivity — online/offline status and version currency',                 docsAnchor: '#fleet' },
+};
+
+export const AUDIT_BADGE_LABELS: Record<string, string> = {
+  green: 'Audit Ready',
+  yellow: 'Issues Found',
+  red: 'Not Ready',
+};
