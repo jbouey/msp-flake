@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS pending_alerts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES client_orgs(id) ON DELETE CASCADE,
-    site_id UUID NOT NULL REFERENCES sites(site_id) ON DELETE CASCADE,
+    site_id VARCHAR NOT NULL REFERENCES sites(site_id) ON DELETE CASCADE,
     alert_type VARCHAR(50) NOT NULL,
     severity VARCHAR(20) DEFAULT 'medium',
     summary TEXT NOT NULL,

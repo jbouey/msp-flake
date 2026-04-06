@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS client_approvals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES client_orgs(id) ON DELETE CASCADE,
-    site_id UUID NOT NULL REFERENCES sites(site_id) ON DELETE CASCADE,
+    site_id VARCHAR NOT NULL REFERENCES sites(site_id) ON DELETE CASCADE,
     incident_id UUID REFERENCES incidents(id) ON DELETE SET NULL,
     alert_id UUID NOT NULL REFERENCES pending_alerts(id) ON DELETE CASCADE,
     action VARCHAR(20) NOT NULL,
