@@ -135,6 +135,12 @@ class TestCSRFMiddlewareExemptions:
         assert "/api/appliances/checkin" in CSRFMiddleware.EXEMPT_PATHS
         assert any("/api/appliances/" in p for p in CSRFMiddleware.EXEMPT_PREFIXES)
 
+    def test_exempt_paths_include_witness_submit(self):
+        """Witness attestation endpoint is exempt (appliance API-key auth)."""
+        from csrf import CSRFMiddleware
+
+        assert "/api/witness/submit" in CSRFMiddleware.EXEMPT_PATHS
+
     def test_exempt_prefixes_include_oauth(self):
         """OAuth callback endpoints are exempt."""
         from csrf import CSRFMiddleware
