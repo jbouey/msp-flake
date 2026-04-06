@@ -1913,37 +1913,68 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     canonical_appliance_id = canonical_row[0] if canonical_row else appliance_id
     now = datetime.now(timezone.utc)
 
-    # Deduplicate: Check for existing incident of same type + hostname across the ORG.
-    # Cross-appliance dedup: if appliance A already created an incident for
-    # windows_update on 192.168.88.251, appliance B seeing the same drift on the
-    # same host deduplicates instead of creating a duplicate incident.
-    # Falls back to appliance-scoped dedup when hostname is not available.
-    hostname = incident.host_id or ""
-    existing_check = await db.execute(
-        text("""
-            SELECT id, status FROM incidents
-            WHERE site_id IN (
-                SELECT s2.site_id FROM sites s1
-                JOIN sites s2 ON s1.client_org_id = s2.client_org_id
-                WHERE s1.site_id = :site_id
-            )
-            AND incident_type = :incident_type
-            AND details->>'hostname' = :hostname
-            AND (
-                (status IN ('open', 'resolving', 'escalated'))
-                OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '24 hours')
-            )
-            AND created_at > NOW() - INTERVAL '48 hours'
-            ORDER BY created_at DESC
-            LIMIT 1
-        """),
-        {"site_id": incident.site_id, "incident_type": incident.incident_type, "hostname": hostname}
-    )
+    # Deduplicate: Check for existing incident of same type + hostname across the SITE.
+    # Cross-appliance dedup: SHA256(site_id:incident_type:hostname) → dedup_key.
+    # Appliance B seeing the same drift as Appliance A deduplicates instead of
+    # creating a duplicate incident.  Falls back to appliance-scoped dedup when
+    # hostname is not available.
+    _hostname = (incident.details or {}).get("hostname") or incident.host_id or ""
+    if _hostname:
+        _dedup_raw = f"{incident.site_id}:{incident.incident_type}:{_hostname}"
+        dedup_key = hashlib.sha256(_dedup_raw.encode()).hexdigest()
+    else:
+        dedup_key = None
+
+    # Severity rank for upgrade comparison
+    _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+    if dedup_key:
+        existing_check = await db.execute(
+            text("""
+                SELECT id, status, severity, appliance_id FROM incidents
+                WHERE site_id = :site_id
+                AND dedup_key = :dedup_key
+                AND (
+                    (status IN ('open', 'resolving', 'escalated'))
+                    OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '30 minutes')
+                )
+                AND created_at > NOW() - INTERVAL '48 hours'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {"site_id": incident.site_id, "dedup_key": dedup_key}
+        )
+    else:
+        existing_check = await db.execute(
+            text("""
+                SELECT id, status, severity, appliance_id FROM incidents
+                WHERE appliance_id = :appliance_id
+                AND incident_type = :incident_type
+                AND (
+                    (status IN ('open', 'resolving', 'escalated'))
+                    OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '30 minutes')
+                )
+                AND created_at > NOW() - INTERVAL '48 hours'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+        )
     existing_incident = existing_check.fetchone()
 
     if existing_incident:
         existing_id = str(existing_incident[0])
         existing_status = existing_incident[1]
+        existing_severity = existing_incident[2] if existing_incident[2] is not None else "info"
+
+        # Severity upgrade: if new report has higher severity, upgrade the existing incident
+        new_rank = _SEVERITY_RANK.get(incident.severity or "info", 0)
+        old_rank = _SEVERITY_RANK.get(existing_severity or "info", 0)
+        if new_rank > old_rank:
+            await db.execute(
+                text("UPDATE incidents SET severity = :severity WHERE id = :id"),
+                {"severity": incident.severity, "id": existing_id}
+            )
 
         # Check if this incident has exhausted its remediation budget
         try:
@@ -2033,9 +2064,9 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     await db.execute(
         text("""
             INSERT INTO incidents (id, appliance_id, incident_type, severity, check_type,
-                details, pre_state, hipaa_controls, reported_at)
+                details, pre_state, hipaa_controls, reported_at, dedup_key)
             VALUES (:id, :appliance_id, :incident_type, :severity, :check_type,
-                :details, :pre_state, :hipaa_controls, :reported_at)
+                :details, :pre_state, :hipaa_controls, :reported_at, :dedup_key)
         """),
         {
             "id": incident_id,
@@ -2046,10 +2077,11 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             "details": json.dumps({**incident.details, "hostname": incident.host_id}),
             "pre_state": json.dumps(incident.pre_state),
             "hipaa_controls": incident.hipaa_controls,
-            "reported_at": now
+            "reported_at": now,
+            "dedup_key": dedup_key,
         }
     )
-    
+
     # Monitoring-only checks: record the incident for dashboards but skip the entire
     # L1 → L2 → L3 remediation cascade.  These check types detect drift that cannot
     # be auto-fixed (e.g. host offline, backup not configured, BitLocker needs TPM).

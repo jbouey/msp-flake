@@ -510,27 +510,66 @@ async def report_incident(
     canonical_appliance_id = canonical_row[0] if canonical_row else appliance_id
     now = datetime.now(timezone.utc)
 
-    # Deduplicate
-    existing_check = await db.execute(
-        text("""
-            SELECT id, status FROM incidents
-            WHERE appliance_id = :appliance_id
-            AND incident_type = :incident_type
-            AND (
-                (status IN ('open', 'resolving', 'escalated'))
-                OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '24 hours')
-            )
-            AND created_at > NOW() - INTERVAL '48 hours'
-            ORDER BY created_at DESC
-            LIMIT 1
-        """),
-        {"appliance_id": appliance_id, "incident_type": incident.incident_type}
-    )
+    # Compute cross-appliance dedup key: SHA256(site_id:incident_type:hostname)
+    # Use hostname from details dict first, then host_id field.
+    hostname = (incident.details or {}).get("hostname") or incident.host_id or ""
+    if hostname:
+        _dedup_raw = f"{incident.site_id}:{incident.incident_type}:{hostname}"
+        dedup_key = hashlib.sha256(_dedup_raw.encode()).hexdigest()
+    else:
+        dedup_key = None
+
+    # Severity rank for upgrade comparison
+    _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+    # Deduplicate — cross-appliance (by dedup_key) or appliance-scoped fallback
+    if dedup_key:
+        existing_check = await db.execute(
+            text("""
+                SELECT id, status, severity, appliance_id FROM incidents
+                WHERE site_id = :site_id
+                AND dedup_key = :dedup_key
+                AND (
+                    (status IN ('open', 'resolving', 'escalated'))
+                    OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '30 minutes')
+                )
+                AND created_at > NOW() - INTERVAL '48 hours'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {"site_id": incident.site_id, "dedup_key": dedup_key}
+        )
+    else:
+        existing_check = await db.execute(
+            text("""
+                SELECT id, status, severity, appliance_id FROM incidents
+                WHERE appliance_id = :appliance_id
+                AND incident_type = :incident_type
+                AND (
+                    (status IN ('open', 'resolving', 'escalated'))
+                    OR (status = 'resolved' AND resolved_at > NOW() - INTERVAL '30 minutes')
+                )
+                AND created_at > NOW() - INTERVAL '48 hours'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+        )
     existing_incident = existing_check.fetchone()
 
     if existing_incident:
         existing_id = str(existing_incident[0])
         existing_status = existing_incident[1]
+        existing_severity = existing_incident[2]
+
+        # Severity upgrade: if new report has higher severity, upgrade the existing incident
+        new_rank = _SEVERITY_RANK.get(incident.severity or "info", 0)
+        old_rank = _SEVERITY_RANK.get(existing_severity or "info", 0)
+        if new_rank > old_rank:
+            await db.execute(
+                text("UPDATE incidents SET severity = :severity WHERE id = :id"),
+                {"severity": incident.severity, "id": existing_id}
+            )
 
         if existing_status == 'resolved':
             await db.execute(
@@ -550,6 +589,7 @@ async def report_incident(
                 "timestamp": now.isoformat()
             }
 
+        await db.commit()
         return {
             "status": "deduplicated",
             "incident_id": existing_id,
@@ -564,9 +604,9 @@ async def report_incident(
     await db.execute(
         text("""
             INSERT INTO incidents (id, appliance_id, incident_type, severity, check_type,
-                details, pre_state, hipaa_controls, reported_at)
+                details, pre_state, hipaa_controls, reported_at, dedup_key)
             VALUES (:id, :appliance_id, :incident_type, :severity, :check_type,
-                :details, :pre_state, :hipaa_controls, :reported_at)
+                :details, :pre_state, :hipaa_controls, :reported_at, :dedup_key)
         """),
         {
             "id": incident_id,
@@ -577,7 +617,8 @@ async def report_incident(
             "details": json.dumps({**incident.details, "hostname": incident.host_id}),
             "pre_state": json.dumps(incident.pre_state),
             "hipaa_controls": incident.hipaa_controls,
-            "reported_at": now
+            "reported_at": now,
+            "dedup_key": dedup_key,
         }
     )
 

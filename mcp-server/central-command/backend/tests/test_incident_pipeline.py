@@ -314,9 +314,10 @@ class TestIncidentDeduplication:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["test-site-004-aa:bb:cc:dd:ee:ff"])])
-            # Dedup check - existing open incident found
-            if "SELECT id, status FROM incidents" in query_str:
-                return FakeResult([FakeRow([existing_incident_id, "open"])])
+            # Dedup check — new query selects 4 columns (id, status, severity, appliance_id)
+            # and uses dedup_key for cross-appliance matching.
+            if "dedup_key" in query_str and "SELECT" in query_str and "INSERT" not in query_str:
+                return FakeResult([FakeRow([existing_incident_id, "open", "high", appliance_uuid])])
             return FakeResult([], rowcount=1)
 
         db.execute = AsyncMock(side_effect=mock_execute)
@@ -354,8 +355,13 @@ class TestIncidentDeduplication:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["test-site-005-aa:bb:cc:dd:ee:ff"])])
-            if "SELECT id, status FROM incidents" in query_str:
-                return FakeResult([FakeRow([existing_incident_id, "resolved"])])
+            # Dedup check — new query selects 4 columns and uses dedup_key
+            if "dedup_key" in query_str and "SELECT" in query_str and "INSERT" not in query_str:
+                return FakeResult([FakeRow([existing_incident_id, "resolved", "high", appliance_uuid])])
+            # resolved_at grace period check
+            if "SELECT resolved_at FROM incidents" in query_str:
+                # Return None to simulate expired grace period (force reopen)
+                return FakeResult([FakeRow([None])])
             return FakeResult([], rowcount=1)
 
         db.execute = AsyncMock(side_effect=mock_execute)
