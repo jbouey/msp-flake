@@ -419,6 +419,69 @@ async def create_notification_with_email(
     return notification_id
 
 
+def send_digest_email(
+    to_email: str,
+    cc_email: Optional[str],
+    subject: str,
+    html_body: str,
+    text_body: str,
+) -> bool:
+    """Send a digest email with optional CC.
+
+    Uses same SMTP pattern as send_critical_alert: 3 retries with backoff.
+
+    Args:
+        to_email: Primary recipient
+        cc_email: Optional CC recipient (None = omit CC header)
+        subject: Email subject line
+        html_body: HTML part
+        text_body: Plain text part
+
+    Returns:
+        True if sent successfully, False otherwise
+    """
+    if not is_email_configured():
+        logger.warning("Email not configured - skipping digest email")
+        return False
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_FROM
+        msg["To"] = to_email
+        if cc_email:
+            msg["Cc"] = cc_email
+
+        msg.attach(MIMEText(text_body, "plain"))
+        msg.attach(MIMEText(html_body, "html"))
+
+        recipients = [to_email]
+        if cc_email:
+            recipients.append(cc_email)
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+                    server.starttls(context=context)
+                    server.login(SMTP_USER, SMTP_PASSWORD)
+                    server.sendmail(SMTP_FROM, recipients, msg.as_string())
+                logger.info(f"Digest email sent to {to_email}: {subject}")
+                return True
+            except (smtplib.SMTPException, OSError) as smtp_err:
+                if attempt < max_retries - 1:
+                    logger.warning(f"SMTP attempt {attempt + 1}/{max_retries} failed: {smtp_err}")
+                    import time as _time
+                    _time.sleep(2 ** attempt)  # 1s, 2s backoff
+                else:
+                    raise
+
+    except Exception as e:
+        logger.error(f"Failed to send digest email after {max_retries} attempts: {e}")
+        return False
+
+
 async def send_companion_alert_email(
     to_email: str,
     companion_name: str,
