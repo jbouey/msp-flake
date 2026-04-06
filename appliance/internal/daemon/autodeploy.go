@@ -84,6 +84,12 @@ type autoDeployer struct {
 	// Track consecutive deployment failures per host for escalation
 	failures   map[string]int       // hostname → consecutive failure count
 	escalated  map[string]time.Time // hostname → time of last escalation
+
+	// Per-target deploy lock — prevents concurrent deploys to the same host.
+	// Multiple code paths (autodeploy cycle + pending "Take Over" deploys) can
+	// target the same hostname simultaneously, causing IO file lock conflicts
+	// when both try to write base64 chunks to C:\OsirisCare\agent.b64.
+	targetLocks sync.Map // hostname → *sync.Mutex
 }
 
 const maxConsecutiveFailures = 3 // Escalate after this many failures
@@ -98,6 +104,15 @@ func newAutoDeployer(svc *Services, d *Daemon) *autoDeployer {
 		escalated:    make(map[string]time.Time),
 		adKnownHosts: make(map[string]bool),
 	}
+}
+
+// targetLock returns a per-hostname mutex, creating one if needed. This ensures
+// only one deploy runs per target at a time, preventing IO file lock conflicts
+// when multiple code paths (autodeploy cycle + "Take Over" deploys) try to
+// write base64 chunks to the same remote file concurrently.
+func (a *autoDeployer) targetLock(hostname string) *sync.Mutex {
+	val, _ := a.targetLocks.LoadOrStore(hostname, &sync.Mutex{})
+	return val.(*sync.Mutex)
 }
 
 // processPendingDeploys handles "Take Over" deploys from Central Command in
@@ -704,8 +719,18 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		}
 		ad.mu.Unlock()
 
+		// Acquire per-target lock to prevent concurrent deploys to the same host.
+		// A "Take Over" deploy from Central Command may already be in progress.
+		tmu := ad.targetLock(hostname)
+		if !tmu.TryLock() {
+			log.Printf("[autodeploy] [%s] Skipping — another deploy is already in progress", hostname)
+			skipped++
+			continue
+		}
+
 		// Deploy with fallback chain
 		err := ad.deployWithFallback(ctx, &ws)
+		tmu.Unlock()
 		if err != nil {
 			log.Printf("[autodeploy] Deploy to %s failed (all methods): %v", hostname, err)
 			ad.mu.Lock()
@@ -1906,6 +1931,14 @@ if ($svc.Status -ne "Running") {
 // This is the entry point for selfheal — it constructs a minimal ADComputer and
 // delegates to deployWithFallback which handles direct WinRM + DC proxy fallback.
 func (ad *autoDeployer) DeployWindowsAgentByHostname(ctx context.Context, hostname, ipAddress string) error {
+	// Acquire per-target lock to prevent concurrent deploys to the same host
+	mu := ad.targetLock(hostname)
+	if !mu.TryLock() {
+		log.Printf("[autodeploy] [%s] Skipping — another deploy is already in progress", hostname)
+		return fmt.Errorf("deploy already in progress for %s", hostname)
+	}
+	defer mu.Unlock()
+
 	ip := ipAddress
 	ws := &discovery.ADComputer{
 		Hostname:      hostname,
