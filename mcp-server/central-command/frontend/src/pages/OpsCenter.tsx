@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { GlassCard, Spinner } from '../components/shared';
-import { StatusLight } from '../components/composed';
+import { StatusLight, AuditReadiness } from '../components/composed';
 import { OPS_LABELS } from '../constants/copy';
 import { formatTimeAgo } from '../constants/status';
 import type { OpsStatus } from '../constants/status';
@@ -216,6 +216,49 @@ const RefreshIcon: React.FC<{ className?: string }> = ({ className }) => (
 );
 
 // ---------------------------------------------------------------------------
+// Audit Readiness Section — fetches orgs, renders one card per org
+// ---------------------------------------------------------------------------
+
+interface OrgSummary {
+  id: string;
+  name: string;
+}
+
+function AuditReadinessSection() {
+  const { data: orgs, isLoading: orgsLoading } = useQuery<OrgSummary[]>({
+    queryKey: ['organizations-list'],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard/organizations', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('Failed to fetch organizations');
+      return res.json();
+    },
+  });
+
+  return (
+    <div className="mt-8">
+      <h2 className="text-lg font-semibold text-label-primary mb-4">Audit Readiness</h2>
+      {orgsLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Spinner size="md" />
+        </div>
+      ) : orgs && orgs.length > 0 ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {orgs.map(org => (
+            <AuditReadiness key={org.id} orgId={org.id} />
+          ))}
+        </div>
+      ) : (
+        <GlassCard>
+          <p className="text-sm text-label-tertiary">
+            No organizations found.
+          </p>
+        </GlassCard>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -317,15 +360,8 @@ export function OpsCenter() {
         <DetailPanel subsystem={expandedPanel} data={data} />
       )}
 
-      {/* Audit Readiness placeholder */}
-      <div className="mt-8">
-        <h2 className="text-lg font-semibold text-label-primary mb-4">Audit Readiness</h2>
-        <GlassCard>
-          <p className="text-sm text-label-tertiary">
-            Per-organization audit readiness will appear here.
-          </p>
-        </GlassCard>
-      </div>
+      {/* Audit Readiness */}
+      <AuditReadinessSection />
     </div>
   );
 }
