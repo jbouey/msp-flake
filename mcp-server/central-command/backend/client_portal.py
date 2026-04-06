@@ -3890,3 +3890,149 @@ async def ignore_device(
         )
 
     return {"status": "ignored", "device_id": device_id}
+
+
+# =============================================================================
+# ALERT ENDPOINTS
+# =============================================================================
+
+VALID_ALERT_ACTIONS = {"approved", "dismissed", "acknowledged", "ignored", "credentials_entered"}
+
+
+@auth_router.get("/alerts")
+async def get_client_alerts(user: dict = Depends(require_client_user)):
+    """Return pending alerts for the client's org, with effective alert mode."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        rows = await conn.fetch("""
+            SELECT pa.id, s.name as site_name, pa.alert_type, pa.summary,
+                   pa.severity, pa.created_at, pa.sent_at, pa.dismissed_at,
+                   pa.incident_id,
+                   COALESCE(s.client_alert_mode, co.client_alert_mode, 'informed') as effective_mode
+            FROM pending_alerts pa
+            JOIN sites s ON s.site_id = pa.site_id
+            JOIN client_orgs co ON co.id = pa.org_id
+            WHERE pa.org_id = $1
+            ORDER BY pa.created_at DESC
+            LIMIT 100
+        """, org_id)
+
+    alerts = []
+    for row in rows:
+        effective_mode = row["effective_mode"]
+        if row["dismissed_at"]:
+            status = "dismissed"
+        elif row["sent_at"]:
+            status = "sent"
+        else:
+            status = "pending"
+
+        alerts.append({
+            "id": str(row["id"]),
+            "site_name": row["site_name"],
+            "alert_type": row["alert_type"],
+            "summary": row["summary"],
+            "severity": row["severity"],
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
+            "dismissed_at": row["dismissed_at"].isoformat() if row["dismissed_at"] else None,
+            "incident_id": str(row["incident_id"]) if row["incident_id"] else None,
+            "effective_mode": effective_mode,
+            "status": status,
+            "actions_available": (effective_mode == "self_service"),
+        })
+
+    return {"alerts": alerts}
+
+
+@auth_router.post("/alerts/{alert_id}/action")
+async def action_client_alert(
+    alert_id: str,
+    request: Request,
+    user: dict = Depends(require_client_user),
+):
+    """Approve, dismiss, acknowledge, or ignore a pending alert."""
+    body = await request.json()
+    action = body.get("action")
+    notes = body.get("notes")
+
+    if action not in VALID_ALERT_ACTIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid action '{action}'. Must be one of: {sorted(VALID_ALERT_ACTIONS)}",
+        )
+
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        # Fetch alert with effective mode
+        alert = await conn.fetchrow("""
+            SELECT pa.id, pa.site_id, pa.incident_id, pa.org_id,
+                   COALESCE(s.client_alert_mode, co.client_alert_mode, 'informed') as effective_mode
+            FROM pending_alerts pa
+            JOIN sites s ON s.site_id = pa.site_id
+            JOIN client_orgs co ON co.id = pa.org_id
+            WHERE pa.id = $1 AND pa.org_id = $2
+        """, alert_id, org_id)
+
+        if not alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+
+        effective_mode = alert["effective_mode"]
+        if effective_mode != "self_service":
+            raise HTTPException(
+                status_code=403,
+                detail="Actions not available for this site's alert mode",
+            )
+
+        import uuid as uuid_mod
+        approval_id = str(uuid_mod.uuid4())
+
+        # Record audit trail
+        await conn.execute("""
+            INSERT INTO client_approvals
+                (id, org_id, site_id, incident_id, alert_id, action, acted_by, notes, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        """,
+            approval_id,
+            org_id,
+            str(alert["site_id"]),
+            str(alert["incident_id"]) if alert["incident_id"] else None,
+            str(alert_id),
+            action,
+            user["user_id"],
+            notes,
+        )
+
+        # Side effects by action
+        if action in ("dismissed", "ignored"):
+            await conn.execute("""
+                UPDATE pending_alerts SET dismissed_at = NOW() WHERE id = $1
+            """, alert_id)
+
+        if action == "approved" and alert["incident_id"]:
+            await conn.execute("""
+                UPDATE incidents
+                SET details = details || '{"client_approved": true}'::jsonb
+                WHERE id = $1
+            """, str(alert["incident_id"]))
+
+    logger.info(
+        "Client alert action taken",
+        extra={
+            "alert_id": alert_id,
+            "action": action,
+            "user": user.get("email"),
+            "org_id": org_id,
+        },
+    )
+
+    return {
+        "status": "ok",
+        "action_taken": action,
+        "approval_id": approval_id,
+        "incident_id": str(alert["incident_id"]) if alert["incident_id"] else None,
+    }
