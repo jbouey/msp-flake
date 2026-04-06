@@ -22,7 +22,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
 # Configuration
-APPLIANCE_HOST = os.environ.get("APPLIANCE_HOST", "192.168.88.246")
+APPLIANCE_HOST = os.environ.get("APPLIANCE_HOST", "192.168.88.235")
 APPLIANCE_USER = os.environ.get("APPLIANCE_USER", "root")
 EXPECTED_SCAN_INTERVAL = 600  # 10 minutes
 EXPECTED_DISCOVERY_INTERVAL = 3600  # 1 hour

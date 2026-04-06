@@ -531,6 +531,7 @@ export interface SiteDetail extends Site {
 export interface SiteAppliance {
   appliance_id: string;
   hostname: string | null;
+  display_name: string | null;
   mac_address: string | null;
   ip_addresses: string[];
   agent_version: string | null;
@@ -544,6 +545,7 @@ export interface SiteAppliance {
   mesh_peer_count: number;
   mesh_ring_size: number;
   mesh_peer_macs: string[];
+  assigned_target_count: number;
 }
 
 export interface SiteCredential {

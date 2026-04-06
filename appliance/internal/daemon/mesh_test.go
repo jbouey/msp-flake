@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 )
@@ -341,5 +343,89 @@ func TestMesh_GracePeriod_KeepsPeerInRing(t *testing.T) {
 
 	if m.PeerCount() != 0 {
 		t.Error("peer should be removed after grace period")
+	}
+}
+
+func TestMesh_ServerAssignment_OverridesLocalRing(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+
+	// Without server assignment, single node owns everything
+	if !m.OwnsTarget("192.168.88.250") {
+		t.Fatal("single node should own all targets")
+	}
+
+	// Apply server assignment that excludes this target
+	m.ApplyTargetAssignment([]string{"192.168.88.1", "192.168.88.2"}, []string{"AABBCCDDEEFF01", "AABBCCDDEEFF02"}, 100)
+
+	if m.OwnsTarget("192.168.88.250") {
+		t.Error("server assignment should exclude 192.168.88.250")
+	}
+	if !m.OwnsTarget("192.168.88.1") {
+		t.Error("server assignment should include 192.168.88.1")
+	}
+	if !m.OwnsTarget("192.168.88.2") {
+		t.Error("server assignment should include 192.168.88.2")
+	}
+}
+
+func TestMesh_ServerAssignment_FallbackAfterExpiry(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+
+	// Apply server assignment with no extra ring members so local ring stays single-node.
+	// A single-node ring means self owns ALL targets — useful as a simple fallback signal.
+	m.ApplyTargetAssignment([]string{"192.168.88.1"}, []string{}, 100)
+
+	// 192.168.88.250 is not in the server list, so it should be excluded while fresh.
+	if m.OwnsTarget("192.168.88.250") {
+		t.Error("fresh server assignment should exclude 192.168.88.250")
+	}
+
+	// Force staleness by backdating the assignment
+	m.mu.Lock()
+	m.serverAssignmentTime = time.Now().Add(-16 * time.Minute)
+	m.mu.Unlock()
+
+	// Should fall back to local ring (single node — self — owns everything)
+	if !m.OwnsTarget("192.168.88.250") {
+		t.Error("stale server assignment should fall back to local ring")
+	}
+}
+
+func TestMesh_ServerAssignment_EmptyTargetsOwnsNothing(t *testing.T) {
+	m := NewMesh("AA:BB:CC:DD:EE:01", "test-site", 50051)
+
+	// Server says: you have no targets (other nodes handle them all)
+	m.ApplyTargetAssignment([]string{}, []string{"AABBCCDDEEFF01", "AABBCCDDEEFF02"}, 100)
+
+	if m.OwnsTarget("192.168.88.250") {
+		t.Error("empty server assignment means this node owns nothing")
+	}
+}
+
+func TestHashRing_CrossLanguageVectors(t *testing.T) {
+	data, err := os.ReadFile("testdata/hash_ring_vectors.json")
+	if err != nil {
+		t.Skipf("No cross-language vectors file: %v", err)
+	}
+
+	var vectors struct {
+		Nodes    []string          `json:"nodes"`
+		Replicas int               `json:"replicas"`
+		Targets  map[string]string `json:"targets"`
+	}
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatalf("Parse vectors: %v", err)
+	}
+
+	ring := NewHashRing()
+	for _, mac := range vectors.Nodes {
+		ring.AddNode(mac)
+	}
+
+	for ip, expectedOwner := range vectors.Targets {
+		got := ring.TargetOwner(ip)
+		if got != expectedOwner {
+			t.Errorf("target %s: Go=%s, Python=%s", ip, got, expectedOwner)
+		}
 	}
 }

@@ -875,50 +875,14 @@ async def _check_mesh_isolation():
                     )
                 """, site_id, site_name)
 
-            # === P2-14: Ring convergence monitoring ===
-            if len(connected) >= 2:
-                peer_sets = {}
-                for app in connected:
-                    dh = _parse_dh(app)
-                    macs = set(dh.get("mesh_peer_macs", []))
-                    peer_sets[app["appliance_id"]] = macs
-                # Check if all appliances agree on ring membership
-                all_sets = list(peer_sets.values())
-                if all_sets and any(s != all_sets[0] for s in all_sets[1:]):
-                    existing = await conn.fetchval("""
-                        SELECT 1 FROM notifications
-                        WHERE site_id = $1 AND category = 'mesh_split_brain'
-                          AND created_at > NOW() - INTERVAL '1 hour'
-                    """, site_id)
-                    if not existing:
-                        details = "; ".join(
-                            f"{aid[:12]}: sees {','.join(sorted(macs)) or 'none'}"
-                            for aid, macs in peer_sets.items()
-                        )
-                        await conn.execute("""
-                            INSERT INTO notifications (
-                                site_id, category, severity, title, message, created_at
-                            ) VALUES ($1, 'mesh_split_brain', 'warning', $2, $3, NOW())
-                        """,
-                            site_id,
-                            f"Mesh split-brain at {site_name}",
-                            f"Appliances disagree on ring membership. "
-                            f"This may cause uneven target distribution. {details}",
-                        )
-                        logger.warning(f"Mesh split-brain: {site_id} — {details}")
+            # === P2-14: Ring convergence monitoring — REMOVED ===
+            # Backend-authoritative mesh eliminates split-brain by design.
+            # The backend is the single authority for target assignment;
+            # appliances no longer need to agree on ring membership.
 
             # === Isolation alerts ===
-            # Respects: mesh_topology=independent (suppresses), 24h auto-reclassify,
-            # graduated cadence (4h first 24h, then 24h).
+            # Still useful to flag unreachable appliances for network troubleshooting.
             if isolated:
-                # Check if site has mesh_topology=independent (consumer router, suppress alerts)
-                mesh_topo = await conn.fetchval(
-                    "SELECT COALESCE(mesh_topology, 'auto') FROM sites WHERE site_id = $1",
-                    site_id
-                )
-                if mesh_topo == 'independent':
-                    continue  # Site declared independent topology, no mesh alerts
-
                 # Check oldest unresolved isolation alert for this site
                 oldest_isolation = await conn.fetchval("""
                     SELECT MIN(created_at) FROM notifications

@@ -770,7 +770,7 @@ async def submit_evidence(
     Security: Only appliances with a registered public key can submit evidence.
     The agent_signature must be valid for the bundle content.
     """
-    # Verify site exists and get its registered public key
+    # Verify site exists
     site_result = await db.execute(
         text("SELECT site_id, agent_public_key FROM sites WHERE site_id = :site_id"),
         {"site_id": site_id}
@@ -780,7 +780,6 @@ async def submit_evidence(
         raise HTTPException(status_code=404, detail=f"Site not found: {site_id}")
 
     # SECURITY: Require Ed25519 signature verification for evidence submission
-    # This prevents unauthorized parties from injecting fake evidence into the chain
     if not bundle.agent_signature:
         logger.warning(f"Evidence submission rejected: no signature provided for site={site_id}")
         raise HTTPException(
@@ -790,9 +789,34 @@ async def submit_evidence(
                    "/var/lib/msp/agent-signing-key"
         )
 
-    registered_key = site_row.agent_public_key
+    # Multi-appliance key resolution: check per-appliance keys first, then site-level fallback
+    registered_key = None
+    matched_appliance_id = None
+
+    # 1. Check per-appliance keys (supports multiple appliances with different keys)
+    if bundle.agent_public_key and len(bundle.agent_public_key) == 64:
+        appliance_result = await db.execute(text("""
+            SELECT appliance_id, agent_public_key
+            FROM site_appliances
+            WHERE site_id = :site_id AND agent_public_key = :key
+            LIMIT 1
+        """), {"site_id": site_id, "key": bundle.agent_public_key})
+        appliance_row = appliance_result.fetchone()
+        if appliance_row:
+            registered_key = appliance_row.agent_public_key
+            matched_appliance_id = appliance_row.appliance_id
+
+    # 2. If no per-appliance match, try the submitted key directly (self-verify)
+    #    Auto-register on the appliance if the signature is valid
+    if not registered_key and bundle.agent_public_key and len(bundle.agent_public_key) == 64:
+        registered_key = bundle.agent_public_key  # Will verify below
+
+    # 3. Fall back to site-level key (legacy single-appliance sites)
     if not registered_key:
-        # Auto-register if the bundle includes the public key
+        registered_key = site_row.agent_public_key
+
+    # 4. Auto-register if no key exists anywhere
+    if not registered_key:
         if bundle.agent_public_key and len(bundle.agent_public_key) == 64:
             try:
                 await db.execute(
@@ -815,8 +839,6 @@ async def submit_evidence(
             )
 
     # Verify the Ed25519 signature
-    # Use the signed_data from the bundle if provided (eliminates serialization mismatch)
-    # Otherwise, reconstruct from fields (legacy support)
     if bundle.signed_data:
         signed_data = bundle.signed_data.encode('utf-8')
     else:
@@ -836,7 +858,6 @@ async def submit_evidence(
             public_key_hex=registered_key
         )
         if not is_valid:
-            # Diagnostic info for troubleshooting
             submitted_fp = bundle.agent_public_key[:12] if bundle.agent_public_key else "not-provided"
             registered_fp = registered_key[:12] if registered_key else "none"
             key_match = bundle.agent_public_key == registered_key if bundle.agent_public_key else None
@@ -847,14 +868,22 @@ async def submit_evidence(
                 f"key_match={key_match} signed_data_provided={bundle.signed_data is not None}"
             )
 
-            # Track rejection for partner visibility
+            # Track rejection on the specific appliance if known, otherwise all
             try:
-                await db.execute(text("""
-                    UPDATE site_appliances SET
-                        evidence_rejection_count = COALESCE(evidence_rejection_count, 0) + 1,
-                        last_evidence_rejection = NOW()
-                    WHERE site_id = :site_id
-                """), {"site_id": site_id})
+                if matched_appliance_id:
+                    await db.execute(text("""
+                        UPDATE site_appliances SET
+                            evidence_rejection_count = COALESCE(evidence_rejection_count, 0) + 1,
+                            last_evidence_rejection = NOW()
+                        WHERE appliance_id = :appliance_id
+                    """), {"appliance_id": matched_appliance_id})
+                else:
+                    await db.execute(text("""
+                        UPDATE site_appliances SET
+                            evidence_rejection_count = COALESCE(evidence_rejection_count, 0) + 1,
+                            last_evidence_rejection = NOW()
+                        WHERE site_id = :site_id
+                    """), {"site_id": site_id})
                 await db.commit()
             except Exception as e:
                 logger.warning(f"Evidence rejection tracking failed for site {site_id}: {e}")
@@ -877,19 +906,47 @@ async def submit_evidence(
             signature_valid = True
             logger.info(f"Evidence signature verified for site={site_id}")
 
-            # Track acceptance + heartbeat (keeps dashboard status accurate
-            # even when the dedicated checkin endpoint fails)
+            # Auto-register per-appliance key if not yet stored
+            if bundle.agent_public_key and len(bundle.agent_public_key) == 64:
+                try:
+                    await db.execute(text("""
+                        UPDATE site_appliances SET
+                            agent_public_key = :key
+                        WHERE site_id = :site_id
+                          AND agent_public_key IS NULL
+                          AND appliance_id = (
+                            SELECT appliance_id FROM site_appliances
+                            WHERE site_id = :site_id
+                            ORDER BY last_checkin DESC NULLS LAST LIMIT 1
+                          )
+                    """), {"site_id": site_id, "key": bundle.agent_public_key})
+                except Exception:
+                    pass
+
+            # Track acceptance + heartbeat per-appliance if matched, else site-wide
             try:
-                await db.execute(text("""
-                    UPDATE site_appliances SET
-                        evidence_rejection_count = 0,
-                        last_evidence_accepted = NOW(),
-                        last_checkin = NOW(),
-                        status = 'online',
-                        offline_since = NULL,
-                        offline_notified = false
-                    WHERE site_id = :site_id
-                """), {"site_id": site_id})
+                if matched_appliance_id:
+                    await db.execute(text("""
+                        UPDATE site_appliances SET
+                            evidence_rejection_count = 0,
+                            last_evidence_accepted = NOW(),
+                            last_checkin = NOW(),
+                            status = 'online',
+                            offline_since = NULL,
+                            offline_notified = false
+                        WHERE appliance_id = :appliance_id
+                    """), {"appliance_id": matched_appliance_id})
+                else:
+                    await db.execute(text("""
+                        UPDATE site_appliances SET
+                            evidence_rejection_count = 0,
+                            last_evidence_accepted = NOW(),
+                            last_checkin = NOW(),
+                            status = 'online',
+                            offline_since = NULL,
+                            offline_notified = false
+                        WHERE site_id = :site_id
+                    """), {"site_id": site_id})
             except Exception:
                 pass
     else:
@@ -945,6 +1002,29 @@ async def submit_evidence(
             bundle.check_result = "warn"
     elif not bundle.check_result:
         bundle.check_result = "unknown"
+
+    # Evidence dedup: skip duplicate bundle hashes within 15-min window.
+    # Handles grace-period overlap where two appliances scan the same target.
+    try:
+        existing_dup = await db.execute(text("""
+            SELECT 1 FROM compliance_bundles
+            WHERE site_id = :site_id
+              AND bundle_hash = :hash
+              AND created_at > NOW() - INTERVAL '15 minutes'
+            LIMIT 1
+        """), {"site_id": site_id, "hash": bundle.bundle_hash})
+        if existing_dup.fetchone():
+            logger.info(
+                f"evidence_dedup_skip: site_id={site_id} bundle_hash={bundle.bundle_hash[:12]}..."
+            )
+            return {
+                "status": "accepted",
+                "bundle_id": bundle.bundle_id,
+                "deduplicated": True,
+                "message": "Bundle already recorded within 15-minute window",
+            }
+    except Exception as e:
+        logger.warning(f"evidence_dedup_check_failed: {e}")
 
     # Acquire per-site advisory lock to serialize chain position assignment.
     # Without this, concurrent submissions race on chain_position (caused 1,125 broken links).

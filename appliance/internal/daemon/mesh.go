@@ -154,6 +154,11 @@ type Mesh struct {
 	peers       map[string]*meshPeer // MAC → peer
 	gracePeriod time.Duration
 	caCertPool  *x509.CertPool       // for TLS-verified peer probes (nil = TCP fallback)
+
+	// Server-authoritative target assignment (Hybrid C+)
+	serverTargets        []string  // IPs this appliance should scan
+	serverEpoch          int64     // assignment epoch from backend
+	serverAssignmentTime time.Time // when assignment was received
 }
 
 type meshPeer struct {
@@ -178,9 +183,43 @@ func NewMesh(selfMAC, siteID string, grpcPort int) *Mesh {
 }
 
 // OwnsTarget returns true if this appliance should scan the given target IP.
-// With a single appliance (no peers), always returns true.
+// Prefers server-authoritative assignment if recent (< 15 min).
+// Falls back to local hash ring if no server assignment or stale.
 func (m *Mesh) OwnsTarget(targetIP string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Server-authoritative: use if we have a recent assignment
+	if m.serverTargets != nil && time.Since(m.serverAssignmentTime) < 15*time.Minute {
+		for _, ip := range m.serverTargets {
+			if ip == targetIP {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Fallback: local ring (no server assignment or stale)
 	return m.ring.OwnsTarget(m.selfMAC, targetIP)
+}
+
+// ApplyTargetAssignment stores server-authoritative target list from checkin response.
+// ringMembers updates the local ring for failover consistency.
+func (m *Mesh) ApplyTargetAssignment(targets []string, ringMembers []string, epoch int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.serverTargets = targets
+	m.serverEpoch = epoch
+	m.serverAssignmentTime = time.Now()
+
+	// Sync ring to match server's view for failover consistency
+	for _, mac := range ringMembers {
+		m.ring.AddNode(mac)
+	}
+
+	log.Printf("[mesh] Server assignment applied: %d targets, epoch=%d, ring=%d nodes",
+		len(targets), epoch, m.ring.NodeCount())
 }
 
 // PeerCount returns the number of peers (excluding self).

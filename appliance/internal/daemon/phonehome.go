@@ -327,6 +327,8 @@ type CheckinResponse struct {
 	PeerBundleHashes     []PeerBundleHash         `json:"peer_bundle_hashes,omitempty"`
 	// Mesh: sibling appliance IPs+MACs for cross-subnet peer discovery
 	MeshPeers            []MeshPeerInfo           `json:"mesh_peers,omitempty"`
+	// Server-authoritative target assignment (Hybrid C+)
+	TargetAssignments *TargetAssignment `json:"target_assignments,omitempty"`
 }
 
 // MeshPeerInfo is a sibling appliance's identity delivered by Central Command
@@ -334,6 +336,13 @@ type CheckinResponse struct {
 type MeshPeerInfo struct {
 	MAC string   `json:"mac"`
 	IPs []string `json:"ips"`
+}
+
+// TargetAssignment is the server-authoritative scan target list.
+type TargetAssignment struct {
+	YourTargets     []string `json:"your_targets"`
+	RingMembers     []string `json:"ring_members"`
+	AssignmentEpoch int64    `json:"assignment_epoch"`
 }
 
 // PeerBundleHash is a sibling appliance's bundle hash delivered for witnessing.

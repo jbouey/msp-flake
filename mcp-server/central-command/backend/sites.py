@@ -5,6 +5,7 @@ that modify site data directly.
 """
 
 import json
+import time
 import secrets
 import logging
 import uuid as _uuid
@@ -670,13 +671,13 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
         # Get appliances for this site
         appliance_rows = await conn.fetch("""
             SELECT
-                appliance_id, hostname, mac_address, ip_addresses,
+                appliance_id, hostname, display_name, mac_address, ip_addresses,
                 agent_version, nixos_version, status, first_checkin,
                 last_checkin, uptime_seconds,
                 COALESCE(auth_failure_count, 0) as auth_failure_count
             FROM site_appliances
             WHERE site_id = $1
-            ORDER BY hostname
+            ORDER BY first_checkin, appliance_id
         """, site_id)
         
         # Verify site exists even if no appliances yet
@@ -709,6 +710,7 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
             appliances.append({
                 'appliance_id': row['appliance_id'],
                 'hostname': row['hostname'],
+                'display_name': row.get('display_name'),
                 'mac_address': row['mac_address'],
                 'ip_addresses': parse_ip_addresses(row['ip_addresses']),
                 'agent_version': row['agent_version'],
@@ -718,6 +720,7 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
                 'first_checkin': first_checkin.isoformat() if first_checkin else None,
                 'last_checkin': last_checkin.isoformat() if last_checkin else None,
                 'uptime_seconds': row['uptime_seconds'],
+                'assigned_target_count': 0,
             })
 
         # Determine overall site live status (worst case from appliances)
@@ -1185,16 +1188,17 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
     async with tenant_connection(pool, site_id=site_id) as conn:
         rows = await conn.fetch("""
             SELECT
-                appliance_id, hostname, mac_address, ip_addresses,
+                appliance_id, hostname, display_name, mac_address, ip_addresses,
                 agent_version, nixos_version, status, first_checkin,
                 last_checkin, uptime_seconds,
                 COALESCE(l2_mode, 'auto') as l2_mode,
                 offline_since,
                 COALESCE(auth_failure_count, 0) as auth_failure_count,
-                daemon_health
+                daemon_health,
+                assigned_targets
             FROM site_appliances
             WHERE site_id = $1
-            ORDER BY hostname
+            ORDER BY first_checkin, appliance_id
         """, site_id)
 
         appliances = []
@@ -1216,6 +1220,7 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
             appliances.append({
                 'appliance_id': row['appliance_id'],
                 'hostname': row['hostname'],
+                'display_name': row.get('display_name'),
                 'mac_address': row['mac_address'],
                 'ip_addresses': parse_ip_addresses(row['ip_addresses']),
                 'agent_version': row['agent_version'],
@@ -1230,6 +1235,7 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 'mesh_peer_count': mesh_peer_count,
                 'mesh_ring_size': mesh_ring_size,
                 'mesh_peer_macs': mesh_peer_macs,
+                'assigned_target_count': len(json.loads(row['assigned_targets'])) if row.get('assigned_targets') else 0,
             })
         
         return {
@@ -3211,6 +3217,65 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             except Exception as e:
                 logger.error(f"Checkin {checkin.site_id}: SSH credentials lookup failed: {e}")
 
+        # === STEP 3.8c: Server-side target assignment ===
+        # Backend-authoritative: compute which targets this appliance should scan
+        # using the same consistent hash ring algorithm as the Go daemon.
+        target_assignments = {}
+        try:
+            async with conn.transaction():
+                online_appliances = await conn.fetch("""
+                    SELECT mac_address
+                    FROM site_appliances
+                    WHERE site_id = $1
+                    AND status = 'online'
+                    AND last_checkin > NOW() - INTERVAL '5 minutes'
+                    ORDER BY mac_address
+                """, checkin.site_id)
+
+                if online_appliances:
+                    from .hash_ring import HashRing, normalize_mac as _norm_mac
+                    ring_macs = [_norm_mac(r['mac_address']) for r in online_appliances if r['mac_address']]
+                    this_mac = _norm_mac(checkin.mac_address) if checkin.mac_address else ""
+
+                    if ring_macs and this_mac in ring_macs:
+                        all_target_ips = set()
+                        for t in windows_targets:
+                            host = t.get('host') or t.get('hostname')
+                            if host:
+                                all_target_ips.add(host)
+                        for t in linux_targets:
+                            host = t.get('host') or t.get('hostname')
+                            if host:
+                                all_target_ips.add(host)
+
+                        ring = HashRing(ring_macs)
+                        my_targets = ring.targets_for_node(this_mac, sorted(all_target_ips))
+                        epoch = int(time.time())
+
+                        target_assignments = {
+                            "your_targets": my_targets,
+                            "ring_members": ring_macs,
+                            "assignment_epoch": epoch,
+                        }
+
+                        # Persist assignment for observability
+                        await conn.execute("""
+                            UPDATE site_appliances
+                            SET assigned_targets = $1::jsonb, assignment_epoch = $2
+                            WHERE site_id = $3 AND mac_address = $4
+                        """, json.dumps(my_targets), epoch, checkin.site_id, checkin.mac_address)
+
+                        logger.info(
+                            "target_assignment site_id=%s appliance_mac=%s target_count=%d ring_size=%d epoch=%d",
+                            checkin.site_id,
+                            this_mac,
+                            len(my_targets),
+                            len(ring_macs),
+                            epoch,
+                        )
+        except Exception as e:
+            logger.warning("target_assignment_failed site_id=%s error=%s", checkin.site_id, str(e))
+
         # === STEP 6: Get enabled runbooks (runbook config pull) ===
         enabled_runbooks = []
         try:
@@ -3424,6 +3489,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         "l2_confidence_threshold": 0.8,
         "peer_bundle_hashes": peer_bundle_hashes,
         "mesh_peers": mesh_peers,
+        "target_assignments": target_assignments,
     }
 
 

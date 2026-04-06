@@ -2509,18 +2509,42 @@ async def appliances_checkin(
         appliance_id = f"{req.site_id}-{mac}"
         now = datetime.now(timezone.utc)
 
+        hostname = req.hostname or "unknown"
+
+        # Auto-generate iterative display_name for appliances sharing the same hostname
+        existing = await db.execute(text("""
+            SELECT appliance_id, display_name, hostname
+            FROM site_appliances
+            WHERE site_id = :site_id
+            ORDER BY first_checkin, appliance_id
+        """), {"site_id": req.site_id})
+        siblings = existing.fetchall()
+
+        # Check if this appliance already exists
+        existing_entry = next((s for s in siblings if s.appliance_id == appliance_id), None)
+        display_name = existing_entry.display_name if existing_entry and existing_entry.display_name else None
+
+        if not display_name:
+            # Count how many siblings share this hostname
+            same_hostname = [s for s in siblings if s.hostname == hostname and s.appliance_id != appliance_id]
+            if same_hostname:
+                display_name = f"{hostname}-{len(same_hostname) + 1}"
+            else:
+                display_name = hostname
+
         await db.execute(text("""
             INSERT INTO site_appliances (
-                site_id, appliance_id, hostname, mac_address, ip_addresses,
+                site_id, appliance_id, hostname, display_name, mac_address, ip_addresses,
                 agent_version, nixos_version, status, last_checkin,
                 uptime_seconds, queue_depth, first_checkin, created_at
             ) VALUES (
-                :site_id, :appliance_id, :hostname, :mac_address, :ip_addresses,
+                :site_id, :appliance_id, :hostname, :display_name, :mac_address, :ip_addresses,
                 :agent_version, :nixos_version, 'online', :last_checkin,
                 :uptime_seconds, :queue_depth, :first_checkin, :created_at
             )
             ON CONFLICT (appliance_id) DO UPDATE SET
                 hostname = EXCLUDED.hostname,
+                display_name = COALESCE(site_appliances.display_name, EXCLUDED.display_name),
                 ip_addresses = EXCLUDED.ip_addresses,
                 agent_version = EXCLUDED.agent_version,
                 nixos_version = EXCLUDED.nixos_version,
@@ -2534,7 +2558,8 @@ async def appliances_checkin(
         """), {
             "site_id": req.site_id,
             "appliance_id": appliance_id,
-            "hostname": req.hostname or "unknown",
+            "hostname": hostname,
+            "display_name": display_name,
             "mac_address": mac,
             "ip_addresses": json.dumps(req.ip_addresses or []),
             "agent_version": req.agent_version,

@@ -902,6 +902,16 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		})
 	}
 
+	// Apply server-authoritative target assignments (Hybrid C+).
+	// Takes precedence over local hash ring for scan target ownership.
+	if d.mesh != nil && resp.TargetAssignments != nil {
+		d.mesh.ApplyTargetAssignment(
+			resp.TargetAssignments.YourTargets,
+			resp.TargetAssignments.RingMembers,
+			resp.TargetAssignments.AssignmentEpoch,
+		)
+	}
+
 	// Update self-healer with current agent heartbeat data from gRPC registry
 	if agents := d.registry.AllAgents(); len(agents) > 0 {
 		agentInfos := make([]GoAgentInfo, 0, len(agents))

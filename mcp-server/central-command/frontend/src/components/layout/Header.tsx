@@ -42,7 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="glass-header h-14 flex items-center justify-between px-6 sticky top-0 z-10">
+    <header className="glass-header h-14 flex items-center justify-between px-6 sticky top-0 z-50">
       {/* Left: Menu + Title */}
       <div className="flex items-center gap-2">
         {onMenuToggle && (
