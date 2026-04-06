@@ -506,7 +506,7 @@ async def _flush_critical_alerts(conn) -> None:
     rows = await conn.fetch(
         """
         SELECT pa.id, pa.org_id, pa.alert_type, pa.severity, pa.summary,
-               co.name AS org_name, co.alert_email, co.alert_mode
+               co.name AS org_name, co.alert_email, co.client_alert_mode
         FROM pending_alerts pa
         JOIN client_orgs co ON co.id = pa.org_id
         WHERE pa.sent_at IS NULL
@@ -521,7 +521,7 @@ async def _flush_critical_alerts(conn) -> None:
     from dashboard_api.email_alerts import send_digest_email
 
     for row in rows:
-        org_mode = row["alert_mode"] or "informed"
+        org_mode = row["client_alert_mode"] or "informed"
         alerts_list = [{
             "alert_type": row["alert_type"],
             "site_name": "Your site",
@@ -547,7 +547,7 @@ async def _send_all_org_digests(conn) -> None:
     """Send digest emails to all orgs that have unsent pending alerts."""
     orgs = await conn.fetch(
         """
-        SELECT DISTINCT co.id, co.name, co.alert_email, co.alert_mode
+        SELECT DISTINCT co.id, co.name, co.alert_email, co.client_alert_mode
         FROM pending_alerts pa
         JOIN client_orgs co ON co.id = pa.org_id
         WHERE pa.sent_at IS NULL
@@ -558,7 +558,7 @@ async def _send_all_org_digests(conn) -> None:
 
     for org in orgs:
         try:
-            org_mode = org["alert_mode"] or "informed"
+            org_mode = org["client_alert_mode"] or "informed"
             await send_digest_for_org(
                 conn=conn,
                 org_id=str(org["id"]),
