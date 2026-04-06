@@ -61,6 +61,7 @@ const VPNManagement = lazy(() => import('./pages/VPNManagement'));
 const Reports = lazy(() => import('./pages/Reports').then(m => ({ default: m.Reports })));
 const SystemHealth = lazy(() => import('./pages/SystemHealth').then(m => ({ default: m.SystemHealth })));
 const PipelineHealth = lazy(() => import('./pages/PipelineHealth').then(m => ({ default: m.PipelineHealth })));
+const OpsCenter = lazy(() => import('./pages/OpsCenter').then(m => ({ default: m.OpsCenter })));
 
 // Detect if serving from marketing domain (www.osiriscare.net or osiriscare.net)
 const isLandingSite = typeof window !== 'undefined' &&
@@ -212,6 +213,7 @@ const pageTitles: Record<string, string> = {
   '/reports': 'Reports',
   '/system-health': 'System Health',
   '/pipeline-health': 'Pipeline Health',
+  '/ops': 'Operations Center',
   '/evidence': 'Evidence Verification',
   '/audit-logs': 'Audit Logs',
   '/settings/oauth': 'OAuth Settings',
@@ -365,6 +367,7 @@ const AppLayout: React.FC = () => {
               <Route path="/reports" element={<Reports />} />
               <Route path="/system-health" element={<SystemHealth />} />
               <Route path="/pipeline-health" element={<PipelineHealth />} />
+              <Route path="/ops" element={<OpsCenter />} />
             </Routes>
             </div>
           </Suspense>
