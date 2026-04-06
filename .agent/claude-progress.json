@@ -1,6 +1,6 @@
 {
-  "session": 196,
-  "updated": "2026-04-06T17:30:49.652239Z",
+  "session": 197,
+  "updated": "2026-04-06T21:27:52.404725Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -25,7 +25,8 @@
     "check_catalog": "58_checks_public_api_hipaa_mapping_no_remediation_scripts",
     "log_pipeline": "operational_35k_plus_entries_csrf_gzip_auth_fixed",
     "prometheus_metrics": "live_at_slash_metrics_7_gauges_counters",
-    "offline_alerting": "partner_email_on_15min_offline",
+    "offline_alerting": "partner_email_on_15min_offline_plus_client_digest_alerts_4h_cycle",
+    "alert_routing": "cross_appliance_dedup_org_routed_digest_3_modes_client_approval_audit_trail",
     "reconciliation": "5min_background_sync_site_appliances_from_appliances",
     "runbook_system": "169_db_runbooks_119_embedded_0_general_category_dead_rules_purged",
     "compliance_infographic": "client_portal_plus_admin_sitedetail_clickthrough_to_incidents_category_filter",
@@ -35,7 +36,59 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "iMac SSH port 2222 still broken (reverse tunnel via VPS:2250). T640 + T740 have 0 assigned scan targets (no credentials for their subnet devices yet).",
+  "current_blocker": "iMac SSH port 2222 still broken (reverse tunnel via VPS:2250). T640 + T740 have 0 assigned scan targets (no credentials for their subnet devices yet). Spec 2 (client self-service approval UX + partner notifications) not started.",
+  "session_197_work": {
+    "commits": 12,
+    "summary": "Cross-appliance incident dedup + alert routing + client approval workflow — full Spec 1 of Multi-Appliance Maturity",
+    "cross_appliance_dedup": [
+      "Incident dedup by SHA256(site_id:incident_type:hostname) instead of per-appliance_id",
+      "Severity upgrade: second report with higher severity updates existing incident",
+      "Hostname-missing fallback preserves legacy appliance-scoped dedup",
+      "30-min resolved grace period (was 24h), 48h lookback window",
+      "Migration 128: dedup_key column + index + backfill of 29 open incidents"
+    ],
+    "alert_routing": [
+      "alert_router.py: classify_alert() maps 11 drift/netscan types to alert_type + client/admin tier",
+      "get_effective_alert_mode(): site overrides org, default 'informed'",
+      "maybe_enqueue_alert(): inserts to pending_alerts if mode != silent and tier == client",
+      "render_digest_email(): PHI-free HTML+text, counts only, no IPs/hostnames",
+      "digest_sender_loop(): background task every 4h, critical/high bypass for immediate send",
+      "send_welcome_email_if_needed(): one-time onboarding email on first device discovery",
+      "send_digest_email(): new SMTP function with 3-retry backoff"
+    ],
+    "alert_config": [
+      "Migration 129: alert_email, cc_email, client_alert_mode, welcome_email_sent_at on client_orgs",
+      "Migration 130: client_alert_mode override on sites (NULL = inherit from org)",
+      "3 modes: self_service (approve buttons), informed (informational), silent (no client emails)",
+      "GET/PUT /api/partners/me/orgs/{org_id}/alert-config",
+      "PUT /api/partners/me/sites/{site_id}/alert-config",
+      "Seeded alert_email from primary_email for 2 existing orgs"
+    ],
+    "client_portal": [
+      "GET /api/client/alerts — RLS-scoped alert list with actions_available flag",
+      "POST /api/client/alerts/{alert_id}/action — approve/dismiss/acknowledge with audit trail",
+      "Migration 131: pending_alerts digest buffer table with RLS",
+      "Migration 132: client_approvals audit trail table with RLS",
+      "ClientAlerts.tsx — approve/dismiss UI, severity badges, PHI-free summaries"
+    ],
+    "wiring": [
+      "agent_api.py: non-fatal alert enqueue after incident creation",
+      "sites.py: effective client_alert_mode delivered in checkin response",
+      "main.py: alert_digest background task registered and supervised"
+    ],
+    "test_coverage": [
+      "4 cross-appliance dedup tests (dedup hit, severity upgrade, hostname fallback, different hosts)",
+      "11 alert router tests (mode resolution, classification, digest content, silent suppression)",
+      "11 partner alert config tests (GET/PUT org + site, validation, 404s)",
+      "9 client alert tests (list, approve, dismiss, 403 for informed, 422 invalid action)",
+      "46 total tests passing, 0 regressions"
+    ],
+    "deploy_notes": [
+      "sites.site_id is VARCHAR not UUID — FK references fixed in migrations 131-132",
+      "dashboard_api_mount overrides /app/dashboard_api — must copy files to both paths",
+      "alert_digest background task confirmed running in production logs"
+    ]
+  },
   "session_196_work": {
     "commits": 1,
     "daemon_version": "0.3.82",
