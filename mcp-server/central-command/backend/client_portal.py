@@ -417,11 +417,28 @@ async def login_with_password(request: Request, body: PasswordLogin):
         if not verify_password(body.password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        # Check if MFA is enabled
+        # Check MFA status: user enrollment + org-level requirement
         mfa_row = await conn.fetchrow(
             "SELECT mfa_enabled FROM client_users WHERE id = $1", user["id"]
         )
-        if mfa_row and mfa_row["mfa_enabled"]:
+        mfa_user_enabled = mfa_row["mfa_enabled"] if mfa_row else False
+
+        org_mfa_row = await conn.fetchrow(
+            "SELECT mfa_required FROM client_orgs WHERE id = $1", user["client_org_id"]
+        )
+        mfa_org_required = org_mfa_row["mfa_required"] if org_mfa_row else False
+
+        # Org requires MFA but user hasn't enrolled — block login
+        if mfa_org_required and not mfa_user_enabled:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "status": "mfa_setup_required",
+                    "error": "Your organization requires multi-factor authentication. Please set up MFA before logging in.",
+                },
+            )
+
+        if mfa_row and mfa_user_enabled:
             mfa_token = secrets.token_urlsafe(32)
             now = datetime.now(timezone.utc)
             # Clean expired tokens

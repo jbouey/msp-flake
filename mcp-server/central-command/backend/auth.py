@@ -264,13 +264,27 @@ async def authenticate_user(
         await _log_audit(db, user_id, username, "LOGIN_FAILED", "auth", {"reason": "invalid_password", "attempts": new_attempts}, ip_address)
         return False, None, {"error": "Invalid username or password"}
 
-    # Check if MFA is enabled
+    # Check MFA status (enabled + required)
     mfa_result = await db.execute(
-        text("SELECT mfa_enabled FROM admin_users WHERE id = :id"),
+        text("SELECT mfa_enabled, mfa_required FROM admin_users WHERE id = :id"),
         {"id": user_id}
     )
     mfa_row = mfa_result.fetchone()
-    if mfa_row and mfa_row[0]:
+
+    mfa_enabled = mfa_row[0] if mfa_row else False
+    mfa_required = mfa_row[1] if mfa_row else False
+
+    # MFA required but not enrolled — block login until setup is complete
+    if mfa_required and not mfa_enabled:
+        await _log_audit(db, user_id, username, "LOGIN_BLOCKED_MFA_REQUIRED", "auth",
+                        {"reason": "mfa_required_but_not_enrolled"}, ip_address)
+        await db.commit()
+        return False, None, {
+            "status": "mfa_setup_required",
+            "error": "Multi-factor authentication is required. Please set up MFA before logging in.",
+        }
+
+    if mfa_enabled:
         # MFA required — issue a short-lived pending token instead of a session
         mfa_token = secrets.token_urlsafe(32)
 

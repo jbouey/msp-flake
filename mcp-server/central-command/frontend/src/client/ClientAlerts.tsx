@@ -158,37 +158,40 @@ export const ClientAlerts: React.FC = () => {
               )}
             </div>
             {alert.actions_available && !dimmed && (
-              <div className="flex gap-2 mt-3">
-                {alert.alert_type === 'credential_needed' ? (
+              <div className="mt-3">
+                <div className="flex gap-2">
+                  {alert.alert_type === 'credential_needed' ? (
+                    <button
+                      onClick={() =>
+                        setCredModal({
+                          siteId: alert.site_id || '',
+                          siteName: alert.site_name,
+                          alertId: alert.id,
+                        })
+                      }
+                      disabled={!!isActioning}
+                      className="px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+                    >
+                      {actionLabels.approve}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleAction(alert.id, 'approved')}
+                      disabled={!!isActioning}
+                      className="px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+                    >
+                      {actioning === alert.id + ':approved' ? 'Working...' : actionLabels.approve}
+                    </button>
+                  )}
                   <button
-                    onClick={() =>
-                      setCredModal({
-                        siteId: alert.site_id || '',
-                        siteName: alert.site_name,
-                        alertId: alert.id,
-                      })
-                    }
+                    onClick={() => handleAction(alert.id, 'dismissed')}
                     disabled={!!isActioning}
-                    className="px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+                    className="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 disabled:opacity-50 transition-colors"
                   >
-                    {actionLabels.approve}
+                    {actioning === alert.id + ':dismissed' ? 'Working...' : actionLabels.dismiss}
                   </button>
-                ) : (
-                  <button
-                    onClick={() => handleAction(alert.id, 'approved')}
-                    disabled={!!isActioning}
-                    className="px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
-                  >
-                    {actioning === alert.id + ':approved' ? 'Working...' : actionLabels.approve}
-                  </button>
-                )}
-                <button
-                  onClick={() => handleAction(alert.id, 'dismissed')}
-                  disabled={!!isActioning}
-                  className="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 disabled:opacity-50 transition-colors"
-                >
-                  {actioning === alert.id + ':dismissed' ? 'Working...' : actionLabels.dismiss}
-                </button>
+                </div>
+                <p className="text-xs text-label-tertiary mt-2">Actions are logged for compliance audit purposes. Do not enter patient names or protected health information.</p>
               </div>
             )}
           </div>

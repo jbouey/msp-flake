@@ -1028,11 +1028,24 @@ async def email_login(request: Request, body: EmailLoginRequest):
         if not verify_password(password, partner["password_hash"]):
             raise _generic_error
 
-        # Check if MFA is enabled
+        # Check MFA status (enabled + required)
         mfa_row = await conn.fetchrow(
-            "SELECT mfa_enabled FROM partners WHERE id = $1", partner["id"]
+            "SELECT mfa_enabled, mfa_required FROM partners WHERE id = $1", partner["id"]
         )
-        if mfa_row and mfa_row["mfa_enabled"]:
+        mfa_enabled = mfa_row["mfa_enabled"] if mfa_row else False
+        mfa_required = mfa_row["mfa_required"] if mfa_row else False
+
+        # MFA required but not enrolled — block login until setup is complete
+        if mfa_required and not mfa_enabled:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "status": "mfa_setup_required",
+                    "error": "Multi-factor authentication is required. Please set up MFA before logging in.",
+                },
+            )
+
+        if mfa_enabled:
             # Issue MFA pending token
             mfa_token = secrets.token_urlsafe(32)
             now = datetime.now(timezone.utc)
@@ -1126,11 +1139,25 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
         if not verify_password(password, partner["password_hash"]):
             raise _generic_error
 
-        # Check if MFA is enabled
+        # Check MFA status (enabled + required)
         mfa_row = await conn.fetchrow(
-            "SELECT mfa_enabled FROM partners WHERE id = $1", partner["id"]
+            "SELECT mfa_enabled, mfa_required FROM partners WHERE id = $1", partner["id"]
         )
-        if mfa_row and mfa_row["mfa_enabled"]:
+        mfa_enabled = mfa_row["mfa_enabled"] if mfa_row else False
+        mfa_required = mfa_row["mfa_required"] if mfa_row else False
+
+        # MFA required but not enrolled — block login until setup is complete
+        if mfa_required and not mfa_enabled:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "status": "mfa_setup_required",
+                    "error": "Multi-factor authentication is required. Please set up MFA before logging in.",
+                },
+            )
+
+        if mfa_enabled:
             # Issue MFA pending token
             mfa_token = secrets.token_urlsafe(32)
             now = datetime.now(timezone.utc)

@@ -509,6 +509,22 @@ async def digest_sender_loop() -> None:
         except Exception as e:
             logger.error(f"Non-engagement check error: {e}")
 
+        # Audit log retention cleanup (3-year / 1095-day policy)
+        try:
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                deleted = await conn.fetchval(
+                    """DELETE FROM admin_audit_log
+                       WHERE created_at < NOW() - INTERVAL '1095 days'
+                       RETURNING COUNT(*)"""
+                )
+                if deleted and deleted > 0:
+                    logger.info(f"Audit retention: purged {deleted} records older than 3 years")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Audit retention error: {e}")
+
         await asyncio.sleep(DIGEST_INTERVAL_HOURS * 3600)
 
 
