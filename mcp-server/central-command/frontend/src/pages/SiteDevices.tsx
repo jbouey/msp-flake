@@ -677,7 +677,7 @@ export const SiteDevices: React.FC = () => {
         </Link>
         <span className="text-label-tertiary">/</span>
         <Link to={`/sites/${siteId}`} className="text-label-secondary hover:text-label-primary">
-          {siteId}
+          {siteId?.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || siteId}
         </Link>
         <span className="text-label-tertiary">/</span>
         <span className="text-label-primary">Devices</span>

@@ -66,8 +66,8 @@ const statusColors: Record<WorkstationComplianceStatus, string> = {
 };
 
 const statusLabels: Record<WorkstationComplianceStatus, string> = {
-  compliant: 'Compliant',
-  drifted: 'Drifted',
+  compliant: 'Passing',
+  drifted: 'Failing',
   error: 'Error',
   unknown: 'No Data',
   offline: 'Offline',
@@ -436,7 +436,7 @@ export const SiteWorkstations: React.FC = () => {
         </Link>
         <span className="text-label-tertiary">/</span>
         <Link to={`/sites/${siteId}`} className="text-label-secondary hover:text-label-primary">
-          {siteId}
+          {siteId?.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || siteId}
         </Link>
         <span className="text-label-tertiary">/</span>
         <span className="text-label-primary">Workstations</span>

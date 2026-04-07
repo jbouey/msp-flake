@@ -10,7 +10,7 @@ import {
   useAttentionRequired,
 } from '../hooks';
 import type { Notification, AttentionItem } from '../types';
-import { formatTimeAgo } from '../constants';
+import { formatTimeAgo, cleanAttentionTitle } from '../constants';
 
 type Tab = 'attention' | 'patterns' | 'activity';
 
@@ -39,7 +39,7 @@ const AttentionCard: React.FC<{
           {meta.label}
         </span>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-label-primary leading-snug">{item.title}</p>
+          <p className="text-sm font-medium text-label-primary leading-snug">{cleanAttentionTitle(item.title)}</p>
           <p className="text-xs text-label-tertiary mt-1">
             {item.clinic_name && <span className="font-medium text-label-secondary">{item.clinic_name}</span>}
             {item.clinic_name && item.detail && ' — '}

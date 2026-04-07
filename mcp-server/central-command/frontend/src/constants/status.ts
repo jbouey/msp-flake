@@ -331,6 +331,38 @@ export interface OpsStatusConfig {
   label: string;
 }
 
+// =============================================================================
+// ATTENTION TITLE CLEANUP
+// =============================================================================
+
+// Lazy-imported to avoid circular deps — CHECK_TYPE_LABELS is in types/index.ts
+let _checkTypeLabels: Record<string, string> | null = null;
+function getCheckTypeLabels(): Record<string, string> {
+  if (!_checkTypeLabels) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _checkTypeLabels = require('../types').CHECK_TYPE_LABELS;
+  }
+  return _checkTypeLabels!;
+}
+
+/**
+ * Clean backend-generated attention/notification titles for display.
+ * Maps raw check_type slugs to human labels after known prefixes.
+ *
+ * "Repeat drift: net_host_reachability (9x in 24h)" → "Recurring: Host Reach (9x in 24h)"
+ * "L3 Escalation: rogue_scheduled_tasks"             → "L3 Escalation: Rogue Tasks"
+ */
+export function cleanAttentionTitle(title: string): string {
+  const labels = getCheckTypeLabels();
+  return title
+    .replace(/^Repeat drift:\s*/i, 'Recurring: ')
+    .replace(/^Repeat failure:\s*/i, 'Recurring: ')
+    .replace(/^L3 Escalation:\s*/i, 'L3 Escalation: ')
+    .replace(/((?:Recurring|L3 Escalation):\s*)(\S+)/, (_match, prefix, checkType) => {
+      return prefix + (labels[checkType] || checkType.replace(/_/g, ' '));
+    });
+}
+
 export const OPS_STATUS_CONFIG: Record<OpsStatus, OpsStatusConfig> = {
   green:  { color: 'text-emerald-400', bgColor: 'bg-emerald-400', ringColor: 'ring-emerald-400/30', pulseColor: 'bg-emerald-400/20', label: 'Healthy' },
   yellow: { color: 'text-amber-400',   bgColor: 'bg-amber-400',   ringColor: 'ring-amber-400/30',   pulseColor: 'bg-amber-400/20',   label: 'Warning' },

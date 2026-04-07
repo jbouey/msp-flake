@@ -20,5 +20,6 @@ export {
   formatMetric,
   formatTimeAgo,
   formatBytes,
+  cleanAttentionTitle,
 } from './status';
 export type { StatusType, StatusConfig } from './status';
