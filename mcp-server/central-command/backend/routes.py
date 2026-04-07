@@ -5541,14 +5541,20 @@ async def get_vpn_status(user: dict = Depends(auth_module.require_auth)):
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
-        # Get all sites with WireGuard configured
+        # Get all sites with WireGuard configured.
+        # Use DISTINCT ON to collapse multiple appliances per site into one row
+        # (picking the most-recently-checked-in appliance for version/checkin data),
+        # and include an appliance_count for display.
         sites = await conn.fetch("""
-            SELECT s.site_id, s.clinic_name, s.status, s.wg_ip, s.wg_pubkey,
-                   s.wg_connected_at, sa.last_checkin, sa.agent_version
+            SELECT DISTINCT ON (s.site_id)
+                   s.site_id, s.clinic_name, s.status, s.wg_ip, s.wg_pubkey,
+                   s.wg_connected_at, sa.last_checkin, sa.agent_version,
+                   (SELECT COUNT(*) FROM site_appliances
+                    WHERE site_id = s.site_id) AS appliance_count
             FROM sites s
             LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
             WHERE s.wg_ip IS NOT NULL
-            ORDER BY s.clinic_name
+            ORDER BY s.site_id, sa.last_checkin DESC NULLS LAST
         """)
 
         # Get real-time handshake data from hub
@@ -5578,7 +5584,11 @@ async def get_vpn_status(user: dict = Depends(auth_module.require_auth)):
                 "endpoint": peer_data.get("endpoint"),
                 "last_checkin": site["last_checkin"].isoformat() if site["last_checkin"] else None,
                 "agent_version": site["agent_version"],
+                "appliance_count": site["appliance_count"],
             })
+
+        # Sort by clinic name for consistent display order
+        result.sort(key=lambda r: r["clinic_name"])
 
         # Count stats
         total = len(result)

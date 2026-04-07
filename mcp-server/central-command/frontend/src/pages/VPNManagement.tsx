@@ -36,9 +36,16 @@ const PeerRow: React.FC<{
   return (
     <tr className="border-b border-separator-light last:border-b-0 hover:bg-fill-quaternary transition-colors">
       <td className="px-4 py-3">
-        <div className="flex flex-col">
+        <div className="flex flex-col gap-0.5">
           <span className="text-sm font-medium text-label-primary">{peer.clinic_name}</span>
-          <span className="text-xs text-label-tertiary">{peer.site_id}</span>
+          {peer.appliance_count > 1 && (
+            <span className="inline-flex items-center gap-1 text-xs text-label-tertiary">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+              {peer.appliance_count} appliances
+            </span>
+          )}
         </div>
       </td>
       <td className="px-4 py-3">

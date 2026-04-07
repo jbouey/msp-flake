@@ -2185,6 +2185,7 @@ export interface VPNPeer {
   endpoint: string | null;
   last_checkin: string | null;
   agent_version: string | null;
+  appliance_count: number;
 }
 
 export interface VPNStatus {
