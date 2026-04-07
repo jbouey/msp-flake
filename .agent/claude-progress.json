@@ -1,6 +1,6 @@
 {
-  "session": 197,
-  "updated": "2026-04-07T03:12:41.909249Z",
+  "session": 198,
+  "updated": "2026-04-07T06:51:18.388290Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -110,13 +110,13 @@
     "total_tests": "65 passing (9 test files), 0 regressions",
     "total_migrations": "128-135 (8 migrations deployed)",
     "audit_fixes": [
-      "C1: DRY — alert enqueue in agent_api.py now calls get_effective_alert_mode() from module",
+      "C1: DRY \u2014 alert enqueue in agent_api.py now calls get_effective_alert_mode() from module",
       "C2: HTML escape org_name in partner non-engagement email",
       "C3: partner_notifications RLS tenant policy added (migration 135)",
       "I1: Replaced custom _esc/_escape_html with html.escape() stdlib",
-      "I2: Silent except:pass in sites.py → logger.debug()",
+      "I2: Silent except:pass in sites.py \u2192 logger.debug()",
       "I3: Digest loop consolidated from 4 connections to 1",
-      "I4: Idempotency guard on client_approvals — returns existing on duplicate",
+      "I4: Idempotency guard on client_approvals \u2014 returns existing on duplicate",
       "I5: Critical alert email now fetches real clinic_name from sites table",
       "I6: Credential entry validates alert_id belongs to client's org"
     ]
