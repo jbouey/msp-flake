@@ -1625,25 +1625,19 @@ export const SiteDetail: React.FC = () => {
 
         {/* Sidebar */}
         <div className="space-y-6">
-          {/* Network Coverage Score */}
+          {/* Network Visibility */}
           {coverageData !== null && coverageData !== undefined && (
             <GlassCard>
-              <h2 className="text-lg font-semibold mb-3">Network Coverage</h2>
+              <h2 className="text-lg font-semibold mb-3">Network Visibility</h2>
               <div className="bg-white/5 rounded-lg p-4">
-                <div className="text-sm text-label-secondary mb-1">Agent Coverage</div>
-                <div className={`text-2xl font-bold ${
-                  (coverageData.network_coverage_pct ?? 0) >= 90
-                    ? 'text-emerald-400'
-                    : (coverageData.network_coverage_pct ?? 0) >= 70
-                      ? 'text-yellow-400'
-                      : 'text-red-400'
-                }`}>
-                  {coverageData.network_coverage_pct ?? 0}%
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm text-label-secondary">Devices Discovered</div>
+                  <div className="text-lg font-bold text-label-primary">
+                    {coverageData.unmanaged_device_count ?? 0}
+                  </div>
                 </div>
-                <div className="text-xs text-label-tertiary mt-1">
-                  {(coverageData.unmanaged_device_count ?? 0) > 0
-                    ? `${coverageData.unmanaged_device_count} unmanaged device${coverageData.unmanaged_device_count > 1 ? 's' : ''}`
-                    : 'All devices managed'}
+                <div className="text-xs text-label-tertiary">
+                  Appliance continuously scans the network and reports all discovered devices. Add credentials to enable deep compliance scanning on servers and workstations.
                 </div>
               </div>
             </GlassCard>
