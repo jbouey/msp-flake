@@ -21,6 +21,13 @@ from .shared import require_appliance_bearer
 
 logger = logging.getLogger(__name__)
 
+# Subnets to exclude from workstation creation — residential/home networks
+# that get discovered by appliances on non-clinical subnets.
+EXCLUDED_WORKSTATION_SUBNETS = [
+    "192.168.0.",   # Common residential default
+    "192.168.1.",   # Common residential default
+]
+
 
 # =============================================================================
 # REQUEST/RESPONSE MODELS
@@ -1166,8 +1173,13 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
         if not hostname:
             continue
 
-        # Check incident-derived status: per-host first, then platform fallback
+        # Skip devices on residential/home subnets — a hostname doesn't make
+        # a home device clinical; IP subnet is the authoritative signal.
         ip = dev['ip_address']
+        if ip and any(ip.startswith(prefix) for prefix in EXCLUDED_WORKSTATION_SUBNETS):
+            continue
+
+        # Check incident-derived status: per-host first, then platform fallback
         incident_data = compliance_map.get(ip) or compliance_map.get(hostname)
         if not incident_data:
             # Platform fallback: match OS to incident platform

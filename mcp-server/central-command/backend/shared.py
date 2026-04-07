@@ -12,6 +12,7 @@ functions during lifespan startup; route modules import the accessor
 functions.
 """
 
+import asyncio
 import hashlib
 import json
 import os
@@ -75,6 +76,27 @@ async def get_db():
     """Yield a SQLAlchemy async session (FastAPI Depends)."""
     async with async_session() as session:
         yield session
+
+
+async def execute_with_retry(db, query, params=None, max_retries=2):
+    """Execute a SQLAlchemy query with retry on PgBouncer prepared statement errors.
+
+    PgBouncer transaction pooling can cause DuplicatePreparedStatementError
+    when recycling server connections. A single retry resolves this.
+    """
+    from sqlalchemy import text as sa_text
+    for attempt in range(max_retries + 1):
+        try:
+            if isinstance(query, str):
+                query = sa_text(query)
+            return await db.execute(query, params or {})
+        except Exception as e:
+            error_str = str(e)
+            if "DuplicatePreparedStatement" in error_str and attempt < max_retries:
+                # PgBouncer recycled a connection — retry once
+                await asyncio.sleep(0.1)
+                continue
+            raise
 
 
 # ============================================================================

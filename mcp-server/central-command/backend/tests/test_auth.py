@@ -25,6 +25,13 @@ _sa_mod.text = lambda x: x
 _sa_async = sys.modules.setdefault("sqlalchemy.ext.asyncio", types.ModuleType("sqlalchemy.ext.asyncio"))
 _sa_async.AsyncSession = object
 
+# Stub .shared so auth.py's relative import resolves in the flat test context
+_shared_stub = types.ModuleType("shared")
+async def _noop_retry(db, query, params=None, max_retries=2):
+    return await db.execute(query, params or {})
+_shared_stub.execute_with_retry = _noop_retry
+sys.modules["shared"] = _shared_stub
+
 from auth import (
     validate_password_complexity,
     hash_password,

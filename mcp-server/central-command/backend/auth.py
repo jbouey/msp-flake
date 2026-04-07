@@ -17,6 +17,11 @@ from fastapi import Request, HTTPException, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+try:
+    from .shared import execute_with_retry
+except ImportError:
+    from shared import execute_with_retry  # type: ignore[no-redef]
+
 logger = logging.getLogger(__name__)
 
 # MFA pending tokens: {token: {"user_id": ..., "username": ..., "expires": datetime}}
@@ -465,15 +470,16 @@ async def validate_session(
     now = datetime.now(timezone.utc)
     idle_cutoff = now - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
 
-    result = await db.execute(
-        text("""
+    result = await execute_with_retry(
+        db,
+        """
             SELECT u.id, u.username, u.display_name, u.role, s.expires_at, s.last_activity_at
             FROM admin_sessions s
             JOIN admin_users u ON u.id = s.user_id
             WHERE s.token_hash = :token_hash
               AND s.expires_at > :now
               AND u.status = 'active'
-        """),
+        """,
         {"token_hash": token_hash, "now": now}
     )
     row = result.fetchone()
