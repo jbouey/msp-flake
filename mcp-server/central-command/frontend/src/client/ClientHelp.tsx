@@ -280,8 +280,8 @@ export const ClientHelp: React.FC = () => {
       content: (
         <div className="space-y-4">
           <p className="text-slate-600">
-            OsirisCare uses cryptographic hash chains (similar to blockchain) to ensure your
-            compliance evidence is tamper-resistant and independently verifiable.
+            OsirisCare uses cryptographic hash chains (similar to blockchain) to help maintain
+            tamper-resistant compliance evidence that is independently verifiable.
           </p>
           <EvidenceChainDiagram />
           <div className="bg-teal-50 p-4 rounded-lg">
@@ -366,7 +366,7 @@ export const ClientHelp: React.FC = () => {
             <div className="bg-green-50 p-4 rounded-lg border-l-4 border-green-500">
               <div className="text-2xl font-bold text-green-600">90-100%</div>
               <div className="text-sm font-medium text-green-800">Excellent</div>
-              <div className="text-xs text-green-700 mt-1">Audit ready - minimal risk</div>
+              <div className="text-xs text-green-700 mt-1">Strong coverage — minimal observed risk</div>
             </div>
             <div className="bg-yellow-50 p-4 rounded-lg border-l-4 border-yellow-500">
               <div className="text-2xl font-bold text-yellow-600">70-89%</div>

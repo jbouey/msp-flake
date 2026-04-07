@@ -85,15 +85,15 @@ const CHECK_TYPE_TIPS: Record<string, string> = {
   rogue_admin_users: 'Detects unauthorized administrator accounts. Extra admins increase breach risk.',
   rogue_scheduled_tasks: 'Finds unexpected scheduled tasks that could indicate malware or unauthorized activity.',
   agent_status: 'Verifies the monitoring agent is running. A failure means this device is not being monitored.',
-  bitlocker_status: 'Checks if disk encryption is active. Protects patient data if a device is lost or stolen.',
+  bitlocker_status: 'Checks if disk encryption is active. Reduces exposure if a device is lost or stolen.',
   smb_signing: 'Verifies network file sharing is signed. Prevents tampering with data in transit.',
   smb1_protocol: 'Checks that the old, insecure SMBv1 protocol is disabled. SMBv1 has known vulnerabilities.',
-  screen_lock_policy: 'Verifies screens lock automatically after inactivity. Prevents unauthorized access.',
+  screen_lock_policy: 'Verifies screens lock automatically after inactivity. Helps restrict unauthorized access.',
   defender_exclusions: 'Monitors antivirus exclusions for suspicious entries that could hide malware.',
   dns_config: 'Checks DNS settings are correct. Wrong DNS can redirect users to malicious sites.',
   network_profile: 'Verifies the network is set to the correct profile. Public profiles have weaker protections.',
   password_policy: 'Checks that password rules meet security standards. Weak passwords are easy to guess.',
-  rdp_nla: 'Verifies Remote Desktop requires authentication before connecting. Prevents unauthorized remote access.',
+  rdp_nla: 'Verifies Remote Desktop requires authentication before connecting. Monitors for unauthorized remote access.',
   guest_account: 'Checks that the Guest account is disabled. Guest accounts bypass normal access controls.',
   service_dns: 'Monitors Active Directory DNS service health. DNS failures break authentication.',
   service_netlogon: 'Monitors Active Directory login service. Failures prevent users from signing in.',
@@ -101,7 +101,7 @@ const CHECK_TYPE_TIPS: Record<string, string> = {
   registry_run_persistence: 'Checks for unauthorized programs set to run at startup via the registry.',
   audit_policy: 'Verifies security audit policies are properly configured for compliance logging.',
   defender_cloud_protection: 'Checks cloud-based threat detection is active. Catches new threats faster.',
-  spooler_service: 'Checks Print Spooler on domain controllers. Should be disabled to prevent known attacks.',
+  spooler_service: 'Checks Print Spooler on domain controllers. Should be disabled to reduce known attack surface.',
   // Linux
   linux_firewall: 'Checks if the Linux firewall is active. A failure means the system is exposed.',
   linux_ssh_root: 'Verifies root SSH login is disabled. Direct root access is a security risk.',
@@ -114,12 +114,12 @@ const CHECK_TYPE_TIPS: Record<string, string> = {
   linux_ntp: 'Verifies time synchronization is active. Incorrect time breaks audit log accuracy.',
   linux_cert_expiry: 'Monitors SSL certificate expiration. Expired certs cause outages and security warnings.',
   // macOS
-  macos_filevault: 'Checks if FileVault disk encryption is active. Protects data if a Mac is lost.',
-  macos_gatekeeper: 'Verifies only trusted software can run. Prevents malicious app installation.',
-  macos_sip: 'Checks System Integrity Protection is on. Prevents malware from modifying system files.',
+  macos_filevault: 'Checks if FileVault disk encryption is active. Helps reduce exposure if a Mac is lost.',
+  macos_gatekeeper: 'Verifies only trusted software can run. Helps detect malicious app installation.',
+  macos_sip: 'Checks System Integrity Protection is on. Monitors for malware modifying system files.',
   macos_firewall: 'Monitors whether the macOS firewall is enabled and blocking unauthorized connections.',
   macos_auto_update: 'Verifies automatic software updates are enabled. Keeps security patches current.',
-  macos_screen_lock: 'Checks that the screen locks automatically. Prevents unauthorized access when unattended.',
+  macos_screen_lock: 'Checks that the screen locks automatically. Helps reduce unauthorized access when unattended.',
   macos_remote_login: 'Monitors SSH access settings. Unrestricted remote login increases attack surface.',
   macos_file_sharing: 'Checks if file sharing is enabled. Unnecessary sharing exposes data.',
   macos_time_machine: 'Verifies Time Machine backup is active. Required for disaster recovery.',
@@ -289,7 +289,7 @@ export const PartnerDriftConfig: React.FC<PartnerDriftConfigProps> = ({ siteId, 
         {loading && (
           <div className="text-center py-12">
             <div className="w-8 h-8 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-slate-500 text-sm">Loading check config...</p>
+            <p className="text-slate-500 text-sm">Loading security checks...</p>
           </div>
         )}
 

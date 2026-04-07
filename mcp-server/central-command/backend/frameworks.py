@@ -417,7 +417,7 @@ async def get_appliance_control_status(
     """
     Get detailed control-by-control status for a specific framework.
 
-    This is the audit-ready view showing every control and its evidence status.
+    This is the audit-supportive view showing every control and its evidence status.
     """
     # Validate framework
     valid_frameworks = {"hipaa", "soc2", "pci_dss", "nist_csf", "cis"}

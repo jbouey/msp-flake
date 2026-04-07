@@ -6640,7 +6640,7 @@ async def generate_org_compliance_packet(
     """Generate an org-level compliance evidence packet with witness attestations.
 
     Aggregates compliance, healing, evidence, incidents, and witness
-    attestations across all sites in the org. Audit-ready JSON.
+    attestations across all sites in the org. Audit-supportive JSON.
     """
     auth_module._check_org_access(user, org_id)
     from .fleet import get_pool

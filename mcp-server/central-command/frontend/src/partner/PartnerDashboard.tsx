@@ -22,6 +22,7 @@ interface Site {
   onboarding_stage: string;
   appliance_count: number;
   last_checkin: string | null;
+  agent_compliance_rate?: number;
 }
 
 interface Provision {
@@ -262,7 +263,7 @@ export const PartnerDashboard: React.FC = () => {
 
       {/* Stats */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(79,70,229,0.12) 0%, rgba(124,58,237,0.08) 100%)' }}>
@@ -300,6 +301,26 @@ export const PartnerDashboard: React.FC = () => {
             <p className="text-3xl font-bold tabular-nums" style={{ color: primaryColor }}>
               {partner.revenue_share_percent}%
             </p>
+          </div>
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.12) 0%, rgba(5,150,105,0.08) 100%)' }}>
+                <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+              </div>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Portfolio Health<InfoTip text="Average compliance score across all active client sites." /></p>
+            </div>
+            {(() => {
+              const rated = sites.filter(s => typeof s.agent_compliance_rate === 'number');
+              const avg = rated.length > 0
+                ? Math.round(rated.reduce((sum, s) => sum + (s.agent_compliance_rate ?? 0), 0) / rated.length)
+                : null;
+              const color = avg === null ? 'text-slate-400' : avg >= 90 ? 'text-emerald-600' : avg >= 70 ? 'text-yellow-600' : 'text-red-600';
+              return (
+                <p className={`text-3xl font-bold tabular-nums ${color}`}>
+                  {avg !== null ? `${avg}%` : '--'}
+                </p>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -728,8 +749,11 @@ export const PartnerDashboard: React.FC = () => {
                               </>
                             )}
                             {provision.status === 'claimed' && (
-                              <span className="text-sm text-slate-500">
-                                {provision.claimed_by_mac}
+                              <span className="inline-flex items-center gap-1 text-sm text-green-600">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                                Claimed
                               </span>
                             )}
                           </div>

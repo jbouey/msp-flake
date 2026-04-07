@@ -2638,7 +2638,7 @@ OsirisCare Compliance Team`}
               <div><dt className="font-semibold text-label-primary">L1 Deterministic</dt><dd>First-tier auto-healing. Rule-based remediation that runs in &lt;100ms at zero cost. Handles 70-80% of incidents (firewall restart, service recovery, etc.).</dd></div>
               <div><dt className="font-semibold text-label-primary">L2 LLM-Assisted</dt><dd>Second-tier healing. Uses Claude Haiku to generate a hypothesis-driven remediation plan when L1 rules don&apos;t match. Costs ~$0.001 per invocation.</dd></div>
               <div><dt className="font-semibold text-label-primary">L3 Human Escalation</dt><dd>Third-tier. Issues that cannot be auto-remediated are escalated to the operator or partner for manual review. Creates a ticket visible in the client portal.</dd></div>
-              <div><dt className="font-semibold text-label-primary">PHI Scrubbing</dt><dd>Protected Health Information is removed from all data before it leaves the appliance. 14 regex patterns detect and redact names, SSNs, MRNs, dates of birth, etc. Central Command is PHI-free by design.</dd></div>
+              <div><dt className="font-semibold text-label-primary">PHI Scrubbing</dt><dd>Protected Health Information is removed from all data before it leaves the appliance. 14 regex patterns detect and redact names, SSNs, MRNs, dates of birth, etc. Central Command operates under a PHI-scrubbed architecture.</dd></div>
             </dl>
           </div>
         ),

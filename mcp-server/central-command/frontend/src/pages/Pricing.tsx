@@ -293,10 +293,10 @@ export const Pricing: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
           </div>
-          <h3 className="text-xl font-semibold text-slate-900 mb-3 font-body">PHI never leaves your premises</h3>
+          <h3 className="text-xl font-semibold text-slate-900 mb-3 font-body">PHI is scrubbed at the appliance before transmission</h3>
           <p className="text-sm text-slate-500 leading-relaxed font-body">
             All data is scrubbed of Protected Health Information at the on-premise appliance
-            before transmission. Our central infrastructure is engineered to be PHI-free by design —
+            before transmission. Our central infrastructure is engineered to be PHI-scrubbed architecture —
             reducing your vendor risk and simplifying your compliance posture.
           </p>
         </div>

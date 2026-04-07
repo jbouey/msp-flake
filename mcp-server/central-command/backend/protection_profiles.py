@@ -645,7 +645,7 @@ async def lock_baseline(
                 pid,
             )
             if not assets:
-                raise HTTPException(400, "No enabled assets to protect")
+                raise HTTPException(400, "No enabled assets to monitor")
 
             # Build baseline snapshot
             baseline = {}

@@ -185,9 +185,9 @@ export const ClientEscalations: React.FC = () => {
   const extractDetails = (raw: Record<string, unknown> | null) => {
     if (!raw) return null;
     const map: Record<string, string> = {
-      hostname: 'Hostname', check_type: 'Check Type', message: 'Message',
+      hostname: 'Device', check_type: 'Check Type', message: 'Description',
       details: 'Details', service_name: 'Service', drift_type: 'Issue Type',
-      expected: 'Expected', actual: 'Actual', os_type: 'OS Type',
+      expected: 'Expected', actual: 'Actual', os_type: 'Operating System',
     };
     const fields: { label: string; value: string }[] = [];
     for (const [k, label] of Object.entries(map)) {
@@ -197,7 +197,7 @@ export const ClientEscalations: React.FC = () => {
   };
 
   const isAdmin = user?.role === 'owner' || user?.role === 'admin';
-  const modeLabel = { partner: 'Partner handles L3s', direct: 'Direct to you', both: 'Both partner + you' };
+  const modeLabel = { partner: 'Your IT provider handles these', direct: 'Sent directly to you', both: 'Both you and your IT provider' };
 
   if (loading && !tickets.length) {
     return (
@@ -223,9 +223,9 @@ export const ClientEscalations: React.FC = () => {
       {/* Header with prefs toggle */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">Escalation Queue</h2>
+          <h2 className="text-xl font-semibold text-slate-900">Issues Needing Review</h2>
           <p className="text-sm text-slate-500 mt-0.5">
-            L3 incidents that require human attention &middot; Mode: <span className="font-medium">{modeLabel[prefs?.escalation_mode || 'partner']}</span>
+            Issues that could not be fixed automatically &middot; Routing: <span className="font-medium">{modeLabel[prefs?.escalation_mode || 'partner']}</span>
           </p>
         </div>
         {isAdmin && (
@@ -241,7 +241,7 @@ export const ClientEscalations: React.FC = () => {
       {/* Preferences panel */}
       {showPrefs && (
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 space-y-4">
-          <h3 className="text-sm font-semibold text-slate-900">L3 Escalation Routing</h3>
+          <h3 className="text-sm font-semibold text-slate-900">How should unresolved issues be routed?</h3>
           <div className="grid grid-cols-3 gap-3">
             {(['partner', 'direct', 'both'] as const).map(mode => (
               <button
@@ -251,11 +251,11 @@ export const ClientEscalations: React.FC = () => {
                   editMode === mode ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'
                 }`}
               >
-                <p className="text-sm font-semibold text-slate-900">{mode === 'partner' ? 'Partner Only' : mode === 'direct' ? 'Direct to Me' : 'Both'}</p>
+                <p className="text-sm font-semibold text-slate-900">{mode === 'partner' ? 'IT Provider Only' : mode === 'direct' ? 'Direct to Me' : 'Both'}</p>
                 <p className="text-xs text-slate-500 mt-1">
-                  {mode === 'partner' && 'MSP partner handles all L3 escalations'}
-                  {mode === 'direct' && 'Get L3 alerts directly — skip the partner'}
-                  {mode === 'both' && 'Both you and partner receive L3 alerts'}
+                  {mode === 'partner' && 'Your IT provider handles all unresolved issues'}
+                  {mode === 'direct' && 'Get alerts directly when an issue needs attention'}
+                  {mode === 'both' && 'Both you and your IT provider receive alerts'}
                 </p>
               </button>
             ))}
@@ -270,7 +270,7 @@ export const ClientEscalations: React.FC = () => {
                 placeholder="admin@clinic.com, it@clinic.com"
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               />
-              <p className="text-xs text-slate-500 mt-1">Comma-separated. These addresses receive L3 escalation alerts.</p>
+              <p className="text-xs text-slate-500 mt-1">Comma-separated. These addresses receive alerts when an issue needs human review.</p>
             </div>
           )}
           <div className="flex gap-3 justify-end">
@@ -301,7 +301,7 @@ export const ClientEscalations: React.FC = () => {
           <p className="text-2xl font-bold text-health-healthy tabular-nums">{counts?.resolved_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">SLA Breached</p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Overdue</p>
           <p className={`text-2xl font-bold tabular-nums ${(counts?.sla_breached_count ?? 0) > 0 ? 'text-health-critical' : 'text-label-tertiary'}`}>
             {counts?.sla_breached_count ?? 0}
           </p>
@@ -328,9 +328,9 @@ export const ClientEscalations: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-slate-900 mb-1">No escalations</h3>
+            <h3 className="text-lg font-medium text-slate-900 mb-1">No issues needing review</h3>
             <p className="text-slate-500 text-sm">
-              {statusFilter === 'all' ? 'All clear — no L3 escalation tickets.' : `No ${statusFilter} tickets.`}
+              {statusFilter === 'all' ? 'All clear — everything is running smoothly.' : `No ${statusFilter} issues.`}
             </p>
           </div>
         ) : (
@@ -440,7 +440,7 @@ export const ClientEscalations: React.FC = () => {
 
               {selectedTicket.attempted_actions && Array.isArray(selectedTicket.attempted_actions) && selectedTicket.attempted_actions.length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase mb-2">Attempted Auto-Healing</p>
+                  <p className="text-xs font-medium text-slate-500 uppercase mb-2">Automatic Fixes Attempted</p>
                   <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 space-y-1.5">
                     {selectedTicket.attempted_actions.map((action, i) => (
                       <div key={i} className="flex items-start gap-2 text-sm">
@@ -458,7 +458,7 @@ export const ClientEscalations: React.FC = () => {
 
               {selectedTicket.hipaa_controls.length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase mb-1">HIPAA Controls</p>
+                  <p className="text-xs font-medium text-slate-500 uppercase mb-1">Regulations Affected</p>
                   <div className="flex flex-wrap gap-1">
                     {selectedTicket.hipaa_controls.map(c => (
                       <span key={c} className="px-2 py-0.5 bg-purple-50 text-purple-700 text-xs rounded-full">{c}</span>
@@ -495,8 +495,8 @@ export const ClientEscalations: React.FC = () => {
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
                 <p className="text-xs font-semibold text-amber-800 uppercase mb-1">Recurring Issue</p>
                 <p className="text-sm text-amber-700">
-                  This issue has recurred {selectedTicket.recurrence_count} time{(selectedTicket.recurrence_count ?? 0) > 1 ? 's' : ''}.
-                  Contact your MSP partner or Central Command if it cannot be permanently resolved.
+                  This issue has come up {selectedTicket.recurrence_count} time{(selectedTicket.recurrence_count ?? 0) > 1 ? 's' : ''}.
+                  Contact your IT provider if it keeps happening.
                 </p>
               </div>
             )}

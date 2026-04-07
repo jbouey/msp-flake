@@ -2,6 +2,43 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { DisclaimerFooter } from '../components/composed';
+import { CHECK_TYPE_LABELS } from '../types';
+
+/** Client-friendly labels for check types (falls back to humanized raw string) */
+function humanCheckType(raw: string): string {
+  if (CHECK_TYPE_LABELS[raw]) {
+    // Expand terse admin labels into full words for non-technical users
+    const expansions: Record<string, string> = {
+      'Patch': 'Software Updates',
+      'AV': 'Antivirus Protection',
+      'Backup': 'Data Backup',
+      'Logging': 'Activity Logging',
+      'Firewall': 'Firewall Protection',
+      'Encryption': 'Data Encryption',
+      'Network': 'Network Security',
+      'NTP': 'Time Sync',
+      'Disk': 'Disk Space',
+      'Services': 'Service Health',
+      'Defender': 'Windows Defender',
+      'Memory': 'Memory Usage',
+      'Cert': 'Certificate Expiry',
+      'Database': 'Database Integrity',
+      'Port': 'Prohibited Port',
+      'Updates': 'Software Updates',
+      'Audit Log': 'Audit Logging',
+      'BitLocker': 'Disk Encryption',
+      'Screen Lock': 'Screen Lock Policy',
+      'FileVault': 'Disk Encryption (Mac)',
+      'Gatekeeper': 'App Security (Mac)',
+      'SIP': 'System Protection (Mac)',
+      'Service Down': 'Service Stopped',
+      'Unreachable': 'Device Unreachable',
+      'Stale Creds': 'Credentials Need Update',
+    };
+    return expansions[CHECK_TYPE_LABELS[raw]] || CHECK_TYPE_LABELS[raw];
+  }
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
 
 interface EvidenceBundle {
   id: string;
@@ -144,7 +181,7 @@ export const ClientEvidence: React.FC = () => {
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Site</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Check</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Control</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Regulation</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Result</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Date</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
@@ -158,7 +195,7 @@ export const ClientEvidence: React.FC = () => {
                       <p className="text-sm font-medium text-slate-900">{bundle.clinic_name}</p>
                       <p className="text-xs text-slate-500">{bundle.site_id}</p>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">{bundle.check_type}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">{humanCheckType(bundle.check_type)}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{bundle.hipaa_control || '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap">{getResultBadge(bundle.check_result)}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
@@ -199,10 +236,10 @@ export const ClientEvidence: React.FC = () => {
                             </div>
                             <div>
                               <span className="text-slate-500">Check Type:</span>
-                              <p className="font-medium text-slate-900 mt-1">{bundle.check_type}</p>
+                              <p className="font-medium text-slate-900 mt-1">{humanCheckType(bundle.check_type)}</p>
                             </div>
                             <div>
-                              <span className="text-slate-500">HIPAA Control:</span>
+                              <span className="text-slate-500">Regulation:</span>
                               <p className="font-medium text-slate-900 mt-1">{bundle.hipaa_control || 'N/A'}</p>
                             </div>
                             <div>

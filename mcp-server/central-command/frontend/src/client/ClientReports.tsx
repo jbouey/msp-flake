@@ -3,6 +3,42 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { getScoreStatus } from '../constants';
 import { DisclaimerFooter } from '../components/composed';
+import { CHECK_TYPE_LABELS } from '../types';
+
+/** Client-friendly labels for check types (falls back to humanized raw string) */
+function humanCheckType(raw: string): string {
+  if (CHECK_TYPE_LABELS[raw]) {
+    const expansions: Record<string, string> = {
+      'Patch': 'Software Updates',
+      'AV': 'Antivirus Protection',
+      'Backup': 'Data Backup',
+      'Logging': 'Activity Logging',
+      'Firewall': 'Firewall Protection',
+      'Encryption': 'Data Encryption',
+      'Network': 'Network Security',
+      'NTP': 'Time Sync',
+      'Disk': 'Disk Space',
+      'Services': 'Service Health',
+      'Defender': 'Windows Defender',
+      'Memory': 'Memory Usage',
+      'Cert': 'Certificate Expiry',
+      'Database': 'Database Integrity',
+      'Port': 'Prohibited Port',
+      'Updates': 'Software Updates',
+      'Audit Log': 'Audit Logging',
+      'BitLocker': 'Disk Encryption',
+      'Screen Lock': 'Screen Lock Policy',
+      'FileVault': 'Disk Encryption (Mac)',
+      'Gatekeeper': 'App Security (Mac)',
+      'SIP': 'System Protection (Mac)',
+      'Service Down': 'Service Stopped',
+      'Unreachable': 'Device Unreachable',
+      'Stale Creds': 'Credentials Need Update',
+    };
+    return expansions[CHECK_TYPE_LABELS[raw]] || CHECK_TYPE_LABELS[raw];
+  }
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
 
 interface MonthlyReport {
   id: string;
@@ -214,7 +250,7 @@ export const ClientReports: React.FC = () => {
                     </div>
                     <div className="text-center">
                       <p className="text-2xl font-bold text-teal-600 tabular-nums">{snapshot.healing.auto_healed}</p>
-                      <p className="text-xs text-slate-500">Auto-Healed</p>
+                      <p className="text-xs text-slate-500">Auto-Fixed</p>
                     </div>
                   </div>
                   <button
@@ -265,9 +301,9 @@ export const ClientReports: React.FC = () => {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-slate-50 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                          <th className="px-4 py-3">Check Type</th>
-                          <th className="px-4 py-3">HIPAA Control</th>
-                          <th className="px-4 py-3">Host</th>
+                          <th className="px-4 py-3">Check</th>
+                          <th className="px-4 py-3">Regulation</th>
+                          <th className="px-4 py-3">Device</th>
                           <th className="px-4 py-3">Result</th>
                           <th className="px-4 py-3">Last Checked</th>
                         </tr>
@@ -275,12 +311,12 @@ export const ClientReports: React.FC = () => {
                       <tbody className="divide-y divide-slate-100">
                         {snapshot.checks.map((check, i) => (
                           <tr key={i} className="hover:bg-slate-50/50">
-                            <td className="px-4 py-3 font-medium text-slate-900">{check.check_type}</td>
+                            <td className="px-4 py-3 font-medium text-slate-900">{humanCheckType(check.check_type)}</td>
                             <td className="px-4 py-3 text-slate-600">{check.hipaa_control || '-'}</td>
                             <td className="px-4 py-3 text-slate-600 font-mono text-xs">{check.hostname || '-'}</td>
                             <td className="px-4 py-3">
                               <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getResultBadge(check.result)}`}>
-                                {check.result}
+                                {check.result === 'pass' ? 'Passed' : check.result === 'fail' ? 'Failed' : check.result === 'warning' ? 'Warning' : check.result}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-slate-500">

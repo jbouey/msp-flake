@@ -107,7 +107,7 @@ APPLIANCE_TIERS = {
             "Unlimited endpoints",
             "Dedicated support channel",
             "Custom integrations",
-            "SLA guarantee",
+            "SLA commitment",
             "On-site deployment assistance",
             "Executive compliance dashboard",
         ],

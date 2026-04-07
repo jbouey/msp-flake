@@ -87,13 +87,13 @@ export type MetricKey = keyof typeof METRIC_TOOLTIPS;
 
 export const CATEGORY_TOOLTIPS = {
   patching: 'Are your systems receiving security updates? Unpatched systems are vulnerable to known exploits.',
-  firewall: 'Is your network firewall active and properly configured? Prevents unauthorized access.',
-  encryption: 'Is data encrypted on your devices? Protects patient data if a device is lost or stolen.',
+  firewall: 'Is your network firewall active and properly configured? Helps restrict unauthorized access.',
+  encryption: 'Is data encrypted on your devices? Reduces exposure if a device is lost or stolen.',
   backup: 'Are your systems being backed up? Required for disaster recovery.',
   logging: 'Are security events being recorded? Required for audit trails.',
-  access_control: 'Are user accounts and passwords properly managed? Prevents unauthorized access to patient data.',
-  antivirus: 'Is antivirus software active with current definitions? Protects against malware.',
-  services: 'Are critical system services running? Ensures infrastructure availability.',
+  access_control: 'Are user accounts and passwords properly managed? Monitors for unauthorized access to patient data.',
+  antivirus: 'Is antivirus software active with current definitions? Helps detect malware.',
+  services: 'Are critical system services running? Monitors infrastructure availability.',
 } as const;
 
 // =============================================================================
@@ -219,7 +219,7 @@ export const OPS_LABELS: Record<string, { title: string; tooltip: string; docsAn
 };
 
 export const AUDIT_BADGE_LABELS: Record<string, string> = {
-  green: 'Audit Ready',
+  green: 'Audit Supportive',
   yellow: 'Issues Found',
   red: 'Not Ready',
 };

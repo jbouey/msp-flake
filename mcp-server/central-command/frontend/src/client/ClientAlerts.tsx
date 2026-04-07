@@ -24,6 +24,17 @@ const ALERT_ICONS: Record<string, string> = {
   encryption_off: '\uD83D\uDD12',
   rogue_device: '\u2753',
   credential_needed: '\uD83D\uDD11',
+  backup_failed: '\uD83D\uDCBE',
+};
+
+const CLIENT_ALERT_LABELS: Record<string, string> = {
+  patch_available: 'Software Update Available',
+  firewall_off: 'Firewall Not Running',
+  encryption_off: 'Encryption Disabled',
+  service_stopped: 'Important Service Stopped',
+  credential_needed: 'Credentials Needed',
+  backup_failed: 'Backup Not Running',
+  rogue_device: 'Unknown Device Detected',
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -144,7 +155,7 @@ export const ClientAlerts: React.FC = () => {
                 {alert.severity}
               </span>
               <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">
-                {alert.alert_type.replace(/_/g, ' ')}
+                {CLIENT_ALERT_LABELS[alert.alert_type] || alert.alert_type.replace(/_/g, ' ')}
               </span>
             </div>
             <p className="text-sm font-medium text-slate-900">{alert.summary}</p>

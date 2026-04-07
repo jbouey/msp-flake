@@ -327,7 +327,7 @@ CONTROL_METADATA = {
         "plain_english": "Your systems get security updates quickly",
         "why_it_matters": "Hackers actively exploit known vulnerabilities within hours of public disclosure. Fast patching closes these windows.",
         "consequence": "Unpatched systems are the #1 way attackers breach healthcare organizations and access patient data.",
-        "what_we_check": "We track how quickly critical security patches are applied and ensure nothing falls through the cracks.",
+        "what_we_check": "We track how quickly critical security patches are applied and monitor for any gaps in coverage.",
         "severity": "critical",
         "hipaa": ["164.308(a)(5)(ii)(B)"],
         "hipaa_section": "Protection from Malicious Software"
@@ -355,9 +355,9 @@ CONTROL_METADATA = {
     "privileged_access": {
         "name": "Privileged Access Review",
         "plain_english": "Admin access is limited and reviewed",
-        "why_it_matters": "Admin accounts have the keys to everything. Regular reviews ensure only the right people have elevated access.",
+        "why_it_matters": "Admin accounts have the keys to everything. Regular reviews help verify only the right people have elevated access.",
         "consequence": "Unused admin accounts or over-provisioned access are prime targets for attackers.",
-        "what_we_check": "We track who has admin access, flag dormant accounts, and ensure access matches job responsibilities.",
+        "what_we_check": "We track who has admin access, flag dormant accounts, and monitor whether access matches job responsibilities.",
         "severity": "high",
         "hipaa": ["164.308(a)(3)(ii)(B)", "164.308(a)(4)(ii)(B)"],
         "hipaa_section": "Workforce Clearance / Access Authorization"
@@ -365,7 +365,7 @@ CONTROL_METADATA = {
     "git_protections": {
         "name": "Git Branch Protection",
         "plain_english": "Code changes require approval",
-        "why_it_matters": "Requiring code review before deployment prevents accidental bugs and malicious changes from reaching production.",
+        "why_it_matters": "Requiring code review before deployment helps detect accidental bugs and malicious changes before they reach production.",
         "consequence": "Unreviewed code changes could introduce security vulnerabilities or data leaks.",
         "what_we_check": "We verify that main branches require pull request approval before merging.",
         "severity": "medium",
@@ -377,7 +377,7 @@ CONTROL_METADATA = {
         "plain_english": "Passwords and API keys are managed securely",
         "why_it_matters": "Leaked credentials in code or old API keys are commonly exploited. Regular rotation limits damage from exposure.",
         "consequence": "A leaked API key could give attackers access to your cloud infrastructure and patient data.",
-        "what_we_check": "We scan for exposed secrets and track API key age to ensure regular rotation.",
+        "what_we_check": "We scan for exposed secrets and track API key age to monitor rotation practices.",
         "severity": "high",
         "hipaa": ["164.312(a)(2)(i)", "164.308(a)(4)(ii)(B)"],
         "hipaa_section": "Unique User Identification / Access Authorization"

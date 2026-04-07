@@ -1220,10 +1220,10 @@ class CompliancePacket:
 
 ## PHI-Free Architecture
 
-This monitoring infrastructure is designed so that **Protected Health Information (PHI) never
-leaves the practice premises**. All data is scrubbed of PHI at the on-premise appliance using
-14 pattern-matching rules before transmission to the monitoring platform. The central
-infrastructure is engineered to be PHI-free by design.
+This monitoring infrastructure is designed so that **Protected Health Information (PHI) is
+scrubbed before leaving the practice premises**. All data is processed through 14
+pattern-matching rules at the on-premise appliance before transmission to the monitoring
+platform. The central infrastructure is architected to minimize PHI exposure by design.
 
 **Implication:** Because no PHI is stored, transmitted, or processed by the monitoring platform,
 the traditional Business Associate Agreement (BAA) requirement under HIPAA §164.502(e) does not

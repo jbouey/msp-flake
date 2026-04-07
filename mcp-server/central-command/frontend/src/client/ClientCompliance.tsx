@@ -34,7 +34,7 @@ type ModuleTab = 'overview' | 'sra' | 'policies' | 'training' | 'baas' | 'ir-pla
 
 const MODULE_TIPS: Record<string, string> = {
   sra: 'Identifies risks to patient data so you can address them before they become problems.',
-  policies: 'Written rules your practice follows to protect patient information.',
+  policies: 'Written rules your practice follows to safeguard patient information.',
   training: 'Tracks whether staff have completed required HIPAA awareness training.',
   baas: 'Agreements with vendors who handle patient data on your behalf.',
   'ir-plan': 'Your plan for responding to a data breach or security incident.',

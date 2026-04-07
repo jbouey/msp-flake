@@ -233,21 +233,7 @@ export const ClientHealingLogs: React.FC = () => {
     }
   };
 
-  const getLevelBadge = (level: string | null) => {
-    const styles: Record<string, string> = {
-      L1: 'bg-ios-blue/10 text-ios-blue',
-      L2: 'bg-ios-purple/10 text-ios-purple',
-      L3: 'bg-ios-orange/10 text-ios-orange',
-    };
-    const key = level?.toUpperCase() || '';
-    return (
-      <span
-        className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${styles[key] || 'bg-fill-secondary text-label-tertiary'}`}
-      >
-        {level || '—'}
-      </span>
-    );
-  };
+  // getLevelBadge removed — L1/L2/L3 not meaningful for client portal users
 
   const getStatusBadge = (success: boolean) =>
     success ? (
@@ -255,14 +241,14 @@ export const ClientHealingLogs: React.FC = () => {
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
         </svg>
-        Healed
+        Fixed
       </span>
     ) : (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-health-critical/10 text-health-critical">
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
         </svg>
-        Failed
+        Needs Attention
       </span>
     );
 
@@ -316,7 +302,7 @@ export const ClientHealingLogs: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </Link>
-              <h1 className="text-lg font-semibold text-slate-900">Healing Activity</h1>
+              <h1 className="text-lg font-semibold text-slate-900">Automatic Fixes</h1>
             </div>
           </div>
         </div>
@@ -333,7 +319,7 @@ export const ClientHealingLogs: React.FC = () => {
                 : 'text-slate-500 hover:text-slate-700'
             }`}
           >
-            Healing Activity
+            Automatic Fix Activity
           </button>
           <button
             onClick={() => setActiveTab('candidates')}
@@ -343,7 +329,7 @@ export const ClientHealingLogs: React.FC = () => {
                 : 'text-slate-500 hover:text-slate-700'
             }`}
           >
-            Promotion Candidates
+            New Automatic Rules to Review
             {candidates.filter((c) => !c.client_endorsed && c.approval_status === 'not_submitted').length > 0 && (
               <span className="ml-2 px-1.5 py-0.5 text-xs bg-teal-100 text-teal-700 rounded-full">
                 {candidates.filter((c) => !c.client_endorsed && c.approval_status === 'not_submitted').length}
@@ -375,8 +361,8 @@ export const ClientHealingLogs: React.FC = () => {
                 <svg className="w-12 h-12 mx-auto mb-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
-                <p className="font-medium text-slate-600">No healing activity yet</p>
-                <p className="text-sm mt-1">Auto-healing logs will appear here as your systems are monitored.</p>
+                <p className="font-medium text-slate-600">No automatic fixes needed</p>
+                <p className="text-sm mt-1">Your systems have been stable. Any automatic fixes will appear here.</p>
               </div>
             ) : (
               <>
@@ -385,10 +371,10 @@ export const ClientHealingLogs: React.FC = () => {
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50/50">
                         <th className="text-left px-4 py-3 font-medium text-slate-600">Site</th>
-                        <th className="text-left px-4 py-3 font-medium text-slate-600">Hostname</th>
-                        <th className="text-left px-4 py-3 font-medium text-slate-600">Runbook</th>
+                        <th className="text-left px-4 py-3 font-medium text-slate-600">Device</th>
+                        <th className="text-left px-4 py-3 font-medium text-slate-600">Issue</th>
                         <th className="text-left px-4 py-3 font-medium text-slate-600">Status</th>
-                        <th className="text-left px-4 py-3 font-medium text-slate-600">Level</th>
+                        {/* Level column hidden — not meaningful for practice managers */}
                         <th className="text-left px-4 py-3 font-medium text-slate-600">Duration</th>
                         <th className="text-left px-4 py-3 font-medium text-slate-600">Time</th>
                       </tr>
@@ -405,12 +391,12 @@ export const ClientHealingLogs: React.FC = () => {
                           </td>
                           <td className="px-4 py-3 text-slate-700 text-sm">{log.hostname}</td>
                           <td className="px-4 py-3">
-                            <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded font-mono text-slate-700">
-                              {log.runbook_id}
-                            </code>
+                            <span className="text-sm text-slate-700">
+                              {formatCheckType(log.incident_type || log.runbook_id)}
+                            </span>
                           </td>
                           <td className="px-4 py-3">{getStatusBadge(log.success)}</td>
-                          <td className="px-4 py-3">{getLevelBadge(log.resolution_level)}</td>
+                          {/* Level cell hidden — not meaningful for practice managers */}
                           <td className="px-4 py-3 text-slate-600 text-sm tabular-nums">
                             {formatDuration(log.duration_seconds)}
                           </td>
@@ -471,9 +457,9 @@ export const ClientHealingLogs: React.FC = () => {
                 <svg className="w-12 h-12 mx-auto mb-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                 </svg>
-                <p className="font-medium text-slate-600">No promotion candidates</p>
+                <p className="font-medium text-slate-600">No new rules to review</p>
                 <p className="text-sm mt-1">
-                  Patterns that heal consistently will appear here for your review.
+                  When the system finds a fix that works consistently, it will appear here for your approval.
                 </p>
               </div>
             ) : (

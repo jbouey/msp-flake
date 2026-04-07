@@ -434,7 +434,7 @@ export const ClientDashboard: React.FC = () => {
           />
         )}
 
-        {/* Protect Your Devices — Agent Downloads */}
+        {/* Monitor Your Devices — Agent Downloads */}
         {agentInfo && agentInfo.sites.length > 0 && (
         <div className="mb-8 rounded-2xl overflow-hidden border-2 border-accent-primary/30" style={{ background: 'linear-gradient(135deg, rgba(20,168,158,0.06) 0%, rgba(60,188,180,0.03) 100%)' }}>
           <div className="p-6 sm:p-8">
@@ -446,7 +446,7 @@ export const ClientDashboard: React.FC = () => {
                   </svg>
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-label-primary">Protect Your Devices</h2>
+                  <h2 className="text-xl font-bold text-label-primary">Monitor Your Devices</h2>
                   <p className="text-label-secondary mt-1">
                     Install the OsirisCare agent on your Mac and Windows workstations for real-time HIPAA compliance monitoring.
                   </p>

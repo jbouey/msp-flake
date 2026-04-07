@@ -771,7 +771,7 @@ export const ClientSettings: React.FC = () => {
               <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 max-w-lg">
                 <h2 className="text-lg font-medium mb-4">Subscribe to OsirisCare</h2>
                 <p className="text-slate-500 mb-6">
-                  Get full access to compliance monitoring, evidence management, and audit-ready reports.
+                  Get full access to compliance monitoring, evidence management, and audit-supportive reports.
                 </p>
 
                 <div className="bg-slate-50 rounded-lg p-4 mb-6">

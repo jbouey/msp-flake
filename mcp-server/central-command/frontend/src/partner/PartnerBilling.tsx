@@ -368,7 +368,7 @@ export const PartnerBilling: React.FC = () => {
             /* No Subscription - Show Appliance Tiers */
             <div>
               <p className="text-slate-600 mb-2">
-                Deploy OsirisCare appliances for HIPAA compliance monitoring, operator-authorized remediation, and audit-ready evidence.
+                Deploy OsirisCare appliances for HIPAA compliance monitoring, operator-authorized remediation, and audit-supportive evidence.
               </p>
               <p className="text-sm text-slate-500 mb-6">
                 Per-appliance pricing • Each site/domain requires one appliance

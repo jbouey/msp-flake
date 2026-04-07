@@ -179,7 +179,7 @@ export const PartnerEscalations: React.FC = () => {
         postOptions({ escalated_by: l4EscalatedBy.trim(), notes: l4Notes.trim() })
       );
       if (res.ok) {
-        setSuccess('Ticket escalated to Central Command (L4)');
+        setSuccess('Ticket escalated to Central Command for critical review');
         setShowL4Modal(false);
         setL4EscalatedBy('');
         setL4Notes('');
@@ -284,7 +284,7 @@ export const PartnerEscalations: React.FC = () => {
     return (
       <div className="text-center py-12">
         <div className="w-8 h-8 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin mx-auto mb-3"></div>
-        <p className="text-sm text-slate-500">Loading escalation queue...</p>
+        <p className="text-sm text-slate-500">Loading review queue...</p>
       </div>
     );
   }
@@ -307,7 +307,7 @@ export const PartnerEscalations: React.FC = () => {
       {/* SLA Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Open<InfoTip text="Issues escalated to your team that need attention." /></p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Open<InfoTip text="Issues requiring manual review by your team." /></p>
           <p className="text-2xl font-bold text-health-critical tabular-nums">{counts?.open_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
@@ -358,10 +358,10 @@ export const PartnerEscalations: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-slate-900 mb-1">No escalations</h3>
+            <h3 className="text-lg font-medium text-slate-900 mb-1">No issues requiring review</h3>
             <p className="text-slate-500 text-sm">
               {statusFilter === 'all'
-                ? 'All clear — no L3 escalation tickets.'
+                ? 'All clear — no issues requiring manual review.'
                 : `No ${statusFilter} tickets.`}
             </p>
           </div>
@@ -503,9 +503,9 @@ export const PartnerEscalations: React.FC = () => {
                               <button
                                 onClick={() => { setSelectedTicket(ticket); setShowL4Modal(true); }}
                                 className="px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition"
-                                title="Recurring issue — escalate to Central Command"
+                                title="Recurring issue — escalate to Central Command for critical review"
                               >
-                                L4
+                                Escalate
                               </button>
                             )}
                           </div>
@@ -649,7 +649,7 @@ export const PartnerEscalations: React.FC = () => {
                 <p className="text-xs font-semibold text-amber-800 uppercase mb-1">Recurring Issue</p>
                 <p className="text-sm text-amber-700">
                   This issue has recurred {selectedTicket.recurrence_count} time{(selectedTicket.recurrence_count ?? 0) > 1 ? 's' : ''} after being resolved.
-                  Consider escalating to Central Command (L4) if it cannot be permanently resolved.
+                  Consider escalating to Central Command if it cannot be permanently resolved.
                 </p>
               </div>
             )}
@@ -676,7 +676,7 @@ export const PartnerEscalations: React.FC = () => {
                   onClick={() => setShowL4Modal(true)}
                   className="px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
                 >
-                  Escalate to L4
+                  Critical Escalation
                 </button>
               )}
               {selectedTicket.status === 'escalated_to_l4' && (
@@ -777,12 +777,12 @@ export const PartnerEscalations: React.FC = () => {
           </div>
         </div>
       )}
-      {/* L4 Escalation Modal */}
+      {/* Critical Escalation Modal */}
       {showL4Modal && selectedTicket && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
             <h3 className="text-lg font-semibold text-slate-900 mb-1">Escalate to Central Command</h3>
-            <p className="text-sm text-purple-600 font-medium mb-2">L4 Escalation</p>
+            <p className="text-sm text-purple-600 font-medium mb-2">Critical Escalation</p>
             <p className="text-sm text-slate-500 mb-4">{selectedTicket.title}</p>
             {(selectedTicket.recurrence_count ?? 0) > 0 && (
               <div className="bg-amber-50 rounded-lg p-2.5 mb-4">
@@ -826,7 +826,7 @@ export const PartnerEscalations: React.FC = () => {
                 disabled={submitting || !l4EscalatedBy.trim() || !l4Notes.trim()}
                 className="px-4 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 transition"
               >
-                {submitting ? 'Escalating...' : 'Escalate to L4'}
+                {submitting ? 'Escalating...' : 'Escalate to Central Command'}
               </button>
             </div>
           </div>

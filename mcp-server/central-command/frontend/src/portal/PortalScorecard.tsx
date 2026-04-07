@@ -166,9 +166,9 @@ const HeroScore: React.FC<{ site: PortalSite; kpis: PortalKPIs; generatedAt: str
 const CARD_GROUPS = [
   {
     title: 'Your Data Protection',
-    tip: 'Is data encrypted on your devices? Protects patient data if a device is lost or stolen.',
+    tip: 'Is data encrypted on your devices? Reduces exposure if a device is lost or stolen.',
     ids: ['endpoint_drift', 'storage_posture'],
-    fallbackText: 'Your systems are configured to protect data at rest and in transit.',
+    fallbackText: 'Your systems are monitored for data-at-rest and in-transit encryption.',
     icon: (
       <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
@@ -189,7 +189,7 @@ const CARD_GROUPS = [
   },
   {
     title: 'Your System Security',
-    tip: 'Are your systems receiving security updates and properly configured? Prevents known vulnerabilities.',
+    tip: 'Are your systems receiving security updates and properly configured? Monitors for known vulnerabilities.',
     ids: ['patch_freshness', 'secrets_hygiene', 'git_protections'],
     fallbackText: 'Monitoring indicates patches applied, access controls configured, and encryption enabled. These are point-in-time observations.',
     icon: (
@@ -200,7 +200,7 @@ const CARD_GROUPS = [
   },
   {
     title: 'Your Access Controls',
-    tip: 'Are user accounts and passwords properly managed? Prevents unauthorized access to patient data.',
+    tip: 'Are user accounts and passwords properly managed? Monitors for unauthorized access to patient data.',
     ids: ['mfa_coverage', 'privileged_access'],
     fallbackText: 'User authentication and privileged access are monitored and enforced.',
     icon: (

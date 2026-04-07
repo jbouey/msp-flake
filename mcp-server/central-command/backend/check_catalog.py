@@ -35,7 +35,7 @@ CHECK_CATALOG = [
     {
         "check_type": "windows_update",
         "name": "Windows Update Service",
-        "description": "Verifies the Windows Update service (wuauserv) is running to ensure patches can be applied",
+        "description": "Verifies the Windows Update service (wuauserv) is running so patches can be applied",
         "platform": "windows",
         "hipaa_controls": ["164.308(a)(5)(ii)(A)"],
         "pass_criteria": "wuauserv service status is Running",
@@ -89,7 +89,7 @@ CHECK_CATALOG = [
     {
         "check_type": "smb_signing",
         "name": "SMB Signing",
-        "description": "Verifies SMB packet signing is required to prevent man-in-the-middle attacks on file shares",
+        "description": "Verifies SMB packet signing is required to help detect man-in-the-middle attacks on file shares",
         "platform": "windows",
         "hipaa_controls": ["164.312(e)(2)(ii)"],
         "pass_criteria": "RequireSecuritySignature is True on SMB server configuration",
@@ -98,7 +98,7 @@ CHECK_CATALOG = [
     {
         "check_type": "smb1_protocol",
         "name": "SMB1 Protocol",
-        "description": "Verifies the legacy SMBv1 protocol is disabled to prevent exploitation via known vulnerabilities (EternalBlue, WannaCry)",
+        "description": "Verifies the legacy SMBv1 protocol is disabled to reduce exposure to known vulnerabilities (EternalBlue, WannaCry)",
         "platform": "windows",
         "hipaa_controls": ["164.312(e)(1)"],
         "pass_criteria": "SMB1 protocol disabled",
@@ -161,7 +161,7 @@ CHECK_CATALOG = [
     {
         "check_type": "guest_account",
         "name": "Guest Account",
-        "description": "Verifies the built-in Guest account is disabled to prevent unauthorized anonymous access",
+        "description": "Verifies the built-in Guest account is disabled to reduce unauthorized anonymous access risk",
         "platform": "windows",
         "hipaa_controls": ["164.312(a)(1)"],
         "pass_criteria": "Guest account is Disabled",
@@ -455,7 +455,7 @@ CHECK_CATALOG = [
     {
         "check_type": "macos_sip",
         "name": "System Integrity Protection",
-        "description": "Verifies macOS System Integrity Protection (SIP) is enabled to prevent unauthorized modification of protected system files and processes",
+        "description": "Verifies macOS System Integrity Protection (SIP) is enabled to monitor for unauthorized modification of system files and processes",
         "platform": "macos",
         "hipaa_controls": ["164.312(a)(1)"],
         "pass_criteria": "SIP status is enabled",

@@ -311,7 +311,7 @@ export const LandingPage: React.FC = () => {
               <p className="text-sm text-slate-500 leading-relaxed font-body">
                 Cryptographically signed evidence bundles with blockchain
                 timestamps. Compliance monitoring summaries generated from
-                continuous observation. Audit-ready documentation available
+                continuous observation. Audit-supportive documentation available
                 on demand — not assembled under pressure before a review.
               </p>
             </div>
@@ -542,7 +542,7 @@ export const LandingPage: React.FC = () => {
             Ready to simplify compliance?
           </h2>
           <p className="text-lg text-slate-500 max-w-2xl mx-auto mb-10 font-body font-light">
-            See how OsirisCare can protect your practice in 30 minutes.
+            See how OsirisCare can monitor your practice in 30 minutes.
             No commitment, no sales pitch — just a walkthrough of what automated
             compliance monitoring looks like for your environment.
           </p>
