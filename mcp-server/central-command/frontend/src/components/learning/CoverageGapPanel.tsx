@@ -1,6 +1,7 @@
 import React from 'react';
 import { GlassCard } from '../shared';
 import type { CoverageGap } from '../../types';
+import { CHECK_TYPE_LABELS } from '../../types';
 
 interface CoverageGapPanelProps {
   gaps: CoverageGap[];
@@ -70,7 +71,7 @@ export const CoverageGapPanel: React.FC<CoverageGapPanelProps> = ({
                 key={gap.check_type}
                 className="flex items-center justify-between py-1.5 px-3 bg-health-critical/5 rounded-ios-sm"
               >
-                <span className="font-mono text-xs text-label-primary">{gap.check_type}</span>
+                <span className="text-xs font-medium text-label-primary">{CHECK_TYPE_LABELS[gap.check_type] || gap.check_type.replace(/_/g, ' ')}</span>
                 <span className="text-xs text-label-tertiary tabular-nums">
                   {gap.incident_count_30d} incidents/30d
                 </span>
@@ -89,9 +90,9 @@ export const CoverageGapPanel: React.FC<CoverageGapPanelProps> = ({
             {covered.map((gap) => (
               <span
                 key={gap.check_type}
-                className="px-2 py-0.5 text-xs font-mono bg-health-healthy/10 text-health-healthy rounded"
+                className="px-2 py-0.5 text-xs bg-health-healthy/10 text-health-healthy rounded"
               >
-                {gap.check_type}
+                {CHECK_TYPE_LABELS[gap.check_type] || gap.check_type.replace(/_/g, ' ')}
               </span>
             ))}
           </div>
