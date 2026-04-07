@@ -35,7 +35,9 @@ sys.modules["fastapi"].Depends = lambda x: x
 _sa_mod = sys.modules.setdefault("sqlalchemy", types.ModuleType("sqlalchemy"))
 _sa_mod.text = lambda x: x
 _sa_async = sys.modules.setdefault("sqlalchemy.ext.asyncio", types.ModuleType("sqlalchemy.ext.asyncio"))
+_sa_async.create_async_engine = MagicMock()
 _sa_async.AsyncSession = object
+_sa_async.async_sessionmaker = MagicMock()
 
 import auth
 from auth import hash_password
