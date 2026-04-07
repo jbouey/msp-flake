@@ -43,96 +43,54 @@ const complianceLabels: Record<string, string> = {
  * Device summary card
  */
 const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
-  const rate = summary.compliance_rate ?? 0;
-  const rateColor = rate >= 80 ? 'text-health-healthy' :
-                    rate >= 50 ? 'text-health-warning' : 'text-health-critical';
-
-  const coveragePct = summary.network_coverage_pct ?? 0;
-  const coverageColor = coveragePct >= 90 ? 'text-emerald-400' :
-                        coveragePct >= 70 ? 'text-yellow-400' : 'text-red-400';
-  const unmanagedCount = summary.unmanaged_device_count ?? 0;
+  const compliant = summary.by_compliance?.compliant ?? 0;
+  const failing = summary.by_compliance?.drifted ?? 0;
+  const managed = compliant + failing;
+  const unknown = summary.by_compliance?.unknown ?? 0;
+  const managedRate = managed > 0 ? Math.round(compliant / managed * 100) : 0;
+  const managedRateColor = managedRate >= 80 ? 'text-health-healthy' :
+                           managedRate >= 50 ? 'text-health-warning' : 'text-health-critical';
 
   return (
     <GlassCard className="p-6 mb-6">
-      <h2 className="text-lg font-semibold text-label-primary mb-4">Device Inventory Summary</h2>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-        {/* Overall compliance */}
-        <div className="text-center">
-          <div className={`text-3xl font-bold ${rateColor}`}>
-            {rate.toFixed(0)}%
-          </div>
-          <div className="text-sm text-label-secondary">Compliance</div>
-        </div>
-
-        {/* Network Coverage */}
-        <div className="text-center">
-          <div className={`text-3xl font-bold ${coverageColor}`}>
-            {coveragePct.toFixed(0)}%
-          </div>
-          <div className="text-sm text-label-secondary">Coverage</div>
-          {unmanagedCount > 0 && (
-            <div className="text-xs text-label-tertiary mt-0.5">
-              {unmanagedCount} unmanaged
-            </div>
-          )}
-        </div>
-
-        {/* Total devices */}
-        <div className="text-center">
-          <div className="text-3xl font-bold text-label-primary">
-            {summary.total_devices}
-          </div>
-          <div className="text-sm text-label-secondary">Total</div>
-        </div>
-
-        {/* Compliant */}
-        <div className="text-center">
-          <div className="text-3xl font-bold text-health-healthy">
-            {summary.by_compliance?.compliant ?? 0}
-          </div>
-          <div className="text-sm text-label-secondary">Compliant</div>
-        </div>
-
-        {/* Failing */}
-        <div className="text-center">
-          <div className="text-3xl font-bold text-orange-500">
-            {summary.by_compliance?.drifted ?? 0}
-          </div>
-          <div className="text-sm text-label-secondary">Failing</div>
-        </div>
-
-        {/* Unknown */}
-        <div className="text-center">
-          <div className="text-3xl font-bold text-slate-400">
-            {summary.by_compliance?.unknown ?? 0}
-          </div>
-          <div className="text-sm text-label-secondary">Unknown</div>
-        </div>
-
-        {/* Medical */}
-        <div className="text-center">
-          <div className="text-3xl font-bold text-red-400">
-            {summary.medical_devices?.total ?? 0}
-          </div>
-          <div className="text-sm text-label-secondary">Medical</div>
-        </div>
-
-        {/* Agent Coverage */}
-        {summary.coverage && (
+      {/* Managed Fleet — the compliance story */}
+      <div className="mb-6">
+        <h2 className="text-lg font-semibold text-label-primary mb-4">Managed Fleet</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="text-center">
-            <div className="text-3xl font-bold text-emerald-400">
-              {summary.coverage.agents_enrolled}
+            <div className={`text-3xl font-bold ${managedRateColor}`}>
+              {managedRate}%
             </div>
-            <div className="text-sm text-label-secondary">Agents</div>
+            <div className="text-sm text-label-secondary">Compliance Rate</div>
           </div>
-        )}
+          <div className="text-center">
+            <div className="text-3xl font-bold text-label-primary">
+              {managed}
+            </div>
+            <div className="text-sm text-label-secondary">Scanned</div>
+          </div>
+          <div className="text-center">
+            <div className="text-3xl font-bold text-health-healthy">
+              {compliant}
+            </div>
+            <div className="text-sm text-label-secondary">Passing</div>
+          </div>
+          <div className="text-center">
+            <div className="text-3xl font-bold text-orange-500">
+              {failing}
+            </div>
+            <div className="text-sm text-label-secondary">Failing</div>
+          </div>
+        </div>
       </div>
 
-      {/* Device type breakdown */}
-      <div className="mt-6 pt-4 border-t border-glass-border">
-        <h3 className="text-sm font-medium text-label-secondary mb-3">Devices by Type</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Network Discovery — context */}
+      <div className="pt-4 border-t border-glass-border">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium text-label-secondary">Network Discovery</h3>
+          <span className="text-xs text-label-tertiary">{summary.total_devices} devices found on subnet</span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <div className="rounded-lg p-3 bg-blue-500/10 border border-blue-500/30 text-center">
             <div className="text-sm font-medium text-blue-400">Workstations</div>
             <div className="text-2xl font-bold text-label-primary">{summary.by_type?.workstations ?? 0}</div>
@@ -149,17 +107,28 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
             <div className="text-sm font-medium text-slate-400">Printers</div>
             <div className="text-2xl font-bold text-label-primary">{summary.by_type?.printers ?? 0}</div>
           </div>
+          <div className="rounded-lg p-3 bg-slate-500/10 border border-slate-500/20 text-center">
+            <div className="text-sm font-medium text-slate-500">Unscanned</div>
+            <div className="text-2xl font-bold text-slate-400">{unknown}</div>
+          </div>
         </div>
+        {summary.coverage && summary.coverage.agents_enrolled > 0 && (
+          <div className="mt-3 text-xs text-label-tertiary">
+            {summary.coverage.agents_enrolled} agent{summary.coverage.agents_enrolled !== 1 ? 's' : ''} deployed
+          </div>
+        )}
       </div>
 
       {/* Medical device notice */}
       {(summary.medical_devices?.total ?? 0) > 0 && (
         <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
           <div className="flex items-center gap-2">
-            <span className="text-lg">⚠️</span>
+            <svg className="w-5 h-5 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
             <div className="text-sm text-red-400">
-              <strong>{summary.medical_devices?.total ?? 0} medical device(s) detected</strong> - Excluded from compliance scanning by default for patient safety.
-              {summary.medical_devices?.excluded_by_default && ' Manual opt-in required for monitoring.'}
+              <strong>{summary.medical_devices?.total ?? 0} medical device(s) detected</strong> — excluded from compliance scanning for patient safety.
+              {summary.medical_devices?.excluded_by_default && ' Manual opt-in required.'}
             </div>
           </div>
         </div>

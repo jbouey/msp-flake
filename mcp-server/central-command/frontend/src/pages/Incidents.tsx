@@ -427,7 +427,7 @@ export const Incidents: React.FC = () => {
         <div>
           <h1 className="text-xl font-semibold text-label-primary tracking-tight">Incidents</h1>
           <p className="text-sm text-label-tertiary mt-0.5">
-            MSP triage view
+            Monitor and resolve configuration issues across your fleet
             {selectedSiteId ? ` — ${sites.find(s => s.site_id === selectedSiteId)?.clinic_name || selectedSiteId}` : ''}
             {selectedHostname ? ` on ${selectedHostname}` : ''}
           </p>
@@ -482,7 +482,7 @@ export const Incidents: React.FC = () => {
               <option value="">All Sites</option>
               {sites.map(site => (
                 <option key={site.site_id} value={site.site_id}>
-                  {site.clinic_name} ({site.site_id})
+                  {site.clinic_name}
                 </option>
               ))}
             </select>

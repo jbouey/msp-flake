@@ -29,6 +29,11 @@ for mod_name in (
     if mod_name not in sys.modules:
         sys.modules[mod_name] = types.ModuleType(mod_name)
 
+# SQLAlchemy async stubs required by shared.py imports
+sys.modules["sqlalchemy.ext.asyncio"].create_async_engine = lambda *a, **kw: None
+sys.modules["sqlalchemy.ext.asyncio"].AsyncSession = object
+sys.modules["sqlalchemy.ext.asyncio"].async_sessionmaker = lambda *a, **kw: None
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 _email_mod = sys.modules["dashboard_api.email_alerts"]

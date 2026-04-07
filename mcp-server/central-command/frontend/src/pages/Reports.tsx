@@ -73,9 +73,9 @@ const ScoreGauge: React.FC<{ score: number | null }> = ({ score }) => {
   const status = getScoreStatus(score);
   if (score === null) {
     return (
-      <div className="flex flex-col items-center">
-        <span className="text-4xl font-bold font-display text-label-tertiary">--</span>
-        <span className="text-sm text-label-tertiary">No Data</span>
+      <div className="flex flex-col items-center opacity-40">
+        <span className="text-4xl font-bold font-display text-label-tertiary">N/A</span>
+        <span className="text-sm text-label-tertiary">Insufficient Data</span>
       </div>
     );
   }
@@ -331,9 +331,11 @@ export const Reports: React.FC = () => {
       {!report && !isLoading && !error && (
         <div className="flex flex-col items-center justify-center py-16 text-center print:hidden">
           <DocumentIcon className="w-12 h-12 text-label-tertiary mb-4" />
-          <h2 className="text-lg font-semibold text-label-primary mb-1">No Report Generated</h2>
+          <h2 className="text-lg font-semibold text-label-primary mb-1">Generate a Compliance Report</h2>
           <p className="text-label-tertiary text-sm max-w-md">
-            Select a site and month above, then click Generate to create a compliance report.
+            {sites.length > 0
+              ? `Select a site from the ${sites.length} available above, choose a reporting month, and click Generate.`
+              : 'No sites available. Add a site first to generate compliance reports.'}
           </p>
         </div>
       )}

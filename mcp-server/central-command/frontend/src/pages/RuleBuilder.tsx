@@ -137,7 +137,10 @@ export const RuleBuilder: React.FC = () => {
 
   const getIncidentTypeFromPattern = (pattern: Record<string, unknown>): string => {
     if (pattern.incident_type) return String(pattern.incident_type);
-    return JSON.stringify(pattern);
+    // Friendlier fallback: try to extract a meaningful key, otherwise "Custom pattern"
+    const keys = Object.keys(pattern);
+    if (keys.length === 1) return `${keys[0]}: ${String(pattern[keys[0]])}`;
+    return 'Custom pattern';
   };
 
   const getSourceBadge = (source: string) => {
@@ -354,12 +357,10 @@ export const RuleBuilder: React.FC = () => {
                             m.severity === 'high' ? 'bg-health-warning/10 text-health-warning' :
                             'bg-label-tertiary/10 text-label-tertiary'
                           }`}>
-                            {m.severity}
+                            {m.severity || '-'}
                           </span>
-                          <span className="text-label-primary">{m.incident_type}</span>
-                          {m.hostname && (
-                            <span className="text-label-tertiary text-xs">{m.hostname}</span>
-                          )}
+                          <span className="text-label-primary">{m.incident_type || '-'}</span>
+                          <span className="text-label-tertiary text-xs">{m.hostname || '-'}</span>
                         </div>
                         <span className="text-xs text-label-tertiary">
                           {new Date(m.created_at).toLocaleDateString()}
@@ -482,7 +483,7 @@ export const RuleBuilder: React.FC = () => {
 
                     {/* Rule ID */}
                     <td className="py-3 px-4">
-                      <span className="font-mono text-xs text-label-primary">{rule.rule_id}</span>
+                      <span className="font-mono text-xs text-label-tertiary">{rule.rule_id}</span>
                     </td>
 
                     {/* Incident Type */}
@@ -497,7 +498,7 @@ export const RuleBuilder: React.FC = () => {
                       <div>
                         <span className="text-label-primary">{rule.runbook_name || rule.runbook_id}</span>
                         {rule.runbook_name && (
-                          <span className="block text-xs text-label-tertiary font-mono">{rule.runbook_id}</span>
+                          <span className="block text-xs text-label-tertiary">{rule.runbook_id}</span>
                         )}
                       </div>
                     </td>

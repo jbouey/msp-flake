@@ -284,6 +284,10 @@ const PartnerDetailView: React.FC<{
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
 
+  // Inline feedback (replaces alert() calls)
+  const [feedback, setFeedback] = useState<{type: 'success' | 'error'; message: string} | null>(null);
+  const [apiKeyDisplay, setApiKeyDisplay] = useState<string | null>(null);
+
   const fetchDetail = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -345,12 +349,16 @@ const PartnerDetailView: React.FC<{
         setIsEditing(false);
         fetchDetail();
         onRefreshList();
+        setFeedback({ type: 'success', message: 'Partner updated successfully' });
+        setTimeout(() => setFeedback(null), 3000);
       } else {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-        alert(`Failed to update: ${err.detail}`);
+        setFeedback({ type: 'error', message: `Failed to update: ${err.detail}` });
+        setTimeout(() => setFeedback(null), 5000);
       }
     } catch {
-      alert('Failed to update partner');
+      setFeedback({ type: 'error', message: 'Failed to update partner' });
+      setTimeout(() => setFeedback(null), 5000);
     } finally {
       setIsSaving(false);
     }
@@ -369,10 +377,12 @@ const PartnerDetailView: React.FC<{
         onBack();
       } else {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-        alert(`Failed to delete: ${err.detail}`);
+        setFeedback({ type: 'error', message: `Failed to delete: ${err.detail}` });
+        setTimeout(() => setFeedback(null), 5000);
       }
     } catch {
-      alert('Failed to delete partner');
+      setFeedback({ type: 'error', message: 'Failed to delete partner' });
+      setTimeout(() => setFeedback(null), 5000);
     }
   };
 
@@ -388,13 +398,17 @@ const PartnerDetailView: React.FC<{
         const data = await res.json();
         if (data.api_key) {
           await navigator.clipboard.writeText(data.api_key).catch(() => {});
-          alert(`New API Key (copied to clipboard):\n\n${data.api_key}\n\nSave this now.`);
+          setApiKeyDisplay(data.api_key);
+          setFeedback({ type: 'success', message: 'API key regenerated and copied to clipboard' });
+          setTimeout(() => setFeedback(null), 3000);
         }
       } else {
-        alert('Failed to regenerate API key');
+        setFeedback({ type: 'error', message: 'Failed to regenerate API key' });
+        setTimeout(() => setFeedback(null), 5000);
       }
     } catch {
-      alert('Failed to regenerate API key');
+      setFeedback({ type: 'error', message: 'Failed to regenerate API key' });
+      setTimeout(() => setFeedback(null), 5000);
     }
   };
 
@@ -458,6 +472,40 @@ const PartnerDetailView: React.FC<{
           </button>
         </div>
       </div>
+
+      {/* Inline feedback banner */}
+      {feedback && (
+        <div className={`p-3 rounded-lg text-sm flex items-center justify-between ${
+          feedback.type === 'success'
+            ? 'bg-health-healthy/20 text-health-healthy'
+            : 'bg-health-critical/20 text-health-critical'
+        }`}>
+          <span>{feedback.message}</span>
+          <button onClick={() => setFeedback(null)} className="ml-3 opacity-70 hover:opacity-100">&times;</button>
+        </div>
+      )}
+
+      {/* API key display (shown after regeneration) */}
+      {apiKeyDisplay && (
+        <div className="p-4 rounded-lg bg-accent-primary/10 border border-accent-primary/30 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-label-primary">New API Key</span>
+            <button onClick={() => setApiKeyDisplay(null)} className="text-label-tertiary hover:text-label-primary text-sm">&times;</button>
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 px-3 py-2 rounded bg-fill-secondary text-label-primary text-sm font-mono break-all select-all">
+              {apiKeyDisplay}
+            </code>
+            <button
+              onClick={() => { navigator.clipboard.writeText(apiKeyDisplay).catch(() => {}); }}
+              className="px-3 py-2 rounded-ios-sm bg-accent-primary text-white text-sm hover:bg-accent-primary/90 transition-colors flex-shrink-0"
+            >
+              Copy
+            </button>
+          </div>
+          <p className="text-xs text-label-tertiary">Save this key now. It will not be shown again after you navigate away.</p>
+        </div>
+      )}
 
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -932,6 +980,10 @@ export const Partners: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [processingApproval, setProcessingApproval] = useState<string | null>(null);
 
+  // Inline feedback (replaces alert() calls)
+  const [feedback, setFeedback] = useState<{type: 'success' | 'error'; message: string} | null>(null);
+  const [newPartnerApiKey, setNewPartnerApiKey] = useState<string | null>(null);
+
   // Pagination & search state
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -1038,12 +1090,16 @@ export const Partners: React.FC = () => {
       if (response.ok) {
         setShowOAuthSettings(false);
         fetchOAuthConfig();
+        setFeedback({ type: 'success', message: 'OAuth settings saved successfully' });
+        setTimeout(() => setFeedback(null), 3000);
       } else {
         const error = await response.json();
-        alert(`Failed to save OAuth settings: ${error.detail || 'Unknown error'}`);
+        setFeedback({ type: 'error', message: `Failed to save OAuth settings: ${error.detail || 'Unknown error'}` });
+        setTimeout(() => setFeedback(null), 5000);
       }
     } catch {
-      alert('Failed to save OAuth settings');
+      setFeedback({ type: 'error', message: 'Failed to save OAuth settings' });
+      setTimeout(() => setFeedback(null), 5000);
     } finally {
       setSavingOAuth(false);
     }
@@ -1058,12 +1114,16 @@ export const Partners: React.FC = () => {
       if (response.ok) {
         fetchPendingPartners();
         fetchPartners();
+        setFeedback({ type: 'success', message: 'Partner approved successfully' });
+        setTimeout(() => setFeedback(null), 3000);
       } else {
         const error = await response.json();
-        alert(`Failed to approve partner: ${error.detail || 'Unknown error'}`);
+        setFeedback({ type: 'error', message: `Failed to approve partner: ${error.detail || 'Unknown error'}` });
+        setTimeout(() => setFeedback(null), 5000);
       }
     } catch {
-      alert('Failed to approve partner');
+      setFeedback({ type: 'error', message: 'Failed to approve partner' });
+      setTimeout(() => setFeedback(null), 5000);
     } finally {
       setProcessingApproval(null);
     }
@@ -1078,12 +1138,16 @@ export const Partners: React.FC = () => {
       });
       if (response.ok) {
         fetchPendingPartners();
+        setFeedback({ type: 'success', message: 'Partner rejected' });
+        setTimeout(() => setFeedback(null), 3000);
       } else {
         const error = await response.json();
-        alert(`Failed to reject partner: ${error.detail || 'Unknown error'}`);
+        setFeedback({ type: 'error', message: `Failed to reject partner: ${error.detail || 'Unknown error'}` });
+        setTimeout(() => setFeedback(null), 5000);
       }
     } catch {
-      alert('Failed to reject partner');
+      setFeedback({ type: 'error', message: 'Failed to reject partner' });
+      setTimeout(() => setFeedback(null), 5000);
     } finally {
       setProcessingApproval(null);
     }
@@ -1106,14 +1170,19 @@ export const Partners: React.FC = () => {
         setShowNewPartnerModal(false);
         fetchPartners();
         if (result.api_key) {
-          alert(`Partner created!\n\nAPI Key (copy now, won't be shown again):\n${result.api_key}`);
+          setNewPartnerApiKey(result.api_key);
+          await navigator.clipboard.writeText(result.api_key).catch(() => {});
         }
+        setFeedback({ type: 'success', message: 'Partner created successfully' });
+        setTimeout(() => setFeedback(null), 3000);
       } else {
         const error = await response.json();
-        alert(`Failed to create partner: ${error.detail || 'Unknown error'}`);
+        setFeedback({ type: 'error', message: `Failed to create partner: ${error.detail || 'Unknown error'}` });
+        setTimeout(() => setFeedback(null), 5000);
       }
     } catch {
-      alert('Failed to create partner');
+      setFeedback({ type: 'error', message: 'Failed to create partner' });
+      setTimeout(() => setFeedback(null), 5000);
     } finally {
       setIsCreating(false);
     }
@@ -1159,6 +1228,40 @@ export const Partners: React.FC = () => {
           <button onClick={() => setShowNewPartnerModal(true)} className="btn-primary">+ New Partner</button>
         )}
       </div>
+
+      {/* Inline feedback banner */}
+      {feedback && (
+        <div className={`p-3 rounded-lg text-sm flex items-center justify-between ${
+          feedback.type === 'success'
+            ? 'bg-health-healthy/20 text-health-healthy'
+            : 'bg-health-critical/20 text-health-critical'
+        }`}>
+          <span>{feedback.message}</span>
+          <button onClick={() => setFeedback(null)} className="ml-3 opacity-70 hover:opacity-100">&times;</button>
+        </div>
+      )}
+
+      {/* API key display (shown after partner creation) */}
+      {newPartnerApiKey && (
+        <div className="p-4 rounded-lg bg-accent-primary/10 border border-accent-primary/30 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-label-primary">New Partner API Key</span>
+            <button onClick={() => setNewPartnerApiKey(null)} className="text-label-tertiary hover:text-label-primary text-sm">&times;</button>
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 px-3 py-2 rounded bg-fill-secondary text-label-primary text-sm font-mono break-all select-all">
+              {newPartnerApiKey}
+            </code>
+            <button
+              onClick={() => { navigator.clipboard.writeText(newPartnerApiKey).catch(() => {}); }}
+              className="px-3 py-2 rounded-ios-sm bg-accent-primary text-white text-sm hover:bg-accent-primary/90 transition-colors flex-shrink-0"
+            >
+              Copy
+            </button>
+          </div>
+          <p className="text-xs text-label-tertiary">Save this key now. It will not be shown again after you navigate away.</p>
+        </div>
+      )}
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-separator-light">

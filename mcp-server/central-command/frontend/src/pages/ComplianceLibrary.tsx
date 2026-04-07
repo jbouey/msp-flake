@@ -131,7 +131,7 @@ function CoverageMatrix({
             {frameworks.map((fw) => (
               <th key={fw.framework} className="text-center py-2 px-2 text-label-tertiary font-medium whitespace-nowrap">
                 <div className="max-w-[80px] truncate" title={fw.display_name}>
-                  {fw.display_name.length > 12 ? fw.framework.toUpperCase().replace(/_/g, ' ') : fw.display_name}
+                  {fw.display_name}
                 </div>
               </th>
             ))}

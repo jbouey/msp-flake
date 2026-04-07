@@ -20,7 +20,7 @@ const FleetStatusBadge: React.FC<{ status: string }> = ({ status }) => {
 
   return (
     <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${colors[status] || colors.pending}`}>
-      {status.replace('_', ' ')}
+      {status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
     </span>
   );
 };

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge, ActionDropdown, EmptyState, OnboardingChecklist } from '../components/shared';
 import type { ActionItem } from '../components/shared';
 import { StatusBadge } from '../components/composed';
@@ -224,9 +224,10 @@ const ApplianceCard: React.FC<{
             <button
               onClick={() => setShowUpdateModal(true)}
               disabled={isLoading}
-              className="px-3 py-1.5 text-xs rounded-ios bg-gradient-to-r from-blue-600 to-purple-500 hover:from-blue-700 hover:to-purple-600 text-white font-medium disabled:opacity-50 transition-all shadow-sm animate-pulse"
+              className="px-3 py-1.5 text-xs rounded-ios bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-medium disabled:opacity-50 transition-all shadow-sm"
             >
-              Push Update ({appliance.agent_version} &rarr; {latestVersion})
+              <span className="inline-block w-1.5 h-1.5 bg-white rounded-full mr-1.5 align-middle" />
+              Update Available ({appliance.agent_version} &rarr; {latestVersion || 'Unknown'})
             </button>
           )}
         </div>
@@ -283,14 +284,8 @@ const ApplianceCard: React.FC<{
             <p className="text-label-secondary text-sm mb-4">
               Update <strong>{appliance.hostname || appliance.appliance_id}</strong> from version{' '}
               <code className="bg-fill-secondary px-1 rounded">{appliance.agent_version || 'unknown'}</code> to{' '}
-              <code className="bg-fill-secondary px-1 rounded">{latestVersion}</code>
+              <code className="bg-fill-secondary px-1 rounded">{latestVersion || 'Unknown'}</code>
             </p>
-            <div className="bg-fill-secondary rounded-ios p-3 mb-4 text-sm">
-              <p className="text-label-tertiary mb-1">Package URL:</p>
-              <p className="text-label-primary font-mono text-xs break-all">
-                {AGENT_PACKAGE_BASE_URL}/compliance_agent-{latestVersion}.tar.gz
-              </p>
-            </div>
             <div className="flex gap-3">
               <button
                 onClick={() => setShowUpdateModal(false)}
@@ -1115,6 +1110,7 @@ export const SiteDetail: React.FC = () => {
   const [showMoveApplianceModal, setShowMoveApplianceModal] = useState<string | null>(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showDecommissionModal, setShowDecommissionModal] = useState(false);
+  const queryClient = useQueryClient();
   const { data: site, isLoading, error } = useSite(siteId || null);
   const { data: fleetStats } = useQuery<FleetStats>({
     queryKey: ['fleet-stats'],
@@ -1285,8 +1281,7 @@ export const SiteDetail: React.FC = () => {
       if (res.ok) {
         showToast('Appliance moved successfully', 'success');
         setShowMoveApplianceModal(null);
-        // Refresh page
-        window.location.reload();
+        queryClient.invalidateQueries({ queryKey: ['site', siteId] });
       } else {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         showToast(`Failed to move appliance: ${err.detail}`, 'error');
@@ -1443,7 +1438,7 @@ export const SiteDetail: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            Drift Config
+            Check Config
           </Link>
           <div className="w-px h-5 bg-separator-medium mx-0.5 flex-shrink-0" />
           <Link
@@ -1779,7 +1774,7 @@ export const SiteDetail: React.FC = () => {
         <EditSiteModal
           site={site}
           onClose={() => setShowEditSiteModal(false)}
-          onSaved={() => { setShowEditSiteModal(false); window.location.reload(); }}
+          onSaved={() => { setShowEditSiteModal(false); queryClient.invalidateQueries({ queryKey: ['site', siteId] }); }}
           showToast={showToast}
         />
       )}
@@ -1802,7 +1797,7 @@ export const SiteDetail: React.FC = () => {
           onClose={() => setShowTransferModal(false)}
           onTransferred={() => {
             setShowTransferModal(false);
-            window.location.reload();
+            queryClient.invalidateQueries({ queryKey: ['site', siteId] });
           }}
           showToast={showToast}
         />

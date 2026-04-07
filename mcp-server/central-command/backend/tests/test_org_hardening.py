@@ -56,7 +56,9 @@ def _ensure_http_exception():
         sys.modules["sqlalchemy.ext"] = types.ModuleType("sqlalchemy.ext")
     if "sqlalchemy.ext.asyncio" not in sys.modules:
         _sa_async = types.ModuleType("sqlalchemy.ext.asyncio")
+        _sa_async.create_async_engine = lambda *a, **kw: None
         _sa_async.AsyncSession = type("AsyncSession", (), {})
+        _sa_async.async_sessionmaker = lambda *a, **kw: None
         sys.modules["sqlalchemy.ext.asyncio"] = _sa_async
     if "asyncpg" not in sys.modules:
         sys.modules["asyncpg"] = types.ModuleType("asyncpg")

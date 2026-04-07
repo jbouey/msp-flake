@@ -20,7 +20,7 @@ const formatRelativeTime = formatTimeAgo;
 
 const typeLabels: Record<string, { label: string; color: string }> = {
   l3_escalation: { label: 'L3 Escalation', color: 'bg-health-critical text-white' },
-  repeat_failure: { label: 'Repeat Drift', color: 'bg-health-warning text-white' },
+  repeat_failure: { label: 'Repeat Failure', color: 'bg-health-warning text-white' },
   offline_appliance: { label: 'Offline', color: 'bg-label-tertiary text-white' },
 };
 

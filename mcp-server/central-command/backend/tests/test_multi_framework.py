@@ -40,6 +40,10 @@ if "sqlalchemy" in sys.modules and not hasattr(sys.modules["sqlalchemy"], "text"
 
 if "sqlalchemy.ext.asyncio" in sys.modules and not hasattr(sys.modules["sqlalchemy.ext.asyncio"], "AsyncSession"):
     sys.modules["sqlalchemy.ext.asyncio"].AsyncSession = object
+if "sqlalchemy.ext.asyncio" in sys.modules and not hasattr(sys.modules["sqlalchemy.ext.asyncio"], "create_async_engine"):
+    sys.modules["sqlalchemy.ext.asyncio"].create_async_engine = lambda *a, **kw: None
+if "sqlalchemy.ext.asyncio" in sys.modules and not hasattr(sys.modules["sqlalchemy.ext.asyncio"], "async_sessionmaker"):
+    sys.modules["sqlalchemy.ext.asyncio"].async_sessionmaker = lambda *a, **kw: None
 
 # ---------------------------------------------------------------------------
 # Stub framework_mapper as a sibling package member so relative import resolves

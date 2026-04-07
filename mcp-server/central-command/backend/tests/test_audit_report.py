@@ -45,7 +45,9 @@ _pydantic.Field = lambda *a, **kw: None
 _sa = sys.modules["sqlalchemy"]
 _sa.text = lambda x: x
 _sa_async = sys.modules["sqlalchemy.ext.asyncio"]
-_sa_async.AsyncSession = type("AsyncSession", (), {})
+_sa_async.create_async_engine = lambda *a, **kw: None
+        _sa_async.AsyncSession = type("AsyncSession", (), {})
+        _sa_async.async_sessionmaker = lambda *a, **kw: None
 
 # Stub the relative imports that audit_report.py uses
 _dashboard_api = types.ModuleType("dashboard_api")

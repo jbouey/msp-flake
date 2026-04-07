@@ -1339,6 +1339,9 @@ export default function Users() {
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
+  // Inline feedback (replaces alert() calls)
+  const [feedback, setFeedback] = useState<{type: 'success' | 'error'; message: string} | null>(null);
+
   // Get current user ID from localStorage token (decoded)
   const currentUserId = React.useMemo(() => {
     try {
@@ -1430,8 +1433,8 @@ export default function Users() {
     try {
       await usersApi.adminResetPassword(userId, password);
       setResetPasswordUser(null);
-      // Show success message
-      alert('Password reset successfully');
+      setFeedback({ type: 'success', message: 'Password reset successfully' });
+      setTimeout(() => setFeedback(null), 3000);
     } catch (err) {
       setModalError(err instanceof Error ? err.message : 'Failed to reset password');
     } finally {
@@ -1445,7 +1448,8 @@ export default function Users() {
     try {
       await usersApi.changePassword(data);
       setShowChangePasswordModal(false);
-      alert('Password changed successfully');
+      setFeedback({ type: 'success', message: 'Password changed successfully' });
+      setTimeout(() => setFeedback(null), 3000);
     } catch (err) {
       setModalError(err instanceof Error ? err.message : 'Failed to change password');
     } finally {
@@ -1456,7 +1460,8 @@ export default function Users() {
   const handleResendInvite = async (invite: UserInvite) => {
     try {
       await usersApi.resendInvite(invite.id);
-      alert('Invite resent successfully');
+      setFeedback({ type: 'success', message: 'Invite resent successfully' });
+      setTimeout(() => setFeedback(null), 3000);
       loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to resend invite');
@@ -1530,6 +1535,18 @@ export default function Users() {
       {error && (
         <div className="p-4 bg-health-critical/10 border border-health-critical/20 rounded-lg text-health-critical">
           {error}
+        </div>
+      )}
+
+      {/* Inline feedback banner */}
+      {feedback && (
+        <div className={`p-3 rounded-lg text-sm flex items-center justify-between ${
+          feedback.type === 'success'
+            ? 'bg-health-healthy/20 text-health-healthy'
+            : 'bg-health-critical/20 text-health-critical'
+        }`}>
+          <span>{feedback.message}</span>
+          <button onClick={() => setFeedback(null)} className="ml-3 opacity-70 hover:opacity-100">&times;</button>
         </div>
       )}
 

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { GlassCard } from '../components/shared';
 import { useCVESummary, useCVEs, useCVEDetail, useTriggerCVESync, useUpdateCVEStatus } from '../hooks';
 import { RemediateModal } from '../components/cve/RemediateModal';
+import { formatTimeAgo } from '../constants';
 import type { CVEEntry } from '../types';
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -91,7 +92,7 @@ export const CVEWatch: React.FC = () => {
             <p className="text-sm text-label-tertiary mt-1">
               {cves.length} vulnerabilities tracked
               {summary?.last_sync && (
-                <span> &middot; Last sync: {new Date(summary.last_sync).toLocaleString()}</span>
+                <span> &middot; Last sync: {formatTimeAgo(summary.last_sync)}</span>
               )}
             </p>
           </div>
@@ -182,7 +183,7 @@ export const CVEWatch: React.FC = () => {
                       <span className="text-xs text-label-tertiary">CVSS {cve.cvss_score}</span>
                     )}
                   </div>
-                  <p className="text-sm text-label-secondary truncate mt-0.5">{cve.description}</p>
+                  <p className="text-sm text-label-secondary truncate mt-0.5" title={cve.description}>{cve.description}</p>
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
@@ -270,7 +271,7 @@ export const CVEWatch: React.FC = () => {
                 {cveDetail.affected_appliances.map((a, i) => (
                   <div key={i} className="flex items-center justify-between py-2">
                     <div>
-                      <span className="text-sm font-mono text-label-primary">{a.appliance_id.split('-').slice(0, 3).join('-')}</span>
+                      <span className="text-sm font-mono text-label-primary">{a.appliance_id}</span>
                       <span className="text-xs text-label-tertiary ml-2">{a.site_id}</span>
                     </div>
                     <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${STATUS_COLORS[a.status]}`}>

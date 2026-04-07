@@ -214,7 +214,7 @@ export const Learning: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-label-secondary font-medium">All caught up!</p>
+                <p className="text-label-secondary font-medium">Review queue is clear</p>
                 <p className="text-label-tertiary text-sm mt-1">
                   No patterns awaiting promotion at this time.
                 </p>
