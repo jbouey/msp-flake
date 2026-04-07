@@ -60,6 +60,18 @@ class HashRing:
         return self._ring[idx][1]
 
     def targets_for_node(self, mac: str, target_ips: List[str]) -> List[str]:
-        """Return the subset of target_ips assigned to this MAC."""
+        """Return the subset of target_ips assigned to this MAC.
+
+        When targets are scarce (< 2x nodes), consistent hashing can degenerate
+        and assign all targets to one node. Fall back to deterministic round-robin
+        in that case to guarantee every node gets work.
+        """
         norm = normalize_mac(mac)
+
+        # Small target set: round-robin for guaranteed distribution
+        if len(target_ips) < 2 * len(self._nodes) and len(self._nodes) > 1 and norm in self._nodes:
+            sorted_targets = sorted(target_ips)
+            node_idx = sorted(self._nodes).index(norm)
+            return [t for i, t in enumerate(sorted_targets) if i % len(self._nodes) == node_idx]
+
         return [ip for ip in target_ips if self.owner(ip) == norm]
