@@ -35,8 +35,8 @@ _sa = sys.modules["sqlalchemy"]
 _sa.text = lambda x: x
 _sa_async = sys.modules.setdefault("sqlalchemy.ext.asyncio", types.ModuleType("sqlalchemy.ext.asyncio"))
 _sa_async.create_async_engine = lambda *a, **kw: None
-        _sa_async.AsyncSession = object
-        _sa_async.async_sessionmaker = lambda *a, **kw: None
+_sa_async.AsyncSession = object
+_sa_async.async_sessionmaker = lambda *a, **kw: None
 
 _aiohttp = sys.modules["aiohttp"]
 _aiohttp.ClientTimeout = lambda **kw: None
