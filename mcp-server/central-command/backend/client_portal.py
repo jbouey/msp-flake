@@ -3907,7 +3907,7 @@ async def get_client_alerts(user: dict = Depends(require_client_user)):
 
     async with org_connection(pool, org_id=org_id) as conn:
         rows = await conn.fetch("""
-            SELECT pa.id, s.name as site_name, pa.alert_type, pa.summary,
+            SELECT pa.id, pa.site_id, s.name as site_name, pa.alert_type, pa.summary,
                    pa.severity, pa.created_at, pa.sent_at, pa.dismissed_at,
                    pa.incident_id,
                    COALESCE(s.client_alert_mode, co.client_alert_mode, 'informed') as effective_mode
@@ -3931,6 +3931,7 @@ async def get_client_alerts(user: dict = Depends(require_client_user)):
 
         alerts.append({
             "id": str(row["id"]),
+            "site_id": str(row["site_id"]),
             "site_name": row["site_name"],
             "alert_type": row["alert_type"],
             "summary": row["summary"],

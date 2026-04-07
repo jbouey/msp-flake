@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { csrfHeaders } from '../utils/csrf';
+import { CredentialEntryModal } from './CredentialEntryModal';
 
 interface Alert {
   id: string;
+  site_id: string;
   site_name: string;
   alert_type: string;
   summary: string;
@@ -47,6 +49,7 @@ export const ClientAlerts: React.FC = () => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [actioning, setActioning] = useState<string | null>(null);
+  const [credModal, setCredModal] = useState<{ siteId: string; siteName: string; alertId: string } | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -156,13 +159,29 @@ export const ClientAlerts: React.FC = () => {
             </div>
             {alert.actions_available && !dimmed && (
               <div className="flex gap-2 mt-3">
-                <button
-                  onClick={() => handleAction(alert.id, 'approved')}
-                  disabled={!!isActioning}
-                  className="px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
-                >
-                  {actioning === alert.id + ':approved' ? 'Working...' : actionLabels.approve}
-                </button>
+                {alert.alert_type === 'credential_needed' ? (
+                  <button
+                    onClick={() =>
+                      setCredModal({
+                        siteId: alert.site_id || '',
+                        siteName: alert.site_name,
+                        alertId: alert.id,
+                      })
+                    }
+                    disabled={!!isActioning}
+                    className="px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+                  >
+                    {actionLabels.approve}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleAction(alert.id, 'approved')}
+                    disabled={!!isActioning}
+                    className="px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+                  >
+                    {actioning === alert.id + ':approved' ? 'Working...' : actionLabels.approve}
+                  </button>
+                )}
                 <button
                   onClick={() => handleAction(alert.id, 'dismissed')}
                   disabled={!!isActioning}
@@ -212,6 +231,20 @@ export const ClientAlerts: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* Credential Entry Modal */}
+      {credModal && (
+        <CredentialEntryModal
+          isOpen={true}
+          onClose={() => {
+            setCredModal(null);
+            fetchAlerts();
+          }}
+          siteId={credModal.siteId}
+          siteName={credModal.siteName}
+          alertId={credModal.alertId}
+        />
+      )}
 
       {/* Main */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">

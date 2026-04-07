@@ -260,6 +260,9 @@ class CompliancePacket:
 
             # Device inventory summary
             "device_inventory": await self._get_device_inventory(),
+
+            # Client approval audit log (last 30 days)
+            "approval_log": await self._get_approval_log(),
         }
 
         # Render markdown
@@ -1023,6 +1026,48 @@ class CompliancePacket:
             pass
         return {"total_devices": 0, "windows": 0, "linux": 0, "macos": 0, "managed": 0, "compliant": 0}
 
+    async def _get_approval_log(self) -> List[Dict[str, Any]]:
+        """Return client approvals for this site in the last 30 days.
+
+        Joins client_approvals → client_users → pending_alerts to surface
+        who acted on which alert and when.  Returns empty list if the table
+        does not exist or contains no rows — never raises.
+        """
+        try:
+            result = await self.db.execute(
+                text("""
+                    SELECT
+                        ca.action,
+                        ca.acted_at,
+                        ca.notes,
+                        cu.email           AS acted_by_email,
+                        pa.alert_type,
+                        pa.summary
+                    FROM client_approvals ca
+                    LEFT JOIN client_users cu  ON cu.id  = ca.acted_by
+                    LEFT JOIN pending_alerts pa ON pa.id = ca.alert_id
+                    WHERE ca.site_id = :sid
+                      AND ca.acted_at > NOW() - INTERVAL '30 days'
+                    ORDER BY ca.acted_at DESC
+                    LIMIT 50
+                """),
+                {"sid": self.site_id},
+            )
+            rows = result.fetchall()
+            approvals = []
+            for row in rows:
+                approvals.append({
+                    "date": row.acted_at.strftime("%Y-%m-%d %H:%M UTC") if row.acted_at else "—",
+                    "acted_by": row.acted_by_email or "unknown",
+                    "action": row.action or "—",
+                    "alert_type": row.alert_type or "—",
+                    "details": row.summary or row.notes or "—",
+                })
+            return approvals
+        except Exception as exc:
+            logger.debug("approval_log query skipped: %s", exc)
+            return []
+
     def _render_markdown(self, data: Dict) -> str:
         """Render monitoring evidence bundle markdown from real data."""
         template = Template("""# Monthly {{ framework_label }} Monitoring Evidence Bundle
@@ -1242,6 +1287,21 @@ These controls require organizational attestation — they cannot be verified by
 **Coverage:** {{ administrative_controls.attested }}/{{ administrative_controls.total }} controls attested ({{ administrative_controls.coverage_pct }}%)
 
 *Administrative and physical safeguard attestations are managed through the OsirisCare Compliance Companion portal. Contact your compliance officer to complete pending attestations.*
+
+---
+
+## Approval Log (Last 30 Days)
+
+This section records every client-authorized action taken during the reporting period,
+providing an auditable trail of human decisions in the remediation workflow.
+
+{% if approval_log %}| Date | User | Action | Alert Type | Details |
+|------|------|--------|------------|---------|
+{% for a in approval_log %}| {{ a.date }} | {{ a.acted_by }} | {{ a.action }} | {{ a.alert_type }} | {{ a.details }} |
+{% endfor %}{% else %}No client approvals recorded in the last 30 days.
+{% endif %}
+
+**HIPAA Control:** 164.308(a)(1)(ii)(D) (Information System Activity Review), 164.312(b) (Audit Controls)
 
 ---
 
