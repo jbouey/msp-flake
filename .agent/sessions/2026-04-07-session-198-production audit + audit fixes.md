@@ -1,67 +1,75 @@
-# Session 198 - Production Audit + Audit Fixes
+# Session 198 — Production Audit + Fixes + Multi-Framework + Data Cleanup
 
 **Date:** 2026-04-07
-**Commits:** ~4
-**Tests:** 65 passing (9 test files)
+**Commits:** ~12
+**Tests:** 82 passing (11 test files)
 **Migrations:** 135 deployed
 
 ---
 
-## Goals
+## What Shipped
 
-- [x] Full production security audit (DRY, logging, auth, tests, idempotency, robustness)
-- [x] Verify production state on VPS (docker logs, DB state, health endpoint)
-- [x] Fix all critical and important findings
-- [x] Deploy fixes
+### Production Security Audit (9 findings fixed)
+- C1: DRY — alert enqueue uses module function not inline reimplementation
+- C2: HTML-escaped org_name in all email templates
+- C3: partner_notifications RLS tenant policy (migration 135)
+- I1-I6: idempotency, connection consolidation, logging, site name, validation
+
+### Pre-Existing Production Errors (4 fixed, all verified 0)
+- go_agents RLS: admin_connection must SET LOCAL app.is_admin=true (PgBouncer stale GUC)
+- Mesh isolation: ::text cast on asyncpg LIKE parameter
+- MinIO WORM: http:// prefix for boto3 endpoint_url
+- PgBouncer DuplicatePreparedStatementError: retry decorator on SQLAlchemy hot path
+
+### Multi-Framework Compliance (9 frameworks)
+- compliance_packet.py routes through control_mappings.yaml crosswalk
+- Email templates parameterized (framework-agnostic)
+- Frontend copy.ts: "Compliance Monitoring Platform" not "HIPAA..."
+- Checkin delivers compliance_framework to daemon
+
+### SOC 2 + GLBA Assessment Templates
+- soc2_templates.py: 30 questions (CC/A/PI/C/P) + 8 policies
+- glba_templates.py: 25 questions (admin/tech/physical/privacy/disposal) + 6 policies
+- framework_templates.py: router for get_assessment_questions(framework)
+- 17 template tests
+
+### MFA Enforcement + Audit Retention
+- Per-org/user mfa_required flag, blocks login if not enrolled
+- 3-year audit log retention with background purge
+- Migration 134
+
+### Data Quality Cleanup
+- 3 home network workstations removed
+- 1 appliance IP workstation removed
+- 1 duplicate iMac entry removed
+- 28 home network discovered_devices removed
+- 19 stale incidents resolved (deploy + unreachable + old IPs)
+- Residential subnet exclusion (192.168.0/1.x) prevents recontamination
+
+### VPN Page Dedup
+- Backend: DISTINCT ON (site_id) instead of per-appliance rows
+- Frontend: shows appliance count per unique peer
 
 ---
 
-## Progress
+## Production State After Session
 
-### Production Errors Found (Pre-Existing)
-- `go_agents` RLS violation: 120 errors/2h — agent sync without tenant GUC. Pre-existing.
-- `AmbiguousParameterError: text vs varchar` in mesh isolation check. Pre-existing.
-- `MinIO WORM: Invalid endpoint minio:9000`. Pre-existing.
-- None of these are from Session 197 code.
-
-### Audit Findings — Fixed
-
-**3 Critical:**
-1. Alert enqueue in agent_api.py reimplemented inline instead of calling module → refactored to use `get_effective_alert_mode()`
-2. Unescaped org_name in partner email HTML → all templates now use `html.escape()`
-3. `partner_notifications` missing tenant RLS policy → migration 135 added
-
-**6 Important:**
-1. Duplicate `_esc()` / `_escape_html()` → replaced with `html.escape()` everywhere
-2. Silent `except: pass` in sites.py → `logger.debug()`
-3. Digest loop acquires 4 connections → consolidated to 1 per cycle
-4. No idempotency on approvals → duplicate returns existing record
-5. Critical alert uses hardcoded "Your site" → now fetches real clinic_name
-6. Credential entry doesn't validate alert_id org ownership → added check
-
-### Multi-Framework Compliance Verified in Production
-- Framework mapping logs show active execution: `mappings=38 frameworks=['hipaa']`
-- `client_orgs` columns confirmed: `compliance_framework='hipaa'`, `mfa_required=false`, `audit_retention_days=1095`
-
----
-
-## Files Changed
-
-| File | Change |
-|------|--------|
-| agent_api.py | C1: DRY alert enqueue |
-| alert_router.py | C2: html.escape(), I1: kill _esc(), I3: connection consolidation, I5: real site name |
-| client_portal.py | I4: idempotency guard, I6: alert_id validation |
-| email_alerts.py | I1: kill _escape_html() |
-| sites.py | I2: log instead of silent pass |
-| migrations/135 | C3: partner_notifications tenant RLS policy |
+| Metric | Before | After |
+|--------|--------|-------|
+| go_agents RLS errors | 120/2h | 0 |
+| PgBouncer stmt errors | intermittent | 0 (retry) |
+| MinIO WORM errors | every checkin | 0 |
+| Mesh isolation errors | every 5min | 0 |
+| Open incidents | 38 | 7 (real ones) |
+| Workstations | 15 (polluted) | 10 (clean) |
+| Go agents in DB | 0 | 3 (NVDC01, NVWS01, iMac) |
 
 ---
 
 ## Next Session
 
-1. Add node to 88.x subnet — test mesh target distribution across 3 appliances
-2. Key rotation design + implementation (last P0 gap)
-3. Fix pre-existing production errors (go_agents RLS, mesh isolation type mismatch, MinIO endpoint)
-4. SOC 2 / GLBA assessment template data files
-5. Test non-engagement escalation (fires after 48h — monitor)
+1. Add node to 88.x subnet — test mesh target distribution
+2. Key rotation design (last P0 security gap)
+3. Verify workstation compliance improves now that incidents are recording
+4. iMac agent: configure drift checks (currently 0/0 monitor-only)
+5. VPN page: verify dedup renders correctly
