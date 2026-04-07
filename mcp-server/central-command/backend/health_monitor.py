@@ -929,7 +929,7 @@ async def _check_mesh_isolation():
                         SELECT 1 FROM notifications
                         WHERE site_id = $1
                           AND category IN ('mesh_isolation', 'mesh_topology_limitation')
-                          AND message LIKE '%' || $2 || '%'
+                          AND message LIKE '%' || $2::text || '%'
                           AND created_at > NOW() - INTERVAL '{dedup_interval}'
                     """, site_id, app["appliance_id"])
 

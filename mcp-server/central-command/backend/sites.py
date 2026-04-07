@@ -2635,75 +2635,76 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # Use a savepoint so failures here don't poison the outer transaction
         if checkin.connected_agents:
             try:
-                async with conn.transaction():
-                    for agent in checkin.connected_agents:
-                        def _parse_ts(s):
-                            if not s:
-                                return datetime.utcnow()
-                            try:
-                                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-                                return dt.replace(tzinfo=None)
-                            except (ValueError, AttributeError):
-                                return datetime.utcnow()
-                        connected_at_dt = _parse_ts(agent.connected_at)
-                        last_heartbeat_dt = _parse_ts(agent.last_heartbeat)
-                        # Go zero time (0001-01-01) means "never heartbeated" — treat as None
-                        if last_heartbeat_dt and last_heartbeat_dt.year < 2000:
-                            last_heartbeat_dt = None
-                        if connected_at_dt and connected_at_dt.year < 2000:
-                            connected_at_dt = None
-                        # Delete any existing row with same (site_id, hostname) but different agent_id
-                        # This handles agent reinstalls that generate a new agent_id
-                        await conn.execute("""
-                            DELETE FROM go_agents
-                            WHERE site_id = $1 AND hostname = $2 AND agent_id != $3
-                        """, checkin.site_id, agent.hostname, agent.agent_id)
-                        compliance_pct = round(
-                            (agent.checks_passed / agent.checks_total * 100)
-                            if agent.checks_total > 0 else 0.0, 2
-                        )
-                        await conn.execute("""
-                            INSERT INTO go_agents (
-                                agent_id, site_id, hostname, agent_version,
-                                ip_address, os_name, os_version,
-                                capability_tier, status, checks_passed, checks_total,
-                                compliance_percentage, connected_at, last_heartbeat,
-                                updated_at
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 'connected', $8, $9, $10, $11, $12, NOW())
-                            ON CONFLICT (agent_id) DO UPDATE SET
-                                hostname = EXCLUDED.hostname,
-                                agent_version = COALESCE(NULLIF(EXCLUDED.agent_version, ''), go_agents.agent_version),
-                                ip_address = COALESCE(NULLIF(EXCLUDED.ip_address, ''), go_agents.ip_address),
-                                os_name = COALESCE(NULLIF(EXCLUDED.os_name, ''), go_agents.os_name),
-                                os_version = COALESCE(NULLIF(EXCLUDED.os_version, ''), go_agents.os_version),
-                                capability_tier = EXCLUDED.capability_tier,
-                                status = 'connected',
-                                checks_passed = EXCLUDED.checks_passed,
-                                checks_total = EXCLUDED.checks_total,
-                                compliance_percentage = EXCLUDED.compliance_percentage,
-                                last_heartbeat = COALESCE(EXCLUDED.last_heartbeat, go_agents.last_heartbeat),
-                                updated_at = NOW()
-                        """,
-                            agent.agent_id,
-                            checkin.site_id,
-                            agent.hostname,
-                            agent.agent_version,
-                            agent.ip_address,
-                            agent.os_version,
-                            agent.capability_tier,
-                            agent.checks_passed,
-                            agent.checks_total,
-                            compliance_pct,
-                            connected_at_dt,
-                            last_heartbeat_dt,
-                        )
-                    # Mark agents not in this batch as disconnected
-                    active_ids = [a.agent_id for a in checkin.connected_agents]
-                    await conn.execute("""
-                        UPDATE go_agents SET status = 'disconnected', updated_at = NOW()
-                        WHERE site_id = $1 AND status = 'connected'
-                        AND agent_id != ALL($2)
-                    """, checkin.site_id, active_ids)
+                async with admin_connection(pool) as admin_conn:
+                    async with admin_conn.transaction():
+                        for agent in checkin.connected_agents:
+                            def _parse_ts(s):
+                                if not s:
+                                    return datetime.utcnow()
+                                try:
+                                    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                                    return dt.replace(tzinfo=None)
+                                except (ValueError, AttributeError):
+                                    return datetime.utcnow()
+                            connected_at_dt = _parse_ts(agent.connected_at)
+                            last_heartbeat_dt = _parse_ts(agent.last_heartbeat)
+                            # Go zero time (0001-01-01) means "never heartbeated" — treat as None
+                            if last_heartbeat_dt and last_heartbeat_dt.year < 2000:
+                                last_heartbeat_dt = None
+                            if connected_at_dt and connected_at_dt.year < 2000:
+                                connected_at_dt = None
+                            # Delete any existing row with same (site_id, hostname) but different agent_id
+                            # This handles agent reinstalls that generate a new agent_id
+                            await admin_conn.execute("""
+                                DELETE FROM go_agents
+                                WHERE site_id = $1 AND hostname = $2 AND agent_id != $3
+                            """, checkin.site_id, agent.hostname, agent.agent_id)
+                            compliance_pct = round(
+                                (agent.checks_passed / agent.checks_total * 100)
+                                if agent.checks_total > 0 else 0.0, 2
+                            )
+                            await admin_conn.execute("""
+                                INSERT INTO go_agents (
+                                    agent_id, site_id, hostname, agent_version,
+                                    ip_address, os_name, os_version,
+                                    capability_tier, status, checks_passed, checks_total,
+                                    compliance_percentage, connected_at, last_heartbeat,
+                                    updated_at
+                                ) VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 'connected', $8, $9, $10, $11, $12, NOW())
+                                ON CONFLICT (agent_id) DO UPDATE SET
+                                    hostname = EXCLUDED.hostname,
+                                    agent_version = COALESCE(NULLIF(EXCLUDED.agent_version, ''), go_agents.agent_version),
+                                    ip_address = COALESCE(NULLIF(EXCLUDED.ip_address, ''), go_agents.ip_address),
+                                    os_name = COALESCE(NULLIF(EXCLUDED.os_name, ''), go_agents.os_name),
+                                    os_version = COALESCE(NULLIF(EXCLUDED.os_version, ''), go_agents.os_version),
+                                    capability_tier = EXCLUDED.capability_tier,
+                                    status = 'connected',
+                                    checks_passed = EXCLUDED.checks_passed,
+                                    checks_total = EXCLUDED.checks_total,
+                                    compliance_percentage = EXCLUDED.compliance_percentage,
+                                    last_heartbeat = COALESCE(EXCLUDED.last_heartbeat, go_agents.last_heartbeat),
+                                    updated_at = NOW()
+                            """,
+                                agent.agent_id,
+                                checkin.site_id,
+                                agent.hostname,
+                                agent.agent_version,
+                                agent.ip_address,
+                                agent.os_version,
+                                agent.capability_tier,
+                                agent.checks_passed,
+                                agent.checks_total,
+                                compliance_pct,
+                                connected_at_dt,
+                                last_heartbeat_dt,
+                            )
+                        # Mark agents not in this batch as disconnected
+                        active_ids = [a.agent_id for a in checkin.connected_agents]
+                        await admin_conn.execute("""
+                            UPDATE go_agents SET status = 'disconnected', updated_at = NOW()
+                            WHERE site_id = $1 AND status = 'connected'
+                            AND agent_id != ALL($2)
+                        """, checkin.site_id, active_ids)
             except Exception as e:
                 import logging
                 logging.warning(f"Failed to sync go_agents: {e}")

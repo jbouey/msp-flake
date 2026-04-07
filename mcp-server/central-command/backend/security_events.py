@@ -187,9 +187,12 @@ async def _write_to_minio_worm(site_id: str, events: list):
         if not endpoint:
             return  # MinIO not configured — skip
 
+        # boto3 needs full URL; minio library accepts bare hostname
+        endpoint_url = endpoint if endpoint.startswith("http") else f"http://{endpoint}"
+
         s3 = boto3.client(
             "s3",
-            endpoint_url=endpoint,
+            endpoint_url=endpoint_url,
             aws_access_key_id=os.getenv("MINIO_ACCESS_KEY", ""),
             aws_secret_access_key=os.getenv("MINIO_SECRET_KEY", ""),
             config=BotoConfig(signature_version="s3v4"),
