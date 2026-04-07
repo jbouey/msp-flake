@@ -135,6 +135,7 @@ class TestGetClientAlerts:
         rows = [
             FakeRecord(
                 id=ALERT_ID,
+                site_id="site-001",
                 site_name="North Valley",
                 alert_type="patch_drift",
                 summary="3 critical patches missing",
@@ -147,6 +148,7 @@ class TestGetClientAlerts:
             ),
             FakeRecord(
                 id=str(uuid.uuid4()),
+                site_id="site-002",
                 site_name="Main Office",
                 alert_type="backup_drift",
                 summary="Backup overdue",
@@ -191,6 +193,7 @@ class TestGetClientAlerts:
         rows = [
             FakeRecord(
                 id=ALERT_ID,
+                site_id="site-003",
                 site_name="Branch",
                 alert_type="firewall_drift",
                 summary="Firewall off",
