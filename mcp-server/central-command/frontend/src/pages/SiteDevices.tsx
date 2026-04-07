@@ -651,6 +651,7 @@ export const SiteDevices: React.FC = () => {
   const [showAddNetworkDevice, setShowAddNetworkDevice] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [takeOverDevice, setTakeOverDevice] = useState<DiscoveredDevice | null>(null);
+  const [showNeighbors, setShowNeighbors] = useState(false);
 
   const { data: devicesData, isLoading: devicesLoading, error: devicesError } = useSiteDevices(
     siteId || null,
@@ -687,7 +688,6 @@ export const SiteDevices: React.FC = () => {
   const allDevices = devicesData?.devices || [];
   const devices = allDevices.filter(d => d.managed_network !== false);
   const neighborDevices = allDevices.filter(d => d.managed_network === false);
-  const [showNeighbors, setShowNeighbors] = useState(false);
 
   return (
     <div className="space-y-6">
