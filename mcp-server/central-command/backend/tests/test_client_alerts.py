@@ -42,6 +42,66 @@ for _mod_name in list(sys.modules):
 
 from fastapi import HTTPException  # noqa: E402
 
+# ---------------------------------------------------------------------------
+# Stub heavy dependencies that client_portal imports at module level
+# ---------------------------------------------------------------------------
+
+import types as _types
+from contextlib import asynccontextmanager as _asynccontextmanager
+
+for _mod_name in (
+    "structlog", "aiohttp",
+    "nacl", "nacl.signing", "nacl.encoding", "minio",
+    "redis", "redis.asyncio",
+    "dashboard_api.fleet",
+    "dashboard_api.tenant_middleware",
+    "dashboard_api.phiscrub",
+    "dashboard_api.shared",
+):
+    if _mod_name not in sys.modules:
+        sys.modules[_mod_name] = _types.ModuleType(_mod_name)
+
+# Ensure dashboard_api package is set up
+backend_dir_local = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_pkg = _types.ModuleType("dashboard_api")
+_pkg.__path__ = [backend_dir_local]
+_pkg.__package__ = "dashboard_api"
+if not hasattr(sys.modules.get("dashboard_api", None), "__file__") or \
+        sys.modules.get("dashboard_api", None).__file__ is None:
+    sys.modules["dashboard_api"] = _pkg
+
+# Stub fleet
+_fleet_mod = sys.modules["dashboard_api.fleet"]
+_fleet_mod.get_pool = AsyncMock(return_value=None)
+
+# Stub tenant_middleware with the three connections client_portal needs
+_tenant_mod = sys.modules["dashboard_api.tenant_middleware"]
+
+@_asynccontextmanager
+async def _noop_tenant_connection(pool, *, site_id=None):
+    yield MagicMock()
+
+@_asynccontextmanager
+async def _noop_admin_connection(pool):
+    yield MagicMock()
+
+@_asynccontextmanager
+async def _noop_org_connection(pool, *, org_id=None):
+    yield MagicMock()
+
+_tenant_mod.tenant_connection = _noop_tenant_connection
+_tenant_mod.admin_connection = _noop_admin_connection
+_tenant_mod.org_connection = _noop_org_connection
+
+# Stub phiscrub
+_phiscrub_mod = sys.modules["dashboard_api.phiscrub"]
+_phiscrub_mod.sanitize_evidence_checks = lambda x: x
+
+# Stub shared
+_shared_mod = sys.modules["dashboard_api.shared"]
+_shared_mod.require_client_user = MagicMock()
+_shared_mod.require_appliance_bearer = MagicMock()
+
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -77,15 +137,28 @@ class FakeRecord(dict):
 
 
 class FakeConn:
-    """Fake asyncpg connection with configurable responses."""
+    """Fake asyncpg connection with configurable responses.
+
+    fetchrow_return may be:
+      - a single value (returned for all fetchrow calls), OR
+      - a list of values (consumed in order; last value repeated once exhausted)
+    """
 
     def __init__(self, fetchrow_return=None, fetch_return=None):
-        self._fetchrow_return = fetchrow_return
+        if isinstance(fetchrow_return, list):
+            self._fetchrow_queue = list(fetchrow_return)
+        else:
+            self._fetchrow_queue = None
+            self._fetchrow_return = fetchrow_return
         self._fetch_return = fetch_return or []
         self.executed = []
 
     async def fetchrow(self, query, *args):
         self.executed.append(("fetchrow", query, args))
+        if self._fetchrow_queue is not None:
+            if self._fetchrow_queue:
+                return self._fetchrow_queue.pop(0)
+            return None
         return self._fetchrow_return
 
     async def fetch(self, query, *args):
@@ -262,7 +335,8 @@ class TestActionClientAlert:
         """action='approved' with self_service mode inserts into client_approvals."""
         from dashboard_api.client_portal import action_client_alert
 
-        conn = FakeConn(fetchrow_return=self._alert_record("self_service"))
+        # Two fetchrow calls: (1) alert lookup, (2) idempotency check → None
+        conn = FakeConn(fetchrow_return=[self._alert_record("self_service"), None])
 
         async def _fake_get_pool():
             return object()
@@ -345,7 +419,8 @@ class TestActionClientAlert:
         """action='dismissed' inserts approval record AND updates dismissed_at."""
         from dashboard_api.client_portal import action_client_alert
 
-        conn = FakeConn(fetchrow_return=self._alert_record("self_service"))
+        # Two fetchrow calls: (1) alert lookup, (2) idempotency check → None
+        conn = FakeConn(fetchrow_return=[self._alert_record("self_service"), None])
 
         async def _fake_get_pool():
             return object()
@@ -395,7 +470,8 @@ class TestActionClientAlert:
         """action='ignored' also sets dismissed_at (same code path as dismissed)."""
         from dashboard_api.client_portal import action_client_alert
 
-        conn = FakeConn(fetchrow_return=self._alert_record("self_service"))
+        # Two fetchrow calls: (1) alert lookup, (2) idempotency check → None
+        conn = FakeConn(fetchrow_return=[self._alert_record("self_service"), None])
 
         async def _fake_get_pool():
             return object()
@@ -416,3 +492,41 @@ class TestActionClientAlert:
             if c[0] == "execute" and "dismissed_at" in c[1]
         ]
         assert len(dismissed_update_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_duplicate_action_returns_idempotent_response(self):
+        """Duplicate action on same alert+action returns existing approval without new INSERT."""
+        from dashboard_api.client_portal import action_client_alert
+
+        existing_approval_id = str(uuid.uuid4())
+        existing_approval = FakeRecord(id=existing_approval_id)
+
+        # Two fetchrow calls: (1) alert lookup, (2) idempotency check → existing record
+        conn = FakeConn(fetchrow_return=[
+            self._alert_record("self_service"),
+            existing_approval,
+        ])
+
+        async def _fake_get_pool():
+            return object()
+
+        with patch("dashboard_api.client_portal.get_pool", new=_fake_get_pool), \
+             patch("dashboard_api.client_portal.org_connection",
+                   new=_org_connection_patch(conn)):
+            result = await action_client_alert(
+                alert_id=ALERT_ID,
+                request=self._make_request({"action": "approved"}),
+                user=FAKE_USER,
+            )
+
+        assert result["status"] == "ok"
+        assert result["action_taken"] == "approved"
+        assert result["approval_id"] == existing_approval_id
+        assert result.get("note") == "already_actioned"
+
+        # No INSERT into client_approvals should have been made
+        insert_calls = [
+            c for c in conn.executed
+            if c[0] == "execute" and "client_approvals" in c[1]
+        ]
+        assert len(insert_calls) == 0

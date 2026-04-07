@@ -38,7 +38,8 @@ if mcp_server_dir not in sys.path:
     sys.path.insert(0, mcp_server_dir)
 
 # Remove any stub modules that other test files may have injected
-_stub_prefixes = ("fastapi", "pydantic", "sqlalchemy", "aiohttp", "starlette")
+_stub_prefixes = ("fastapi", "pydantic", "sqlalchemy", "aiohttp", "starlette",
+                  "nacl", "minio", "redis", "structlog", "dashboard_api")
 for _mod_name in list(sys.modules):
     if any(_mod_name == p or _mod_name.startswith(p + ".") for p in _stub_prefixes):
         _mod = sys.modules[_mod_name]

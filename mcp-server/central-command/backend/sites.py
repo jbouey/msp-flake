@@ -3342,8 +3342,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 client_alert_mode_site = mode_row["site_mode"]
                 client_alert_mode_org = mode_row["org_mode"]
                 compliance_framework = mode_row["org_framework"] or "hipaa"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Alert mode resolution failed (non-fatal): {e}")
         effective_alert_mode = client_alert_mode_site or client_alert_mode_org or "informed"
 
         # === STEP 6c: Get maintenance window (if active) ===

@@ -4007,6 +4007,22 @@ async def action_client_alert(
             )
 
         import uuid as uuid_mod
+
+        # Idempotency: don't create duplicate approval records
+        existing_approval = await conn.fetchrow(
+            """SELECT id FROM client_approvals
+               WHERE alert_id = $1 AND action = $2""",
+            alert_id, action,
+        )
+        if existing_approval:
+            return {
+                "status": "ok",
+                "action_taken": action,
+                "approval_id": str(existing_approval["id"]),
+                "incident_id": str(alert["incident_id"]) if alert["incident_id"] else None,
+                "note": "already_actioned",
+            }
+
         approval_id = str(uuid_mod.uuid4())
 
         # Record audit trail

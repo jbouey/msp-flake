@@ -10,6 +10,7 @@ Handles:
 """
 
 import asyncio
+import html
 import logging
 import os
 import uuid
@@ -235,9 +236,9 @@ def render_digest_email(
         rows_html += (
             f"<tr>"
             f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">'
-            f"{_esc(site_name)}</td>"
+            f"{html.escape(site_name)}</td>"
             f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">'
-            f"{_esc(summary)}</td>"
+            f"{html.escape(summary)}</td>"
             f"</tr>"
         )
 
@@ -260,7 +261,7 @@ def render_digest_email(
   <div class="container">
     <div class="header">
       <h1>Compliance Digest</h1>
-      <div style="margin-top:4px;font-size:13px;opacity:0.85;">{_esc(org_name)} &mdash; {_esc(now_str)}</div>
+      <div style="margin-top:4px;font-size:13px;opacity:0.85;">{html.escape(org_name)} &mdash; {html.escape(now_str)}</div>
     </div>
     <div class="content">
       <p style="margin:0 0 12px;">Your compliance monitoring summary:</p>
@@ -283,17 +284,6 @@ def render_digest_email(
 </html>"""
 
     return html_body, text_body
-
-
-def _esc(text: str) -> str:
-    """Minimal HTML escaping for digest template."""
-    return (
-        str(text)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
 
 
 async def send_digest_for_org(
@@ -430,7 +420,7 @@ async def send_welcome_email_if_needed(
     <h1 style="margin:0;font-size:20px;">Welcome to OsirisCare</h1>
   </div>
   <div style="padding:20px;background:#f9fafb;border:1px solid #e5e7eb;">
-    <p>Hi {_esc(org_name)},</p>
+    <p>Hi {html.escape(org_name)},</p>
     <p>Your HIPAA compliance monitoring is now active.</p>
     <ul>
       <li><strong>Sites enrolled:</strong> {site_count}</li>
@@ -479,40 +469,13 @@ async def digest_sender_loop() -> None:
     logger.info("Digest sender loop started", extra={"interval_hours": DIGEST_INTERVAL_HOURS})
 
     while True:
-        # --- Flush critical/high immediately ---
         try:
             pool = await get_pool()
             async with admin_connection(pool) as conn:
                 await _flush_critical_alerts(conn)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error(f"Critical alert flush error: {e}", exc_info=True)
-
-        # --- Regular digest for all orgs with unsent alerts ---
-        try:
-            pool = await get_pool()
-            async with admin_connection(pool) as conn:
                 await _send_all_org_digests(conn)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error(f"Digest send error: {e}", exc_info=True)
-
-        # Check for client non-engagement
-        try:
-            pool = await get_pool()
-            async with admin_connection(pool) as conn:
                 await _check_non_engagement(conn)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error(f"Non-engagement check error: {e}")
-
-        # Audit log retention cleanup (3-year / 1095-day policy)
-        try:
-            pool = await get_pool()
-            async with admin_connection(pool) as conn:
+                # Audit log retention cleanup (3-year / 1095-day policy)
                 deleted = await conn.fetchval(
                     """DELETE FROM admin_audit_log
                        WHERE created_at < NOW() - INTERVAL '1095 days'
@@ -523,7 +486,7 @@ async def digest_sender_loop() -> None:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"Audit retention error: {e}")
+            logger.error(f"Digest cycle error: {e}", exc_info=True)
 
         await asyncio.sleep(DIGEST_INTERVAL_HOURS * 3600)
 
@@ -533,9 +496,11 @@ async def _flush_critical_alerts(conn) -> None:
     rows = await conn.fetch(
         """
         SELECT pa.id, pa.org_id, pa.alert_type, pa.severity, pa.summary,
-               co.name AS org_name, co.alert_email, co.client_alert_mode
+               co.name AS org_name, co.alert_email, co.client_alert_mode,
+               s.clinic_name AS site_name
         FROM pending_alerts pa
         JOIN client_orgs co ON co.id = pa.org_id
+        LEFT JOIN sites s ON s.site_id = pa.site_id
         WHERE pa.sent_at IS NULL
           AND pa.dismissed_at IS NULL
           AND pa.severity IN ('critical', 'high')
@@ -551,7 +516,7 @@ async def _flush_critical_alerts(conn) -> None:
         org_mode = row["client_alert_mode"] or "informed"
         alerts_list = [{
             "alert_type": row["alert_type"],
-            "site_name": "Your site",
+            "site_name": row.get("site_name") or "Your site",
             "count": 1,
         }]
         html_body, text_body = render_digest_email(row["org_name"], alerts_list, org_mode)
@@ -623,7 +588,8 @@ async def _check_non_engagement(conn) -> None:
         if partner and partner["email"]:
             try:
                 from dashboard_api.email_alerts import send_digest_email
-                html = f"""<!DOCTYPE html>
+                safe_org_name = html.escape(row["org_name"])
+                html_body = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
 <div style="background:linear-gradient(135deg,#7c3aed,#4f46e5);padding:24px;border-radius:8px 8px 0 0;">
@@ -631,7 +597,7 @@ async def _check_non_engagement(conn) -> None:
   <p style="color:#c4b5fd;margin:4px 0 0;">Client Non-Engagement</p>
 </div>
 <div style="padding:20px;background:#fff;border:1px solid #e2e8f0;border-top:none;">
-  <p><strong>{row['org_name']}</strong> has <strong>{row['unacted_count']}</strong> unacted compliance alert(s) that have been pending for over {NON_ENGAGEMENT_HOURS} hours.</p>
+  <p><strong>{safe_org_name}</strong> has <strong>{row['unacted_count']}</strong> unacted compliance alert(s) that have been pending for over {NON_ENGAGEMENT_HOURS} hours.</p>
   <p style="color:#64748b;">The client was notified but has not taken action. Please follow up.</p>
   <div style="margin-top:16px;text-align:center;">
     <a href="https://dashboard.osiriscare.net/partners/orgs/{row['org_id']}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">View in Dashboard</a>
@@ -639,13 +605,13 @@ async def _check_non_engagement(conn) -> None:
 </div>
 <div style="padding:12px;text-align:center;color:#94a3b8;font-size:11px;">OsirisCare Partner Alert</div>
 </body></html>"""
-                text = f"{row['org_name']} has {row['unacted_count']} unacted compliance alert(s) pending for over {NON_ENGAGEMENT_HOURS} hours. Please follow up."
+                text_body = f"{row['org_name']} has {row['unacted_count']} unacted compliance alert(s) pending for over {NON_ENGAGEMENT_HOURS} hours. Please follow up."
                 send_digest_email(
                     to_email=partner["email"],
                     cc_email=None,
                     subject=f"[OsirisCare Partner] Client non-engagement — {row['org_name']}",
-                    html_body=html,
-                    text_body=text,
+                    html_body=html_body,
+                    text_body=text_body,
                 )
             except Exception as e:
                 logger.error(f"Failed to send non-engagement email for org {row['org_id']}: {e}")

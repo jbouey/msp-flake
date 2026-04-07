@@ -4,6 +4,7 @@ Sends email alerts to administrators when critical notifications are created.
 Uses SMTP with TLS for secure email delivery.
 """
 
+import html
 import os
 import ssl
 import smtplib
@@ -29,15 +30,6 @@ def is_email_configured() -> bool:
     return bool(SMTP_USER and SMTP_PASSWORD)
 
 
-def _escape_html(text: str) -> str:
-    """Escape HTML special characters."""
-    return (str(text)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;"))
-
-
 def _build_details_section(details: dict) -> str:
     """Build HTML for incident details (expected vs actual, drift info)."""
     if not details:
@@ -47,9 +39,9 @@ def _build_details_section(details: dict) -> str:
     # Prioritize expected/actual for drift visibility
     if "expected" in details and "actual" in details:
         rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;">Expected</td>'
-                     f'<td style="padding:6px 12px;font-family:monospace;color:#059669;">{_escape_html(details["expected"])}</td></tr>')
+                     f'<td style="padding:6px 12px;font-family:monospace;color:#059669;">{html.escape(details["expected"])}</td></tr>')
         rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;">Actual</td>'
-                     f'<td style="padding:6px 12px;font-family:monospace;color:#dc2626;">{_escape_html(details["actual"])}</td></tr>')
+                     f'<td style="padding:6px 12px;font-family:monospace;color:#dc2626;">{html.escape(details["actual"])}</td></tr>')
 
     # Show other detail fields (format nested values as JSON)
     for key, val in details.items():
@@ -58,11 +50,11 @@ def _build_details_section(details: dict) -> str:
         if isinstance(val, (dict, list)):
             import json
             formatted = json.dumps(val, indent=2, default=str)
-            rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;vertical-align:top;">{_escape_html(key)}</td>'
-                         f'<td style="padding:6px 12px;"><pre style="margin:0;font-size:12px;white-space:pre-wrap;">{_escape_html(formatted)}</pre></td></tr>')
+            rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;vertical-align:top;">{html.escape(key)}</td>'
+                         f'<td style="padding:6px 12px;"><pre style="margin:0;font-size:12px;white-space:pre-wrap;">{html.escape(formatted)}</pre></td></tr>')
         else:
-            rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;">{_escape_html(key)}</td>'
-                         f'<td style="padding:6px 12px;">{_escape_html(val)}</td></tr>')
+            rows.append(f'<tr><td style="padding:6px 12px;color:#6b7280;">{html.escape(key)}</td>'
+                         f'<td style="padding:6px 12px;">{html.escape(val)}</td></tr>')
 
     if not rows:
         return ""
@@ -97,9 +89,9 @@ def _build_controls_section(controls: list, framework: str = "HIPAA") -> str:
     items = []
     for c in controls:
         desc = control_descriptions.get(c, "")
-        label = f"<strong>{_escape_html(c)}</strong>"
+        label = f"<strong>{html.escape(c)}</strong>"
         if desc:
-            label += f" &mdash; {_escape_html(desc)}"
+            label += f" &mdash; {html.escape(desc)}"
         items.append(f"<li style='margin-bottom:4px;'>{label}</li>")
 
     framework_upper = framework.upper()
@@ -121,7 +113,7 @@ def _build_actions_section(attempted: list) -> str:
     if not attempted:
         return ""
 
-    items = "".join(f"<li style='margin-bottom:4px;'>{_escape_html(a)}</li>" for a in attempted[:5])
+    items = "".join(f"<li style='margin-bottom:4px;'>{html.escape(a)}</li>" for a in attempted[:5])
     return f"""
             <div style="margin-top:16px;">
                 <div class="field-label">Remediation Attempted</div>
@@ -137,7 +129,7 @@ def _build_recommendation_section(rec: str) -> str:
     return f"""
             <div style="margin-top:16px;background:white;padding:12px 16px;border-radius:8px;border-left:4px solid #3b82f6;">
                 <div class="field-label">Recommended Action</div>
-                <div style="color:#111827;margin-top:4px;">{_escape_html(rec)}</div>
+                <div style="color:#111827;margin-top:4px;">{html.escape(rec)}</div>
             </div>"""
 
 
@@ -262,7 +254,7 @@ def send_critical_alert(
             host_row = f"""
             <div class="field">
                 <div class="field-label">Host</div>
-                <div class="field-value">{_escape_html(host_id)}</div>
+                <div class="field-value">{html.escape(host_id)}</div>
             </div>"""
 
         check_row = ""
@@ -270,7 +262,7 @@ def send_critical_alert(
             check_row = f"""
             <div class="field">
                 <div class="field-label">Check Type</div>
-                <div class="field-value">{_escape_html(check_type)}</div>
+                <div class="field-value">{html.escape(check_type)}</div>
             </div>"""
 
         # HTML version
@@ -302,15 +294,15 @@ def send_critical_alert(
         <div class="content">
             <div class="field">
                 <div class="field-label">Title</div>
-                <div class="field-value" style="font-size: 18px; font-weight: 600;">{_escape_html(title)}</div>
+                <div class="field-value" style="font-size: 18px; font-weight: 600;">{html.escape(title)}</div>
             </div>
             <div class="field">
                 <div class="field-label">Category</div>
-                <div class="field-value">{_escape_html(category)}</div>
+                <div class="field-value">{html.escape(category)}</div>
             </div>
             <div class="field">
                 <div class="field-label">Site</div>
-                <div class="field-value">{_escape_html(site_id or 'System-wide')}</div>
+                <div class="field-value">{html.escape(site_id or 'System-wide')}</div>
             </div>{host_row}{check_row}
             <div class="field">
                 <div class="field-label">Time</div>
@@ -318,7 +310,7 @@ def send_critical_alert(
             </div>
             <div class="message-box">
                 <div class="field-label">Message</div>
-                <div class="field-value">{_escape_html(message)}</div>
+                <div class="field-value">{html.escape(message)}</div>
             </div>{details_html}{hipaa_html}{actions_html}{recommendation_html}
             <a href="https://dashboard.osiriscare.net/notifications" class="button">View in Dashboard</a>
         </div>
@@ -553,7 +545,7 @@ https://dashboard.osiriscare.net/companion
             desc_html = f"""
             <div class="field">
                 <div class="field-label">Note</div>
-                <div class="field-value">{_escape_html(description)}</div>
+                <div class="field-value">{html.escape(description)}</div>
             </div>"""
 
         html_content = f"""
@@ -586,30 +578,30 @@ https://dashboard.osiriscare.net/companion
             <span class="badge">Overdue</span>
         </div>
         <div class="content">
-            <p style="margin:0 0 16px;color:#1A1A18;">Hi {_escape_html(companion_name)},</p>
+            <p style="margin:0 0 16px;color:#1A1A18;">Hi {html.escape(companion_name)},</p>
             <p style="margin:0 0 16px;color:#6B6B66;">A compliance module has not reached its expected status by the target date.</p>
 
             <div class="field">
                 <div class="field-label">Client</div>
-                <div class="field-value" style="font-size:16px;font-weight:600;">{_escape_html(org_name)}</div>
+                <div class="field-value" style="font-size:16px;font-weight:600;">{html.escape(org_name)}</div>
             </div>
             <div class="field">
                 <div class="field-label">Module</div>
-                <div class="field-value">{_escape_html(module_label)}</div>
+                <div class="field-value">{html.escape(module_label)}</div>
             </div>
             <div class="field">
                 <div class="field-label">Target Date</div>
-                <div class="field-value">{_escape_html(target_date)}</div>
+                <div class="field-value">{html.escape(target_date)}</div>
             </div>{desc_html}
 
             <div class="status-box">
                 <div class="status-item" style="flex:1;">
                     <div class="status-label">Expected</div>
-                    <div class="status-expected">{_escape_html(expected_status.replace('_', ' ').title())}</div>
+                    <div class="status-expected">{html.escape(expected_status.replace('_', ' ').title())}</div>
                 </div>
                 <div class="status-item" style="flex:1;">
                     <div class="status-label">Current</div>
-                    <div class="status-current">{_escape_html(current_status.replace('_', ' ').title())}</div>
+                    <div class="status-current">{html.escape(current_status.replace('_', ' ').title())}</div>
                 </div>
             </div>
 
