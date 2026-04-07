@@ -83,7 +83,7 @@ const RunbookRow: React.FC<{
       <td className="py-3 px-4">
         <div>
           <p className="font-medium text-label-primary">{runbook.name}</p>
-          <p className="text-xs text-label-tertiary font-mono">{runbook.runbook_id}</p>
+          <p className="text-xs text-label-tertiary">{runbook.runbook_id}</p>
         </div>
       </td>
       <td className="py-3 px-4">

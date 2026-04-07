@@ -214,7 +214,7 @@ export const L4Queue: React.FC = () => {
                     <p className="text-xs text-label-tertiary mt-0.5 line-clamp-1">{ticket.summary}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-xs text-label-tertiary">{ticket.site_name || ticket.site_id}</p>
+                    <p className="text-xs text-label-tertiary">{ticket.site_name || 'Unknown Site'}</p>
                     <p className="text-xs text-label-quaternary mt-0.5">
                       by {ticket.partner_name || 'Partner'}
                     </p>
@@ -253,7 +253,7 @@ export const L4Queue: React.FC = () => {
                 </div>
                 <h3 className="text-lg font-semibold text-label-primary">{selectedTicket.title}</h3>
                 <p className="text-sm text-label-tertiary">
-                  {selectedTicket.site_name || selectedTicket.site_id} &middot; Partner: {selectedTicket.partner_name || 'Unknown'}
+                  {selectedTicket.site_name || 'Unknown Site'} &middot; Partner: {selectedTicket.partner_name || 'Unknown'}
                 </p>
               </div>
               <button onClick={() => setSelectedTicket(null)} className="text-label-tertiary hover:text-label-primary text-xl">&times;</button>

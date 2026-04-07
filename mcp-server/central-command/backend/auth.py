@@ -491,23 +491,26 @@ async def validate_session(
 
     # HIPAA idle timeout: reject sessions inactive beyond threshold
     if last_activity and last_activity < idle_cutoff:
-        await db.execute(
-            text("DELETE FROM admin_sessions WHERE token_hash = :token_hash"),
+        await execute_with_retry(
+            db,
+            "DELETE FROM admin_sessions WHERE token_hash = :token_hash",
             {"token_hash": token_hash}
         )
         await db.commit()
         return None
 
     # Update last_activity_at on every successful validation
-    await db.execute(
-        text("UPDATE admin_sessions SET last_activity_at = :now WHERE token_hash = :token_hash"),
+    await execute_with_retry(
+        db,
+        "UPDATE admin_sessions SET last_activity_at = :now WHERE token_hash = :token_hash",
         {"token_hash": token_hash, "now": now}
     )
     await db.commit()
 
     # Check org-level scoping (no rows = global admin)
-    org_result = await db.execute(
-        text("SELECT client_org_id FROM admin_org_assignments WHERE admin_user_id = :uid"),
+    org_result = await execute_with_retry(
+        db,
+        "SELECT client_org_id FROM admin_org_assignments WHERE admin_user_id = :uid",
         {"uid": str(user_id)}
     )
     org_rows = org_result.fetchall()

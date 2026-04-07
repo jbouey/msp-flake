@@ -61,7 +61,7 @@ const PeerRow: React.FC<{
       </td>
       <td className="px-4 py-3">
         <span className="text-sm text-label-secondary tabular-nums">
-          {peer.last_handshake ? formatRelativeTime(peer.last_handshake) : '--'}
+          {peer.last_handshake ? formatRelativeTime(peer.last_handshake) : 'No handshake yet'}
         </span>
       </td>
       <td className="px-4 py-3">
@@ -76,12 +76,12 @@ const PeerRow: React.FC<{
       </td>
       <td className="px-4 py-3">
         <span className="text-sm text-label-secondary font-mono tabular-nums">
-          {peer.endpoint || '--'}
+          {peer.endpoint || 'Not configured'}
         </span>
       </td>
       <td className="px-4 py-3">
         <span className="text-sm text-label-secondary tabular-nums">
-          {peer.agent_version || '--'}
+          {peer.agent_version || 'Not available'}
         </span>
       </td>
       <td className="px-4 py-3">

@@ -161,7 +161,7 @@ export const Runbooks: React.FC = () => {
         <div className="flex items-center justify-center gap-6 text-xs text-label-tertiary">
           <div className="flex items-center gap-2">
             <span className="px-1.5 py-0.5 bg-ios-blue/10 text-ios-blue rounded">L1</span>
-            <span>Deterministic (&lt;100ms)</span>
+            <span>Deterministic (under 100ms)</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="px-1.5 py-0.5 bg-ios-purple/10 text-ios-purple rounded">L2</span>

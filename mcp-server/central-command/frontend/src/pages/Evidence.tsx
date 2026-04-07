@@ -152,7 +152,7 @@ export const Evidence: React.FC = () => {
             <option value="">Select a site...</option>
             {sites.map((s) => (
               <option key={s.site_id} value={s.site_id}>
-                {s.clinic_name || s.site_id}
+                {s.clinic_name || `${s.site_id.slice(0, 12)}...`}
               </option>
             ))}
           </select>

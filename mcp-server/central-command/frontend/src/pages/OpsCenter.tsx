@@ -290,8 +290,9 @@ export function OpsCenter() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <p className="text-sm text-health-critical">
-          {error instanceof Error ? error.message : 'Failed to load operations health'}
+        <p className="text-lg font-semibold text-label-primary">Unable to load operations health</p>
+        <p className="text-sm text-label-tertiary max-w-md text-center">
+          The server may be temporarily unavailable. Please try again in a moment.
         </p>
         <button
           onClick={() => refetch()}

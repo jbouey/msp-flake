@@ -311,7 +311,15 @@ export const Organizations: React.FC = () => {
               </div>
               <div>
                 <label className="block text-sm text-label-secondary mb-1">Practice Type</label>
-                <input name="practice_type" defaultValue={editOrg.practice_type || ''} className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary" />
+                <select name="practice_type" defaultValue={editOrg.practice_type || ''} className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary">
+                  <option value="">Select...</option>
+                  <option value="medical">Medical</option>
+                  <option value="dental">Dental</option>
+                  <option value="mental_health">Mental Health</option>
+                  <option value="pharmacy">Pharmacy</option>
+                  <option value="veterinary">Veterinary</option>
+                  <option value="other">Other</option>
+                </select>
               </div>
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => { setEditOrg(null); setActionError(''); }} className="flex-1 px-4 py-2 text-sm rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary">Cancel</button>

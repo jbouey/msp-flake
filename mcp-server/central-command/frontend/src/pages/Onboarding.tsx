@@ -299,7 +299,7 @@ export const Onboarding: React.FC = () => {
                   <div>
                     <p className="font-medium text-label-primary">{client.name}</p>
                     <p className="text-xs text-label-tertiary">
-                      {client.site_id && `Site: ${client.site_id}`}
+                      {client.site_id && 'New Site'}
                     </p>
                   </div>
                 </div>
