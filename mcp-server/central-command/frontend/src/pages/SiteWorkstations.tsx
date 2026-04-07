@@ -16,7 +16,46 @@ import { formatTimeAgo } from '../constants';
 const formatRelativeTime = formatTimeAgo;
 
 /**
- * Status badge colors
+ * Compute pass/fail stats from individual checks
+ */
+function getCheckStats(ws: Workstation): { passed: number; failed: number; total: number } {
+  if (!ws.checks || Object.keys(ws.checks).length === 0) {
+    return { passed: 0, failed: 0, total: 0 };
+  }
+  const checks = Object.values(ws.checks);
+  const total = checks.length;
+  const passed = checks.filter(c => c.compliant).length;
+  return { passed, failed: total - passed, total };
+}
+
+/**
+ * Detect stale scans — checked > 24h ago or never
+ */
+function getStaleness(lastCheck: string | undefined): { isStale: boolean; label: string } {
+  if (!lastCheck) return { isStale: true, label: 'Never scanned' };
+  const hoursAgo = (Date.now() - new Date(lastCheck).getTime()) / (1000 * 60 * 60);
+  if (hoursAgo > 24) {
+    const days = Math.floor(hoursAgo / 24);
+    return { isStale: true, label: `${days}d since scan` };
+  }
+  return { isStale: false, label: '' };
+}
+
+/**
+ * Sorting weight: most failing first, then stale, then compliant
+ */
+function getSortWeight(ws: Workstation): number {
+  const { failed } = getCheckStats(ws);
+  const stale = getStaleness(ws.last_compliance_check);
+  if (ws.compliance_status === 'error') return 1000 + failed;
+  if (ws.compliance_status === 'drifted') return 500 + failed * 10 + (stale.isStale ? 50 : 0);
+  if (ws.compliance_status === 'unknown') return 100;
+  if (stale.isStale) return 50;
+  return 0; // compliant
+}
+
+/**
+ * Status badge colors (fallback for non-check statuses)
  */
 const statusColors: Record<WorkstationComplianceStatus, string> = {
   compliant: 'bg-health-healthy text-white',
@@ -30,7 +69,7 @@ const statusLabels: Record<WorkstationComplianceStatus, string> = {
   compliant: 'Compliant',
   drifted: 'Drifted',
   error: 'Error',
-  unknown: 'Unknown',
+  unknown: 'No Data',
   offline: 'Offline',
 };
 
@@ -79,12 +118,12 @@ const SummaryCard: React.FC<{ summary: SiteWorkstationSummary }> = ({ summary })
           <div className="text-sm text-label-secondary">Compliant</div>
         </div>
 
-        {/* Drifted */}
+        {/* Failing */}
         <div className="text-center">
           <div className="text-3xl font-bold text-health-warning">
             {summary.drifted_workstations}
           </div>
-          <div className="text-sm text-label-secondary">Drifted</div>
+          <div className="text-sm text-label-secondary">Failing</div>
         </div>
 
         {/* Error */}
@@ -140,8 +179,25 @@ const WorkstationRow: React.FC<{
   expanded: boolean;
   onToggle: () => void;
 }> = ({ workstation, expanded, onToggle }) => {
-  const statusColor = statusColors[workstation.compliance_status] || statusColors.unknown;
-  const statusLabel = statusLabels[workstation.compliance_status] || 'Unknown';
+  const { passed, failed, total } = getCheckStats(workstation);
+  const stale = getStaleness(workstation.last_compliance_check);
+  const hasChecks = total > 0;
+
+  // Build the status badge based on actual check data
+  let badgeLabel: string;
+  let badgeColor: string;
+  if (workstation.compliance_status === 'compliant') {
+    badgeLabel = hasChecks ? `${passed}/${total} Passing` : 'Compliant';
+    badgeColor = 'bg-health-healthy text-white';
+  } else if (workstation.compliance_status === 'drifted' || workstation.compliance_status === 'error') {
+    badgeLabel = hasChecks ? `${failed}/${total} Failing` : (statusLabels[workstation.compliance_status] || 'Drifted');
+    badgeColor = failed >= 4 ? 'bg-red-600 text-white'
+               : failed >= 2 ? 'bg-orange-500 text-white'
+               : 'bg-amber-500 text-white';
+  } else {
+    badgeLabel = statusLabels[workstation.compliance_status] || 'Unknown';
+    badgeColor = statusColors[workstation.compliance_status] || statusColors.unknown;
+  }
 
   return (
     <>
@@ -152,7 +208,12 @@ const WorkstationRow: React.FC<{
         <td className="px-4 py-3">
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${workstation.online ? 'bg-health-healthy' : 'bg-slate-500'}`} />
-            <span className="font-medium text-label-primary">{workstation.hostname}</span>
+            <div>
+              <span className="font-medium text-label-primary">{workstation.hostname}</span>
+              {workstation.hostname === workstation.ip_address && (
+                <div className="text-xs text-amber-400">hostname not resolved</div>
+              )}
+            </div>
           </div>
         </td>
         <td className="px-4 py-3 text-label-secondary">
@@ -162,20 +223,25 @@ const WorkstationRow: React.FC<{
           {workstation.os_name || '-'}
         </td>
         <td className="px-4 py-3">
-          <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColor}`}>
-            {statusLabel}
-          </span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={`px-2 py-1 rounded-full text-xs font-medium ${badgeColor}`}>
+              {badgeLabel}
+            </span>
+            {stale.isStale && workstation.compliance_status !== 'unknown' && (
+              <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                {stale.label}
+              </span>
+            )}
+          </div>
         </td>
         <td className="px-4 py-3 text-label-secondary text-sm">
-          {workstation.last_compliance_check
-            ? formatRelativeTime(workstation.last_compliance_check)
-            : workstation.compliance_status === 'compliant'
-              ? 'Status inherited'
-              : workstation.compliance_status === 'drifted'
-                ? 'Check needed'
-                : workstation.compliance_status === 'unknown'
-                  ? 'Pending scan'
-                  : 'Never'}
+          <span className={stale.isStale ? 'text-amber-400' : ''}>
+            {workstation.last_compliance_check
+              ? formatRelativeTime(workstation.last_compliance_check)
+              : workstation.compliance_status === 'compliant'
+                ? 'Status inherited'
+                : 'Pending scan'}
+          </span>
         </td>
         <td className="px-4 py-3 text-right">
           <svg
@@ -245,41 +311,52 @@ const WorkstationRow: React.FC<{
  */
 const WorkstationTable: React.FC<{ workstations: Workstation[] }> = ({ workstations }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'all' | 'online' | 'compliant' | 'drifted'>('all');
+  const [filter, setFilter] = useState<'all' | 'online' | 'compliant' | 'failing'>('all');
 
-  const filteredWorkstations = workstations.filter(ws => {
-    switch (filter) {
-      case 'online': return ws.online;
-      case 'compliant': return ws.compliance_status === 'compliant';
-      case 'drifted': return ws.compliance_status === 'drifted' || ws.compliance_status === 'error';
-      default: return true;
-    }
-  });
+  const failingCount = workstations.filter(ws => ws.compliance_status === 'drifted' || ws.compliance_status === 'error').length;
+  const staleCount = workstations.filter(ws => getStaleness(ws.last_compliance_check).isStale && ws.compliance_status !== 'unknown').length;
+
+  const filteredWorkstations = workstations
+    .filter(ws => {
+      switch (filter) {
+        case 'online': return ws.online;
+        case 'compliant': return ws.compliance_status === 'compliant';
+        case 'failing': return ws.compliance_status === 'drifted' || ws.compliance_status === 'error';
+        default: return true;
+      }
+    })
+    .sort((a, b) => getSortWeight(b) - getSortWeight(a));
+
+  const filterTabs: { key: typeof filter; label: string; count: number }[] = [
+    { key: 'all', label: 'All', count: workstations.length },
+    { key: 'failing', label: 'Failing', count: failingCount },
+    { key: 'online', label: 'Online', count: workstations.filter(ws => ws.online).length },
+    { key: 'compliant', label: 'Passing', count: workstations.filter(ws => ws.compliance_status === 'compliant').length },
+  ];
 
   return (
     <GlassCard className="overflow-hidden">
       {/* Filter tabs */}
-      <div className="flex gap-2 p-4 border-b border-glass-border">
-        {(['all', 'online', 'compliant', 'drifted'] as const).map((f) => (
+      <div className="flex items-center gap-2 p-4 border-b border-glass-border">
+        {filterTabs.map((f) => (
           <button
-            key={f}
-            onClick={() => setFilter(f)}
+            key={f.key}
+            onClick={() => setFilter(f.key)}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              filter === f
+              filter === f.key
                 ? 'bg-accent-primary text-white'
                 : 'text-label-secondary hover:bg-glass-bg/50'
             }`}
           >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
-            <span className="ml-1 text-xs opacity-70">
-              ({f === 'all' ? workstations.length :
-                f === 'online' ? workstations.filter(ws => ws.online).length :
-                f === 'compliant' ? workstations.filter(ws => ws.compliance_status === 'compliant').length :
-                workstations.filter(ws => ws.compliance_status === 'drifted' || ws.compliance_status === 'error').length
-              })
-            </span>
+            {f.label}
+            <span className="ml-1 text-xs opacity-70">({f.count})</span>
           </button>
         ))}
+        {staleCount > 0 && (
+          <span className="ml-auto px-2 py-1 rounded text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+            {staleCount} stale scan{staleCount !== 1 ? 's' : ''}
+          </span>
+        )}
       </div>
 
       {/* Table */}

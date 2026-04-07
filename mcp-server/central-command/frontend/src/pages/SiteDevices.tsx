@@ -27,9 +27,16 @@ const deviceTypeConfig: Record<string, { icon: string; label: string; color: str
  */
 const complianceColors: Record<string, string> = {
   compliant: 'bg-health-healthy text-white',
-  drifted: 'bg-health-critical text-white',
+  drifted: 'bg-orange-500 text-white',
   unknown: 'bg-slate-500 text-white',
   excluded: 'bg-slate-600 text-white',
+};
+
+const complianceLabels: Record<string, string> = {
+  compliant: 'Passing',
+  drifted: 'Failing',
+  unknown: 'No Data',
+  excluded: 'Excluded',
 };
 
 /**
@@ -87,12 +94,12 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
           <div className="text-sm text-label-secondary">Compliant</div>
         </div>
 
-        {/* Drifted */}
+        {/* Failing */}
         <div className="text-center">
-          <div className="text-3xl font-bold text-health-critical">
+          <div className="text-3xl font-bold text-orange-500">
             {summary.by_compliance?.drifted ?? 0}
           </div>
-          <div className="text-sm text-label-secondary">Drifted</div>
+          <div className="text-sm text-label-secondary">Failing</div>
         </div>
 
         {/* Unknown */}
@@ -321,7 +328,7 @@ const DeviceRow: React.FC<{
         </td>
         <td className="px-4 py-3">
           <span className={`px-2 py-1 rounded-full text-xs font-medium ${complianceColor}`}>
-            {device.compliance_status}
+            {complianceLabels[device.compliance_status] || device.compliance_status}
           </span>
         </td>
         <td className="px-4 py-3">
@@ -571,9 +578,9 @@ const DeviceTable: React.FC<{
             className="px-2 py-1 rounded bg-glass-bg border border-glass-border text-sm text-label-primary"
           >
             <option value="">All Status</option>
-            <option value="compliant">Compliant</option>
-            <option value="drifted">Drifted</option>
-            <option value="unknown">Unknown</option>
+            <option value="compliant">Passing</option>
+            <option value="drifted">Failing</option>
+            <option value="unknown">No Data</option>
           </select>
         </div>
 
