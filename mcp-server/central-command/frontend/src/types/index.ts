@@ -819,7 +819,9 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   spooler_service: 'Print Spooler',
   firewall_dangerous_rules: 'FW Inbound Rules',
   // Deploy / special
-  'WIN-DEPLOY-UNREACHABLE': 'Deploy Fail',
+  'WIN-DEPLOY-UNREACHABLE': 'Deploy Failed',
+  'AGENT-REDEPLOY-EXHAUSTED': 'Redeploy Exhausted',
+  linux_encryption: 'Disk Encryption',
   // Legacy / alternate check types
   windows_audit_policy: 'Audit Policy',
   audit_policy: 'Audit Policy',

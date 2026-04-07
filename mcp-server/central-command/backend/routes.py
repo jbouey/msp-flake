@@ -2368,7 +2368,7 @@ async def get_attention_required(db: AsyncSession = Depends(get_db)):
             items.append({
                 "type": "repeat_failure",
                 "severity": "warning",
-                "title": f"Repeat drift: {r.check_type} ({r.occurrences}x in 24h)",
+                "title": f"Recurring: {r.check_type} ({r.occurrences}x in 24h)",
                 "site_id": r.site_id,
                 "clinic_name": r.clinic_name,
                 "detail": f"Auto-healing not sticking — {r.occurrences} recurrences",

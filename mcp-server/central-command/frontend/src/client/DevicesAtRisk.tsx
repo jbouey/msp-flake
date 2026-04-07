@@ -310,8 +310,8 @@ export const DevicesAtRisk: React.FC<Props> = ({ siteId, apiPrefix = '/api/clien
             </svg>
           </div>
           <div>
-            <h3 className="text-sm font-semibold" style={{ color: 'var(--label-primary)' }}>All Devices Healthy</h3>
-            <p className="text-xs" style={{ color: 'var(--label-tertiary)' }}>No active drift detected across your fleet</p>
+            <h3 className="text-sm font-semibold" style={{ color: 'var(--label-primary)' }}>All Devices Passing</h3>
+            <p className="text-xs" style={{ color: 'var(--label-tertiary)' }}>No active compliance issues detected</p>
           </div>
         </div>
       </div>

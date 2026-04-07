@@ -559,7 +559,7 @@ export const ComplianceHealthInfographic: React.FC<Props> = ({ sites, apiPrefix 
                   <div className="mt-2 flex items-center gap-1.5">
                     <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                     <span className="text-xs" style={{ color: 'var(--label-tertiary)' }}>
-                      {data.healing.pending} remediation attempts failed
+                      {data.healing.pending} pending remediation{data.healing.pending !== 1 ? 's' : ''}
                     </span>
                   </div>
                 )}

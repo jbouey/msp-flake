@@ -780,7 +780,7 @@ const MoveApplianceModal: React.FC<{
               className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light focus:border-accent-primary focus:outline-none text-sm">
               <option value="">Select target site...</option>
               {sites.map(s => (
-                <option key={s.site_id} value={s.site_id}>{s.clinic_name} ({s.site_id.slice(0, 20)})</option>
+                <option key={s.site_id} value={s.site_id}>{s.clinic_name}</option>
               ))}
             </select>
             <div className="flex gap-3 pt-2">
@@ -890,7 +890,7 @@ const TransferApplianceModal: React.FC<{
                   className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light focus:border-accent-primary focus:outline-none text-sm">
                   <option value="">Select target site...</option>
                   {sites.map(s => (
-                    <option key={s.site_id} value={s.site_id}>{s.clinic_name} ({s.site_id})</option>
+                    <option key={s.site_id} value={s.site_id}>{s.clinic_name}</option>
                   ))}
                 </select>
               </div>
@@ -1333,7 +1333,7 @@ export const SiteDetail: React.FC = () => {
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-semibold text-label-primary truncate">{site.clinic_name}</h1>
               <Badge variant={site.live_status === 'online' ? 'success' : site.live_status === 'offline' ? 'error' : 'default'}>
-                {site.live_status}
+                {site.live_status === 'online' ? 'Online' : site.live_status === 'offline' ? 'Offline' : site.live_status?.replace(/\b\w/g, c => c.toUpperCase()) || 'Unknown'}
               </Badge>
               {site.wg_ip && (
                 <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -1344,7 +1344,7 @@ export const SiteDetail: React.FC = () => {
                 </span>
               )}
             </div>
-            <p className="text-label-tertiary text-sm mt-0.5">{site.site_id}</p>
+            {/* site_id hidden from main view — visible in Edit modal */}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -1506,7 +1506,7 @@ export const SiteDetail: React.FC = () => {
               <div>
                 <p className="text-label-tertiary text-sm">Tier</p>
                 <Badge variant={site.tier === 'large' ? 'success' : site.tier === 'mid' ? 'info' : 'default'}>
-                  {site.tier}
+                  {site.tier?.replace(/\b\w/g, c => c.toUpperCase()) || 'Standard'}
                 </Badge>
               </div>
               <div>

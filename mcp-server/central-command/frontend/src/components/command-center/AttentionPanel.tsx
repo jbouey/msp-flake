@@ -3,7 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { GlassCard, Spinner } from '../shared';
 import { useAttentionRequired } from '../../hooks';
 import type { AttentionItem } from '../../types';
+import { CHECK_TYPE_LABELS } from '../../types';
 import { formatTimeAgo } from '../../constants';
+
+/** Clean up backend-generated attention titles for display */
+function cleanTitle(title: string): string {
+  // "Repeat drift: net_host_reachability (9x in 24h)" → "Recurring: Host Reach (9x in 24h)"
+  return title
+    .replace(/^Repeat drift:\s*/i, 'Recurring: ')
+    .replace(/^Repeat failure:\s*/i, 'Recurring: ')
+    .replace(/(Recurring:\s*)(\S+)/, (_match, prefix, checkType) => {
+      return prefix + (CHECK_TYPE_LABELS[checkType] || checkType.replace(/_/g, ' '));
+    });
+}
 
 const typeIcons: Record<string, React.ReactNode> = {
   l3_escalation: (
@@ -40,7 +52,7 @@ const AttentionItemRow: React.FC<{
     {typeIcons[item.type] || typeIcons.offline_appliance}
     <div className="flex-1 min-w-0">
       <p className="text-sm font-medium text-label-primary leading-snug truncate">
-        {item.title}
+        {cleanTitle(item.title)}
       </p>
       <p className="text-xs text-label-tertiary mt-0.5 leading-relaxed">
         {item.clinic_name && <span className="font-medium text-label-secondary">{item.clinic_name}</span>}

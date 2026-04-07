@@ -30,7 +30,6 @@ const SiteRow: React.FC<{
         <div className="flex items-center gap-2">
           <div className="flex-1">
             <p className="font-medium text-label-primary">{site.clinic_name}</p>
-            <p className="text-xs text-label-tertiary">{site.site_id}</p>
           </div>
           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
@@ -67,7 +66,7 @@ const SiteRow: React.FC<{
           site.onboarding_stage === 'connectivity' ? 'info' :
           'default'
         }>
-          {site.onboarding_stage.replace('_', ' ')}
+          {site.onboarding_stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
         </Badge>
       </td>
       <td className="px-4 py-3 text-sm text-label-secondary">
@@ -79,7 +78,7 @@ const SiteRow: React.FC<{
           site.tier === 'mid' ? 'info' :
           'default'
         }>
-          {site.tier}
+          {site.tier.replace(/\b\w/g, c => c.toUpperCase())}
         </Badge>
       </td>
     </tr>
