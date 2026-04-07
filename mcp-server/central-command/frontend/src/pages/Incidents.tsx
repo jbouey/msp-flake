@@ -125,7 +125,7 @@ const IncidentDetailPanel: React.FC<{ incidentId: string; onClose: () => void }>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
         <div>
           <span className="text-label-tertiary">Hostname:</span>
-          <div className="text-label-primary font-medium">{detail.hostname || 'Unknown'}</div>
+          <div className="text-label-primary font-medium">{detail.hostname || detail.site_id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</div>
         </div>
         <div>
           <span className="text-label-tertiary">Site:</span>
@@ -153,10 +153,10 @@ const IncidentDetailPanel: React.FC<{ incidentId: string; onClose: () => void }>
         </div>
       )}
 
-      {/* Drift details */}
+      {/* Check details */}
       {hasDriftInfo && (
         <div className="rounded-lg bg-glass-bg/30 p-4">
-          <h4 className="text-xs font-medium text-label-tertiary uppercase mb-2">Drift Details</h4>
+          <h4 className="text-xs font-medium text-label-tertiary uppercase mb-2">Check Details</h4>
           <div className="space-y-2 text-sm">
             {'message' in driftData && driftData.message !== undefined && driftData.message !== null && (
               <p className="text-label-primary">{String(driftData.message)}</p>
@@ -271,6 +271,7 @@ export const Incidents: React.FC = () => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [showRecent, setShowRecent] = useState(false);
+  const [activeViewMode, setActiveViewMode] = useState<'cards' | 'table'>('cards');
   const [page, setPage] = useState(0);
   const limit = 50;
 
@@ -291,6 +292,21 @@ export const Incidents: React.FC = () => {
   // Fetch sites for the selector
   const { data: sitesData } = useSites({ limit: 200, sort_by: 'clinic_name', sort_dir: 'asc' });
   const sites = sitesData?.sites || [];
+
+  // Build site_id -> clinic_name lookup for hostname fallback
+  const siteNameMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of sites) {
+      map[s.site_id] = s.clinic_name;
+    }
+    return map;
+  }, [sites]);
+
+  /** Resolve display name for an incident: hostname, then site/clinic name, then 'Unknown' */
+  const displayHostname = useCallback((incident: Incident): string => {
+    if (incident.hostname) return incident.hostname;
+    return siteNameMap[incident.site_id] || 'Unknown';
+  }, [siteNameMap]);
 
   // Fetch all incidents (no resolved filter -- we split client-side)
   const { data: rawIncidents = [], isLoading, error } = useIncidents({
@@ -579,128 +595,239 @@ export const Incidents: React.FC = () => {
           {/* Section 1: Active Threats                                      */}
           {/* ============================================================= */}
           <div>
-            <h2 className="text-sm font-semibold text-label-primary mb-3 flex items-center gap-2">
-              <ExclamationTriangleIcon className="w-4 h-4 text-health-critical" />
-              Active Threats
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-label-primary flex items-center gap-2">
+                <ExclamationTriangleIcon className="w-4 h-4 text-health-critical" />
+                Active Threats
+                {activeIncidents.length > 0 && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-health-critical/10 text-health-critical rounded-full">
+                    {activeIncidents.length}
+                  </span>
+                )}
+              </h2>
               {activeIncidents.length > 0 && (
-                <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-health-critical/10 text-health-critical rounded-full">
-                  {activeIncidents.length}
-                </span>
-              )}
-            </h2>
-            <div className="space-y-3">
-              {activeIncidents.map((incident: Incident) => (
-                <div
-                  key={incident.id}
-                  className={`glass-card p-4 border-l-4 ${SEVERITY_BORDER[incident.severity] || 'border-health-warning'}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <StatusBadge status="active" />
-                        <span className="font-semibold text-label-primary truncate">{incident.hostname || 'Unknown'}</span>
-                        <span className="text-label-tertiary hidden sm:inline">
-                          {'\u00B7'}
-                        </span>
-                        <span className="text-sm text-label-secondary truncate">
-                          {CHECK_TYPE_LABELS[incident.check_type] || incident.check_type}
-                        </span>
-                      </div>
-                      <p className="text-xs text-label-tertiary mt-1">
-                        {formatTimeAgo(incident.created_at)}
-                        {' \u00B7 '}
-                        <span className="capitalize">{incident.severity}</span>
-                        {incident.resolution_level && (
-                          <>
-                            {' \u00B7 '}
-                            {TIER_SHORT_LABELS[incident.resolution_level] || incident.resolution_level}
-                            {' \u2014 '}
-                            {TIER_LABELS[incident.resolution_level as keyof typeof TIER_LABELS] || ''}
-                          </>
-                        )}
-                      </p>
-                      {incident.remediation_attempts > 0 && (
-                        <p className="text-xs text-health-warning mt-1">
-                          {incident.remediation_attempts} remediation attempt{incident.remediation_attempts !== 1 ? 's' : ''}
-                          {incident.remediation_exhausted ? ' -- exhausted, needs manual review' : ''}
-                        </p>
-                      )}
-                      {incident.hipaa_controls.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                          {incident.hipaa_controls.slice(0, 3).map(ctrl => (
-                            <span key={ctrl} className="px-1.5 py-0.5 bg-accent-primary/10 text-accent-primary rounded text-[10px] font-mono">
-                              {ctrl}
-                            </span>
-                          ))}
-                          {incident.hipaa_controls.length > 3 && (
-                            <span className="text-[10px] text-label-tertiary">+{incident.hipaa_controls.length - 3}</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      {actionLoadingId === String(incident.id) ? (
-                        <span className="w-20 flex justify-center">
-                          <svg className="w-4 h-4 animate-spin text-label-tertiary" viewBox="0 0 24 24" fill="none">
-                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4 31.4" strokeLinecap="round" />
-                          </svg>
-                        </span>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => handleResolve(String(incident.id))}
-                            className="px-2.5 py-1.5 text-xs font-medium rounded-ios-sm bg-health-healthy/10 text-health-healthy hover:bg-health-healthy/20 transition-colors"
-                            title="Resolve"
-                          >
-                            Resolve
-                          </button>
-                          <button
-                            onClick={() => handleEscalate(String(incident.id))}
-                            className="px-2.5 py-1.5 text-xs font-medium rounded-ios-sm bg-ios-orange/10 text-ios-orange hover:bg-ios-orange/20 transition-colors"
-                            title="Escalate to L3"
-                          >
-                            Escalate
-                          </button>
-                          <button
-                            onClick={() => handleSuppress(String(incident.id))}
-                            className="px-2.5 py-1.5 text-xs font-medium rounded-ios-sm bg-label-tertiary/10 text-label-tertiary hover:bg-label-tertiary/20 transition-colors"
-                            title="Suppress 24h"
-                          >
-                            Suppress
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Expandable detail panel */}
-                  {expandedId === String(incident.id) && (
-                    <IncidentDetailPanel
-                      incidentId={String(incident.id)}
-                      onClose={() => setExpandedId(null)}
-                    />
-                  )}
-
-                  {/* Click-to-expand hint */}
+                <div className="flex items-center bg-separator-light rounded-ios-sm overflow-hidden">
                   <button
-                    onClick={() => setExpandedId(expandedId === String(incident.id) ? null : String(incident.id))}
-                    className="mt-2 text-[10px] text-label-tertiary hover:text-label-secondary transition-colors"
+                    onClick={() => setActiveViewMode('cards')}
+                    className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                      activeViewMode === 'cards'
+                        ? 'bg-accent-primary text-white'
+                        : 'text-label-secondary hover:text-label-primary'
+                    }`}
                   >
-                    {expandedId === String(incident.id) ? 'Hide details' : 'View details'}
+                    Cards
                   </button>
-                </div>
-              ))}
-
-              {activeIncidents.length === 0 && (
-                <div className="glass-card p-6 text-center">
-                  <div className="w-10 h-10 rounded-full bg-health-healthy/10 flex items-center justify-center mx-auto mb-3">
-                    <ShieldCheckIcon className="w-5 h-5 text-health-healthy" />
-                  </div>
-                  <p className="text-sm font-medium text-label-primary">All clear</p>
-                  <p className="text-xs text-label-tertiary mt-1">No active incidents. All systems monitored and healthy.</p>
+                  <button
+                    onClick={() => setActiveViewMode('table')}
+                    className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                      activeViewMode === 'table'
+                        ? 'bg-accent-primary text-white'
+                        : 'text-label-secondary hover:text-label-primary'
+                    }`}
+                  >
+                    Table
+                  </button>
                 </div>
               )}
             </div>
+
+            {activeViewMode === 'table' && activeIncidents.length > 0 ? (
+              /* ---- Compact table view ---- */
+              <div className="glass-card overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-separator-light">
+                        <th className="px-3 py-2 text-left text-xs font-medium text-label-tertiary">Status</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-label-tertiary">Hostname</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-label-tertiary">Check Type</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-label-tertiary">Severity</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-label-tertiary">Time</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-label-tertiary">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeIncidents.map((incident: Incident) => (
+                        <tr
+                          key={incident.id}
+                          className={`border-l-4 ${SEVERITY_BORDER[incident.severity] || 'border-health-warning'} hover:bg-fill-secondary/50 transition-colors cursor-pointer`}
+                          onClick={() => setExpandedId(expandedId === String(incident.id) ? null : String(incident.id))}
+                        >
+                          <td className="px-3 py-2">
+                            <StatusBadge status="active" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="text-sm font-medium text-label-primary">{displayHostname(incident)}</span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="text-sm text-label-secondary">{CHECK_TYPE_LABELS[incident.check_type] || incident.check_type}</span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className={`text-xs font-medium capitalize px-1.5 py-0.5 rounded ${
+                              incident.severity === 'critical' ? 'bg-health-critical/10 text-health-critical' :
+                              incident.severity === 'high' ? 'bg-ios-orange/10 text-ios-orange' :
+                              incident.severity === 'medium' ? 'bg-health-warning/10 text-health-warning' :
+                              'bg-ios-blue/10 text-ios-blue'
+                            }`}>{incident.severity}</span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="text-xs text-label-tertiary">{formatTimeAgo(incident.created_at)}</span>
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              {actionLoadingId === String(incident.id) ? (
+                                <svg className="w-4 h-4 animate-spin text-label-tertiary" viewBox="0 0 24 24" fill="none">
+                                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4 31.4" strokeLinecap="round" />
+                                </svg>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleResolve(String(incident.id)); }}
+                                    className="px-2 py-1 text-xs font-medium rounded-ios-sm bg-health-healthy/10 text-health-healthy hover:bg-health-healthy/20 transition-colors"
+                                    title="Resolve"
+                                  >
+                                    Resolve
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleEscalate(String(incident.id)); }}
+                                    className="px-2 py-1 text-xs font-medium rounded-ios-sm bg-ios-orange/10 text-ios-orange hover:bg-ios-orange/20 transition-colors"
+                                    title="Escalate to L3"
+                                  >
+                                    Escalate
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleSuppress(String(incident.id)); }}
+                                    className="px-2 py-1 text-xs font-medium rounded-ios-sm bg-label-tertiary/10 text-label-tertiary hover:bg-label-tertiary/20 transition-colors"
+                                    title="Suppress 24h"
+                                  >
+                                    Suppress
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              /* ---- Card view (default) ---- */
+              <div className="space-y-3">
+                {activeIncidents.map((incident: Incident) => (
+                  <div
+                    key={incident.id}
+                    className={`glass-card p-4 border-l-4 ${SEVERITY_BORDER[incident.severity] || 'border-health-warning'}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <StatusBadge status="active" />
+                          <span className="font-semibold text-label-primary truncate">{displayHostname(incident)}</span>
+                          <span className="text-label-tertiary hidden sm:inline">
+                            {'\u00B7'}
+                          </span>
+                          <span className="text-sm text-label-secondary truncate">
+                            {CHECK_TYPE_LABELS[incident.check_type] || incident.check_type}
+                          </span>
+                        </div>
+                        <p className="text-xs text-label-tertiary mt-1">
+                          {formatTimeAgo(incident.created_at)}
+                          {' \u00B7 '}
+                          <span className="capitalize">{incident.severity}</span>
+                          {incident.resolution_level && (
+                            <>
+                              {' \u00B7 '}
+                              {TIER_SHORT_LABELS[incident.resolution_level] || incident.resolution_level}
+                              {' \u2014 '}
+                              {TIER_LABELS[incident.resolution_level as keyof typeof TIER_LABELS] || ''}
+                            </>
+                          )}
+                        </p>
+                        {incident.remediation_attempts > 0 && (
+                          <p className="text-xs text-health-warning mt-1">
+                            {incident.remediation_attempts} remediation attempt{incident.remediation_attempts !== 1 ? 's' : ''}
+                            {incident.remediation_exhausted ? ' -- exhausted, needs manual review' : ''}
+                          </p>
+                        )}
+                        {incident.hipaa_controls.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {incident.hipaa_controls.slice(0, 3).map(ctrl => (
+                              <span key={ctrl} className="px-1.5 py-0.5 bg-accent-primary/10 text-accent-primary rounded text-[10px] font-mono">
+                                {ctrl}
+                              </span>
+                            ))}
+                            {incident.hipaa_controls.length > 3 && (
+                              <span className="text-[10px] text-label-tertiary">+{incident.hipaa_controls.length - 3}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {actionLoadingId === String(incident.id) ? (
+                          <span className="w-20 flex justify-center">
+                            <svg className="w-4 h-4 animate-spin text-label-tertiary" viewBox="0 0 24 24" fill="none">
+                              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4 31.4" strokeLinecap="round" />
+                            </svg>
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleResolve(String(incident.id))}
+                              className="px-2.5 py-1.5 text-xs font-medium rounded-ios-sm bg-health-healthy/10 text-health-healthy hover:bg-health-healthy/20 transition-colors"
+                              title="Resolve"
+                            >
+                              Resolve
+                            </button>
+                            <button
+                              onClick={() => handleEscalate(String(incident.id))}
+                              className="px-2.5 py-1.5 text-xs font-medium rounded-ios-sm bg-ios-orange/10 text-ios-orange hover:bg-ios-orange/20 transition-colors"
+                              title="Escalate to L3"
+                            >
+                              Escalate
+                            </button>
+                            <button
+                              onClick={() => handleSuppress(String(incident.id))}
+                              className="px-2.5 py-1.5 text-xs font-medium rounded-ios-sm bg-label-tertiary/10 text-label-tertiary hover:bg-label-tertiary/20 transition-colors"
+                              title="Suppress 24h"
+                            >
+                              Suppress
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expandable detail panel */}
+                    {expandedId === String(incident.id) && (
+                      <IncidentDetailPanel
+                        incidentId={String(incident.id)}
+                        onClose={() => setExpandedId(null)}
+                      />
+                    )}
+
+                    {/* Click-to-expand hint */}
+                    <button
+                      onClick={() => setExpandedId(expandedId === String(incident.id) ? null : String(incident.id))}
+                      className="mt-2 text-[10px] text-label-tertiary hover:text-label-secondary transition-colors"
+                    >
+                      {expandedId === String(incident.id) ? 'Hide details' : 'View details'}
+                    </button>
+                  </div>
+                ))}
+
+                {activeIncidents.length === 0 && (
+                  <div className="glass-card p-6 text-center">
+                    <div className="w-10 h-10 rounded-full bg-health-healthy/10 flex items-center justify-center mx-auto mb-3">
+                      <ShieldCheckIcon className="w-5 h-5 text-health-healthy" />
+                    </div>
+                    <p className="text-sm font-medium text-label-primary">All clear</p>
+                    <p className="text-xs text-label-tertiary mt-1">No active incidents. All systems monitored and healthy.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* ============================================================= */}

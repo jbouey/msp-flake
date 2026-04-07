@@ -1103,7 +1103,7 @@ export interface SiteRunbookConfig {
 }
 
 // =============================================================================
-// DRIFT CONFIG API (per-site drift check toggles)
+// COMPLIANCE CHECK CONFIG API (per-site check toggles)
 // =============================================================================
 
 export interface DriftCheckConfig {
@@ -1557,7 +1557,7 @@ export const goAgentsApi = {
       body: JSON.stringify({ capability_tier: tier }),
     }),
 
-  // Trigger drift check on a Go agent
+  // Trigger compliance check on a Go agent
   triggerCheck: (siteId: string, agentId: string) =>
     fetchSitesApi<{ status: string; message: string }>(`/sites/${siteId}/agents/${agentId}/check`, {
       method: 'POST',

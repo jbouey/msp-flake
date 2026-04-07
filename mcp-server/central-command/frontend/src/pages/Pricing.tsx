@@ -88,13 +88,13 @@ export const Pricing: React.FC = () => {
       price: '$499',
       description: 'Full compliance monitoring for practices that need visibility and basic auto-healing.',
       features: [
-        { text: 'All 59 drift checks (Windows, Linux, macOS)', included: true },
+        { text: 'All 59 compliance checks (Windows, Linux, macOS)', included: true },
         { text: 'L1 deterministic auto-healing', included: true },
         { text: 'Ed25519 signed evidence bundles', included: true },
         { text: 'Blockchain timestamping (OpenTimestamps)', included: true },
         { text: 'Client compliance portal', included: true },
         { text: 'Monthly compliance monitoring summary', included: true },
-        { text: 'Email notifications on drift + healing', included: true },
+        { text: 'Email notifications on issues + healing', included: true },
         { text: 'Top 50 remediation runbooks', included: true },
         { text: 'L2 LLM-powered healing', included: false },
         { text: 'Full runbook library (288)', included: false },
@@ -110,13 +110,13 @@ export const Pricing: React.FC = () => {
       price: '$799',
       description: 'Complete healing pipeline with LLM-powered remediation and full compliance packets.',
       features: [
-        { text: 'All 59 drift checks (Windows, Linux, macOS)', included: true },
+        { text: 'All 59 compliance checks (Windows, Linux, macOS)', included: true },
         { text: 'L1 deterministic auto-healing', included: true },
         { text: 'Ed25519 signed evidence bundles', included: true },
         { text: 'Blockchain timestamping (OpenTimestamps)', included: true },
         { text: 'Client compliance portal', included: true },
         { text: 'Full monthly compliance packets', included: true },
-        { text: 'Email notifications on drift + healing', included: true },
+        { text: 'Email notifications on issues + healing', included: true },
         { text: 'Full runbook library (288 runbooks)', included: true },
         { text: 'L2 LLM-powered healing', included: true },
         { text: 'Partner fleet management portal', included: true },
@@ -133,13 +133,13 @@ export const Pricing: React.FC = () => {
       price: '$1,299',
       description: 'Dedicated support, custom runbooks, and audit preparation for larger practices.',
       features: [
-        { text: 'All 59 drift checks (Windows, Linux, macOS)', included: true },
+        { text: 'All 59 compliance checks (Windows, Linux, macOS)', included: true },
         { text: 'L1 deterministic auto-healing', included: true },
         { text: 'Ed25519 signed evidence bundles', included: true },
         { text: 'Blockchain timestamping (OpenTimestamps)', included: true },
         { text: 'Client compliance portal', included: true },
         { text: 'Full monthly compliance packets', included: true },
-        { text: 'Email notifications on drift + healing', included: true },
+        { text: 'Email notifications on issues + healing', included: true },
         { text: 'Full runbook library + custom runbooks', included: true },
         { text: 'L2 LLM-powered healing', included: true },
         { text: 'Partner fleet management portal', included: true },
@@ -201,7 +201,7 @@ export const Pricing: React.FC = () => {
             75% less than traditional<br />MSP compliance
           </h1>
           <p className="text-lg text-slate-500 max-w-2xl mx-auto font-body font-light">
-            Every tier includes full drift scanning and evidence-grade compliance monitoring.
+            Every tier includes full compliance scanning and evidence-grade compliance monitoring.
             No per-device fees. No hidden costs. Annual contracts with monthly billing.
           </p>
         </div>

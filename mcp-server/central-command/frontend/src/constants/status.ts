@@ -171,7 +171,7 @@ const STATUS_MAP: Record<string, StatusConfig> = {
     type: 'success',
   },
   drifted: {
-    label: 'Drifted',
+    label: 'Failing',
     color: 'text-health-warning',
     bgColor: 'bg-orange-100',
     dotColor: 'bg-health-warning',

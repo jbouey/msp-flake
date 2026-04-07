@@ -186,7 +186,7 @@ export const ClientEscalations: React.FC = () => {
     if (!raw) return null;
     const map: Record<string, string> = {
       hostname: 'Hostname', check_type: 'Check Type', message: 'Message',
-      details: 'Details', service_name: 'Service', drift_type: 'Drift Type',
+      details: 'Details', service_name: 'Service', drift_type: 'Issue Type',
       expected: 'Expected', actual: 'Actual', os_type: 'OS Type',
     };
     const fields: { label: string; value: string }[] = [];

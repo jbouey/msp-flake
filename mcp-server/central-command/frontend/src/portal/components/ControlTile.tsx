@@ -47,7 +47,7 @@ export const ControlTile: React.FC<ControlTileProps> = ({ control }) => {
       bg: 'bg-red-50',
       icon: '✗',
       iconColor: 'text-red-600',
-      label: 'DRIFT DETECTED',
+      label: 'CHECK FAILED',
       labelBg: 'bg-red-100 text-red-800'
     }
   };

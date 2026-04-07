@@ -210,7 +210,7 @@ const ApplianceCard: React.FC<{
             disabled={isLoading}
             className="px-3 py-1.5 text-xs rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary disabled:opacity-50 transition-colors"
           >
-            Run Drift
+            Run Scan
           </button>
           <button
             onClick={() => onCreateOrder(appliance.appliance_id, 'sync_rules')}

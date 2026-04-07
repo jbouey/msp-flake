@@ -190,7 +190,7 @@ const WorkstationRow: React.FC<{
     badgeLabel = hasChecks ? `${passed}/${total} Passing` : 'Compliant';
     badgeColor = 'bg-health-healthy text-white';
   } else if (workstation.compliance_status === 'drifted' || workstation.compliance_status === 'error') {
-    badgeLabel = hasChecks ? `${failed}/${total} Failing` : (statusLabels[workstation.compliance_status] || 'Drifted');
+    badgeLabel = hasChecks ? `${failed}/${total} Failing` : (statusLabels[workstation.compliance_status] || 'Failing');
     badgeColor = failed >= 4 ? 'bg-red-600 text-white'
                : failed >= 2 ? 'bg-orange-500 text-white'
                : 'bg-amber-500 text-white';
@@ -312,6 +312,8 @@ const WorkstationRow: React.FC<{
 const WorkstationTable: React.FC<{ workstations: Workstation[] }> = ({ workstations }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'online' | 'compliant' | 'failing'>('all');
+  const [wsPage, setWsPage] = useState(0);
+  const wsPageSize = 25;
 
   const failingCount = workstations.filter(ws => ws.compliance_status === 'drifted' || ws.compliance_status === 'error').length;
   const staleCount = workstations.filter(ws => getStaleness(ws.last_compliance_check).isStale && ws.compliance_status !== 'unknown').length;
@@ -327,6 +329,12 @@ const WorkstationTable: React.FC<{ workstations: Workstation[] }> = ({ workstati
     })
     .sort((a, b) => getSortWeight(b) - getSortWeight(a));
 
+  const totalFiltered = filteredWorkstations.length;
+  const totalWsPages = Math.ceil(totalFiltered / wsPageSize);
+  const paginatedWorkstations = filteredWorkstations.slice(wsPage * wsPageSize, (wsPage + 1) * wsPageSize);
+  const wsStart = wsPage * wsPageSize + 1;
+  const wsEnd = Math.min((wsPage + 1) * wsPageSize, totalFiltered);
+
   const filterTabs: { key: typeof filter; label: string; count: number }[] = [
     { key: 'all', label: 'All', count: workstations.length },
     { key: 'failing', label: 'Failing', count: failingCount },
@@ -341,7 +349,7 @@ const WorkstationTable: React.FC<{ workstations: Workstation[] }> = ({ workstati
         {filterTabs.map((f) => (
           <button
             key={f.key}
-            onClick={() => setFilter(f.key)}
+            onClick={() => { setFilter(f.key); setWsPage(0); }}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               filter === f.key
                 ? 'bg-accent-primary text-white'
@@ -373,14 +381,14 @@ const WorkstationTable: React.FC<{ workstations: Workstation[] }> = ({ workstati
             </tr>
           </thead>
           <tbody>
-            {filteredWorkstations.length === 0 ? (
+            {paginatedWorkstations.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-label-tertiary">
                   No workstations found
                 </td>
               </tr>
             ) : (
-              filteredWorkstations.map((ws) => (
+              paginatedWorkstations.map((ws) => (
                 <WorkstationRow
                   key={ws.id}
                   workstation={ws}
@@ -392,6 +400,31 @@ const WorkstationTable: React.FC<{ workstations: Workstation[] }> = ({ workstati
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalFiltered > wsPageSize && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-glass-border">
+          <span className="text-sm text-label-tertiary">
+            Showing {wsStart}-{wsEnd} of {totalFiltered}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setWsPage(p => Math.max(0, p - 1))}
+              disabled={wsPage === 0}
+              className="px-3 py-1.5 text-sm rounded-lg bg-glass-bg text-label-secondary hover:bg-glass-bg/80 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setWsPage(p => Math.min(totalWsPages - 1, p + 1))}
+              disabled={wsPage >= totalWsPages - 1}
+              className="px-3 py-1.5 text-sm rounded-lg bg-glass-bg text-label-secondary hover:bg-glass-bg/80 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </GlassCard>
   );
 };

@@ -120,9 +120,9 @@ export const LandingPage: React.FC = () => {
             </h1>
 
             <p className="text-lg md:text-xl text-slate-500 leading-relaxed max-w-2xl mb-10 font-body font-light">
-              Enterprise-grade compliance monitoring, drift detection, and evidence
+              Enterprise-grade compliance monitoring, issue detection, and evidence
               capture — designed for practices with 1–50 providers.
-              Observe your posture. Respond to drift. Attest with confidence.
+              Observe your posture. Respond to issues. Attest with confidence.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4">
@@ -195,7 +195,7 @@ export const LandingPage: React.FC = () => {
               The challenge
             </p>
             <h2 className="font-display text-3xl md:text-4xl text-slate-900 mb-6">
-              Compliance drift doesn't wait for your next audit
+              Compliance issues don't wait for your next audit
             </h2>
             <p className="text-lg text-slate-500 leading-relaxed font-body font-light">
               HIPAA compliance is a continuous obligation, not an annual checkbox. But the
@@ -218,7 +218,7 @@ export const LandingPage: React.FC = () => {
               },
               {
                 num: '03',
-                title: 'Silent drift',
+                title: 'Silent failures',
                 desc: 'Configuration changes, missed patches, and policy deviations accumulate undetected until the next assessment.',
               },
               {
@@ -271,7 +271,7 @@ export const LandingPage: React.FC = () => {
               </div>
               <h3 className="text-xl font-semibold text-slate-900 mb-3 font-body">Observe</h3>
               <p className="text-sm text-slate-500 leading-relaxed font-body">
-                Continuous monitoring of your infrastructure for compliance drift.
+                Continuous monitoring of your infrastructure for compliance issues.
                 Configuration state, access controls, encryption status, and audit
                 policies — captured as evidence-grade logs with tamper-evident
                 hash chains.
@@ -291,7 +291,7 @@ export const LandingPage: React.FC = () => {
               <h3 className="text-xl font-semibold text-slate-900 mb-3 font-body">Respond</h3>
               <p className="text-sm text-slate-500 leading-relaxed font-body">
                 Three-tier response framework. Deterministic rules handle
-                routine drift automatically. Intelligent planning addresses
+                routine issues automatically. Intelligent planning addresses
                 complex scenarios. Critical decisions escalate to your team
                 for human-authorized action.
               </p>
@@ -340,7 +340,7 @@ export const LandingPage: React.FC = () => {
 
               <ul className="space-y-4 mb-10">
                 {[
-                  'Real-time compliance dashboard with current drift status',
+                  'Real-time compliance dashboard with current check status',
                   'Monthly compliance monitoring summaries with control-level detail',
                   'Evidence bundles with hash-chain integrity and blockchain timestamps',
                   'Notifications when issues are detected and when healing completes',
@@ -414,7 +414,7 @@ export const LandingPage: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-green-500 rounded-full" />
                     <p className="text-sm font-medium text-green-800 font-body">
-                      Firewall drift detected and remediated automatically — 2m ago
+                      Firewall issue detected and remediated automatically — 2m ago
                     </p>
                   </div>
                 </div>
@@ -501,7 +501,7 @@ export const LandingPage: React.FC = () => {
                   </svg>
                 ),
                 title: 'Operator-authorized',
-                desc: 'Your team controls remediation policy. Routine drift is handled automatically by rules you approve. Critical actions always escalate for human decision.',
+                desc: 'Your team controls remediation policy. Routine issues are handled automatically by rules you approve. Critical actions always escalate for human decision.',
               },
             ].map((item, i) => (
               <div key={i} className="p-6 rounded-xl border border-slate-100 bg-white">

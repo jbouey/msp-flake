@@ -43,7 +43,7 @@ const CLIENT_STEPS: WelcomeStep[] = [
         <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
           <p className="font-medium text-label-primary mb-1">Incidents</p>
           <p className="text-sm text-label-secondary">
-            Configuration drift events that were detected and handled.
+            Configuration issues that were detected and handled.
           </p>
         </div>
         <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">

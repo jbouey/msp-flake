@@ -387,13 +387,13 @@ const GoAgentRow: React.FC<{
  */
 const GoAgentTable: React.FC<{ agents: GoAgent[]; siteId: string }> = ({ agents, siteId }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'all' | 'active' | 'healthy' | 'drifted'>('all');
+  const [filter, setFilter] = useState<'all' | 'active' | 'healthy' | 'failing'>('all');
 
   const filteredAgents = agents.filter(agent => {
     switch (filter) {
       case 'active': return agent.status === 'active';
       case 'healthy': return agent.checks_passed === agent.checks_total && agent.checks_total > 0;
-      case 'drifted': return agent.checks_passed < agent.checks_total;
+      case 'failing': return agent.checks_passed < agent.checks_total;
       default: return true;
     }
   });
@@ -402,7 +402,7 @@ const GoAgentTable: React.FC<{ agents: GoAgent[]; siteId: string }> = ({ agents,
     <GlassCard className="overflow-hidden">
       {/* Filter tabs */}
       <div className="flex gap-2 p-4 border-b border-glass-border">
-        {(['all', 'active', 'healthy', 'drifted'] as const).map((f) => (
+        {(['all', 'active', 'healthy', 'failing'] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -515,7 +515,7 @@ export const SiteGoAgents: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-label-primary">Go Agents</h1>
           <p className="text-label-secondary mt-1">
-            Lightweight workstation agents pushing drift events via gRPC
+            Lightweight workstation agents pushing compliance events via gRPC
           </p>
         </div>
         <Badge variant="info" className="px-3 py-1">

@@ -124,7 +124,7 @@ export const DriftConfig: React.FC = () => {
       setChecks(data.checks);
       setDirty({});
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load drift config');
+      setError(err instanceof Error ? err.message : 'Failed to load check config');
     } finally {
       setLoading(false);
     }
@@ -217,13 +217,13 @@ export const DriftConfig: React.FC = () => {
           Site Detail
         </Link>
         <span className="text-label-tertiary">/</span>
-        <span className="text-label-secondary">Drift Scan Config</span>
+        <span className="text-label-secondary">Compliance Check Config</span>
       </div>
 
       <GlassCard>
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-semibold text-label-primary tracking-tight">Drift Scan Configuration</h1>
+            <h1 className="text-xl font-semibold text-label-primary tracking-tight">Compliance Check Configuration</h1>
             <p className="text-sm text-label-tertiary mt-1">
               Toggle individual security checks on or off for this site. Mark checks as N/A with a documented reason when handled externally. Changes take effect on the next scan cycle.
             </p>
@@ -277,7 +277,7 @@ export const DriftConfig: React.FC = () => {
         {loading && (
           <div className="text-center py-12">
             <Spinner size="lg" />
-            <p className="text-label-tertiary mt-4">Loading drift config...</p>
+            <p className="text-label-tertiary mt-4">Loading check config...</p>
           </div>
         )}
 

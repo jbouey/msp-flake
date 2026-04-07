@@ -132,7 +132,7 @@ export function useSuppressIncident() {
 }
 
 /**
- * Hook for fetching compliance events (drift detections from compliance bundles)
+ * Hook for fetching compliance events (issue detections from compliance bundles)
  */
 export function useEvents(params?: {
   site_id?: string;
@@ -820,7 +820,7 @@ export function useUpdateGoAgentTier() {
 }
 
 /**
- * Hook for triggering a drift check on a Go agent
+ * Hook for triggering a compliance check on a Go agent
  */
 export function useTriggerGoAgentCheck() {
   const queryClient = useQueryClient();

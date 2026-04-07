@@ -73,7 +73,7 @@ export const IncidentRow: React.FC<IncidentRowProps> = memo(({
           {formatTimeShort(incident.created_at)}
         </span>
         <span className="text-sm text-label-primary truncate flex-1">
-          {incident.hostname}
+          {incident.hostname || incident.site_id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
         </span>
         <span className="text-sm text-label-secondary truncate max-w-[100px]">
           {checkLabel}
@@ -122,7 +122,7 @@ export const IncidentRow: React.FC<IncidentRowProps> = memo(({
           {incident.site_id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
         </p>
         <p className="text-xs text-label-tertiary truncate">
-          {incident.hostname}
+          {incident.hostname || incident.site_id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
         </p>
       </div>
 

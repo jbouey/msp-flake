@@ -30,11 +30,13 @@ export const Runbooks: React.FC = () => {
     return matchesLevel && matchesSearch;
   });
 
-  // Stats
+  // Stats — only average runbooks that have actually executed (exclude 0-execution runbooks
+  // whose 0% success rate would drag the average down)
   const totalExecutions = runbooks.reduce((sum, rb) => sum + rb.execution_count, 0);
+  const executedRunbooks = runbooks.filter((rb) => rb.execution_count > 0);
   const avgSuccessRate =
-    runbooks.length > 0
-      ? runbooks.reduce((sum, rb) => sum + rb.success_rate, 0) / runbooks.length
+    executedRunbooks.length > 0
+      ? executedRunbooks.reduce((sum, rb) => sum + rb.success_rate, 0) / executedRunbooks.length
       : 0;
   const l1Count = runbooks.filter((rb) => rb.level === 'L1').length;
   const disruptiveCount = runbooks.filter((rb) => rb.is_disruptive).length;

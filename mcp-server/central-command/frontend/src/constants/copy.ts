@@ -59,9 +59,9 @@ export type StatusKey = keyof typeof STATUS_LABELS;
 
 export const METRIC_TOOLTIPS = {
   compliance_score: 'Average configuration check pass rate across all sites. Not a compliance certification.',
-  incidents_24h: 'Configuration drift events detected in the last 24 hours.',
+  incidents_24h: 'Configuration issues detected in the last 24 hours.',
   l1_rate: 'Percentage of incidents resolved automatically by deterministic rules, without human intervention.',
-  drift_checks: 'Number of active security configuration checks running across all sites.',
+  compliance_checks: 'Number of active security configuration checks running across all sites.',
   clients: 'Total active sites being monitored.',
   healing_rate: 'Percentage of incidents successfully auto-remediated.',
   order_rate: 'Percentage of fleet orders completed successfully.',
@@ -71,8 +71,8 @@ export const METRIC_TOOLTIPS = {
   promotion_success: 'Success rate of promoted L2 patterns running as L1 rules.',
   control_coverage: 'Percentage of security checks passing across all sites.',
   appliances_online: 'Appliances currently reporting in vs. total deployed.',
-  incidents_7d: 'Total configuration drift events in the past 7 days.',
-  incidents_30d: 'Total configuration drift events in the past 30 days.',
+  incidents_7d: 'Total configuration issues in the past 7 days.',
+  incidents_30d: 'Total configuration issues in the past 30 days.',
   l1_rules: 'Instant automatic fixes. No human needed, resolves in under a second.',
   l2_decisions: 'AI-assisted resolutions from the past 30 days.',
   awaiting_promotion: 'AI fixes ready to become instant automatic rules after review.',

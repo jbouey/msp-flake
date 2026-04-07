@@ -101,12 +101,12 @@ export const ClientDriftConfig: React.FC<ClientDriftConfigProps> = ({ siteId, si
       const response = await fetch(`/api/client/sites/${siteId}/drift-config`, {
         credentials: 'include',
       });
-      if (!response.ok) throw new Error('Failed to load drift configuration');
+      if (!response.ok) throw new Error('Failed to load check configuration');
       const data = await response.json();
       setChecks(data.checks || []);
       setDirty({});
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load drift config');
+      setError(err instanceof Error ? err.message : 'Failed to load check configuration');
     } finally {
       setLoading(false);
     }
@@ -149,7 +149,7 @@ export const ClientDriftConfig: React.FC<ClientDriftConfigProps> = ({ siteId, si
         credentials: 'include',
         body: JSON.stringify({ checks: changedChecks }),
       });
-      if (!response.ok) throw new Error('Failed to save drift configuration');
+      if (!response.ok) throw new Error('Failed to save check configuration');
       setDirty({});
       setSaveMessage(`Saved ${changedChecks.length} change${changedChecks.length > 1 ? 's' : ''}`);
     } catch (err) {
@@ -185,7 +185,7 @@ export const ClientDriftConfig: React.FC<ClientDriftConfigProps> = ({ siteId, si
           <div>
             <h2 className="text-xl font-semibold text-slate-900 tracking-tight">Security Checks</h2>
             <p className="text-sm text-slate-500 mt-1">
-              {siteName} &mdash; Toggle individual drift checks on or off. Changes take effect on the next scan cycle.
+              {siteName} &mdash; Toggle individual security checks on or off. Changes take effect on the next scan cycle.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -222,7 +222,7 @@ export const ClientDriftConfig: React.FC<ClientDriftConfigProps> = ({ siteId, si
         {loading && (
           <div className="text-center py-12">
             <div className="w-8 h-8 border-2 border-teal-200 border-t-teal-600 rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-slate-500 text-sm">Loading drift config...</p>
+            <p className="text-slate-500 text-sm">Loading security checks...</p>
           </div>
         )}
 

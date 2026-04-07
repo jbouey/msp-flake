@@ -61,6 +61,7 @@ export const PartnerDashboard: React.FC = () => {
   const [qrProvision, setQrProvision] = useState<Provision | null>(null);
   const [driftConfigSite, setDriftConfigSite] = useState<{ id: string; name: string } | null>(null);
   const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem('osiriscare_partner_onboarded'));
+  const [revokeConfirmId, setRevokeConfirmId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -140,7 +141,7 @@ export const PartnerDashboard: React.FC = () => {
   };
 
   const handleRevokeProvision = async (id: string) => {
-    if (!isAuthenticated || !confirm('Revoke this provision code?')) return;
+    if (!isAuthenticated) return;
 
     try {
       const fetchOptions: RequestInit = apiKey
@@ -148,9 +149,11 @@ export const PartnerDashboard: React.FC = () => {
         : { method: 'DELETE', credentials: 'include', headers: { ...csrfHeaders() } };
 
       await fetch(`/api/partners/me/provisions/${id}`, fetchOptions);
+      setRevokeConfirmId(null);
       loadData();
     } catch (e) {
       console.error('Failed to revoke', e);
+      setRevokeConfirmId(null);
     }
   };
 
@@ -488,7 +491,6 @@ export const PartnerDashboard: React.FC = () => {
                           <td className="px-6 py-4">
                             <div>
                               <p className="font-medium text-slate-900">{site.clinic_name}</p>
-                              <p className="text-sm text-slate-500">{site.site_id}</p>
                             </div>
                           </td>
                           <td className="px-6 py-4">
@@ -699,12 +701,30 @@ export const PartnerDashboard: React.FC = () => {
                                   </svg>
                                   QR
                                 </button>
-                                <button
-                                  onClick={() => handleRevokeProvision(provision.id)}
-                                  className="text-red-600 hover:text-red-800 text-sm font-medium"
-                                >
-                                  Revoke
-                                </button>
+                                {revokeConfirmId === provision.id ? (
+                                  <span className="flex items-center gap-1">
+                                    <span className="text-xs text-slate-500">Revoke?</span>
+                                    <button
+                                      onClick={() => handleRevokeProvision(provision.id)}
+                                      className="text-red-600 hover:text-red-800 text-xs font-semibold"
+                                    >
+                                      Yes
+                                    </button>
+                                    <button
+                                      onClick={() => setRevokeConfirmId(null)}
+                                      className="text-slate-500 hover:text-slate-700 text-xs font-medium"
+                                    >
+                                      No
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => setRevokeConfirmId(provision.id)}
+                                    className="text-red-600 hover:text-red-800 text-sm font-medium"
+                                  >
+                                    Revoke
+                                  </button>
+                                )}
                               </>
                             )}
                             {provision.status === 'claimed' && (
@@ -780,7 +800,6 @@ export const PartnerDashboard: React.FC = () => {
                     >
                       <div>
                         <p className="font-medium text-slate-900">{site.clinic_name}</p>
-                        <p className="text-xs text-slate-500">{site.site_id}</p>
                       </div>
                       <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -908,7 +927,7 @@ const PartnerInventory: React.FC<{ apiKey: string | null }> = ({ apiKey }) => {
                             d.compliance_status === 'compliant' ? 'bg-emerald-100 text-emerald-700' :
                             d.compliance_status === 'drifted' ? 'bg-red-100 text-red-700' :
                             'bg-slate-100 text-slate-600'
-                          }`}>{d.compliance_status}</span>
+                          }`}>{d.compliance_status === 'drifted' ? 'non-compliant' : d.compliance_status}</span>
                         </td>
                       </tr>
                     ))}

@@ -72,8 +72,8 @@ export const OnboardingChecklist: React.FC<OnboardingChecklistProps> = ({
     {
       label: 'Monitoring baseline set',
       description: hasBaseline
-        ? 'Baseline established. You will see alerts when systems drift from this state.'
-        : 'Set automatically after the first full scan cycle. This becomes the reference point for drift detection.',
+        ? 'Baseline established. You will see alerts when systems deviate from this state.'
+        : 'Set automatically after the first full scan cycle. This becomes the reference point for compliance checks.',
       completed: hasBaseline,
     },
   ];

@@ -448,13 +448,13 @@ const DeviceRow: React.FC<{
               </div>
             )}
 
-            {/* Drifted device call-to-action */}
+            {/* Failing device call-to-action */}
             {device.compliance_status === 'drifted' && incidents.length === 0 && (
               <div className="mt-4 p-3 rounded-lg bg-health-warning/10 border border-health-warning/30">
                 <div className="flex items-center gap-2 text-sm">
-                  <span className="text-health-warning font-medium">Drift Detected</span>
+                  <span className="text-health-warning font-medium">Compliance Issue Detected</span>
                   <span className="text-label-secondary">
-                    — This device has compliance drift but no matching incidents found. The drift may have been detected by the network scanner but not yet reported as an incident.
+                    — This device has a compliance issue but no matching incidents found. The issue may have been detected by the network scanner but not yet reported as an incident.
                   </span>
                 </div>
               </div>
@@ -495,6 +495,8 @@ const DeviceTable: React.FC<{
 }> = ({ devices, siteId, filter, onFilterChange, onTakeOver }) => {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [devPage, setDevPage] = useState(0);
+  const devPageSize = 25;
 
   const MANAGED_STATUSES = ['agent_active', 'ad_managed', 'deploying', 'pending_deploy', 'agent_stale'];
   const managedCount = devices.filter((d) => MANAGED_STATUSES.includes(d.device_status || '')).length;
@@ -502,18 +504,24 @@ const DeviceTable: React.FC<{
     ? devices
     : devices.filter((d) => MANAGED_STATUSES.includes(d.device_status || ''));
 
+  const totalDevFiltered = filteredDevices.length;
+  const totalDevPages = Math.ceil(totalDevFiltered / devPageSize);
+  const paginatedDevices = filteredDevices.slice(devPage * devPageSize, (devPage + 1) * devPageSize);
+  const devStart = devPage * devPageSize + 1;
+  const devEnd = Math.min((devPage + 1) * devPageSize, totalDevFiltered);
+
   return (
     <GlassCard className="overflow-hidden">
       {/* Managed / All toggle */}
       <div className="flex items-center gap-2 px-4 pt-4 mb-0">
         <button
-          onClick={() => setShowAll(false)}
+          onClick={() => { setShowAll(false); setDevPage(0); }}
           className={`px-3 py-1 text-xs rounded ${!showAll ? 'bg-blue-500/20 text-blue-400' : 'text-slate-400 hover:text-slate-300'}`}
         >
           Managed ({managedCount})
         </button>
         <button
-          onClick={() => setShowAll(true)}
+          onClick={() => { setShowAll(true); setDevPage(0); }}
           className={`px-3 py-1 text-xs rounded ${showAll ? 'bg-blue-500/20 text-blue-400' : 'text-slate-400 hover:text-slate-300'}`}
         >
           All Devices ({devices.length})
@@ -527,7 +535,7 @@ const DeviceTable: React.FC<{
           <span className="text-sm text-label-tertiary">Type:</span>
           <select
             value={filter.type || ''}
-            onChange={(e) => onFilterChange({ ...filter, type: e.target.value || undefined })}
+            onChange={(e) => { setDevPage(0); onFilterChange({ ...filter, type: e.target.value || undefined }); }}
             className="px-2 py-1 rounded bg-glass-bg border border-glass-border text-sm text-label-primary"
           >
             <option value="">All Types</option>
@@ -543,7 +551,7 @@ const DeviceTable: React.FC<{
           <span className="text-sm text-label-tertiary">Status:</span>
           <select
             value={filter.status || ''}
-            onChange={(e) => onFilterChange({ ...filter, status: e.target.value || undefined })}
+            onChange={(e) => { setDevPage(0); onFilterChange({ ...filter, status: e.target.value || undefined }); }}
             className="px-2 py-1 rounded bg-glass-bg border border-glass-border text-sm text-label-primary"
           >
             <option value="">All Status</option>
@@ -558,7 +566,7 @@ const DeviceTable: React.FC<{
           <input
             type="checkbox"
             checked={filter.includeMedical}
-            onChange={(e) => onFilterChange({ ...filter, includeMedical: e.target.checked })}
+            onChange={(e) => { setDevPage(0); onFilterChange({ ...filter, includeMedical: e.target.checked }); }}
             className="rounded border-glass-border"
           />
           <span className="text-sm text-label-secondary">Include Medical Devices</span>
@@ -588,7 +596,7 @@ const DeviceTable: React.FC<{
             </tr>
           </thead>
           <tbody>
-            {filteredDevices.length === 0 ? (
+            {paginatedDevices.length === 0 ? (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-label-tertiary">
                   {showAll
@@ -597,7 +605,7 @@ const DeviceTable: React.FC<{
                 </td>
               </tr>
             ) : (
-              filteredDevices.map((device) => (
+              paginatedDevices.map((device) => (
                 <DeviceRow
                   key={device.id}
                   device={device}
@@ -611,6 +619,31 @@ const DeviceTable: React.FC<{
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalDevFiltered > devPageSize && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-glass-border">
+          <span className="text-sm text-label-tertiary">
+            Showing {devStart}-{devEnd} of {totalDevFiltered}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setDevPage(p => Math.max(0, p - 1))}
+              disabled={devPage === 0}
+              className="px-3 py-1.5 text-sm rounded-lg bg-glass-bg text-label-secondary hover:bg-glass-bg/80 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setDevPage(p => Math.min(totalDevPages - 1, p + 1))}
+              disabled={devPage >= totalDevPages - 1}
+              className="px-3 py-1.5 text-sm rounded-lg bg-glass-bg text-label-secondary hover:bg-glass-bg/80 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </GlassCard>
   );
 };

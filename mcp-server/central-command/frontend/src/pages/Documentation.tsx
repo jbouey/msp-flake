@@ -22,7 +22,7 @@ const sections: Record<DocSection, { title: string; icon: string; items: DocItem
             <p>
               OsirisCare is a HIPAA compliance automation platform designed for healthcare SMBs.
               It combines NixOS-based infrastructure, Model Context Protocol (MCP) orchestration,
-              and LLM-assisted remediation to deliver compliance monitoring, drift detection, and evidence-grade observability.
+              and LLM-assisted remediation to deliver compliance monitoring, issue detection, and evidence-grade observability.
             </p>
             <h4 className="font-semibold mt-4">Key Features</h4>
             <ul className="list-disc list-inside space-y-2 text-label-secondary">
@@ -30,7 +30,7 @@ const sections: Record<DocSection, { title: string; icon: string; items: DocItem
               <li>Three-tier remediation (L1 deterministic, L2 LLM-assisted, L3 human escalation)</li>
               <li>Immutable audit trail with cryptographic evidence</li>
               <li>Client portal with magic-link access</li>
-              <li>Real-time drift detection and guided remediation</li>
+              <li>Real-time issue detection and guided remediation</li>
             </ul>
             <h4 className="font-semibold mt-4">Architecture</h4>
             <ul className="list-disc list-inside space-y-2 text-label-secondary">
@@ -1876,7 +1876,7 @@ ls -lh result-iso/iso/
                 </thead>
                 <tbody className="text-label-secondary">
                   <tr className="border-b border-separator-light/50">
-                    <td className="py-2 px-3 font-medium">Endpoint Drift</td>
+                    <td className="py-2 px-3 font-medium">Endpoint Configuration</td>
                     <td className="py-2 px-3">Configuration matches approved baseline</td>
                     <td className="py-2 px-3">164.308(a)(1)(ii)(D), 164.310(d)(1)</td>
                   </tr>
@@ -2126,7 +2126,7 @@ ls -lh result-iso/iso/
               <li>HIPAA compliance modules (SRA, policies, training, BAAs)</li>
               <li>Notifications for compliance events</li>
               <li>Two-factor authentication (TOTP)</li>
-              <li>Drift configuration per site</li>
+              <li>Compliance check configuration per site</li>
             </ul>
           </div>
         ),
@@ -2265,7 +2265,7 @@ OsirisCare Compliance Team`}
                 <p className="font-medium">"What do I do if something is red/failing?"</p>
                 <p className="text-sm text-label-tertiary mt-1">
                   Our system uses a multi-tier approach: deterministic fixes (L1), AI-assisted
-                  planning (L2), and human escalation (L3). Most configuration drift is resolved
+                  planning (L2), and human escalation (L3). Most configuration issues are resolved
                   automatically, but some issues require manual review. You control all remediation settings.
                 </p>
               </div>
@@ -2536,7 +2536,7 @@ OsirisCare Compliance Team`}
               <li>Navigate to Incidents page, filter by &quot;exhausted&quot; status</li>
               <li>Click into each incident to see the remediation history</li>
               <li>Common causes: target unreachable (VM powered off), credentials expired, OS-level lock</li>
-              <li>Resolve the root cause, then resolve the incident manually. The next scan will create a fresh incident if drift persists.</li>
+              <li>Resolve the root cause, then resolve the incident manually. The next scan will create a fresh incident if the issue persists.</li>
             </ol>
             <h4 className="font-semibold text-blue-400">Verification</h4>
             <p>Exhausted incident count drops. Healing rate recovers on next scan cycle.</p>
@@ -2609,7 +2609,7 @@ OsirisCare Compliance Team`}
             <p>The OsirisCare evidence pipeline produces cryptographically verifiable compliance attestations anchored to the Bitcoin blockchain.</p>
             <h4 className="font-semibold mt-4">Data Flow</h4>
             <ol className="list-decimal list-inside space-y-2 text-label-secondary">
-              <li><strong>Drift Scan</strong> &mdash; Appliance daemon scans Windows/Linux/macOS targets every 5 minutes (adaptive interval)</li>
+              <li><strong>Compliance Scan</strong> &mdash; Appliance daemon scans Windows/Linux/macOS targets every 5 minutes (adaptive interval)</li>
               <li><strong>Bundle Construction</strong> &mdash; Findings are aggregated into a compliance bundle with check results, timestamps, and summary</li>
               <li><strong>Ed25519 Signing</strong> &mdash; Bundle is signed with the appliance&apos;s private key. Signature covers site_id, checked_at, checks, and summary.</li>
               <li><strong>PHI Scrubbing</strong> &mdash; All data is scrubbed of protected health information before leaving the appliance (14 regex patterns)</li>
@@ -2648,7 +2648,7 @@ OsirisCare Compliance Team`}
         title: 'HIPAA Control Mapping',
         content: (
           <div className="space-y-4">
-            <p>Each drift check maps to one or more HIPAA Security Rule controls:</p>
+            <p>Each compliance check maps to one or more HIPAA Security Rule controls:</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>

@@ -85,6 +85,7 @@ export const ClientHealingLogs: React.FC = () => {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -190,7 +191,8 @@ export const ClientHealingLogs: React.FC = () => {
         setTimeout(() => setApproveSuccess(null), 3000);
       } else {
         const err = await res.json().catch(() => ({ detail: 'Approval failed' }));
-        alert(err.detail || 'Failed to approve');
+        setActionError(err.detail || 'Failed to approve');
+        setTimeout(() => setActionError(null), 5000);
       }
     } catch {
       // Approve candidate failed silently
@@ -221,7 +223,8 @@ export const ClientHealingLogs: React.FC = () => {
         setRejectReason('');
       } else {
         const err = await res.json().catch(() => ({ detail: 'Rejection failed' }));
-        alert(err.detail || 'Failed to reject');
+        setActionError(err.detail || 'Failed to reject');
+        setTimeout(() => setActionError(null), 5000);
       }
     } catch {
       // Reject candidate failed silently
@@ -352,6 +355,14 @@ export const ClientHealingLogs: React.FC = () => {
 
       {/* Main */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {actionError && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
+            <p className="text-sm text-red-700">{actionError}</p>
+            <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+        )}
         {/* =========== HEALING LOGS TAB =========== */}
         {activeTab === 'logs' && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">

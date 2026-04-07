@@ -849,12 +849,12 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   // App protection profile incidents
   service_stopped: 'Service Down',
   port_closed: 'Port Closed',
-  registry_drift: 'Registry Drift',
+  registry_drift: 'Registry Changed',
   scheduled_task_disabled: 'Task Disabled',
   config_file_changed: 'Config Changed',
   tcp_connectivity_lost: 'TCP Lost',
   iis_binding_drift: 'IIS Binding',
-  odbc_dsn_drift: 'ODBC Drift',
+  odbc_dsn_drift: 'ODBC Changed',
   process_unhealthy: 'Process Down',
   // Device reachability
   device_unreachable: 'Unreachable',

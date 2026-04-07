@@ -349,7 +349,7 @@ export const DevicesAtRisk: React.FC<Props> = ({ siteId, apiPrefix = '/api/clien
               Devices at Risk
             </h2>
             <p className="text-xs" style={{ color: 'var(--label-tertiary)' }}>
-              {data.total_devices_at_risk} device{data.total_devices_at_risk !== 1 ? 's' : ''} with active drift
+              {data.total_devices_at_risk} device{data.total_devices_at_risk !== 1 ? 's' : ''} with active issues
               {criticalDevices > 0 && <span style={{ color: '#FF3B30' }}> • {criticalDevices} critical</span>}
               {highDevices > 0 && <span style={{ color: '#FF9500' }}> • {highDevices} high</span>}
             </p>

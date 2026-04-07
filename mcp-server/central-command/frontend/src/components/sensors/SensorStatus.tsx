@@ -185,7 +185,7 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
                     </span>
                   ) : (
                     <span className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded">
-                      {sensor.last_drift_count} Drifts
+                      {sensor.last_drift_count} Failing
                     </span>
                   )}
                 </td>
@@ -200,14 +200,14 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
                   {sensor.sensor_version ? (
                     <span
                       className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded cursor-help"
-                      title="Drift detection via sensor push (instant)"
+                      title="Issue detection via sensor push (instant)"
                     >
                       Sensor
                     </span>
                   ) : (
                     <span
                       className="px-2 py-1 text-xs bg-fill-secondary text-label-secondary rounded cursor-help"
-                      title="Drift detection via WinRM polling (60s)"
+                      title="Issue detection via WinRM polling (60s)"
                     >
                       WinRM Poll
                     </span>
@@ -254,11 +254,11 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
       {/* Legend */}
       <div className="mt-4 pt-4 border-t text-sm text-label-tertiary">
         <p className="mb-1">
-          <strong>Sensor Mode:</strong> Instant drift detection via lightweight PowerShell agent.
+          <strong>Sensor Mode:</strong> Instant issue detection via lightweight PowerShell agent.
           Remediation still uses WinRM.
         </p>
         <p>
-          <strong>WinRM Poll Mode:</strong> Drift detection every 60 seconds via WinRM.
+          <strong>WinRM Poll Mode:</strong> Issue detection every 60 seconds via WinRM.
           Used when sensor not deployed or offline.
         </p>
       </div>

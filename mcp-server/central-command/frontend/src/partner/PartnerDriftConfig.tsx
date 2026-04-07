@@ -170,12 +170,12 @@ export const PartnerDriftConfig: React.FC<PartnerDriftConfigProps> = ({ siteId, 
         `/api/partners/me/sites/${siteId}/drift-config`,
         buildFetchOptions()
       );
-      if (!response.ok) throw new Error('Failed to load drift configuration');
+      if (!response.ok) throw new Error('Failed to load check configuration');
       const data = await response.json();
       setChecks(data.checks || []);
       setDirty({});
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load drift config');
+      setError(err instanceof Error ? err.message : 'Failed to load check config');
     } finally {
       setLoading(false);
     }
@@ -216,7 +216,7 @@ export const PartnerDriftConfig: React.FC<PartnerDriftConfigProps> = ({ siteId, 
         `/api/partners/me/sites/${siteId}/drift-config`,
         buildFetchOptions('PUT', { checks: changedChecks })
       );
-      if (!response.ok) throw new Error('Failed to save drift configuration');
+      if (!response.ok) throw new Error('Failed to save check configuration');
       setDirty({});
       setSaveMessage(`Saved ${changedChecks.length} change${changedChecks.length > 1 ? 's' : ''}`);
     } catch (err) {
@@ -252,7 +252,7 @@ export const PartnerDriftConfig: React.FC<PartnerDriftConfigProps> = ({ siteId, 
           <div>
             <h2 className="text-xl font-semibold text-slate-900 tracking-tight">Security Checks</h2>
             <p className="text-sm text-slate-500 mt-1">
-              {siteName} &mdash; Toggle individual drift checks on or off. Changes take effect on the next scan cycle.
+              {siteName} &mdash; Toggle individual compliance checks on or off. Changes take effect on the next scan cycle.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -289,7 +289,7 @@ export const PartnerDriftConfig: React.FC<PartnerDriftConfigProps> = ({ siteId, 
         {loading && (
           <div className="text-center py-12">
             <div className="w-8 h-8 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-slate-500 text-sm">Loading drift config...</p>
+            <p className="text-slate-500 text-sm">Loading check config...</p>
           </div>
         )}
 

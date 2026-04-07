@@ -438,7 +438,7 @@ export const ClientHelp: React.FC = () => {
                     Protecting ePHI from improper alteration or destruction
                   </div>
                   <div className="text-xs text-slate-500 mt-2">
-                    <strong>Checks:</strong> System updates, configuration drift, file integrity
+                    <strong>Checks:</strong> System updates, configuration compliance, file integrity
                   </div>
                 </div>
               </div>

@@ -248,7 +248,7 @@ export const PartnerEscalations: React.FC = () => {
       check_type: 'Check Type',
       message: 'Message',
       details: 'Details',
-      drift_type: 'Drift Type',
+      drift_type: 'Issue Type',
       expected: 'Expected',
       actual: 'Actual',
       service_name: 'Service',

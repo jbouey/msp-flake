@@ -389,7 +389,7 @@ export const AddNetworkDeviceModal: React.FC<AddNetworkDeviceModalProps> = ({
             </svg>
             <p className="text-xs text-label-secondary">
               <strong className="text-amber-600">Read-only monitoring.</strong> The appliance will poll this device for configuration and status but will never push changes.
-              If drift is detected, L2 will generate advisory remediation commands in the escalation ticket for human execution.
+              If an issue is detected, L2 will generate advisory remediation commands in the escalation ticket for human execution.
             </p>
           </div>
 

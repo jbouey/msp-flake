@@ -367,10 +367,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </h2>
         {(() => {
           const activeSites = clients.filter(c => c.status !== 'inactive');
-          const online = activeSites.filter(c => c.health.status === 'healthy').length;
-          const warning = activeSites.filter(c => c.health.status === 'warning').length;
-          const offline = activeSites.filter(c => c.health.status === 'critical').length;
-          const needsAttention = activeSites.filter(c => c.health.status !== 'healthy');
+          const online = activeSites.filter(c => c.appliance_count > 0 && c.health.status === 'healthy').length;
+          const warning = activeSites.filter(c => c.appliance_count > 0 && c.health.status !== 'healthy').length;
+          const notDeployed = activeSites.filter(c => c.appliance_count === 0).length;
+          const needsAttention = activeSites.filter(c => c.appliance_count > 0 && c.health.status !== 'healthy');
           return (
             <>
               <button
@@ -392,11 +392,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <span className="text-xs text-label-primary">Warning</span>
                     </span>
                   )}
-                  {offline > 0 && (
+                  {notDeployed > 0 && (
                     <span className="flex items-center gap-2">
-                      <span className="status-dot status-dot-critical" />
-                      <span className="text-xs font-medium text-health-critical tabular-nums">{offline}</span>
-                      <span className="text-xs text-label-primary">Offline</span>
+                      <span className="status-dot status-dot-neutral" />
+                      <span className="text-xs font-medium text-label-tertiary tabular-nums">{notDeployed}</span>
+                      <span className="text-xs text-label-primary">Not Deployed</span>
                     </span>
                   )}
                   {clients.length === 0 && (

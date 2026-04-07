@@ -378,7 +378,7 @@ export const RunbookConfig: React.FC = () => {
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-fill-primary" />
-                <span>Disabled - Runbook skipped, drift still detected</span>
+                <span>Disabled - Runbook skipped, issue still detected</span>
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="warning">Disruptive</Badge>
