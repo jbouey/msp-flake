@@ -3328,9 +3328,11 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # === STEP 6b-2: Resolve effective alert mode for daemon ===
         client_alert_mode_site = None
         client_alert_mode_org = None
+        compliance_framework = "hipaa"
         try:
             mode_row = await conn.fetchrow(
-                """SELECT s.client_alert_mode as site_mode, co.client_alert_mode as org_mode
+                """SELECT s.client_alert_mode as site_mode, co.client_alert_mode as org_mode,
+                          co.compliance_framework as org_framework
                    FROM sites s
                    LEFT JOIN client_orgs co ON co.id = s.client_org_id
                    WHERE s.site_id = $1""",
@@ -3339,6 +3341,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             if mode_row:
                 client_alert_mode_site = mode_row["site_mode"]
                 client_alert_mode_org = mode_row["org_mode"]
+                compliance_framework = mode_row["org_framework"] or "hipaa"
         except Exception:
             pass
         effective_alert_mode = client_alert_mode_site or client_alert_mode_org or "informed"
@@ -3511,6 +3514,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         "mesh_peers": mesh_peers,
         "target_assignments": target_assignments,
         "client_alert_mode": effective_alert_mode,
+        "compliance_framework": compliance_framework,
     }
 
 

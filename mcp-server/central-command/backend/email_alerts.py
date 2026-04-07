@@ -76,8 +76,8 @@ def _build_details_section(details: dict) -> str:
             </div>"""
 
 
-def _build_hipaa_section(controls: list) -> str:
-    """Build HTML for HIPAA controls."""
+def _build_controls_section(controls: list, framework: str = "HIPAA") -> str:
+    """Build HTML for compliance controls (any framework)."""
     if not controls:
         return ""
 
@@ -102,11 +102,18 @@ def _build_hipaa_section(controls: list) -> str:
             label += f" &mdash; {_escape_html(desc)}"
         items.append(f"<li style='margin-bottom:4px;'>{label}</li>")
 
+    framework_upper = framework.upper()
     return f"""
             <div style="margin-top:16px;">
-                <div class="field-label">HIPAA Controls Affected</div>
+                <div class="field-label">{framework_upper} Controls Affected</div>
                 <ul style="margin:4px 0 0 0;padding-left:20px;">{"".join(items)}</ul>
             </div>"""
+
+
+# Backward-compatible alias
+def _build_hipaa_section(controls: list) -> str:
+    """Build HTML for HIPAA controls. Deprecated: use _build_controls_section."""
+    return _build_controls_section(controls, framework="HIPAA")
 
 
 def _build_actions_section(attempted: list) -> str:
@@ -147,6 +154,8 @@ def send_critical_alert(
     hipaa_controls: Optional[list] = None,
     attempted_actions: Optional[list] = None,
     recommended_action: Optional[str] = None,
+    controls: Optional[list] = None,
+    framework: str = "hipaa",
 ) -> bool:
     """Send an email alert for a critical notification.
 
@@ -160,13 +169,17 @@ def send_critical_alert(
         severity: Incident severity (critical, high, medium, low)
         check_type: Type of compliance check that failed
         details: Drift details dict (expected, actual, etc.)
-        hipaa_controls: List of HIPAA control IDs affected
+        hipaa_controls: List of control IDs affected (legacy name, still accepted)
         attempted_actions: List of L1/L2 actions tried before escalation
         recommended_action: Suggested next step for the partner
+        controls: List of control IDs affected (preferred over hipaa_controls)
+        framework: Compliance framework label (hipaa, soc2, pci_dss, etc.)
 
     Returns:
         True if email sent successfully, False otherwise
     """
+    # Accept either kwarg; controls takes precedence
+    effective_controls = controls if controls is not None else hipaa_controls
     if not is_email_configured():
         logger.warning("Email not configured - skipping critical alert email")
         return False
@@ -205,8 +218,8 @@ def send_critical_alert(
                     text_parts.append(f"  {k}: {v}")
             text_parts.append("")
 
-        if hipaa_controls:
-            text_parts.append(f"HIPAA Controls: {', '.join(hipaa_controls)}")
+        if effective_controls:
+            text_parts.append(f"Compliance Controls: {', '.join(effective_controls)}")
             text_parts.append("")
 
         if attempted_actions:
@@ -230,7 +243,7 @@ def send_critical_alert(
 
         # --- Dynamic HTML sections ---
         details_html = _build_details_section(details or {})
-        hipaa_html = _build_hipaa_section(hipaa_controls or [])
+        hipaa_html = _build_controls_section(effective_controls or [], framework=framework)
         actions_html = _build_actions_section(attempted_actions or [])
         recommendation_html = _build_recommendation_section(recommended_action or "")
 
@@ -359,6 +372,8 @@ async def create_notification_with_email(
     check_type: Optional[str] = None,
     details: Optional[dict] = None,
     hipaa_controls: Optional[list] = None,
+    controls: Optional[list] = None,
+    framework: str = "hipaa",
 ) -> str:
     """Create a notification and send email if critical.
 
@@ -375,11 +390,15 @@ async def create_notification_with_email(
         incident_severity: Incident severity for email display
         check_type: Compliance check type
         details: Drift details (expected/actual)
-        hipaa_controls: HIPAA control IDs affected
+        hipaa_controls: Control IDs affected (legacy name, still accepted)
+        controls: Control IDs affected (preferred over hipaa_controls)
+        framework: Compliance framework (hipaa, soc2, etc.)
 
     Returns:
         Notification ID
     """
+    # Accept either kwarg for backward compat
+    effective_controls = controls if controls is not None else hipaa_controls
     from sqlalchemy import text
     import json
 
@@ -413,7 +432,8 @@ async def create_notification_with_email(
             severity=incident_severity,
             check_type=check_type,
             details=details,
-            hipaa_controls=hipaa_controls,
+            controls=effective_controls,
+            framework=framework,
         )
 
     return notification_id
@@ -508,7 +528,7 @@ async def send_companion_alert_email(
 
         desc_line = f"\nNote: {description}" if description else ""
 
-        text_content = f"""HIPAA Compliance Alert - OsirisCare
+        text_content = f"""Compliance Alert - OsirisCare
 {'=' * 40}
 
 Hi {companion_name},

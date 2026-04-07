@@ -144,6 +144,30 @@ CHECK_TYPE_HIPAA_MAP = {
 }
 
 
+def get_control_for_check(check_type: str, framework: str = "hipaa") -> dict:
+    """Get control mapping for a check_type in any framework.
+
+    Uses CHECK_TYPE_HIPAA_MAP as the canonical HIPAA source, then
+    framework_mapper crosswalk for other frameworks.
+    """
+    hipaa_entry = CHECK_TYPE_HIPAA_MAP.get(check_type)
+    if not hipaa_entry:
+        return {"control": "N/A", "description": "Unmapped check"}
+
+    if framework == "hipaa":
+        return hipaa_entry
+
+    # Use crosswalk for non-HIPAA frameworks
+    from .framework_mapper import get_controls_for_check
+    controls = get_controls_for_check(check_type, hipaa_entry["control"], [framework])
+    for ctrl in controls:
+        if ctrl.get("framework") == framework:
+            return {"control": ctrl["control_id"], "description": ctrl.get("control_name", hipaa_entry["description"])}
+
+    # Fallback: return HIPAA mapping with framework label
+    return {"control": hipaa_entry["control"], "description": hipaa_entry["description"]}
+
+
 class CompliancePacket:
     """Generate compliance packet from real evidence data.
 

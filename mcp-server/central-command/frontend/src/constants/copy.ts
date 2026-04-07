@@ -112,11 +112,11 @@ export const TIER_LABELS = {
 // =============================================================================
 
 export const DISCLAIMERS = {
-  footer: 'OsirisCare provides automated compliance monitoring and does not constitute legal advice, HIPAA certification, or a guarantee of regulatory compliance. All metrics represent point-in-time observations. Consult qualified compliance professionals for formal assessments.',
+  footer: 'OsirisCare provides automated compliance monitoring and does not constitute legal advice, compliance certification, or a guarantee of regulatory compliance. All metrics represent point-in-time observations. Consult qualified compliance professionals for formal assessments.',
   score: 'This score measures automated check pass rates and does not constitute compliance certification.',
   evidence: 'Cryptographically signed records of system configuration state. Supports compliance documentation but does not replace formal assessments.',
   blockchain: 'Bitcoin blockchain anchoring provides immutable timestamp verification that evidence records have not been altered since creation.',
-  portal_detailed: 'This system monitors configuration states and provides automated compliance observations. OsirisCare does not certify HIPAA compliance. Compliance determinations require qualified assessment by authorized personnel. Contact your compliance officer for official guidance. All metrics represent point-in-time observations, not guarantees of security or compliance status.',
+  portal_detailed: 'This system monitors configuration states and provides automated compliance observations. OsirisCare does not certify regulatory compliance. Compliance determinations require qualified assessment by authorized personnel. Contact your compliance officer for official guidance. All metrics represent point-in-time observations, not guarantees of security or compliance status.',
   evidence_chain: 'Evidence bundles are cryptographically signed and anchored to the Bitcoin blockchain for immutable timestamp verification. This provides independent proof that evidence records have not been altered since creation.',
   landing_legal: 'OsirisCare provides automated compliance monitoring tools for healthcare organizations. Organizations remain solely responsible for their compliance programs, policies, and regulatory obligations.',
   portal_login: 'This portal provides monitoring data only. OsirisCare does not certify compliance.',
@@ -128,7 +128,7 @@ export const DISCLAIMERS = {
 
 export const BRANDING = {
   name: 'OsirisCare',
-  tagline: 'HIPAA Compliance Monitoring Platform',
+  tagline: 'Compliance Monitoring Platform',
   support_email: 'support@osiriscare.net',
   dashboard_url: 'https://dashboard.osiriscare.net',
 } as const;
@@ -180,7 +180,7 @@ export const PHYSICAL_SAFEGUARD_LABELS = {
 export const WHITE_LABEL = {
   POWERED_BY: 'Powered by OsirisCare',
   DEFAULT_BRAND: 'OsirisCare',
-  DEFAULT_TAGLINE: 'HIPAA Compliance Simplified',
+  DEFAULT_TAGLINE: 'Compliance Simplified',
   DEFAULT_PRIMARY: '#0D9488',
   DEFAULT_SECONDARY: '#6366F1',
 } as const;
