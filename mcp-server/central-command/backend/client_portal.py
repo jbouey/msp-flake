@@ -4131,8 +4131,17 @@ async def submit_client_credentials(
             cred_id, site_id, credential_type, credential_name, encrypted,
         )
 
-        # Audit trail (only if triggered from an alert)
+        # Validate alert_id belongs to this org (if provided)
         alert_id = body.get("alert_id")
+        if alert_id:
+            alert_check = await conn.fetchrow(
+                "SELECT id FROM pending_alerts WHERE id = $1 AND org_id = $2",
+                alert_id, org_id,
+            )
+            if not alert_check:
+                alert_id = None  # Silently drop invalid alert_id rather than 404
+
+        # Audit trail (only if triggered from an alert)
         if alert_id:
             await conn.execute(
                 """INSERT INTO client_approvals (id, org_id, site_id, alert_id, action, acted_by, notes)
