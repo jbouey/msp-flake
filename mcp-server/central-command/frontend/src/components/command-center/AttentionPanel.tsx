@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { GlassCard, Spinner } from '../shared';
 import { useAttentionRequired } from '../../hooks';
 import type { AttentionItem } from '../../types';
+import { CHECK_TYPE_LABELS } from '../../types';
 import { formatTimeAgo, cleanAttentionTitle } from '../../constants';
 
 const typeIcons: Record<string, React.ReactNode> = {
@@ -40,7 +41,7 @@ const AttentionItemRow: React.FC<{
     {typeIcons[item.type] || typeIcons.offline_appliance}
     <div className="flex-1 min-w-0">
       <p className="text-sm font-medium text-label-primary leading-snug truncate">
-        {cleanAttentionTitle(item.title)}
+        {cleanAttentionTitle(item.title, CHECK_TYPE_LABELS)}
       </p>
       <p className="text-xs text-label-tertiary mt-0.5 leading-relaxed">
         {item.clinic_name && <span className="font-medium text-label-secondary">{item.clinic_name}</span>}

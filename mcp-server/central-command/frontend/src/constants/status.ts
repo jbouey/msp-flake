@@ -335,25 +335,17 @@ export interface OpsStatusConfig {
 // ATTENTION TITLE CLEANUP
 // =============================================================================
 
-// Lazy-imported to avoid circular deps — CHECK_TYPE_LABELS is in types/index.ts
-let _checkTypeLabels: Record<string, string> | null = null;
-function getCheckTypeLabels(): Record<string, string> {
-  if (!_checkTypeLabels) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _checkTypeLabels = require('../types').CHECK_TYPE_LABELS;
-  }
-  return _checkTypeLabels!;
-}
-
 /**
  * Clean backend-generated attention/notification titles for display.
  * Maps raw check_type slugs to human labels after known prefixes.
  *
  * "Repeat drift: net_host_reachability (9x in 24h)" → "Recurring: Host Reach (9x in 24h)"
  * "L3 Escalation: rogue_scheduled_tasks"             → "L3 Escalation: Rogue Tasks"
+ *
+ * Accepts an optional labels map to avoid circular imports — callers pass
+ * CHECK_TYPE_LABELS from types/index.ts.
  */
-export function cleanAttentionTitle(title: string): string {
-  const labels = getCheckTypeLabels();
+export function cleanAttentionTitle(title: string, labels: Record<string, string> = {}): string {
   return title
     .replace(/^Repeat drift:\s*/i, 'Recurring: ')
     .replace(/^Repeat failure:\s*/i, 'Recurring: ')
