@@ -35,7 +35,4 @@ _spec.loader.exec_module(_parent_routes)
 router = _parent_routes.router
 auth_router = _parent_routes.auth_router
 
-# Export device_sync router from sub-module
-from .device_sync import router as device_sync_router
-
-__all__ = ["router", "auth_router", "device_sync_router"]
+__all__ = ["router", "auth_router"]

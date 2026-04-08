@@ -2163,14 +2163,23 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             "timestamp": now.isoformat()
         }
 
-    # Create incident record
+    # Create incident record (ON CONFLICT guards against dedup race condition —
+    # if two appliances report the same issue simultaneously, the unique partial
+    # index on dedup_key ensures only one INSERT succeeds)
     incident_id = str(uuid.uuid4())
-    await db.execute(
+    insert_result = await db.execute(
         text("""
             INSERT INTO incidents (id, appliance_id, incident_type, severity, check_type,
                 details, pre_state, hipaa_controls, reported_at, dedup_key)
             VALUES (:id, :appliance_id, :incident_type, :severity, :check_type,
                 :details, :pre_state, :hipaa_controls, :reported_at, :dedup_key)
+            ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL AND status NOT IN ('resolved', 'closed')
+            DO UPDATE SET severity = CASE
+                WHEN EXCLUDED.severity = 'critical' THEN 'critical'
+                WHEN EXCLUDED.severity = 'high' AND incidents.severity NOT IN ('critical') THEN 'high'
+                ELSE incidents.severity
+            END
+            RETURNING id, (xmax = 0) AS was_inserted
         """),
         {
             "id": incident_id,
@@ -2185,6 +2194,19 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             "dedup_key": dedup_key,
         }
     )
+    insert_row = insert_result.fetchone()
+    if insert_row and not insert_row[1]:
+        # ON CONFLICT fired — this was a race-condition dedup
+        return {
+            "status": "deduplicated",
+            "incident_id": str(insert_row[0]),
+            "resolution_tier": None,
+            "order_id": None,
+            "runbook_id": None,
+            "timestamp": now.isoformat(),
+        }
+    if insert_row:
+        incident_id = str(insert_row[0])
 
     # Monitoring-only checks: record the incident for dashboards but skip the entire
     # L1 → L2 → L3 remediation cascade.  These check types detect drift that cannot
