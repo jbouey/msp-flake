@@ -224,6 +224,8 @@ export interface LearningStatus {
   promotion_success_rate: number | null;
   l1_resolution_rate: number | null;
   l2_resolution_rate: number;
+  promoted_rule_matches_30d: number;
+  active_promoted_rules: number;
 }
 
 export interface PromotionCandidate {
