@@ -476,13 +476,14 @@ async def digest_sender_loop() -> None:
                 await _send_all_org_digests(conn)
                 await _check_non_engagement(conn)
                 # Audit log retention cleanup (3-year / 1095-day policy)
-                deleted = await conn.fetchval(
+                result = await conn.execute(
                     """DELETE FROM admin_audit_log
-                       WHERE created_at < NOW() - INTERVAL '1095 days'
-                       RETURNING COUNT(*)"""
+                       WHERE created_at < NOW() - INTERVAL '1095 days'"""
                 )
-                if deleted and deleted > 0:
-                    logger.info(f"Audit retention: purged {deleted} records older than 3 years")
+                if result:
+                    count = int(result.split()[-1]) if result and 'DELETE' in result else 0
+                    if count > 0:
+                        logger.info(f"Audit retention: purged {count} records older than 3 years")
         except asyncio.CancelledError:
             raise
         except Exception as e:

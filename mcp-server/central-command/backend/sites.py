@@ -2463,8 +2463,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
 
     Returns pending orders and windows targets (credential-pull RMM pattern).
     """
-    # Authenticate appliance via Bearer token
-    await require_appliance_auth(request)
+    # SECURITY: Use auth_site_id from Bearer token, not checkin.site_id from body.
+    # This prevents an appliance from spoofing another site's checkin.
+    checkin.site_id = auth_site_id
 
     pool = await get_pool()
     now = datetime.now(timezone.utc)
@@ -2688,7 +2689,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                                     capability_tier, status, checks_passed, checks_total,
                                     compliance_percentage, connected_at, last_heartbeat,
                                     updated_at
-                                ) VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 'connected', $8, $9, $10, $11, $12, NOW())
+                                ) VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, 'connected', $8, $9, $10, $11, $12, NOW())
                                 ON CONFLICT (agent_id) DO UPDATE SET
                                     hostname = EXCLUDED.hostname,
                                     agent_version = COALESCE(NULLIF(EXCLUDED.agent_version, ''), go_agents.agent_version),
@@ -3358,7 +3359,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                        FROM sites s
                        LEFT JOIN client_orgs co ON co.id = s.client_org_id
                        WHERE s.site_id = $1""",
-                    site_id
+                    checkin.site_id
                 )
                 if mode_row:
                     client_alert_mode_site = mode_row["site_mode"]
