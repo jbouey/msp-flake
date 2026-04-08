@@ -44,6 +44,7 @@ interface Props {
   sites: Site[];
   apiPrefix?: string;  // '/api/client' (default) or '/api/dashboard' for admin
   onCategoryClick?: (category: string, siteId: string) => void;  // drill into incidents
+  onStatusClick?: (status: 'pass' | 'warn' | 'fail', siteId: string) => void;  // drill into checks by status
 }
 
 // ─── Category Metadata ──────────────────────────────────────────────────────
@@ -318,7 +319,7 @@ const CategoryCard: React.FC<{
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export const ComplianceHealthInfographic: React.FC<Props> = ({ sites, apiPrefix = '/api/client', onCategoryClick }) => {
+export const ComplianceHealthInfographic: React.FC<Props> = ({ sites, apiPrefix = '/api/client', onCategoryClick, onStatusClick }) => {
   const [selectedSiteId, setSelectedSiteId] = useState<string>(sites[0]?.site_id || '');
   const [data, setData] = useState<ComplianceHealthData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -434,20 +435,32 @@ export const ComplianceHealthInfographic: React.FC<Props> = ({ sites, apiPrefix 
 
               {/* Counts summary */}
               <div className="flex items-center gap-4 mt-4 px-4 py-2.5 rounded-xl" style={{ background: 'var(--fill-quaternary)' }}>
-                <div className="text-center">
+                <button
+                  className="text-center hover:opacity-70 transition-opacity"
+                  onClick={() => onStatusClick?.('pass', selectedSiteId)}
+                  title="View passing checks"
+                >
                   <span className="text-sm font-bold tabular-nums text-green-600">{data.counts.passed}</span>
                   <p className="text-[10px]" style={{ color: 'var(--label-tertiary)' }}>Pass</p>
-                </div>
+                </button>
                 <div className="w-px h-6" style={{ background: 'var(--separator-light)' }} />
-                <div className="text-center">
+                <button
+                  className="text-center hover:opacity-70 transition-opacity"
+                  onClick={() => onStatusClick?.('warn', selectedSiteId)}
+                  title="View warnings"
+                >
                   <span className="text-sm font-bold tabular-nums text-amber-500">{data.counts.warnings}</span>
                   <p className="text-[10px]" style={{ color: 'var(--label-tertiary)' }}>Warn</p>
-                </div>
+                </button>
                 <div className="w-px h-6" style={{ background: 'var(--separator-light)' }} />
-                <div className="text-center">
+                <button
+                  className={`text-center transition-opacity ${data.counts.failed > 0 ? 'hover:opacity-70 cursor-pointer' : ''}`}
+                  onClick={() => data.counts.failed > 0 && onStatusClick?.('fail', selectedSiteId)}
+                  title={data.counts.failed > 0 ? 'View failing checks' : undefined}
+                >
                   <span className="text-sm font-bold tabular-nums text-red-500">{data.counts.failed}</span>
                   <p className="text-[10px]" style={{ color: 'var(--label-tertiary)' }}>Fail</p>
-                </div>
+                </button>
               </div>
             </div>
 

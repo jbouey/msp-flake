@@ -1475,6 +1475,7 @@ export const SiteDetail: React.FC = () => {
               sites={[{ site_id: site.site_id, clinic_name: site.clinic_name }]}
               apiPrefix="/api/dashboard"
               onCategoryClick={(category, sid) => navigate(`/incidents?site_id=${sid}&category=${category}`)}
+              onStatusClick={(status, sid) => navigate(`/incidents?site_id=${sid}&status=${status}`)}
             />
           )}
 
