@@ -287,6 +287,25 @@ async def sso_callback(
             mfa_enabled = False
             logger.info(f"SSO auto-provisioned user {email} for org {org_id}")
 
+            # Notify partner that a new client user was auto-provisioned via SSO
+            try:
+                org_row = await conn.fetchrow(
+                    "SELECT name, current_partner_id FROM client_orgs WHERE id = $1", org_id
+                )
+                if org_row and org_row["current_partner_id"]:
+                    await conn.execute("""
+                        INSERT INTO partner_notifications (
+                            partner_id, event_type, title, message, metadata
+                        ) VALUES ($1, 'client_user_provisioned', $2, $3, $4::jsonb)
+                    """,
+                        org_row["current_partner_id"],
+                        f"New user joined {org_row['name']}",
+                        f"{email} was auto-provisioned via SSO with viewer role.",
+                        json.dumps({"email": email, "org_id": str(org_id), "role": "viewer", "method": "sso"}),
+                    )
+            except Exception as e:
+                logger.debug(f"Partner notification for SSO provision failed (non-fatal): {e}")
+
         # MFA check
         if mfa_enabled:
             mfa_token = secrets.token_urlsafe(32)
