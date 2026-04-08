@@ -164,20 +164,20 @@ const ApplianceCard: React.FC<{
         </div>
       </div>
 
-      {/* Scan Coordination */}
+      {/* Assigned Targets */}
       {(applianceCount ?? 0) >= 1 && (
         <div className="mt-3 pt-3 border-t border-separator-light">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${
-                appliance.mesh_ring_size > 1 ? 'bg-health-healthy' : 'bg-label-tertiary'
+                (appliance.assigned_target_count || 0) > 0 ? 'bg-health-healthy' : 'bg-label-tertiary'
               }`} />
-              <p className="text-xs text-label-tertiary">Scan Coordination</p>
+              <p className="text-xs text-label-tertiary">Devices Monitored</p>
             </div>
             <p className="text-xs text-label-secondary">
               {appliance.mesh_ring_size > 1
-                ? `${appliance.mesh_ring_size} nodes, ${appliance.assigned_target_count || 0} targets assigned`
-                : `${appliance.assigned_target_count || 0} targets`}
+                ? `${appliance.assigned_target_count || 0} devices (${appliance.mesh_ring_size} appliances coordinating)`
+                : `${appliance.assigned_target_count || 0} devices`}
             </p>
           </div>
         </div>

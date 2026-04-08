@@ -3040,7 +3040,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             own_rows = await conn.fetch("""
                 SELECT DISTINCT ip_address FROM discovered_devices
                 WHERE owner_appliance_id = $1 AND ip_address IS NOT NULL
-            """, appliance_db_id)
+            """, canonical_id)
             owned_ips = {r['ip_address'] for r in own_rows}
         except Exception:
             pass  # owner_appliance_id column may not exist yet
@@ -3050,7 +3050,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 disc_rows = await conn.fetch("""
                     SELECT DISTINCT ip_address FROM discovered_devices
                     WHERE appliance_id = $1 AND ip_address IS NOT NULL
-                """, appliance_db_id)
+                """, canonical_id)
                 discovered_ips = {r['ip_address'] for r in disc_rows}
             except Exception:
                 pass
@@ -3067,7 +3067,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 SELECT DISTINCT hostname, ip_address FROM discovered_devices
                 WHERE appliance_id = $1 AND hostname IS NOT NULL AND hostname != ''
                 AND ip_address IS NOT NULL
-            """, appliance_db_id)
+            """, canonical_id)
             for hr in hn_rows:
                 hostname_to_ip[hr['hostname'].lower()] = hr['ip_address']
         except Exception:
@@ -3234,9 +3234,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 """, checkin.site_id)
 
                 if online_appliances:
-                    from .hash_ring import HashRing, normalize_mac as _norm_mac
-                    ring_macs = [_norm_mac(r['mac_address']) for r in online_appliances if r['mac_address']]
-                    this_mac = _norm_mac(checkin.mac_address) if checkin.mac_address else ""
+                    from .hash_ring import HashRing, normalize_mac_for_ring
+                    ring_macs = [normalize_mac_for_ring(r['mac_address']) for r in online_appliances if r['mac_address']]
+                    this_mac = normalize_mac_for_ring(checkin.mac_address) if checkin.mac_address else ""
 
                     if ring_macs and this_mac in ring_macs:
                         all_target_ips = set()
@@ -3259,14 +3259,12 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                             "assignment_epoch": epoch,
                         }
 
-                        # Persist assignment for observability (use appliance_id for reliable matching)
-                        canonical_mac = mac_normalized  # colon-separated, from normalize_mac()
-                        canonical_aid = f"{checkin.site_id}-{canonical_mac}"
+                        # Persist assignment for observability
                         await conn.execute("""
                             UPDATE site_appliances
                             SET assigned_targets = $1::jsonb, assignment_epoch = $2
                             WHERE appliance_id = $3
-                        """, json.dumps(my_targets), epoch, canonical_aid)
+                        """, json.dumps(my_targets), epoch, canonical_id)
 
                         logger.info(
                             "target_assignment site_id=%s appliance_mac=%s target_count=%d ring_size=%d epoch=%d",

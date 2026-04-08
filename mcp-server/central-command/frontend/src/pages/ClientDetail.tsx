@@ -219,13 +219,6 @@ export const ClientDetail: React.FC = () => {
                       </span>
                     </div>
 
-                    {/* Target count badge */}
-                    {(appliance.assigned_target_count ?? 0) > 0 && (
-                      <span className="flex-shrink-0 text-xs bg-background-secondary text-label-secondary px-2 py-0.5 rounded-full border border-border-primary">
-                        {appliance.assigned_target_count} targets
-                      </span>
-                    )}
-
                     {/* Chevron */}
                     <svg
                       className={`w-4 h-4 flex-shrink-0 text-label-tertiary transition-transform ${isExpanded ? 'rotate-180' : ''}`}

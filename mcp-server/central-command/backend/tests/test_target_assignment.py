@@ -7,7 +7,7 @@ when the appliance fleet changes size.
 import pytest
 
 try:
-    from hash_ring import HashRing, normalize_mac
+    from hash_ring import HashRing, normalize_mac_for_ring
 except ImportError:
     pytest.skip("hash_ring not yet available", allow_module_level=True)
 
@@ -25,9 +25,9 @@ def test_three_appliances_six_targets_full_coverage():
         targets = ring.targets_for_node(mac, all_ips)
         for t in targets:
             assert t not in assigned, (
-                f"{t} assigned to both {assigned[t]} and {normalize_mac(mac)}"
+                f"{t} assigned to both {assigned[t]} and {normalize_mac_for_ring(mac)}"
             )
-            assigned[t] = normalize_mac(mac)
+            assigned[t] = normalize_mac_for_ring(mac)
     assert set(assigned.keys()) == set(all_ips), (
         f"Missing: {set(all_ips) - set(assigned.keys())}"
     )
@@ -51,7 +51,7 @@ def test_node_removal_redistributes():
 
     # Targets previously owned by node 3 are now owned by surviving nodes
     targets_3_had = ring_3.targets_for_node("AA:BB:CC:DD:EE:03", all_ips)
-    surviving = {normalize_mac(m) for m in macs_2}
+    surviving = {normalize_mac_for_ring(m) for m in macs_2}
     for ip in targets_3_had:
         owner_after = ring_2.owner(ip)
         assert owner_after in surviving, (
@@ -214,11 +214,11 @@ def test_get_full_assignment_complete_coverage():
     assert all_assigned == set(targets), f"Missing: {set(targets) - all_assigned}"
 
 
-def test_normalize_mac_formats():
+def test_normalize_mac_for_ring_formats():
     """Various MAC formats normalize to the same value."""
-    assert normalize_mac("7C:D3:0A:7C:55:18") == "7CD30A7C5518"
-    assert normalize_mac("7c-d3-0a-7c-55-18") == "7CD30A7C5518"
-    assert normalize_mac("7cd30a7c5518") == "7CD30A7C5518"
-    assert normalize_mac("7C.D3.0A.7C.55.18") == "7CD30A7C5518"
-    assert normalize_mac("") == ""
-    assert normalize_mac(None) == ""
+    assert normalize_mac_for_ring("7C:D3:0A:7C:55:18") == "7CD30A7C5518"
+    assert normalize_mac_for_ring("7c-d3-0a-7c-55-18") == "7CD30A7C5518"
+    assert normalize_mac_for_ring("7cd30a7c5518") == "7CD30A7C5518"
+    assert normalize_mac_for_ring("7C.D3.0A.7C.55.18") == "7CD30A7C5518"
+    assert normalize_mac_for_ring("") == ""
+    assert normalize_mac_for_ring(None) == ""

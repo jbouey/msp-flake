@@ -25,8 +25,12 @@ logger = structlog.get_logger(__name__)
 REPLICAS = 64  # Must match mesh.go NewHashRing() replicas field
 
 
-def normalize_mac(mac: str) -> str:
+def normalize_mac_for_ring(mac: str) -> str:
     """Normalize MAC to uppercase, no separators. Matches Go normalizeMACForRing().
+
+    Different from sites.normalize_mac() which produces colon-separated format
+    for storage/display (e.g., "84:3A:5B:91:B6:61"). This version strips all
+    separators for ring hashing (e.g., "843A5B91B661").
 
     Returns empty string for invalid input rather than raising.
     """
@@ -50,7 +54,7 @@ class HashRing:
 
     def __init__(self, macs: List[str]):
         # Filter out empty/invalid MACs
-        valid_macs = [normalize_mac(m) for m in (macs or [])]
+        valid_macs = [normalize_mac_for_ring(m) for m in (macs or [])]
         self._nodes = sorted(set(m for m in valid_macs if m))
 
         if not self._nodes:
@@ -115,7 +119,7 @@ class HashRing:
         if not target_ips or not mac:
             return []
 
-        norm = normalize_mac(mac)
+        norm = normalize_mac_for_ring(mac)
         if not norm:
             logger.warning("hash_ring_invalid_mac", raw_mac=mac)
             return []

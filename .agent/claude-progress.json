@@ -1,12 +1,12 @@
 {
-  "session": 198,
-  "updated": "2026-04-07T07:17:42.561149Z",
+  "session": 199,
+  "updated": "2026-04-07T14:53:43.328441Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
-    "dashboard": "redesigned_hero_compliance_merged_attention_sidebar_sections_dark_badges",
+    "dashboard": "session199_full_round_table_audit_80plus_files_legal_sweep_portal_overhaul_failing_badges_pagination",
     "physical_appliance": "go_daemon_v0.3.82_backend_authoritative_mesh_per_appliance_keys_display_names",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
@@ -19,7 +19,7 @@
     "ots_proofs": "127529_anchored_15_pending_verify_endpoint_chain_health_daily_integrity_check",
     "evidence_verify": "production_verify_endpoint_chain_health_hash_recompute_ed25519_ots_blockchain",
     "fleet_updates": "v0.3.82_deployed_backend_authoritative_mesh_3_appliances",
-    "mesh_discovery": "backend_authoritative_target_assignment_local_ring_failover_split_brain_eliminated",
+    "mesh_discovery": "backend_authoritative_target_assignment_discovery_filter_fixed_normalize_mac_clarified_ui_renamed",
     "landing_page": "pricing_499_legal_pages_ecg_animation_calendly_fixed_claims_qualified",
     "l2_pipeline": "hypothesis_driven_triage_validation_gate_confidence_tagging_audit_trail",
     "check_catalog": "58_checks_public_api_multi_framework_9_frameworks_yaml_crosswalk",
@@ -38,7 +38,55 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "iMac SSH port 2222 still broken (reverse tunnel via VPS:2250). T640/T740 get 0 targets due to hash ring distribution with only 4 scan targets (adding node to 88.x tomorrow will fix). Key rotation not yet implemented (needs careful design).",
+  "current_blocker": "iMac SSH port 2222 still broken (reverse tunnel via VPS:2250). Chaos lab SSH key rejected by appliance .241.",
+  "session_199_work": {
+    "commits": 12,
+    "summary": "Full round-table demo audit: 80+ files, 19 admin pages, partner+client portal overhaul, legal language sweep, CI pipeline fix",
+    "admin_dashboard_audit": [
+      "SiteDevices crash fix (React hooks violation \u2014 useState after conditional return)",
+      "Drifted\u2192Failing: X/Y check count badges with severity colors + staleness chips on workstations",
+      "Device Inventory restructured: Managed Fleet vs Network Discovery summary",
+      "Dashboard: Recurring labels, L3 Escalation humanized, CHECK_TYPE_LABELS for linux_encryption + AGENT-REDEPLOY-EXHAUSTED",
+      "Sites: hidden raw site_id, capitalized Stage/Tier",
+      "SiteDetail: Online capitalized, hidden site_id, Check Config label, pending remediations, React Query refresh",
+      "Incidents: polished subtitle, hostname fallback to clinic name, compact table view toggle",
+      "Notifications: DRY cleanAttentionTitle shared utility",
+      "Sidebar: Not Deployed label for sites without appliances (was Offline)",
+      "Runbook success rate: excluded 0-execution rules (6.2% \u2192 ~85%)",
+      "Partners: 16 alert()\u2192inline banners, Users: 3 alert()\u2192banners",
+      "Learning: Review queue is clear, coverage gap human labels",
+      "All remaining pages: raw IDs removed, status capitalized, drift\u2192failing terminology"
+    ],
+    "partner_portal_audit": [
+      "Portfolio Health KPI card (avg compliance across client sites)",
+      "Hidden MAC addresses from provision codes",
+      "L3/L4 \u2192 Manual Review Required / Critical Escalation",
+      "Hidden raw site_id from sites table and SSO config",
+      "confirm() \u2192 inline confirmation UI for provision revocation"
+    ],
+    "client_portal_audit": [
+      "ClientAlerts: CLIENT_ALERT_LABELS map (Software Update Available, Firewall Not Running, etc.)",
+      "ClientEvidence: humanCheckType() expanding terse labels, Regulation column",
+      "ClientHealingLogs: Automatic Fixes terminology, hidden runbook IDs, removed L1/L2 column",
+      "ClientEscalations: Issues Needing Review, plain English routing, Device/Regulation columns",
+      "ClientReports: Device/Regulation columns, humanized check types",
+      "ClientDriftConfig: security checks terminology throughout"
+    ],
+    "legal_sweep": [
+      "Frontend 9 files: ensures\u2192monitors, prevents\u2192helps restrict, protects\u2192reduces exposure",
+      "PHI never leaves \u2192 PHI scrubbed at appliance (Pricing, Legal, Documentation)",
+      "audit-ready \u2192 audit-supportive (ClientSettings, PartnerBilling, LandingPage)",
+      "Backend 8 files: portal.py, billing.py, check_catalog.py, agent_api.py, compliance_packet.py",
+      "All liability-limiting disclaimers preserved unchanged"
+    ],
+    "production_fixes": [
+      "auth.py validate_session: execute_with_retry for PgBouncer prepared statement 500s",
+      "Stale v0.2.2 release cleared from DB (was causing downgrade display)",
+      "CI pipeline: sqlalchemy stubs in 8 test files + indentation fixes + ESLint require\u2192param injection",
+      "Pagination added to SiteWorkstations and SiteDevices (25 per page)"
+    ],
+    "ci_status": "last 3 deploys GREEN, 287 backend tests passing"
+  },
   "session_197_work": {
     "commits": 28,
     "summary": "Spec 1 (dedup + alerts) + Layer 4 (dashboard) + Spec 2 (self-service + non-engagement + credentials + partner notifs) + MFA enforcement + multi-framework compliance (9 frameworks) + audit retention",

@@ -2,7 +2,7 @@
 import json
 import os
 import pytest
-from hash_ring import HashRing, normalize_mac
+from hash_ring import HashRing, normalize_mac_for_ring
 
 
 def test_single_node_owns_everything():
@@ -23,7 +23,7 @@ def test_two_nodes_split_targets():
 def test_three_nodes_reasonably_balanced():
     macs = ["AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02", "AA:BB:CC:DD:EE:03"]
     ring = HashRing(macs)
-    counts = {normalize_mac(m): 0 for m in macs}
+    counts = {normalize_mac_for_ring(m): 0 for m in macs}
     for i in range(1000):
         ip = f"10.0.{i // 256}.{i % 256}"
         counts[ring.owner(ip)] += 1
@@ -38,10 +38,10 @@ def test_deterministic():
     assert owner1 == owner2
 
 
-def test_normalize_mac():
-    assert normalize_mac("aa:bb:cc:dd:ee:ff") == "AABBCCDDEEFF"
-    assert normalize_mac("AA-BB-CC-DD-EE-FF") == "AABBCCDDEEFF"
-    assert normalize_mac("AABBCCDDEEFF") == "AABBCCDDEEFF"
+def test_normalize_mac_for_ring():
+    assert normalize_mac_for_ring("aa:bb:cc:dd:ee:ff") == "AABBCCDDEEFF"
+    assert normalize_mac_for_ring("AA-BB-CC-DD-EE-FF") == "AABBCCDDEEFF"
+    assert normalize_mac_for_ring("AABBCCDDEEFF") == "AABBCCDDEEFF"
 
 
 def test_targets_for_node():
