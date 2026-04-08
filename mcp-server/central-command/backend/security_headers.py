@@ -52,12 +52,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app, production_mode: bool = None):
         super().__init__(app)
-        # Auto-detect production mode from environment
+        # Default to production mode unless explicitly set to development.
+        # This ensures hardened CSP even when ENVIRONMENT is not set.
         if production_mode is None:
-            env = os.getenv("ENVIRONMENT", "development")
-            production_mode = env.lower() in ("production", "prod")
+            env = os.getenv("ENVIRONMENT", "production")
+            production_mode = env.lower() not in ("development", "dev", "test")
         self.production_mode = production_mode
         self.csp = self.PRODUCTION_CSP if production_mode else self.DEFAULT_CSP
+        if production_mode:
+            logger.info("Security headers: PRODUCTION mode (strict CSP, HSTS preload)")
+        else:
+            logger.warning("Security headers: DEVELOPMENT mode (relaxed CSP with unsafe-eval)")
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process request and add security headers to response."""
