@@ -70,10 +70,10 @@ var allowedFlakeRefPattern = regexp.MustCompile(`^github:jbouey/msp-flake#[a-zA-
 // NOTE: No raw IPs — use DNS names only. Pinning to IPs leaks infrastructure details
 // in the binary and breaks if the VPS migrates.
 var allowedDownloadDomains = map[string]bool{
-	"api.osiriscare.net":            true,
-	"release.osiriscare.net":        true,
-	"github.com":                    true,
-	"objects.githubusercontent.com": true,
+	"api.osiriscare.net":     true,
+	"release.osiriscare.net": true,
+	// SECURITY: github.com removed — too broad. Attacker could host malicious binaries
+	// on any GitHub release. Use api.osiriscare.net/updates/ for all binary distribution.
 }
 
 // validateFlakeRef ensures flake_ref points to the official repo.
@@ -426,13 +426,30 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 // host scoping (target_appliance_id in the signed payload must match this appliance).
 // Returns nil if the signature is valid or if verification is not yet configured
 // (graceful degradation during rollout — logs a warning for unsigned orders).
+// dangerousOrderTypes are order types that must NEVER execute without signature verification.
+// These can modify binaries, execute commands, or alter security configuration.
+var dangerousOrderTypes = map[string]bool{
+	"update_daemon":               true,
+	"nixos_rebuild":               true,
+	"healing":                     true,
+	"diagnostic":                  true,
+	"sync_promoted_rule":          true,
+	"configure_workstation_agent": true,
+	"update_agent":                true,
+}
+
 func (p *Processor) verifySignature(order *Order) error {
 	if !p.verifier.HasKey() {
 		// No server public key yet (first checkin hasn't completed).
-		// Allow orders through but log a warning.
-		if order.Signature != "" {
-			log.Printf("[orders] WARNING: order %s has signature but no server public key to verify", order.OrderID)
+		// SECURITY: block dangerous order types until key is available.
+		if dangerousOrderTypes[order.OrderType] {
+			log.Printf("[orders] SECURITY: rejected %s order %s — no server public key yet (pre-checkin)",
+				order.OrderType, order.OrderID)
+			return fmt.Errorf("dangerous order %s rejected: server public key not yet received", order.OrderType)
 		}
+		// Allow safe order types (force_checkin, run_drift, restart_agent) through
+		log.Printf("[orders] WARNING: allowing safe order %s (type=%s) without signature (pre-checkin)",
+			order.OrderID, order.OrderType)
 		return nil
 	}
 
@@ -959,6 +976,10 @@ func (p *Processor) handleSyncPromotedRule(_ context.Context, params map[string]
 	}
 
 	rulePath := filepath.Join(promotedDir, ruleID+".yaml")
+	// SECURITY: prevent path traversal — ensure rulePath stays within promotedDir
+	if !strings.HasPrefix(filepath.Clean(rulePath), filepath.Clean(promotedDir)) {
+		return nil, fmt.Errorf("SECURITY: rule_id %q escapes promoted directory", ruleID)
+	}
 	if _, err := os.Stat(rulePath); err == nil {
 		return map[string]interface{}{
 			"status":  "already_exists",
@@ -1243,7 +1264,7 @@ func (p *Processor) recordExecuted(orderID string) {
 
 // --- Nonce replay protection ---
 
-const nonceMaxAge = 24 * time.Hour
+const nonceMaxAge = 2 * time.Hour // SECURITY: reduced from 24h to shrink replay attack window
 
 // nonceStore is the on-disk format for persisted nonces.
 type nonceStore struct {

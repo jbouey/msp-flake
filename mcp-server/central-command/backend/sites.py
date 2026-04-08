@@ -427,7 +427,7 @@ async def create_appliance_order(
 
 
 @router.get("/{site_id}/appliances/{appliance_id}/orders/pending")
-async def get_pending_orders(site_id: str, appliance_id: str):
+async def get_pending_orders(site_id: str, appliance_id: str, auth_site_id: str = Depends(require_appliance_bearer)):
     """Get pending orders for an appliance (both admin and healing orders)."""
     pool = await get_pool()
 
@@ -1695,6 +1695,13 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site
         parts = order_id.split("::", 2)
         if len(parts) == 3:
             fleet_order_id, appliance_id = parts[1], parts[2]
+            # SECURITY: verify completing appliance belongs to authenticated site
+            if auth_site_id and not appliance_id.startswith(auth_site_id):
+                logger.warning(
+                    "Order completion rejected: appliance %s does not belong to site %s",
+                    appliance_id, auth_site_id,
+                )
+                raise HTTPException(status_code=403, detail="Order does not belong to this appliance")
             async with admin_connection(pool) as conn:
                 await record_fleet_order_completion(conn, fleet_order_id, appliance_id, new_status)
                 return {
@@ -1753,6 +1760,14 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site
                     )
             else:
                 raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+
+        # SECURITY: verify order belongs to authenticated site
+        if auth_site_id and result.get('site_id') and result['site_id'] != auth_site_id:
+            logger.warning(
+                "Order completion rejected: order %s belongs to site %s, not %s",
+                order_id, result['site_id'], auth_site_id,
+            )
+            raise HTTPException(status_code=403, detail="Order does not belong to this site")
 
         # Post-completion hooks for specific order types
         # Healing order → resolve incident on success, escalate on failure
