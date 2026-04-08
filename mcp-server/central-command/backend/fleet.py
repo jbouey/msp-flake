@@ -29,14 +29,22 @@ from .metrics import (
 
 
 # =============================================================================
-# DATABASE CONNECTION
+# DATABASE CONNECTION — asyncpg pool for RLS-enforced queries
+# =============================================================================
+# This pool handles tenant-scoped queries via SET LOCAL GUCs (app.current_tenant,
+# app.is_admin, app.current_org) through tenant_connection()/admin_connection().
+# 41 files use this pool for raw conn.fetch()/conn.execute() with RLS isolation.
+#
+# A separate SQLAlchemy pool (shared.py, pool_size=20) handles admin CRUD routes
+# via FastAPI's Depends(get_db). Both pools go through PgBouncer (25 server conns).
+# Total client connections: asyncpg 25 + SQLAlchemy 50 = 75 max → 25 PgBouncer slots.
 # =============================================================================
 
 _pool: Optional[asyncpg.Pool] = None
 
 
 async def get_pool() -> asyncpg.Pool:
-    """Get or create the database connection pool."""
+    """Get or create the asyncpg connection pool for RLS-enforced queries."""
     global _pool
     if _pool is None:
         import os
@@ -50,7 +58,7 @@ async def get_pool() -> asyncpg.Pool:
         if "+asyncpg" in database_url:
             database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
         _pool = await asyncpg.create_pool(
-            database_url, min_size=5, max_size=50,
+            database_url, min_size=2, max_size=25,
             statement_cache_size=0,  # Required for PgBouncer transaction pooling
         )
     return _pool

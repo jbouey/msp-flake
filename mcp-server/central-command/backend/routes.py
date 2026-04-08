@@ -547,6 +547,32 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
     if not row:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
+    # Fetch remediation steps from relational table (migration 137)
+    remediation_history = []
+    try:
+        steps_result = await db.execute(
+            text("""
+                SELECT tier, runbook_id, result, confidence, created_at
+                FROM incident_remediation_steps
+                WHERE incident_id = :incident_id
+                ORDER BY step_idx
+            """),
+            {"incident_id": row.incident_id}
+        )
+        remediation_history = [
+            {
+                "tier": s.tier,
+                "runbook_id": s.runbook_id,
+                "result": s.result,
+                "confidence": s.confidence,
+                "timestamp": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in steps_result.fetchall()
+        ]
+    except Exception:
+        # Fallback to JSONB column if migration 137 hasn't run
+        remediation_history = getattr(row, 'remediation_history', None) or []
+
     return IncidentDetail(
         id=str(row.id),
         site_id=row.site_id,
@@ -565,7 +591,7 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
         execution_log=None,
         remediation_attempts=getattr(row, 'remediation_attempts', None) or 0,
         remediation_exhausted=getattr(row, 'remediation_exhausted', None) or False,
-        remediation_history=getattr(row, 'remediation_history', None) or [],
+        remediation_history=remediation_history,
         created_at=row.created_at,
     )
 

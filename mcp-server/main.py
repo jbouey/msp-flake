@@ -2275,26 +2275,31 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                     tier=resolution_tier)
 
         # Record L1 remediation attempt
-        l1_attempt = json.dumps({
-            "tier": "L1",
-            "runbook_id": runbook_id,
-            "result": "order_created",
-            "timestamp": now.isoformat(),
-        })
         try:
             await db.execute(
                 text("""
                     UPDATE incidents SET
                         remediation_attempts = COALESCE(remediation_attempts, 0) + 1,
-                        remediation_history = COALESCE(remediation_history, '[]'::jsonb) || :attempt::jsonb,
                         context_hash = :hash
                     WHERE id = :id
                 """),
-                {"id": incident_id, "attempt": l1_attempt, "hash": context_hash}
+                {"id": incident_id, "hash": context_hash}
+            )
+            # Insert into relational remediation steps table
+            await db.execute(
+                text("""
+                    INSERT INTO incident_remediation_steps
+                        (incident_id, step_idx, tier, runbook_id, result, created_at)
+                    VALUES (
+                        :incident_id,
+                        COALESCE((SELECT MAX(step_idx) + 1 FROM incident_remediation_steps WHERE incident_id = :incident_id), 0),
+                        'L1', :runbook_id, 'order_created', :ts
+                    )
+                """),
+                {"incident_id": incident_id, "runbook_id": runbook_id, "ts": now}
             )
         except Exception as e:
-            # Graceful degradation: remediation tracking columns require migration 099
-            logger.debug("Skipping L1 remediation tracking (migration 099 not applied)", error=str(e))
+            logger.debug("Skipping L1 remediation tracking", error=str(e))
     elif resolution_tier == "L3":
         # L1 rule matched an escalation-only runbook (ESC-*) — skip L2, go straight to L3
         await db.execute(
@@ -2318,7 +2323,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
         try:
             prev_state_check = await db.execute(
                 text("""
-                    SELECT remediation_attempts, context_hash, remediation_history
+                    SELECT remediation_attempts, context_hash
                     FROM incidents
                     WHERE appliance_id = :appliance_id
                     AND incident_type = :incident_type
@@ -2332,7 +2337,6 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
             prev_state = prev_state_check.fetchone()
             prev_attempts = prev_state[0] if prev_state else 0
             prev_hash = prev_state[1] if prev_state else None
-            prev_history = prev_state[2] if prev_state else []
 
             # Rule 1: Never call L2 with identical context
             if prev_hash == context_hash and prev_attempts > 0:
@@ -2351,7 +2355,6 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                         text("""
                             UPDATE incidents SET
                                 remediation_attempts = :attempts,
-                                remediation_history = :history::jsonb,
                                 remediation_exhausted = true,
                                 context_hash = :hash,
                                 resolution_tier = 'L3',
@@ -2361,7 +2364,6 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                         {
                             "id": incident_id,
                             "attempts": prev_attempts,
-                            "history": json.dumps(prev_history if isinstance(prev_history, list) else []),
                             "hash": context_hash,
                         }
                     )
@@ -2492,23 +2494,15 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                                 confidence=decision.confidence if decision else None,
                                 requires_review=decision.requires_human_review if decision else None)
 
-                # Record L2 attempt in remediation history (requires migration 099)
+                # Record L2 attempt in remediation steps table
                 try:
                     new_attempts = (prev_attempts if 'prev_attempts' in dir() else 0) + 1
-                    l2_attempt = json.dumps({
-                        "tier": "L2",
-                        "runbook_id": l2_runbook,
-                        "result": l2_result,
-                        "confidence": l2_confidence,
-                        "timestamp": now.isoformat(),
-                    })
                     is_exhausted = new_attempts >= MAX_REMEDIATION_ATTEMPTS
 
                     await db.execute(
                         text("""
                             UPDATE incidents SET
                                 remediation_attempts = :attempts,
-                                remediation_history = COALESCE(remediation_history, '[]'::jsonb) || :attempt::jsonb,
                                 remediation_exhausted = :exhausted,
                                 context_hash = :hash
                             WHERE id = :id
@@ -2516,14 +2510,31 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                         {
                             "id": incident_id,
                             "attempts": new_attempts,
-                            "attempt": l2_attempt,
                             "exhausted": is_exhausted,
                             "hash": context_hash,
                         }
                     )
+                    # Insert into relational remediation steps table
+                    await db.execute(
+                        text("""
+                            INSERT INTO incident_remediation_steps
+                                (incident_id, step_idx, tier, runbook_id, result, confidence, created_at)
+                            VALUES (
+                                :incident_id,
+                                COALESCE((SELECT MAX(step_idx) + 1 FROM incident_remediation_steps WHERE incident_id = :incident_id), 0),
+                                'L2', :runbook_id, :result, :confidence, :ts
+                            )
+                        """),
+                        {
+                            "incident_id": incident_id,
+                            "runbook_id": l2_runbook,
+                            "result": l2_result,
+                            "confidence": l2_confidence,
+                            "ts": now,
+                        }
+                    )
                 except Exception as e:
-                    # Graceful degradation: L2 remediation tracking requires migration 099
-                    logger.debug("Skipping L2 remediation tracking (migration 099 not applied)", error=str(e))
+                    logger.debug("Skipping L2 remediation tracking", error=str(e))
 
                 # Rule 2: If budget exhausted after this attempt, force L3 escalation
                 if is_exhausted and not l2_succeeded:

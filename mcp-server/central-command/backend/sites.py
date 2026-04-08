@@ -2462,6 +2462,11 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     appliance_id = f"{checkin.site_id}-{mac_normalized}"
 
     async with tenant_connection(pool, site_id=checkin.site_id) as conn:
+      # Micro-transaction architecture (Session 200):
+      # tenant_connection wraps in one transaction for SET LOCAL RLS.
+      # Each step uses its own savepoint (conn.transaction()) for isolation.
+      # Failure in any optional step does NOT abort the checkin.
+      # Core identity (STEP 0-3) runs bare — failure aborts the whole checkin.
       async with conn.transaction():
         # === STEP 0: Process deploy results from previous checkin cycle ===
         if checkin.deploy_results:
@@ -2570,54 +2575,51 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
 
         # === STEP 3.5: Also update appliances table for Fleet Updates ===
         try:
-            await conn.execute("""
-                UPDATE appliances SET
-                    last_checkin = $2,
-                    agent_version = $3,
-                    nixos_version = $4,
-                    ip_address = $5::inet,
-                    status = 'active',
-                    updated_at = $2
-                WHERE site_id = $1
-            """,
-                checkin.site_id,
-                now,
-                checkin.agent_version,
-                checkin.nixos_version,
-                checkin.ip_addresses[0] if checkin.ip_addresses else None
-            )
+            async with conn.transaction():
+                await conn.execute("""
+                    UPDATE appliances SET
+                        last_checkin = $2,
+                        agent_version = $3,
+                        nixos_version = $4,
+                        ip_address = $5::inet,
+                        status = 'active',
+                        updated_at = $2
+                    WHERE site_id = $1
+                """,
+                    checkin.site_id,
+                    now,
+                    checkin.agent_version,
+                    checkin.nixos_version,
+                    checkin.ip_addresses[0] if checkin.ip_addresses else None
+                )
         except Exception as e:
-            # Don't fail checkin if fleet update fails
-            import logging
-            logging.warning(f"Failed to update appliances table: {e}")
+            logger.warning(f"Failed to update appliances table: {e}")
 
         # === STEP 3.6: Register/update agent signing key ===
         if checkin.agent_public_key and len(checkin.agent_public_key) == 64:
             try:
-                existing_key = await conn.fetchval(
-                    "SELECT agent_public_key FROM sites WHERE site_id = $1",
-                    checkin.site_id
-                )
-                if existing_key != checkin.agent_public_key:
-                    await conn.execute(
-                        "UPDATE sites SET agent_public_key = $1 WHERE site_id = $2",
-                        checkin.agent_public_key, checkin.site_id
+                async with conn.transaction():
+                    existing_key = await conn.fetchval(
+                        "SELECT agent_public_key FROM sites WHERE site_id = $1",
+                        checkin.site_id
                     )
-                    if existing_key:
-                        import logging
-                        logging.warning(
-                            f"Agent signing key ROTATED for site={checkin.site_id} "
-                            f"old={existing_key[:12]}... new={checkin.agent_public_key[:12]}..."
+                    if existing_key != checkin.agent_public_key:
+                        await conn.execute(
+                            "UPDATE sites SET agent_public_key = $1 WHERE site_id = $2",
+                            checkin.agent_public_key, checkin.site_id
                         )
-                    else:
-                        import logging
-                        logging.info(
-                            f"Agent signing key registered for site={checkin.site_id} "
-                            f"key={checkin.agent_public_key[:12]}..."
-                        )
+                        if existing_key:
+                            logger.warning(
+                                f"Agent signing key ROTATED for site={checkin.site_id} "
+                                f"old={existing_key[:12]}... new={checkin.agent_public_key[:12]}..."
+                            )
+                        else:
+                            logger.info(
+                                f"Agent signing key registered for site={checkin.site_id} "
+                                f"key={checkin.agent_public_key[:12]}..."
+                            )
             except Exception as e:
-                import logging
-                logging.warning(f"Failed to register agent public key: {e}")
+                logger.warning(f"Failed to register agent public key: {e}")
 
         # === STEP 3.6b: Update WireGuard VPN status ===
         if checkin.wg_connected and checkin.wg_ip:
@@ -2938,76 +2940,80 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             logger.warning(f"Witness exchange during checkin: {e}")
 
         # === STEP 4: Get pending orders for this appliance ===
-        # Check admin_orders table (fleet management orders)
-        order_rows = await conn.fetch("""
-            SELECT order_id, order_type, parameters, priority, created_at, expires_at,
-                   nonce, signature, signed_payload
-            FROM admin_orders
-            WHERE appliance_id = $1
-            AND status = 'pending'
-            AND expires_at > NOW()
-            ORDER BY priority DESC, created_at ASC
-        """, canonical_id)
+        pending_orders = []
+        try:
+            async with conn.transaction():
+                # Check admin_orders table (fleet management orders)
+                order_rows = await conn.fetch("""
+                    SELECT order_id, order_type, parameters, priority, created_at, expires_at,
+                           nonce, signature, signed_payload
+                    FROM admin_orders
+                    WHERE appliance_id = $1
+                    AND status = 'pending'
+                    AND expires_at > NOW()
+                    ORDER BY priority DESC, created_at ASC
+                """, canonical_id)
 
-        pending_orders = [
-            {
-                "order_id": row["order_id"],
-                "order_type": row["order_type"],
-                "parameters": parse_parameters(row["parameters"]),
-                "priority": row["priority"],
-                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-                "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
-                "nonce": row["nonce"],
-                "signature": row["signature"],
-                "signed_payload": row["signed_payload"],
-            }
-            for row in order_rows
-        ]
+                pending_orders = [
+                    {
+                        "order_id": row["order_id"],
+                        "order_type": row["order_type"],
+                        "parameters": parse_parameters(row["parameters"]),
+                        "priority": row["priority"],
+                        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                        "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+                        "nonce": row["nonce"],
+                        "signature": row["signature"],
+                        "signed_payload": row["signed_payload"],
+                    }
+                    for row in order_rows
+                ]
+        except Exception as e:
+            logger.warning(f"Failed to fetch admin orders: {e}")
 
         # Also check orders table (healing orders from incidents)
-        # These are created by the MCP server when incidents are reported
         try:
-            healing_order_rows = await conn.fetch("""
-                SELECT o.order_id, o.runbook_id, o.parameters, o.issued_at, o.expires_at,
-                       o.nonce, o.signature, o.signed_payload,
-                       i.id as incident_id
-                FROM orders o
-                JOIN appliances a ON o.appliance_id = a.id
-                LEFT JOIN incidents i ON i.order_id = o.id
-                WHERE a.site_id = $1
-                AND o.status = 'pending'
-                AND o.expires_at > NOW()
-                ORDER BY o.issued_at ASC
-            """, checkin.site_id)
+            async with conn.transaction():
+                healing_order_rows = await conn.fetch("""
+                    SELECT o.order_id, o.runbook_id, o.parameters, o.issued_at, o.expires_at,
+                           o.nonce, o.signature, o.signed_payload,
+                           i.id as incident_id
+                    FROM orders o
+                    JOIN appliances a ON o.appliance_id = a.id
+                    LEFT JOIN incidents i ON i.order_id = o.id
+                    WHERE a.site_id = $1
+                    AND o.status = 'pending'
+                    AND o.expires_at > NOW()
+                    ORDER BY o.issued_at ASC
+                """, checkin.site_id)
 
-            for row in healing_order_rows:
-                params = row["parameters"] if isinstance(row["parameters"], dict) else {}
-                params["incident_id"] = str(row["incident_id"]) if row["incident_id"] else None
-                pending_orders.append({
-                    "order_id": row["order_id"],
-                    "order_type": "healing",
-                    "runbook_id": row["runbook_id"],
-                    "parameters": params,
-                    "priority": 10,  # Healing orders are high priority
-                    "created_at": row["issued_at"].isoformat() if row["issued_at"] else None,
-                    "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
-                    "nonce": row["nonce"],
-                    "signature": row["signature"],
-                    "signed_payload": row["signed_payload"],
-                })
+                for row in healing_order_rows:
+                    params = row["parameters"] if isinstance(row["parameters"], dict) else {}
+                    params["incident_id"] = str(row["incident_id"]) if row["incident_id"] else None
+                    pending_orders.append({
+                        "order_id": row["order_id"],
+                        "order_type": "healing",
+                        "runbook_id": row["runbook_id"],
+                        "parameters": params,
+                        "priority": 10,  # Healing orders are high priority
+                        "created_at": row["issued_at"].isoformat() if row["issued_at"] else None,
+                        "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+                        "nonce": row["nonce"],
+                        "signature": row["signature"],
+                        "signed_payload": row["signed_payload"],
+                    })
         except Exception as e:
-            import logging
-            logging.warning(f"Failed to fetch healing orders: {e}")
+            logger.warning(f"Failed to fetch healing orders: {e}")
 
         # === STEP 4.5: Get fleet-wide orders ===
         try:
-            fleet_orders = await get_fleet_orders_for_appliance(
-                conn, canonical_id, checkin.agent_version
-            )
-            pending_orders.extend(fleet_orders)
+            async with conn.transaction():
+                fleet_orders = await get_fleet_orders_for_appliance(
+                    conn, canonical_id, checkin.agent_version
+                )
+                pending_orders.extend(fleet_orders)
         except Exception as e:
-            import logging
-            logging.warning(f"Failed to fetch fleet orders: {e}")
+            logger.warning(f"Failed to fetch fleet orders: {e}")
 
         # === STEP 5: Get windows targets (conditional credential delivery) ===
         # Always check credential freshness — if creds were updated since last checkin,
@@ -3329,18 +3335,19 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         client_alert_mode_org = None
         compliance_framework = "hipaa"
         try:
-            mode_row = await conn.fetchrow(
-                """SELECT s.client_alert_mode as site_mode, co.client_alert_mode as org_mode,
-                          co.compliance_framework as org_framework
-                   FROM sites s
-                   LEFT JOIN client_orgs co ON co.id = s.client_org_id
-                   WHERE s.site_id = $1""",
-                site_id
-            )
-            if mode_row:
-                client_alert_mode_site = mode_row["site_mode"]
-                client_alert_mode_org = mode_row["org_mode"]
-                compliance_framework = mode_row["org_framework"] or "hipaa"
+            async with conn.transaction():
+                mode_row = await conn.fetchrow(
+                    """SELECT s.client_alert_mode as site_mode, co.client_alert_mode as org_mode,
+                              co.compliance_framework as org_framework
+                       FROM sites s
+                       LEFT JOIN client_orgs co ON co.id = s.client_org_id
+                       WHERE s.site_id = $1""",
+                    site_id
+                )
+                if mode_row:
+                    client_alert_mode_site = mode_row["site_mode"]
+                    client_alert_mode_org = mode_row["org_mode"]
+                    compliance_framework = mode_row["org_framework"] or "hipaa"
         except Exception as e:
             logger.debug(f"Alert mode resolution failed (non-fatal): {e}")
         effective_alert_mode = client_alert_mode_site or client_alert_mode_org or "informed"
