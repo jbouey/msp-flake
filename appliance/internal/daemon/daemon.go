@@ -291,6 +291,7 @@ func New(cfg *Config) *Daemon {
 	// Initialize order processor with completion callback
 	d.orderProc = orders.NewProcessor(cfg.StateDir, d.completeOrder)
 	d.orderProc.SetAgentCounter(d.registry)
+	d.orderProc.SetRuleReloader(d.l1Engine.ReloadRules)
 
 	// Build Services struct for subsystem injection (RunCtx set in Run())
 	d.svc = &Services{

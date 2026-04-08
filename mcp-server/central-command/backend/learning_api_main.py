@@ -375,12 +375,28 @@ async def get_learning_status(db: AsyncSession = Depends(get_db), user: dict = D
         else:
             promo_success_rate = None
 
+        # Promoted rule match stats (30 days)
+        promoted_stats = await db.execute(text("""
+            SELECT
+                COUNT(*) as promoted_matches_30d,
+                COUNT(DISTINCT et.runbook_id) as active_promoted_rules
+            FROM execution_telemetry et
+            JOIN l1_rules lr ON lr.runbook_id = et.runbook_id
+            WHERE et.created_at > NOW() - INTERVAL '30 days'
+              AND et.resolution_level = 'L1'
+              AND lr.source IN ('promoted', 'platform')
+              AND lr.enabled = true
+        """))
+        ps = promoted_stats.fetchone()
+
         return {
             "total_l1_rules": row.total_l1_rules,
             "total_l2_decisions_30d": row.total_l2_decisions_30d or 0,
             "l1_resolution_rate": round(l1_rate, 1),
             "promotion_success_rate": promo_success_rate,
             "total_promotions_90d": row.total_promotions_90d or 0,
+            "promoted_rule_matches_30d": ps.promoted_matches_30d if ps else 0,
+            "active_promoted_rules": ps.active_promoted_rules if ps else 0,
         }
     except Exception as e:
         logger.error(f"Failed to get learning status: {e}")

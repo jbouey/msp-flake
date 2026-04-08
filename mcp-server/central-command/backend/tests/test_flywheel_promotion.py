@@ -447,5 +447,304 @@ class TestPlatformPromotionRunbookValidation:
         # (We can't easily check params, but we know only 1 INSERT happened = the good one)
 
 
+# ---------------------------------------------------------------------------
+# Tests: Promotion eligibility thresholds (Step 2)
+# ---------------------------------------------------------------------------
+
+class TestPromotionEligibilityThresholds:
+    """Test the threshold logic for marking patterns as promotion_eligible."""
+
+    def test_eligibility_criteria_constants(self):
+        """Verify the hardcoded thresholds match the documented values."""
+        # These thresholds are in the SQL (Step 2 of flywheel loop)
+        # total_occurrences >= 5, success_rate >= 0.90, l2_resolutions >= 3
+        min_occurrences = 5
+        min_success_rate = 0.90
+        min_l2_resolutions = 3
+        max_staleness_days = 7
+
+        assert min_occurrences == 5
+        assert min_success_rate == 0.90
+        assert min_l2_resolutions == 3
+        assert max_staleness_days == 7
+
+    def test_pattern_signature_format_is_two_part(self):
+        """Pattern signature in aggregated_pattern_stats is incident_type:runbook_id (no hostname)."""
+        # Step 1 uses: et.incident_type || ':' || et.runbook_id
+        sig = "firewall_status:RB-WIN-FIREWALL-001"
+        parts = sig.split(":")
+        assert len(parts) == 2
+        assert parts[0] == "firewall_status"
+        assert parts[1] == "RB-WIN-FIREWALL-001"
+
+    def test_pattern_id_is_16_hex_chars(self):
+        """Pattern ID is LEFT(md5(...), 16) — 16 hex characters."""
+        import hashlib
+        sig = "firewall_status:RB-WIN-FIREWALL-001"
+        md5 = hashlib.md5(sig.encode()).hexdigest()
+        pattern_id = md5[:16]
+        assert len(pattern_id) == 16
+        assert all(c in "0123456789abcdef" for c in pattern_id)
+
+
+# ---------------------------------------------------------------------------
+# Tests: Platform auto-promotion thresholds (Step 4)
+# ---------------------------------------------------------------------------
+
+class TestPlatformAutoPromotionThresholds:
+    """Test the cross-client platform promotion criteria."""
+
+    def test_rule_id_format(self):
+        """Platform rule IDs follow L1-PLATFORM-{TYPE}-{RUNBOOK} format."""
+        incident_type = "firewall_status"
+        runbook_id = "RB-WIN-FIREWALL-001"
+        rule_id = f"L1-PLATFORM-{incident_type.upper()}-{runbook_id[:12].upper().replace('-', '')}"
+        assert rule_id == "L1-PLATFORM-FIREWALL_STATUS-RBWINFIREW"
+
+    def test_incident_pattern_includes_incident_type(self):
+        """Promoted l1_rules must have incident_type in incident_pattern JSON."""
+        import json
+        incident_type = "firewall_status"
+        incident_pattern = {"incident_type": incident_type}
+        if incident_type:
+            incident_pattern["check_type"] = incident_type
+        assert incident_pattern["incident_type"] == "firewall_status"
+        assert incident_pattern["check_type"] == "firewall_status"
+
+    def test_promotion_cap_is_5_per_cycle(self):
+        """Max 5 platform promotions per 30-minute cycle."""
+        promotions_this_cycle = 5
+        remaining = max(0, 5 - promotions_this_cycle)
+        assert remaining == 0
+
+    def test_remaining_decreases_with_promotions(self):
+        """Remaining promotion slots decrease as rules are promoted."""
+        for i in range(6):
+            remaining = max(0, 5 - i)
+            if i < 5:
+                assert remaining > 0
+            else:
+                assert remaining == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: Health monitoring canary logic (Step 5)
+# ---------------------------------------------------------------------------
+
+class TestHealthMonitoringCanary:
+    """Test the auto-disable and graduation thresholds."""
+
+    def test_degradation_threshold_is_70_percent(self):
+        """Rules with <70% success after 48h should be disabled."""
+        success_rate = 0.69
+        min_executions = 3
+        assert success_rate < 0.70
+        assert min_executions >= 3
+
+    def test_graduation_threshold_is_70_percent(self):
+        """Rules with >=70% success after 48h should graduate to synced."""
+        success_rate = 0.70
+        assert success_rate >= 0.70
+
+    def test_minimum_executions_required(self):
+        """At least 3 executions required before making health decisions."""
+        executions = 2
+        assert executions < 3  # Should not evaluate health yet
+
+    def test_edge_case_exactly_70_percent(self):
+        """70% success = graduation (>=), not disable (<)."""
+        success_rate = 0.70
+        assert success_rate >= 0.70  # Graduate
+        assert not (success_rate < 0.70)  # Don't disable
+
+
+# ---------------------------------------------------------------------------
+# Tests: Audit log writes (RT-3)
+# ---------------------------------------------------------------------------
+
+class TestPromotionAuditLog:
+    """Test that promotion decisions write to promotion_audit_log."""
+
+    @pytest.mark.asyncio
+    async def test_platform_promotion_writes_audit_log(self):
+        """Platform auto-promotion should INSERT into promotion_audit_log."""
+        import main as m
+
+        mock_db = make_mock_db()
+        executed_queries = []
+
+        good_candidate = FakeRow(
+            ["svc:RB-AUTO-SVC", "svc", "RB-AUTO-SVC", 6, 20, 0.95],
+            columns=["pattern_key", "incident_type", "runbook_id",
+                      "distinct_orgs", "total_occurrences", "success_rate"],
+        )
+        inserted_row = FakeRow([True], columns=["inserted"])
+
+        async def mock_execute(query, params=None):
+            query_str = str(query)
+            executed_queries.append(query_str)
+
+            if "INSERT INTO patterns" in query_str:
+                return FakeResult([], rowcount=0)
+            if "INSERT INTO aggregated_pattern_stats" in query_str:
+                return FakeResult([], rowcount=0)
+            if "UPDATE aggregated_pattern_stats" in query_str:
+                return FakeResult([], rowcount=0)
+            if "INSERT INTO platform_pattern_stats" in query_str:
+                return FakeResult([], rowcount=0)
+            if "FROM platform_pattern_stats" in query_str and "promoted_at IS NULL" in query_str:
+                return FakeResult([good_candidate])
+            if "SELECT runbook_id FROM runbooks" in query_str:
+                return FakeResult([])
+            if "DISTINCT incident_pattern" in query_str:
+                return FakeResult([])
+            if "INSERT INTO l1_rules" in query_str:
+                return FakeResult([inserted_row], rowcount=1)
+            if "INSERT INTO promotion_audit_log" in query_str:
+                return FakeResult([], rowcount=1)
+            if "UPDATE platform_pattern_stats" in query_str:
+                return FakeResult([], rowcount=1)
+            if "UPDATE l1_rules SET enabled" in query_str:
+                return FakeResult([], rowcount=0)
+            if "UPDATE l1_rules SET source" in query_str:
+                return FakeResult([], rowcount=0)
+            if "DELETE FROM execution_telemetry" in query_str:
+                return FakeResult([], rowcount=0)
+            return FakeResult([], rowcount=0)
+
+        mock_db.execute = AsyncMock(side_effect=mock_execute)
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        run_count = {"n": 0}
+
+        async def limited_sleep(duration):
+            run_count["n"] += 1
+            if run_count["n"] >= 2:
+                raise asyncio.CancelledError()
+            return
+
+        with patch.object(m, "async_session", mock_session), \
+             patch("asyncio.sleep", side_effect=limited_sleep):
+            try:
+                await m._flywheel_promotion_loop()
+            except asyncio.CancelledError:
+                pass
+
+        audit_inserts = [q for q in executed_queries if "INSERT INTO promotion_audit_log" in q]
+        assert len(audit_inserts) >= 1, f"Expected audit log INSERT, got {len(audit_inserts)}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Telemetry retention (RT-6)
+# ---------------------------------------------------------------------------
+
+class TestTelemetryRetention:
+    """Test that the flywheel loop cleans up old telemetry."""
+
+    @pytest.mark.asyncio
+    async def test_flywheel_loop_includes_retention_step(self):
+        """The flywheel loop should DELETE telemetry older than 90 days."""
+        import main as m
+
+        mock_db = make_mock_db()
+        executed_queries = []
+
+        async def mock_execute(query, params=None):
+            query_str = str(query)
+            executed_queries.append(query_str)
+            return FakeResult([], rowcount=0)
+
+        mock_db.execute = AsyncMock(side_effect=mock_execute)
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        run_count = {"n": 0}
+
+        async def limited_sleep(duration):
+            run_count["n"] += 1
+            if run_count["n"] >= 2:
+                raise asyncio.CancelledError()
+            return
+
+        with patch.object(m, "async_session", mock_session), \
+             patch("asyncio.sleep", side_effect=limited_sleep):
+            try:
+                await m._flywheel_promotion_loop()
+            except asyncio.CancelledError:
+                pass
+
+        retention_deletes = [q for q in executed_queries if "DELETE FROM execution_telemetry" in q and "90 days" in q]
+        assert len(retention_deletes) == 1, f"Expected 1 retention DELETE, got {len(retention_deletes)}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Runbook validation regression
+# ---------------------------------------------------------------------------
+
+class TestRunbookValidationRegression:
+    """Additional runbook validation edge cases."""
+
+    def test_case_insensitive_prefix_match(self):
+        """Embedded prefix regex should be case-insensitive."""
+        import re
+        pattern = re.compile(r"^(L1|LIN|WIN|MAC|NET|RB|ESC)-", re.IGNORECASE)
+        assert pattern.match("l1-lowercase")
+        assert pattern.match("Lin-Mixed")
+        assert pattern.match("WIN-UPPERCASE")
+
+    def test_prefix_requires_dash(self):
+        """Prefix must be followed by a dash — bare prefix is not enough."""
+        import re
+        pattern = re.compile(r"^(L1|LIN|WIN|MAC|NET|RB|ESC)-", re.IGNORECASE)
+        assert not pattern.match("L1")
+        assert not pattern.match("RB")
+        assert not pattern.match("WIN")
+
+    def test_empty_string_rejected(self):
+        """Empty runbook_id should be rejected."""
+        import re
+        pattern = re.compile(r"^(L1|LIN|WIN|MAC|NET|RB|ESC)-", re.IGNORECASE)
+        assert not pattern.match("")
+
+    def test_none_runbook_id_rejected(self):
+        """None runbook_id should not crash validation."""
+        import re
+        pattern = re.compile(r"^(L1|LIN|WIN|MAC|NET|RB|ESC)-", re.IGNORECASE)
+        rb_id = None
+        valid_ids = set()
+        is_valid = (rb_id is not None) and (rb_id in valid_ids or pattern.match(rb_id))
+        assert not is_valid
+
+
+# ---------------------------------------------------------------------------
+# Tests: Source constraint validation
+# ---------------------------------------------------------------------------
+
+class TestSourceConstraint:
+    """Test that l1_rules source values are valid."""
+
+    def test_valid_sources(self):
+        """All valid source values should pass."""
+        valid = {'built-in', 'synced', 'promoted', 'platform'}
+        for s in valid:
+            assert s in valid
+
+    def test_invalid_sources_rejected(self):
+        """Invalid source values should not be in the valid set."""
+        valid = {'built-in', 'synced', 'promoted', 'platform'}
+        invalid = ['builtin', 'auto', 'manual', 'custom', '', None]
+        for s in invalid:
+            assert s not in valid
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

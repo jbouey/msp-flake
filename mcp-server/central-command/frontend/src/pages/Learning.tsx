@@ -113,7 +113,7 @@ export const Learning: React.FC = () => {
       )}
 
       {/* Stats row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <GlassCard padding="md">
           <p className="text-label-tertiary text-sm">L1 Rules</p>
           {isLoadingStatus ? (
@@ -148,6 +148,24 @@ export const Learning: React.FC = () => {
                 {status?.l1_resolution_rate?.toFixed(1) ?? 0}%
               </p>
               <p className="text-xs text-label-tertiary">Target: 70-80%</p>
+            </>
+          )}
+        </GlassCard>
+
+        <GlassCard padding="md">
+          <p className="text-label-tertiary text-sm">Promoted Matches (30d)</p>
+          {isLoadingStatus ? (
+            <div className="h-9 animate-pulse bg-separator-light rounded mt-1" />
+          ) : (
+            <>
+              <p className={`text-3xl font-semibold ${
+                (status?.promoted_rule_matches_30d ?? 0) > 0
+                  ? 'text-health-healthy'
+                  : 'text-health-warning'
+              }`}>
+                {status?.promoted_rule_matches_30d ?? 0}
+              </p>
+              <p className="text-xs text-label-tertiary">{status?.active_promoted_rules ?? 0} active promoted rules</p>
             </>
           )}
         </GlassCard>

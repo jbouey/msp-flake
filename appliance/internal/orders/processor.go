@@ -227,9 +227,13 @@ type AgentCounter interface {
 	ConnectedCount() int
 }
 
+// RuleReloadFunc is called after a promoted rule is deployed to trigger an L1 engine reload.
+type RuleReloadFunc func()
+
 type Processor struct {
 	handlers     map[string]HandlerFunc
 	onComplete   CompletionCallback
+	onRuleReload RuleReloadFunc
 	stateDir     string
 	verifier     *crypto.OrderVerifier
 	applianceID  string // This appliance's ID (from checkin response)
@@ -242,6 +246,11 @@ type Processor struct {
 	// Order idempotency: tracks recently executed order IDs to skip duplicates
 	executedMu     sync.Mutex
 	executedOrders map[string]time.Time // order_id → execution timestamp
+}
+
+// SetRuleReloader registers a callback to reload L1 rules after promoted rule deployment.
+func (p *Processor) SetRuleReloader(fn RuleReloadFunc) {
+	p.onRuleReload = fn
 }
 
 // NewProcessor creates a new order processor.
@@ -959,6 +968,12 @@ func (p *Processor) handleSyncPromotedRule(_ context.Context, params map[string]
 
 	if err := os.WriteFile(rulePath, []byte(ruleYAML), 0o600); err != nil {
 		return nil, fmt.Errorf("write promoted rule: %w", err)
+	}
+
+	// Trigger L1 engine reload so the new rule is active immediately
+	if p.onRuleReload != nil {
+		log.Printf("[orders] Reloading L1 rules after deploying promoted rule %s", ruleID)
+		p.onRuleReload()
 	}
 
 	return map[string]interface{}{

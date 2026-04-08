@@ -641,10 +641,14 @@ async def _ots_resubmit_expired_loop():
 async def _flywheel_promotion_loop():
     """Periodically scan patterns for L2→L1 auto-promotion (every 30 minutes).
 
-    Three steps:
+    Five steps:
     0. Generate patterns from L2 execution telemetry (bridge telemetry → patterns)
-    1. patterns table: auto-promote patterns with >=5 occurrences and >=90% success
-    2. aggregated_pattern_stats: update promotion_eligible flag for partner dashboard
+    1. Populate aggregated_pattern_stats from telemetry
+    2. Update promotion_eligible flag
+    3. Cross-client platform pattern aggregation
+    4. Auto-promote platform rules + audit log
+    5. Health monitoring (canary → rollout)
+    + Telemetry retention cleanup (90 days)
     """
     await asyncio.sleep(120)  # Wait 2 min after startup
     while True:
@@ -652,7 +656,7 @@ async def _flywheel_promotion_loop():
             promotions_this_cycle = 0
             async with async_session() as db:
                 # Step 0: Generate/update patterns from L2 execution telemetry
-                # The agent reports telemetry but not patterns — bridge the gap
+                # Pattern signature: incident_type:runbook_id (no hostname — hostname is a grouping key, not identity)
                 try:
                     await db.execute(text("""
                         INSERT INTO patterns (
@@ -660,8 +664,8 @@ async def _flywheel_promotion_loop():
                             occurrences, success_count, failure_count, status
                         )
                         SELECT
-                            LEFT(md5(et.incident_type || ':' || et.runbook_id || ':' || et.hostname), 16) as pattern_id,
-                            et.incident_type || ':' || et.runbook_id || ':' || et.hostname as pattern_signature,
+                            LEFT(md5(et.incident_type || ':' || et.runbook_id), 16) as pattern_id,
+                            et.incident_type || ':' || et.runbook_id as pattern_signature,
                             et.incident_type,
                             et.runbook_id,
                             COUNT(*) as occurrences,
@@ -672,7 +676,7 @@ async def _flywheel_promotion_loop():
                         WHERE et.resolution_level = 'L2'
                           AND et.incident_type IS NOT NULL
                           AND et.runbook_id IS NOT NULL
-                        GROUP BY et.incident_type, et.runbook_id, et.hostname
+                        GROUP BY et.incident_type, et.runbook_id
                         HAVING COUNT(*) >= 5
                         ON CONFLICT (pattern_signature) DO UPDATE SET
                             occurrences = EXCLUDED.occurrences,
@@ -681,7 +685,7 @@ async def _flywheel_promotion_loop():
                     """))
                     await db.commit()
                 except Exception as e:
-                    logger.debug(f"Flywheel pattern generation: {e}")
+                    logger.warning(f"Flywheel step 0 (pattern generation) failed: {e}")
                     await db.rollback()
 
                 # Step 1: Populate aggregated_pattern_stats from execution_telemetry
@@ -737,7 +741,7 @@ async def _flywheel_promotion_loop():
                     """))
                     await db.commit()
                 except Exception as e:
-                    logger.debug(f"Flywheel aggregated stats: {e}")
+                    logger.warning(f"Flywheel step 1 (aggregated stats) failed: {e}")
                     await db.rollback()
 
                 # Step 2: Update promotion_eligible on aggregated_pattern_stats
@@ -762,7 +766,7 @@ async def _flywheel_promotion_loop():
                             newly_eligible=len(newly_eligible),
                         )
                 except Exception as e:
-                    logger.debug(f"Flywheel promotion eligible update: {e}")
+                    logger.warning(f"Flywheel step 2 (promotion eligible) failed: {e}")
                     await db.rollback()
 
                 # Step 3: Cross-client platform pattern aggregation
@@ -804,7 +808,7 @@ async def _flywheel_promotion_loop():
                     """))
                     await db.commit()
                 except Exception as e:
-                    logger.debug(f"Platform pattern aggregation: {e}")
+                    logger.warning(f"Flywheel step 3 (platform aggregation) failed: {e}")
                     await db.rollback()
 
                 # Step 4: Auto-promote platform rules
@@ -901,6 +905,27 @@ async def _flywheel_promotion_loop():
                                 WHERE pattern_key = :pk
                             """), {"rid": rule_id, "pk": pc.pattern_key})
 
+                            # Audit log: record promotion decision
+                            await db.execute(text("""
+                                INSERT INTO promotion_audit_log (
+                                    event_type, rule_id, pattern_signature, check_type,
+                                    confidence_score, success_rate, l2_resolutions,
+                                    total_occurrences, source, actor, metadata
+                                ) VALUES (
+                                    'auto_promoted', :rule_id, :pattern_key, :check_type,
+                                    :confidence, :success_rate, 0,
+                                    :total_occ, 'platform', 'flywheel_loop',
+                                    :metadata
+                                )
+                            """), {
+                                "rule_id": rule_id,
+                                "pattern_key": pc.pattern_key,
+                                "check_type": pc.incident_type,
+                                "confidence": float(pc.success_rate),
+                                "success_rate": float(pc.success_rate),
+                                "total_occ": pc.total_occurrences,
+                                "metadata": json.dumps({"distinct_orgs": pc.distinct_orgs}),
+                            })
                             await db.commit()
                             if was_inserted:
                                 platform_promoted += 1
@@ -921,7 +946,7 @@ async def _flywheel_promotion_loop():
                         logger.info(f"Platform promotion: {platform_promoted} new rules auto-promoted")
 
                 except Exception as e:
-                    logger.debug(f"Platform auto-promotion: {e}")
+                    logger.warning(f"Flywheel step 4 (platform auto-promotion) failed: {e}")
                     await db.rollback()
 
                 # Step 5: Post-promotion health monitoring (canary → rollout)
@@ -950,13 +975,18 @@ async def _flywheel_promotion_loop():
                         RETURNING rule_id
                     """))
                     auto_disabled = degraded.fetchall()
-                    await db.commit()
                     if auto_disabled:
                         for row in auto_disabled:
+                            await db.execute(text("""
+                                INSERT INTO promotion_audit_log (
+                                    event_type, rule_id, source, actor
+                                ) VALUES ('auto_disabled', :rid, 'promoted', 'flywheel_loop')
+                            """), {"rid": row[0]})
                             logger.warning(
                                 "Promoted rule auto-disabled (success rate < 70%)",
                                 rule_id=row[0],
                             )
+                    await db.commit()
 
                     # 5b: Graduate successful promoted rules to 'synced' (>70% success after 48h)
                     # This is the canary → rollout transition: proven rules become fleet-wide
@@ -980,15 +1010,33 @@ async def _flywheel_promotion_loop():
                         RETURNING rule_id
                     """))
                     auto_graduated = graduated.fetchall()
-                    await db.commit()
                     if auto_graduated:
                         for row in auto_graduated:
+                            await db.execute(text("""
+                                INSERT INTO promotion_audit_log (
+                                    event_type, rule_id, source, actor
+                                ) VALUES ('synced', :rid, 'promoted', 'flywheel_loop')
+                            """), {"rid": row[0]})
                             logger.info(
                                 "Promoted rule graduated to synced (canary success)",
                                 rule_id=row[0],
                             )
+                    await db.commit()
                 except Exception as e:
-                    logger.debug(f"Post-promotion monitoring: {e}")
+                    logger.warning(f"Flywheel step 5 (health monitoring) failed: {e}")
+                    await db.rollback()
+
+                # Step 6: Telemetry retention — purge records older than 90 days
+                try:
+                    purged = await db.execute(text("""
+                        DELETE FROM execution_telemetry
+                        WHERE created_at < NOW() - INTERVAL '90 days'
+                    """))
+                    await db.commit()
+                    if purged.rowcount and purged.rowcount > 0:
+                        logger.info("Flywheel telemetry retention", purged=purged.rowcount)
+                except Exception as e:
+                    logger.warning(f"Flywheel step 6 (telemetry retention) failed: {e}")
                     await db.rollback()
 
         except asyncio.CancelledError:
