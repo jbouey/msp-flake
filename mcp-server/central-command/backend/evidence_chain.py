@@ -3170,3 +3170,69 @@ async def verify_batch(
         )
 
         return results
+
+
+@router.get("/sites/{site_id}/verify-merkle/{bundle_id}")
+async def verify_merkle_proof_endpoint(
+    site_id: str,
+    bundle_id: str,
+    request: Request,
+):
+    """Verify a bundle's Merkle proof against its batch root.
+
+    Proves that a specific evidence bundle was included in a Merkle batch
+    that was anchored to Bitcoin via OpenTimestamps. Auditor-facing endpoint.
+
+    Auth: admin (require_auth).
+    """
+    from .auth import require_auth
+    await require_auth(request)
+    from .merkle import verify_merkle_proof
+
+    pool, admin_connection = await _get_admin_pool()
+    async with admin_connection(pool) as conn:
+        bundle = await conn.fetchrow("""
+            SELECT cb.bundle_id, cb.bundle_hash, cb.merkle_batch_id,
+                   cb.merkle_proof, cb.merkle_leaf_index,
+                   mb.merkle_root, mb.ots_status as batch_ots_status,
+                   mb.bitcoin_block as batch_bitcoin_block
+            FROM compliance_bundles cb
+            LEFT JOIN ots_merkle_batches mb ON mb.batch_id = cb.merkle_batch_id
+            WHERE cb.bundle_id = $1 AND cb.site_id = $2
+        """, bundle_id, site_id)
+
+        if not bundle:
+            raise HTTPException(status_code=404, detail=f"Bundle {bundle_id} not found for site {site_id}")
+
+        if not bundle["merkle_batch_id"] or not bundle["merkle_proof"]:
+            return {
+                "bundle_id": bundle_id,
+                "verified": False,
+                "reason": "Bundle has no Merkle proof (not part of a batch)",
+                "batch_id": None,
+            }
+
+        proof = json.loads(bundle["merkle_proof"]) if isinstance(bundle["merkle_proof"], str) else bundle["merkle_proof"]
+        expected_root = bundle["merkle_root"]
+
+        if not expected_root:
+            return {
+                "bundle_id": bundle_id,
+                "verified": False,
+                "reason": "Batch root not found",
+                "batch_id": bundle["merkle_batch_id"],
+            }
+
+        verified = verify_merkle_proof(bundle["bundle_hash"], proof, expected_root)
+
+        return {
+            "bundle_id": bundle_id,
+            "verified": verified,
+            "batch_id": bundle["merkle_batch_id"],
+            "merkle_root": expected_root,
+            "leaf_hash": bundle["bundle_hash"],
+            "leaf_index": bundle["merkle_leaf_index"],
+            "proof_steps": len(proof),
+            "batch_ots_status": bundle["batch_ots_status"],
+            "batch_bitcoin_block": bundle["batch_bitcoin_block"],
+        }

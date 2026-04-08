@@ -135,17 +135,15 @@ class UserRoleUpdate(BaseModel):
 # =============================================================================
 
 def hash_token(token: str) -> str:
-    """Hash a token for secure storage using HMAC-SHA256."""
-    import hmac
-    secret = os.getenv("SESSION_TOKEN_SECRET", "")
-    if not secret:
-        raise RuntimeError("SESSION_TOKEN_SECRET must be set for session security")
-    return hmac.new(secret.encode(), token.encode(), hashlib.sha256).hexdigest()
+    """Hash a token — delegates to shared.hash_session_token (single source of truth)."""
+    from .shared import hash_session_token
+    return hash_session_token(token)
 
 
 def generate_token() -> str:
-    """Generate a secure token."""
-    return secrets.token_urlsafe(32)
+    """Generate a secure token — delegates to shared.generate_session_token."""
+    from .shared import generate_session_token
+    return generate_session_token()
 
 
 async def get_client_user_from_session(session_token: str, pool):

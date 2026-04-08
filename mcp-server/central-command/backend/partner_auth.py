@@ -133,12 +133,9 @@ def generate_state_token() -> str:
 
 
 def hash_session_token(token: str) -> str:
-    """Hash a session token for storage using HMAC-SHA256."""
-    import hmac
-    secret = os.getenv("SESSION_TOKEN_SECRET", "")
-    if not secret:
-        raise RuntimeError("SESSION_TOKEN_SECRET must be set for session security")
-    return hmac.new(secret.encode(), token.encode(), hashlib.sha256).hexdigest()
+    """Hash a session token — delegates to shared.hash_session_token (single source of truth)."""
+    from .shared import hash_session_token as _shared_hash
+    return _shared_hash(token)
 
 
 # =============================================================================

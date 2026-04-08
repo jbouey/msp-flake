@@ -14,9 +14,11 @@ functions.
 
 import asyncio
 import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional
@@ -97,6 +99,27 @@ async def execute_with_retry(db, query, params=None, max_retries=2):
                 await asyncio.sleep(0.1)
                 continue
             raise
+
+
+# ============================================================================
+# Session Token Management (shared across admin, partner, client portals)
+# ============================================================================
+
+def generate_session_token() -> str:
+    """Generate a cryptographically secure session token."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_session_token(token: str) -> str:
+    """Hash a session token for storage using HMAC-SHA256.
+
+    Single source of truth for all portals — prevents divergent hashing.
+    Requires SESSION_TOKEN_SECRET environment variable.
+    """
+    secret = os.getenv("SESSION_TOKEN_SECRET", "")
+    if not secret:
+        raise RuntimeError("SESSION_TOKEN_SECRET must be set for session security")
+    return hmac.new(secret.encode(), token.encode(), hashlib.sha256).hexdigest()
 
 
 # ============================================================================

@@ -2741,11 +2741,13 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         if checkin.connected_agents:
             try:
                 async with conn.transaction():
-                    for agent in checkin.connected_agents:
-                        if not agent.hostname:
-                            continue
-                        # Upsert workstation from Go agent data
-                        await conn.execute("""
+                    # Batch upsert workstations from Go agent data (single executemany)
+                    ws_rows = [
+                        (checkin.site_id, a.hostname, a.checks_passed, a.checks_total)
+                        for a in checkin.connected_agents if a.hostname
+                    ]
+                    if ws_rows:
+                        await conn.executemany("""
                             INSERT INTO workstations (site_id, hostname, ip_address, online,
                                 compliance_status, last_compliance_check, last_seen, updated_at)
                             VALUES ($1, $2, $2, true,
@@ -2765,8 +2767,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                                     ELSE workstations.last_compliance_check END,
                                 last_seen = NOW(),
                                 updated_at = NOW()
-                        """, checkin.site_id, agent.hostname,
-                            agent.checks_passed, agent.checks_total)
+                        """, ws_rows)
 
                     # Deduplicate: remove IP-only entries when a named workstation has the same IP
                     await conn.execute("""
