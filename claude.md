@@ -226,6 +226,11 @@ Primary state: `.agent/claude-progress.json`
 - **Go daemon v0.3.84: ReloadRules() after sync_promoted_rule (Session 201).** Rules were being written to disk but never loaded into memory. `SetRuleReloader(d.l1Engine.ReloadRules)` wired in daemon.go.
 - **Nonce replay TTL is 2 hours (Session 201).** Was 24h. `nonceMaxAge = 2 * time.Hour` in processor.go.
 - **Download domain allowlist: api.osiriscare.net + release.osiriscare.net ONLY (Session 201).** github.com removed — too broad.
+- **Checkin enforces auth_site_id from Bearer (Session 201).** `checkin.site_id = auth_site_id` — prevents appliance from spoofing another site's checkin. Never use `checkin.site_id` from request body for auth decisions.
+- **Partner/client login lockout (Session 201).** 5 failed attempts → 15-min lockout. Columns: `failed_login_attempts`, `locked_until` on partners + client_users (migration 143). Reset on successful login.
+- **Session token hashing: shared.hash_session_token() is the source of truth (Session 201).** Partner and client portals delegate to `shared.py`. Don't create new hash_token() functions — use the shared one.
+- **Incident dedup uses ON CONFLICT (dedup_key) (Session 201).** Partial unique index on `dedup_key WHERE status NOT IN ('resolved','closed')`. Prevents race condition when two appliances report same issue simultaneously.
+- **Alert digest: never use RETURNING COUNT(*) (Session 201).** PostgreSQL doesn't allow aggregate functions in RETURNING. Use `conn.execute()` and parse the result string instead.
 - **`portal_access_log` is PARTITIONED by month** (Migration 138, Session 200). 
 - **`incident_remediation_steps` replaces `incidents.remediation_history` JSONB** (Migration 137, Session 200). Relational table: incident_id FK, tier, runbook_id, result, confidence, created_at. `remediation_history` JSONB column still exists on incidents but is no longer written to — code uses INSERT/SELECT on new table. routes.py falls back to JSONB if table doesn't exist.
 - **Dual connection pools are intentional.** SQLAlchemy (shared.py, pool_size=20) for admin CRUD via `Depends(get_db)`. asyncpg (fleet.py, min=2/max=25) for RLS-enforced queries via `tenant_connection()`/`admin_connection()`. Both go through PgBouncer (25 server conns). Cannot consolidate — RLS requires asyncpg's `SET LOCAL` transaction control.

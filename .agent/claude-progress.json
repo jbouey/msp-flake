@@ -1,6 +1,6 @@
 {
   "session": 201,
-  "updated": "2026-04-08T13:43:26.438520Z",
+  "updated": "2026-04-08T14:47:02.812202Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -38,7 +38,14 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "iMac SSH port 2222 still broken (reverse tunnel via VPS:2250). Flywheel promoted rules need Go daemon to execute them (v0.3.84 deployed, monitoring).",
+  "current_blocker": "iMac SSH port 2222 still broken. Monitor flywheel promoted rule match_count over next 48h (v0.3.84 ReloadRules fix deployed).",
+  "session_201_work": {
+    "commits": 17,
+    "daemon_version": "0.3.84",
+    "migrations": "139-143 (auth, flywheel, compliance_packets, incident_dedup, portal_lockout)",
+    "tests_added": 41,
+    "summary": "7 round-table audits: auth, flywheel, fleet orders, OTS, incidents, devices, portals+alerts+checkin. 50+ production fixes. 8 critical security vulnerabilities closed."
+  },
   "session_199_work": {
     "commits": 12,
     "summary": "Full round-table demo audit: 80+ files, 19 admin pages, partner+client portal overhaul, legal language sweep, CI pipeline fix",

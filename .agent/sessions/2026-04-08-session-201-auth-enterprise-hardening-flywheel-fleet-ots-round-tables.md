@@ -1,8 +1,10 @@
 # Session 201 — Auth Enterprise Hardening + Flywheel/Fleet/OTS Round Tables
 
 **Date:** 2026-04-08
-**Commits:** 8
+**Commits:** 17
 **Daemon Version:** 0.3.84
+**Migrations:** 139-143
+**Tests Added:** 41 (28 flywheel + 13 RBAC)
 
 ## Summary
 
@@ -69,7 +71,28 @@ Three round-table audits (flywheel, fleet orders, OTS/compliance packets) plus a
 - Path traversal guard on promoted rule paths
 - Deployed to 2/3 appliances via fleet order
 
+## Incident Pipeline Round Table (4 items)
+- Dedup race condition fixed: INSERT ON CONFLICT (dedup_key) with partial unique index
+- Dead unauthenticated routes/device_sync.py deleted
+- Dedup_key unique index + resolve lookup index (migration 142)
+- Device sync endpoint confirmed authenticated (auth agent found dead file)
+
+## Portal Auth + Alert Routing + Checkin Round Table (8 items)
+- CRIT: Checkin auth_site_id enforced (was using body site_id = site spoofing)
+- CRIT: Alert digest crash RETURNING COUNT(*) → conn.execute() (alerts weren't sending)
+- CRIT: Undefined variable site_id → checkin.site_id in alert mode resolution
+- CRIT: go_agents SQL $6,$6 → NULL,$6 (os_name was getting os_version value)
+- Partner/client account lockout: 5 attempts → 15-min (migration 143)
+- Pending alerts dedup: unique index on (org_id, incident_id) (migration 143)
+- DRY: shared.py session token functions (generate + hash)
+- Merkle proof verification endpoint: GET /verify-merkle/{bundle_id}
+- Checkin workstation sync: executemany() replaces N+1 loop
+- Partner RBAC enforcement: 13 tests
+- SSO auto-provision: partner_notification on new viewer user
+
 ## Migrations
 - 139: password_history, API key expiry, audit log retention index
 - 140: l1_rules source CHECK, telemetry index, platform stats index
 - 141: compliance_packets table, legacy bundle marking
+- 142: incident dedup_key unique index, resolve lookup index
+- 143: partner/client lockout columns, pending_alerts dedup index
