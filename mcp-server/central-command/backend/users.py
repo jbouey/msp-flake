@@ -26,6 +26,7 @@ from .auth import (
     _log_audit,
 )
 from .email_service import send_invite_email
+from .shared import execute_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -428,6 +429,84 @@ async def delete_user(
     return {"status": "deleted", "user_id": user_id}
 
 
+@router.put("/me/password")
+async def change_my_password(
+    change: PasswordChangeRequest,
+    request: Request,
+    current_user: dict = Depends(require_auth),
+    db=Depends(get_db)
+):
+    """Change current user's password."""
+    if change.new_password != change.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+
+    # SECURITY: Validate password complexity
+    from .auth import validate_password_complexity
+    is_valid, error_msg = validate_password_complexity(change.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    # Verify current password
+    result = await execute_with_retry(
+        db, text("SELECT password_hash FROM admin_users WHERE id = :id"),
+        {"id": current_user["id"]}
+    )
+    row = result.fetchone()
+    if not row or not verify_password(change.current_password, row[0]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    # SECURITY: Check password history (last 5) — prevent reuse
+    try:
+        history = await execute_with_retry(
+            db, text("""
+                SELECT password_hash FROM password_history
+                WHERE user_id = :uid AND user_type = 'admin'
+                ORDER BY created_at DESC LIMIT 5
+            """),
+            {"uid": current_user["id"]}
+        )
+        for prev in history.fetchall():
+            if verify_password(change.new_password, prev[0]):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot reuse any of your last 5 passwords"
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.debug("password_history table not yet available, skipping check")
+
+    # Update password
+    password_hash = hash_password(change.new_password)
+    await execute_with_retry(
+        db, text("UPDATE admin_users SET password_hash = :hash, updated_at = :now WHERE id = :id"),
+        {"hash": password_hash, "now": datetime.now(timezone.utc), "id": current_user["id"]}
+    )
+
+    # Record in password history
+    try:
+        await execute_with_retry(
+            db, text("""
+                INSERT INTO password_history (user_id, user_type, password_hash, created_at)
+                VALUES (:uid, 'admin', :hash, :now)
+            """),
+            {"uid": current_user["id"], "hash": password_hash, "now": datetime.now(timezone.utc)}
+        )
+    except Exception:
+        logger.debug("password_history insert failed, table may not exist yet")
+
+    # Audit log
+    await _log_audit(
+        db, current_user["id"], current_user["username"],
+        "PASSWORD_CHANGED", f"user:{current_user['id']}",
+        None,
+        request.client.host if request.client else None
+    )
+    await db.commit()
+
+    return {"status": "password_changed"}
+
+
 @router.put("/{user_id}/password")
 async def admin_reset_password(
     user_id: str,
@@ -438,8 +517,8 @@ async def admin_reset_password(
 ):
     """Admin: Reset a user's password."""
     # Check user exists
-    result = await db.execute(
-        text("SELECT username FROM admin_users WHERE id = :id"),
+    result = await execute_with_retry(
+        db, text("SELECT username FROM admin_users WHERE id = :id"),
         {"id": user_id}
     )
     target = result.fetchone()
@@ -454,14 +533,26 @@ async def admin_reset_password(
 
     # Update password
     password_hash = hash_password(reset.new_password)
-    await db.execute(
-        text("UPDATE admin_users SET password_hash = :hash, updated_at = :now WHERE id = :id"),
+    await execute_with_retry(
+        db, text("UPDATE admin_users SET password_hash = :hash, updated_at = :now WHERE id = :id"),
         {"hash": password_hash, "now": datetime.now(timezone.utc), "id": user_id}
     )
 
+    # Record in password history
+    try:
+        await execute_with_retry(
+            db, text("""
+                INSERT INTO password_history (user_id, user_type, password_hash, created_at)
+                VALUES (:uid, 'admin', :hash, :now)
+            """),
+            {"uid": user_id, "hash": password_hash, "now": datetime.now(timezone.utc)}
+        )
+    except Exception:
+        logger.debug("password_history insert failed, table may not exist yet")
+
     # Invalidate all sessions for this user
-    await db.execute(
-        text("DELETE FROM admin_sessions WHERE user_id = :id"),
+    await execute_with_retry(
+        db, text("DELETE FROM admin_sessions WHERE user_id = :id"),
         {"id": user_id}
     )
 
@@ -871,50 +962,6 @@ async def get_my_profile(current_user: dict = Depends(require_auth), db=Depends(
     )
 
 
-@router.put("/me/password")
-async def change_my_password(
-    change: PasswordChangeRequest,
-    request: Request,
-    current_user: dict = Depends(require_auth),
-    db=Depends(get_db)
-):
-    """Change current user's password."""
-    if change.new_password != change.confirm_password:
-        raise HTTPException(status_code=400, detail="Passwords do not match")
-
-    # SECURITY: Validate password complexity
-    from .auth import validate_password_complexity
-    is_valid, error_msg = validate_password_complexity(change.new_password)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=error_msg)
-
-    # Verify current password
-    result = await db.execute(
-        text("SELECT password_hash FROM admin_users WHERE id = :id"),
-        {"id": current_user["id"]}
-    )
-    row = result.fetchone()
-    if not row or not verify_password(change.current_password, row[0]):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
-
-    # Update password
-    password_hash = hash_password(change.new_password)
-    await db.execute(
-        text("UPDATE admin_users SET password_hash = :hash, updated_at = :now WHERE id = :id"),
-        {"hash": password_hash, "now": datetime.now(timezone.utc), "id": current_user["id"]}
-    )
-
-    # Audit log
-    await _log_audit(
-        db, current_user["id"], current_user["username"],
-        "PASSWORD_CHANGED", f"user:{current_user['id']}",
-        None,
-        request.client.host if request.client else None
-    )
-    await db.commit()
-
-    return {"status": "password_changed"}
-
 
 # =============================================================================
 # 2FA / TOTP ENDPOINTS (Self-service)
@@ -948,8 +995,8 @@ async def totp_setup(
     from .totp import generate_totp_secret, get_totp_uri, generate_backup_codes
 
     # Check if already enabled
-    result = await db.execute(
-        text("SELECT mfa_enabled, email FROM admin_users WHERE id = :id"),
+    result = await execute_with_retry(
+        db, text("SELECT mfa_enabled, email FROM admin_users WHERE id = :id"),
         {"id": current_user["id"]}
     )
     row = result.fetchone()
@@ -966,8 +1013,8 @@ async def totp_setup(
     backup_codes = generate_backup_codes()
 
     # Store secret temporarily (not enabled yet — user must verify)
-    await db.execute(
-        text("UPDATE admin_users SET mfa_secret = :secret WHERE id = :id"),
+    await execute_with_retry(
+        db, text("UPDATE admin_users SET mfa_secret = :secret WHERE id = :id"),
         {"secret": secret, "id": current_user["id"]}
     )
     await db.commit()
@@ -995,8 +1042,8 @@ async def totp_verify(
     import json
 
     # Verify current password
-    result = await db.execute(
-        text("SELECT password_hash, mfa_secret, mfa_enabled FROM admin_users WHERE id = :id"),
+    result = await execute_with_retry(
+        db, text("SELECT password_hash, mfa_secret, mfa_enabled FROM admin_users WHERE id = :id"),
         {"id": current_user["id"]}
     )
     row = result.fetchone()
@@ -1024,8 +1071,8 @@ async def totp_verify(
     backup_codes_json = json.dumps(hashed_codes)
 
     # Enable 2FA
-    await db.execute(
-        text("""
+    await execute_with_retry(
+        db, text("""
             UPDATE admin_users
             SET mfa_enabled = TRUE, mfa_backup_codes = :codes, updated_at = :now
             WHERE id = :id
@@ -1057,8 +1104,8 @@ async def totp_disable(
 ):
     """Disable 2FA. Requires current password."""
     # Verify current password
-    result = await db.execute(
-        text("SELECT password_hash, mfa_enabled FROM admin_users WHERE id = :id"),
+    result = await execute_with_retry(
+        db, text("SELECT password_hash, mfa_enabled FROM admin_users WHERE id = :id"),
         {"id": current_user["id"]}
     )
     row = result.fetchone()
@@ -1072,8 +1119,8 @@ async def totp_disable(
         raise HTTPException(status_code=400, detail="2FA is not enabled")
 
     # Disable 2FA
-    await db.execute(
-        text("""
+    await execute_with_retry(
+        db, text("""
             UPDATE admin_users
             SET mfa_enabled = FALSE, mfa_secret = NULL, mfa_backup_codes = NULL, updated_at = :now
             WHERE id = :id

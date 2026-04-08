@@ -8,6 +8,7 @@ Provides secure admin authentication with:
 """
 
 import hashlib
+import json
 import secrets
 import logging
 from datetime import datetime, timezone, timedelta
@@ -18,15 +19,64 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 try:
-    from .shared import execute_with_retry
+    from .shared import execute_with_retry, get_redis_client
 except ImportError:
-    from shared import execute_with_retry  # type: ignore[no-redef]
+    from shared import execute_with_retry, get_redis_client  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
-# MFA pending tokens: {token: {"user_id": ..., "username": ..., "expires": datetime}}
+# MFA pending tokens: in-memory fallback when Redis unavailable
 _mfa_pending_tokens: Dict[str, Dict[str, Any]] = {}
 MFA_PENDING_TTL_MINUTES = 5
+_MFA_REDIS_PREFIX = "mfa_pending:"
+
+
+async def _store_mfa_token(token: str, data: Dict[str, Any]) -> None:
+    """Store MFA pending token in Redis (preferred) or in-memory fallback."""
+    redis = get_redis_client()
+    if redis:
+        try:
+            # Serialize datetime to ISO string for Redis
+            redis_data = {k: v.isoformat() if isinstance(v, datetime) else v for k, v in data.items()}
+            await redis.setex(
+                f"{_MFA_REDIS_PREFIX}{token}",
+                MFA_PENDING_TTL_MINUTES * 60,
+                json.dumps(redis_data),
+            )
+            return
+        except Exception as e:
+            logger.warning("Redis MFA store failed, using in-memory: %s", e)
+    # Fallback to in-memory
+    _mfa_pending_tokens[token] = data
+
+
+async def _pop_mfa_token(token: str) -> Optional[Dict[str, Any]]:
+    """Retrieve and delete MFA pending token from Redis or in-memory."""
+    redis = get_redis_client()
+    if redis:
+        try:
+            key = f"{_MFA_REDIS_PREFIX}{token}"
+            raw = await redis.get(key)
+            if raw:
+                await redis.delete(key)
+                data = json.loads(raw)
+                # Deserialize ISO datetime
+                if "expires" in data:
+                    data["expires"] = datetime.fromisoformat(data["expires"])
+                return data
+            # Not in Redis — might be in-memory from before Redis started
+        except Exception as e:
+            logger.warning("Redis MFA pop failed, checking in-memory: %s", e)
+    # Fallback to in-memory
+    return _mfa_pending_tokens.pop(token, None)
+
+
+def _cleanup_expired_mfa_tokens() -> None:
+    """Remove expired tokens from in-memory fallback only."""
+    now = datetime.now(timezone.utc)
+    expired = [k for k, v in _mfa_pending_tokens.items() if v["expires"] < now]
+    for k in expired:
+        _mfa_pending_tokens.pop(k, None)
 
 # Configuration
 SESSION_DURATION_HOURS = 24
@@ -110,7 +160,7 @@ def validate_password_complexity(password: str) -> Tuple[bool, Optional[str]]:
 
 def hash_password(password: str) -> str:
     """Hash a password for storage using bcrypt."""
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=14)).decode()
 
 
 def verify_password(password: str, password_hash: str) -> bool:
@@ -292,14 +342,11 @@ async def authenticate_user(
     if mfa_enabled:
         # MFA required — issue a short-lived pending token instead of a session
         mfa_token = secrets.token_urlsafe(32)
-
-        # Clean up expired pending tokens
         now = datetime.now(timezone.utc)
-        expired_keys = [k for k, v in _mfa_pending_tokens.items() if v["expires"] < now]
-        for k in expired_keys:
-            _mfa_pending_tokens.pop(k, None)
 
-        _mfa_pending_tokens[mfa_token] = {
+        _cleanup_expired_mfa_tokens()
+
+        await _store_mfa_token(mfa_token, {
             "user_id": str(user_id),
             "username": username,
             "display_name": display_name,
@@ -307,7 +354,7 @@ async def authenticate_user(
             "ip_address": ip_address,
             "user_agent": user_agent,
             "expires": now + timedelta(minutes=MFA_PENDING_TTL_MINUTES),
-        }
+        })
 
         await _log_audit(db, user_id, username, "LOGIN_MFA_PENDING", "auth", None, ip_address)
         await db.commit()
@@ -375,13 +422,10 @@ async def complete_mfa_login(
     """
     from .totp import verify_totp, verify_backup_code
 
-    # Clean up expired tokens
     now = datetime.now(timezone.utc)
-    expired_keys = [k for k, v in _mfa_pending_tokens.items() if v["expires"] < now]
-    for k in expired_keys:
-        _mfa_pending_tokens.pop(k, None)
+    _cleanup_expired_mfa_tokens()
 
-    pending = _mfa_pending_tokens.pop(mfa_token, None)
+    pending = await _pop_mfa_token(mfa_token)
     if not pending:
         return False, None, {"error": "Invalid or expired MFA token"}
 

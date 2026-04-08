@@ -1297,6 +1297,27 @@ async def lifespan(app: FastAPI):
                 logger.error("Merkle batch loop error", error=str(e))
             await asyncio.sleep(3600)  # 1 hour
 
+    async def _audit_log_retention_loop():
+        """Daily cleanup of audit logs older than 7 years (HIPAA: 6-year minimum)."""
+        await asyncio.sleep(7200)  # 2 hours after startup
+        while True:
+            try:
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    result = await conn.execute("""
+                        DELETE FROM admin_audit_log
+                        WHERE created_at < NOW() - INTERVAL '7 years'
+                    """)
+                    if result and 'DELETE' in result:
+                        count = int(result.split()[-1])
+                        if count > 0:
+                            logger.info("audit_log_retention_cleanup", deleted=count)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error("Audit log retention loop error", error=str(e))
+            await asyncio.sleep(86400)  # 24 hours
+
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
         ("ots_resubmit", _ots_resubmit_expired_loop),
@@ -1314,6 +1335,7 @@ async def lifespan(app: FastAPI):
         ("unregistered_device_alerts", _unregistered_device_alert_loop),
         ("compliance_packets", _compliance_packet_loop),
         ("alert_digest", digest_sender_loop),
+        ("audit_log_retention", _audit_log_retention_loop),
     ]
 
     for name, fn in task_defs:

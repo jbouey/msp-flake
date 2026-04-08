@@ -36,6 +36,21 @@ interface FetchApiOptions extends RequestInit {
 }
 
 /**
+ * Extracts a human-readable error message from an API error response.
+ */
+function parseApiErrorMessage(status: number, detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ');
+  }
+  if (status === 500) return 'Something went wrong on our end. Please try again or contact support if this continues.';
+  if (status === 403) return 'You do not have permission to perform this action.';
+  if (status === 404) return 'The requested resource was not found.';
+  if (status === 429) return 'Too many requests. Please wait a moment and try again.';
+  return `Request failed (${status}). Please try again.`;
+}
+
+/**
  * Creates an AbortController with timeout
  */
 function createTimeoutController(timeoutMs: number, existingSignal?: AbortSignal): {
@@ -115,14 +130,8 @@ async function _fetchWithBase<T>(
         window.location.href = '/login';
         throw new ApiError(401, 'Session expired');
       }
-      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      const detail = error.detail;
-      const message = typeof detail === 'string'
-        ? detail
-        : Array.isArray(detail)
-          ? detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ')
-          : `HTTP ${response.status}`;
-      throw new ApiError(response.status, message);
+      const error = await response.json().catch(() => ({ detail: null }));
+      throw new ApiError(response.status, parseApiErrorMessage(response.status, error.detail));
     }
 
     const etag = response.headers.get('etag');
@@ -1331,14 +1340,8 @@ export const usersApi = {
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      const detail = error.detail;
-      const message = typeof detail === 'string'
-        ? detail
-        : Array.isArray(detail)
-          ? detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ')
-          : `HTTP ${response.status}`;
-      throw new ApiError(response.status, message);
+      const error = await response.json().catch(() => ({ detail: null }));
+      throw new ApiError(response.status, parseApiErrorMessage(response.status, error.detail));
     }
     return response.json();
   },

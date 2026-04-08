@@ -187,7 +187,7 @@ async def get_partner_from_api_key(api_key: str):
 
     async with admin_connection(pool) as conn:
         partner = await conn.fetchrow("""
-            SELECT id, name, slug, status
+            SELECT id, name, slug, status, api_key_expires_at
             FROM partners
             WHERE api_key_hash = $1
         """, key_hash)
@@ -196,6 +196,12 @@ async def get_partner_from_api_key(api_key: str):
             return None
         if partner['status'] != 'active':
             return None
+        # Check API key expiry
+        if partner['api_key_expires_at']:
+            from datetime import datetime, timezone
+            if datetime.now(timezone.utc) > partner['api_key_expires_at']:
+                logger.warning("Expired API key used for partner %s", partner['id'])
+                return None
         return partner
 
 
@@ -1441,13 +1447,16 @@ async def create_partner(request: Request, partner: PartnerCreate, admin: dict =
         if existing:
             raise HTTPException(status_code=400, detail=f"Slug '{partner.slug}' already exists")
 
-        # Insert partner
+        # Insert partner (API key expires in 1 year by default)
+        from datetime import timedelta
+        api_key_expires = datetime.now(timezone.utc) + timedelta(days=365)
         row = await conn.fetchrow("""
             INSERT INTO partners (
                 name, slug, contact_email, contact_phone,
                 brand_name, logo_url, primary_color,
-                revenue_share_percent, api_key_hash
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                revenue_share_percent, api_key_hash,
+                api_key_created_at, api_key_expires_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10)
             RETURNING id, name, slug, created_at
         """,
             partner.name,
@@ -1458,7 +1467,8 @@ async def create_partner(request: Request, partner: PartnerCreate, admin: dict =
             partner.logo_url,
             partner.primary_color,
             partner.revenue_share_percent,
-            api_key_hash
+            api_key_hash,
+            api_key_expires,
         )
 
     await log_partner_activity(
@@ -1832,13 +1842,17 @@ async def regenerate_api_key(request: Request, partner_id: str, admin: dict = De
     api_key = generate_api_key()
     api_key_hash = hash_api_key(api_key)
 
+    from datetime import timedelta
+    api_key_expires = datetime.now(timezone.utc) + timedelta(days=365)
+
     async with admin_connection(pool) as conn:
         result = await conn.fetchrow("""
             UPDATE partners
-            SET api_key_hash = $1, updated_at = NOW()
+            SET api_key_hash = $1, api_key_created_at = NOW(),
+                api_key_expires_at = $3, updated_at = NOW()
             WHERE id = $2
             RETURNING name
-        """, api_key_hash, _uid(partner_id))
+        """, api_key_hash, _uid(partner_id), api_key_expires)
 
         if not result:
             raise HTTPException(status_code=404, detail="Partner not found")
@@ -1858,7 +1872,8 @@ async def regenerate_api_key(request: Request, partner_id: str, admin: dict = De
     return {
         "status": "regenerated",
         "api_key": api_key,
-        "message": "Save this API key - it cannot be retrieved later"
+        "expires_at": api_key_expires.isoformat(),
+        "message": "Save this API key - it cannot be retrieved later. Expires in 1 year."
     }
 
 
@@ -2930,10 +2945,13 @@ async def validate_magic_link(request: MagicTokenValidate):
         api_key = generate_api_key()
         api_key_hash = hash_api_key(api_key)
 
-        # Update the partner's API key
+        # Update the partner's API key (1-year expiry)
+        from datetime import timedelta as _td
+        _expires = datetime.now(timezone.utc) + _td(days=365)
         await conn.execute("""
-            UPDATE partners SET api_key_hash = $1 WHERE id = $2
-        """, api_key_hash, user['partner_id'])
+            UPDATE partners SET api_key_hash = $1, api_key_created_at = NOW(),
+                api_key_expires_at = $3 WHERE id = $2
+        """, api_key_hash, user['partner_id'], _expires)
 
     return {
         "success": True,

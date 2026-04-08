@@ -26,8 +26,12 @@ async function fetchIntegrationsApi<T>(endpoint: string, options?: RequestInit):
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new ApiError(response.status, error.detail || `HTTP ${response.status}`);
+    const error = await response.json().catch(() => ({ detail: null }));
+    const detail = error.detail;
+    const message = typeof detail === 'string' ? detail
+      : response.status === 500 ? 'Something went wrong on our end. Please try again or contact support if this continues.'
+      : `Request failed (${response.status}). Please try again.`;
+    throw new ApiError(response.status, message);
   }
 
   return response.json();
