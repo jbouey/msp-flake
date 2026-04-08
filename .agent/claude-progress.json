@@ -6,7 +6,7 @@
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
-    "dashboard": "session200_devices_monitored_ui_discovery_filter_fixed_4_perf_indexes",
+    "dashboard": "session200_db_scaling_4_items_pool_microtxn_remediation_table_partitions_deployed",
     "physical_appliance": "go_daemon_v0.3.82_backend_authoritative_mesh_per_appliance_keys_display_names",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",

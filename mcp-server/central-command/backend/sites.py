@@ -674,7 +674,8 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
                 appliance_id, hostname, display_name, mac_address, ip_addresses,
                 agent_version, nixos_version, status, first_checkin,
                 last_checkin, uptime_seconds,
-                COALESCE(auth_failure_count, 0) as auth_failure_count
+                COALESCE(auth_failure_count, 0) as auth_failure_count,
+                COALESCE(jsonb_array_length(assigned_targets), 0) as assigned_target_count
             FROM site_appliances
             WHERE site_id = $1
             ORDER BY first_checkin, appliance_id
@@ -720,7 +721,7 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
                 'first_checkin': first_checkin.isoformat() if first_checkin else None,
                 'last_checkin': last_checkin.isoformat() if last_checkin else None,
                 'uptime_seconds': row['uptime_seconds'],
-                'assigned_target_count': 0,
+                'assigned_target_count': row.get('assigned_target_count', 0) or 0,
             })
 
         # Determine overall site live status (worst case from appliances)
