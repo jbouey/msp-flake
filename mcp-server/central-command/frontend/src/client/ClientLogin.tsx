@@ -470,8 +470,8 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   onClick={() => { setLoginMode('password'); setError(null); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
                     loginMode === 'password'
-                      ? 'bg-white text-label-primary shadow-sm'
-                      : 'text-slate-400 hover:text-slate-600'
+                      ? 'bg-white text-gray-700 shadow-sm'
+                      : 'text-gray-400 hover:text-gray-500'
                   }`}
                 >
                   Email &amp; Password
@@ -481,8 +481,8 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   onClick={() => { setLoginMode('magic'); setError(null); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
                     loginMode === 'magic'
-                      ? 'bg-white text-label-primary shadow-sm'
-                      : 'text-slate-400 hover:text-slate-600'
+                      ? 'bg-white text-gray-700 shadow-sm'
+                      : 'text-gray-400 hover:text-gray-500'
                   }`}
                 >
                   Magic Link

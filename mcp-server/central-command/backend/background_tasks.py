@@ -673,6 +673,28 @@ async def reconciliation_loop():
         try:
             pool = await get_pool()
             async with pool.acquire() as conn:
+                # Insert missing site_appliances rows for appliances that have no entry
+                inserted = await conn.fetch("""
+                    INSERT INTO site_appliances (site_id, appliance_id, hostname, mac_address, agent_version, status, first_checkin, last_checkin)
+                    SELECT
+                        a.site_id,
+                        a.host_id,
+                        SPLIT_PART(a.host_id, '-', 1),
+                        CASE WHEN a.host_id LIKE '%-%:%' THEN SUBSTRING(a.host_id FROM '[0-9A-Fa-f:]{17}$') ELSE NULL END,
+                        a.agent_version,
+                        CASE WHEN a.last_checkin > NOW() - INTERVAL '15 minutes' THEN 'online' ELSE 'offline' END,
+                        a.created_at,
+                        a.last_checkin
+                    FROM appliances a
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM site_appliances sa WHERE sa.site_id = a.site_id
+                    )
+                    RETURNING site_id
+                """)
+                if inserted:
+                    logger.info(f"Reconciliation: created {len(inserted)} missing site_appliances rows from appliances table")
+
+                # Update existing site_appliances rows from appliances when diverged
                 synced = await conn.fetch("""
                     UPDATE site_appliances sa SET
                         last_checkin = a.last_checkin,
