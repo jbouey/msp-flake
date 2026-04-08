@@ -11,6 +11,45 @@ import (
 	"testing"
 )
 
+// signedProcessor creates a Processor with a test Ed25519 keypair so that
+// dangerous order types (healing, sync_promoted_rule, nixos_rebuild, etc.)
+// pass signature verification in tests.
+func signedProcessor(t *testing.T, dir string, completeFn func(ctx context.Context, orderID string, success bool, result map[string]interface{}, errMsg string) error) (*Processor, ed25519.PrivateKey) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate test keypair: %v", err)
+	}
+	p := NewProcessor(dir, completeFn)
+	if err := p.SetServerPublicKey(hex.EncodeToString(pub)); err != nil {
+		t.Fatalf("set server key: %v", err)
+	}
+	return p, priv
+}
+
+// signOrder signs an order's parameters with the test private key so it passes
+// signature verification. Returns a new Order with Signature and SignedPayload set.
+func signOrder(t *testing.T, priv ed25519.PrivateKey, o *Order) *Order {
+	t.Helper()
+	payload := map[string]interface{}{
+		"order_id":   o.OrderID,
+		"order_type": o.OrderType,
+		"parameters": o.Parameters,
+		"nonce":      "test-nonce-" + o.OrderID,
+		"created_at": "2026-01-01T00:00:00Z",
+		"expires_at": "2099-01-01T00:00:00Z",
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	sig := ed25519.Sign(priv, payloadBytes)
+	o.SignedPayload = string(payloadBytes)
+	o.Signature = hex.EncodeToString(sig)
+	o.Nonce = "test-nonce-" + o.OrderID
+	return o
+}
+
 func TestNewProcessor(t *testing.T) {
 	p := NewProcessor("/tmp/test", nil)
 	if p == nil {
@@ -132,16 +171,16 @@ cooldown_seconds: 300
 
 func TestProcessSyncPromotedRule(t *testing.T) {
 	dir := t.TempDir()
-	p := NewProcessor(dir, nil)
+	p, priv := signedProcessor(t, dir, nil)
 
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "ord-006",
 		OrderType: "sync_promoted_rule",
 		Parameters: map[string]interface{}{
 			"rule_id":   "L1-PROMOTED-ABC123",
 			"rule_yaml": validPromotedRuleYAML,
 		},
-	})
+	}))
 
 	if !result.Success {
 		t.Fatalf("expected success, got error: %s", result.Error)
@@ -159,7 +198,7 @@ func TestProcessSyncPromotedRule(t *testing.T) {
 
 func TestProcessSyncPromotedRuleDuplicate(t *testing.T) {
 	dir := t.TempDir()
-	p := NewProcessor(dir, nil)
+	p, priv := signedProcessor(t, dir, nil)
 
 	dupYAML := `id: L1-PROMOTED-DUP
 name: Duplicate Rule
@@ -176,14 +215,14 @@ conditions:
 	}
 
 	// First deploy
-	p.Process(context.Background(), &Order{
+	p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID: "ord-007", OrderType: "sync_promoted_rule", Parameters: params,
-	})
+	}))
 
 	// Second deploy should report already_exists
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID: "ord-008", OrderType: "sync_promoted_rule", Parameters: params,
-	})
+	}))
 
 	if !result.Success {
 		t.Fatalf("expected success, got error: %s", result.Error)
@@ -194,16 +233,16 @@ conditions:
 }
 
 func TestProcessSyncPromotedRuleMissingFields(t *testing.T) {
-	p := NewProcessor(t.TempDir(), nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "ord-009",
 		OrderType: "sync_promoted_rule",
 		Parameters: map[string]interface{}{
 			"rule_id": "L1-PROMOTED-X",
 			// missing rule_yaml
 		},
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure for missing rule_yaml")
@@ -213,15 +252,15 @@ func TestProcessSyncPromotedRuleMissingFields(t *testing.T) {
 func TestProcessHealing(t *testing.T) {
 	// Without daemon registration, the stub returns an error to signal
 	// that the real handler (executeHealingOrder) was not wired up.
-	p := NewProcessor("/tmp/test", nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "ord-010",
 		OrderType: "healing",
 		Parameters: map[string]interface{}{
 			"runbook_id": "RB-WIN-SEC-001",
 		},
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure from unregistered healing stub")
@@ -232,13 +271,13 @@ func TestProcessHealing(t *testing.T) {
 		return map[string]interface{}{"status": "healed", "runbook_id": params["runbook_id"]}, nil
 	})
 
-	result = p.Process(context.Background(), &Order{
+	result = p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "ord-010b",
 		OrderType: "healing",
 		Parameters: map[string]interface{}{
 			"runbook_id": "RB-WIN-SEC-001",
 		},
-	})
+	}))
 
 	if !result.Success {
 		t.Fatalf("expected success after RegisterHandler, got error: %s", result.Error)
@@ -249,12 +288,12 @@ func TestProcessHealing(t *testing.T) {
 }
 
 func TestProcessHealingMissingRunbook(t *testing.T) {
-	p := NewProcessor("/tmp/test", nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "ord-011",
 		OrderType: "healing",
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure for missing runbook_id")
@@ -600,11 +639,11 @@ func TestValidateDownloadURL(t *testing.T) {
 		url     string
 		wantErr bool
 	}{
-		{"valid_github", "https://github.com/jbouey/msp-flake/releases/download/v1.0/agent.tar.gz", false},
+		{"rejected_github", "https://github.com/jbouey/msp-flake/releases/download/v1.0/agent.tar.gz", true}, // github.com removed from allowlist (Session 201)
 		{"valid_api_domain", "https://api.osiriscare.net/updates/agent-v2.tar.gz", false},
 		{"valid_release_domain", "https://release.osiriscare.net/packages/agent-v2.tar.gz", false},
 		{"rejected_raw_ip", "https://178.156.162.116/packages/agent-v2.tar.gz", true},
-		{"valid_gh_objects", "https://objects.githubusercontent.com/release/agent.tar.gz", false},
+		{"rejected_gh_objects", "https://objects.githubusercontent.com/release/agent.tar.gz", true}, // github.com removed (Session 201)
 		{"http_not_https", "http://github.com/jbouey/msp-flake/releases/download/v1.0/agent.tar.gz", true},
 		{"evil_domain", "https://evil.com/agent.tar.gz", true},
 		{"empty_url", "", true},
@@ -622,15 +661,15 @@ func TestValidateDownloadURL(t *testing.T) {
 }
 
 func TestNixOSRebuildRejectsEvilFlake(t *testing.T) {
-	p := NewProcessor(t.TempDir(), nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "evil-rebuild",
 		OrderType: "nixos_rebuild",
 		Parameters: map[string]interface{}{
 			"flake_ref": "github:attacker/rootkit#pwn",
 		},
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure for malicious flake_ref")
@@ -641,16 +680,16 @@ func TestNixOSRebuildRejectsEvilFlake(t *testing.T) {
 }
 
 func TestUpdateAgentRejectsEvilURL(t *testing.T) {
-	p := NewProcessor(t.TempDir(), nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "evil-update",
 		OrderType: "update_agent",
 		Parameters: map[string]interface{}{
 			"package_url": "https://evil.com/backdoor.tar.gz",
 			"version":     "0.0.1",
 		},
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure for evil package_url")
@@ -661,7 +700,7 @@ func TestUpdateAgentRejectsEvilURL(t *testing.T) {
 }
 
 func TestSyncPromotedRuleRejectsInvalidAction(t *testing.T) {
-	p := NewProcessor(t.TempDir(), nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
 	badYAML := `id: L1-BAD-ACTION
 name: Evil Rule
@@ -671,14 +710,14 @@ conditions:
     operator: eq
     value: test
 `
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "evil-rule-1",
 		OrderType: "sync_promoted_rule",
 		Parameters: map[string]interface{}{
 			"rule_id":   "L1-BAD-ACTION",
 			"rule_yaml": badYAML,
 		},
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure for invalid action")
@@ -689,7 +728,7 @@ conditions:
 }
 
 func TestSyncPromotedRuleRejectsIDMismatch(t *testing.T) {
-	p := NewProcessor(t.TempDir(), nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
 	badYAML := `id: DIFFERENT-ID
 name: Mismatched Rule
@@ -699,14 +738,14 @@ conditions:
     operator: eq
     value: test
 `
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "evil-rule-2",
 		OrderType: "sync_promoted_rule",
 		Parameters: map[string]interface{}{
 			"rule_id":   "L1-EXPECTED-ID",
 			"rule_yaml": badYAML,
 		},
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure for ID mismatch")
@@ -714,20 +753,20 @@ conditions:
 }
 
 func TestSyncPromotedRuleRejectsNoConditions(t *testing.T) {
-	p := NewProcessor(t.TempDir(), nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
 	badYAML := `id: L1-NO-COND
 name: No conditions rule
 action: escalate
 `
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "evil-rule-3",
 		OrderType: "sync_promoted_rule",
 		Parameters: map[string]interface{}{
 			"rule_id":   "L1-NO-COND",
 			"rule_yaml": badYAML,
 		},
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure for missing conditions")
@@ -735,16 +774,16 @@ action: escalate
 }
 
 func TestSyncPromotedRuleRejectsInvalidYAML(t *testing.T) {
-	p := NewProcessor(t.TempDir(), nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "evil-rule-4",
 		OrderType: "sync_promoted_rule",
 		Parameters: map[string]interface{}{
 			"rule_id":   "L1-BAD-YAML",
 			"rule_yaml": "{{{{not valid yaml!@#$",
 		},
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure for invalid YAML")
@@ -752,19 +791,19 @@ func TestSyncPromotedRuleRejectsInvalidYAML(t *testing.T) {
 }
 
 func TestSyncPromotedRuleRejectsOversized(t *testing.T) {
-	p := NewProcessor(t.TempDir(), nil)
+	p, priv := signedProcessor(t, t.TempDir(), nil)
 
 	// Create a YAML string > 8KB
 	bigYAML := "id: L1-BIG-RULE\nname: Big\naction: escalate\nconditions:\n  - field: x\n    operator: eq\n    value: " + strings.Repeat("x", 9000) + "\n"
 
-	result := p.Process(context.Background(), &Order{
+	result := p.Process(context.Background(), signOrder(t, priv, &Order{
 		OrderID:   "evil-rule-5",
 		OrderType: "sync_promoted_rule",
 		Parameters: map[string]interface{}{
 			"rule_id":   "L1-BIG-RULE",
 			"rule_yaml": bigYAML,
 		},
-	})
+	}))
 
 	if result.Success {
 		t.Fatal("expected failure for oversized rule YAML")
