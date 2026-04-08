@@ -32,6 +32,7 @@ _shared_stub = types.ModuleType("shared")
 async def _noop_retry(db, query, params=None, max_retries=2):
     return await db.execute(query, params or {})
 _shared_stub.execute_with_retry = _noop_retry
+_shared_stub.get_redis_client = lambda: None
 sys.modules["shared"] = _shared_stub
 
 from auth import (
