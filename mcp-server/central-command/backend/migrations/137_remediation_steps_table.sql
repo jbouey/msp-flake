@@ -5,7 +5,7 @@
 -- Create the relational table
 CREATE TABLE IF NOT EXISTS incident_remediation_steps (
     id SERIAL PRIMARY KEY,
-    incident_id VARCHAR(255) NOT NULL REFERENCES incidents(incident_id) ON DELETE CASCADE,
+    incident_id UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
     step_idx INTEGER NOT NULL DEFAULT 0,
     tier VARCHAR(10) NOT NULL CHECK (tier IN ('L1', 'L2', 'L3')),
     runbook_id VARCHAR(255),
@@ -33,14 +33,14 @@ CREATE POLICY admin_bypass ON incident_remediation_steps
 CREATE POLICY tenant_isolation ON incident_remediation_steps
     FOR ALL
     USING (incident_id IN (
-        SELECT incident_id FROM incidents
+        SELECT id FROM incidents
         WHERE site_id = current_setting('app.current_tenant', true)
     ));
 
 -- Migrate existing JSONB data into the new table
 INSERT INTO incident_remediation_steps (incident_id, step_idx, tier, runbook_id, result, confidence, created_at)
 SELECT
-    i.incident_id,
+    i.id,
     (elem_idx.idx - 1) as step_idx,
     COALESCE(elem.value->>'tier', 'L1') as tier,
     elem.value->>'runbook_id' as runbook_id,

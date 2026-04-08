@@ -557,7 +557,7 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
                 WHERE incident_id = :incident_id
                 ORDER BY step_idx
             """),
-            {"incident_id": row.incident_id}
+            {"incident_id": str(row.id)}
         )
         remediation_history = [
             {
