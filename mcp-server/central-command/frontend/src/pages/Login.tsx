@@ -114,7 +114,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
   const hasOAuthProviders = providers.google || providers.microsoft;
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden light-login">
       {/* Gradient background */}
       <div
         className="absolute inset-0"
