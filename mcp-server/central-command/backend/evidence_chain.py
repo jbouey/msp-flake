@@ -1053,7 +1053,10 @@ async def submit_evidence(
     # Store the signed_data for future verification
     stored_signed_data = signed_data.decode('utf-8') if isinstance(signed_data, bytes) else signed_data
 
-    # Insert evidence bundle
+    # Insert evidence bundle (upsert via DELETE+INSERT for partitioned table compatibility)
+    await db.execute(text("""
+        DELETE FROM compliance_bundles WHERE bundle_id = :bundle_id
+    """), {"bundle_id": bundle.bundle_id})
     await db.execute(text("""
         INSERT INTO compliance_bundles (
             site_id, bundle_id, bundle_hash, check_type, check_result, checked_at,
@@ -1066,10 +1069,6 @@ async def submit_evidence(
             :prev_bundle_id, :prev_hash, :chain_position, :chain_hash,
             'pending'
         )
-        ON CONFLICT (bundle_id) DO UPDATE SET
-            bundle_hash = EXCLUDED.bundle_hash,
-            checks = EXCLUDED.checks,
-            summary = EXCLUDED.summary
     """), {
         "site_id": site_id,
         "bundle_id": bundle.bundle_id,
