@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/osiriscare/appliance/internal/evidence"
-	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/phiscrub"
 )
 
@@ -807,27 +806,17 @@ func countTrue(devices []discoveredDevice, fn func(discoveredDevice) bool) int {
 // reportNetDrift sends a network finding through the healing pipeline.
 // All text fields that could contain PHI are scrubbed before egress.
 func (ns *netScanner) reportNetDrift(f *driftFinding) {
-	// Scrub details map values — may contain discovered hostnames or device info
-	metadata := map[string]string{
-		"platform": "network",
-		"source":   "netscan",
-	}
-	for k, v := range f.Details {
-		metadata[k] = phiscrub.Scrub(v)
-	}
-
-	req := grpcserver.HealRequest{
+	// PHI-scrub network findings before reporting (may contain hostnames/device info)
+	scrubbed := &driftFinding{
 		Hostname:     phiscrub.Scrub(f.Hostname),
 		CheckType:    f.CheckType,
 		Expected:     phiscrub.Scrub(f.Expected),
 		Actual:       phiscrub.Scrub(f.Actual),
 		HIPAAControl: f.HIPAAControl,
-		AgentID:      "netscan",
-		Metadata:     metadata,
+		Details:      make(map[string]string, len(f.Details)),
 	}
-
-	log.Printf("[netscan] DRIFT: %s/%s expected=%s actual=%s",
-		f.Hostname, f.CheckType, f.Expected, f.Actual)
-
-	ns.daemon.healIncident(context.Background(), &req)
+	for k, v := range f.Details {
+		scrubbed.Details[k] = phiscrub.Scrub(v)
+	}
+	reportDriftGeneric(ns.daemon, scrubbed, "network", "netscan", nil)
 }

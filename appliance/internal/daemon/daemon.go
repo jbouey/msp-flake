@@ -1141,7 +1141,7 @@ func (d *Daemon) completeOrder(ctx context.Context, orderID string, success bool
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return fmt.Errorf("read completion response for order %s: %w", orderID, err)
 	}

@@ -117,6 +117,7 @@ async def get_incidents_from_db(
     offset: int = 0,
     resolved: Optional[bool] = None,
     level: Optional[str] = None,
+    org_scope: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Get incidents from database."""
     query_str = """
@@ -139,6 +140,9 @@ async def get_incidents_from_db(
     """
 
     params = {}
+    if org_scope is not None:
+        query_str += " AND a.site_id IN (SELECT site_id FROM sites WHERE client_org_id = ANY(:org_scope_ids))"
+        params["org_scope_ids"] = org_scope
     if site_id:
         query_str += " AND a.site_id = :site_id"
         params["site_id"] = site_id

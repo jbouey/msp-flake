@@ -257,6 +257,11 @@ async def receive_promotion_report(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Receive promotion reports from appliance learning systems."""
+    # C3 fix: enforce Bearer site matches request body
+    if req.site_id and req.site_id != auth_site_id:
+        logger.warning("promotion_report site_id mismatch", auth_site_id=auth_site_id, request_site_id=req.site_id)
+        raise HTTPException(status_code=403, detail="Site ID mismatch: token does not authorize this site")
+    req.site_id = auth_site_id
     try:
         now = datetime.now(timezone.utc)
 
@@ -337,7 +342,7 @@ async def receive_promotion_report(
 
     except Exception as e:
         logger.error(f"Failed to process promotion report: {e}")
-        return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=500, detail="Failed to process promotion report")
 
 
 @router.get("/api/learning/status")
@@ -503,7 +508,7 @@ async def get_promotion_candidates(
 
     except Exception as e:
         logger.error(f"Failed to get promotion candidates: {e}")
-        return {"status": "error", "message": str(e), "candidates": []}
+        raise HTTPException(status_code=500, detail="Failed to get promotion candidates")
 
 
 @router.post("/api/learning/promotions/{candidate_id}/review")
@@ -645,6 +650,11 @@ async def get_approved_promotions(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Get approved promotions for an appliance to apply."""
+    # C3 fix: enforce Bearer site matches query param
+    if site_id and site_id != auth_site_id:
+        logger.warning("approved_promotions site_id mismatch", auth_site_id=auth_site_id, request_site_id=site_id)
+        raise HTTPException(status_code=403, detail="Site ID mismatch: token does not authorize this site")
+    site_id = auth_site_id
     try:
         query = """
             SELECT id, pattern_signature, recommended_action, confidence_score,
@@ -689,4 +699,4 @@ async def get_approved_promotions(
 
     except Exception as e:
         logger.error(f"Failed to get approved promotions: {e}")
-        return {"status": "error", "message": str(e), "promotions": []}
+        raise HTTPException(status_code=500, detail="Failed to get approved promotions")

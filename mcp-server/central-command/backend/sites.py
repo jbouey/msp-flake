@@ -429,6 +429,9 @@ async def create_appliance_order(
 @router.get("/{site_id}/appliances/{appliance_id}/orders/pending")
 async def get_pending_orders(site_id: str, appliance_id: str, auth_site_id: str = Depends(require_appliance_bearer)):
     """Get pending orders for an appliance (both admin and healing orders)."""
+    # Enforce Bearer site matches path site_id
+    if site_id != auth_site_id:
+        raise HTTPException(status_code=403, detail="Site ID mismatch: token does not authorize this site")
     pool = await get_pool()
 
     # Legacy compat: try both colon and hyphen MAC variants in appliance_id.
@@ -1866,7 +1869,7 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site
 
 
 @orders_router.get("/{order_id}")
-async def get_order(order_id: str):
+async def get_order(order_id: str, user: dict = Depends(require_auth)):
     """Get order details by ID."""
     pool = await get_pool()
 
@@ -3561,7 +3564,7 @@ class EmailAlertRequest(BaseModel):
 
 
 @alerts_router.post("/email")
-async def send_email_alert(request: EmailAlertRequest):
+async def send_email_alert(request: EmailAlertRequest, auth_site_id: str = Depends(require_appliance_bearer)):
     """Send an email alert for L3 escalations or other critical events.
 
     This endpoint allows agents and chaos probes to send email alerts

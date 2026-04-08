@@ -39,6 +39,7 @@ from .auth import (
     require_admin,
     SESSION_DURATION_HOURS,
 )
+from .shared import execute_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +332,7 @@ async def get_user_info(
 
 async def get_oauth_config(db: AsyncSession, provider: str) -> Optional[Dict[str, Any]]:
     """Get OAuth provider configuration."""
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT client_id, client_secret_encrypted, tenant_id, enabled,
                    allow_registration, default_role, require_admin_approval, allowed_domains
@@ -352,8 +353,8 @@ async def get_oauth_config(db: AsyncSession, provider: str) -> Optional[Dict[str
     if client_secret_enc and client_secret_enc != b'\x00':
         try:
             client_secret = decrypt_secret(client_secret_enc)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("OAuth client secret decryption failed — check OAUTH_ENCRYPTION_KEY: %s", e)
 
     return {
         "client_id": client_id,
@@ -373,7 +374,7 @@ async def find_user_by_oauth_identity(
     provider_user_id: str,
 ) -> Optional[Dict[str, Any]]:
     """Find user by OAuth identity."""
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT u.id, u.username, u.display_name, u.role, u.status, u.pending_approval
             FROM admin_oauth_identities oi
@@ -399,7 +400,7 @@ async def find_user_by_oauth_identity(
 
 async def find_user_by_email(db: AsyncSession, email: str) -> Optional[Dict[str, Any]]:
     """Find user by email address."""
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT id, username, display_name, role, status, pending_approval
             FROM admin_users
@@ -436,7 +437,7 @@ async def create_oauth_user(
     # Handle duplicates
     counter = 1
     while True:
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("SELECT 1 FROM admin_users WHERE username = :username"),
             {"username": username}
         )
@@ -446,7 +447,7 @@ async def create_oauth_user(
         counter += 1
 
     # Create user
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             INSERT INTO admin_users (username, email, display_name, role, status, pending_approval)
             VALUES (:username, :email, :display_name, :role, :status, :pending_approval)
@@ -464,7 +465,7 @@ async def create_oauth_user(
     user_id = str(result.fetchone()[0])
 
     # Create OAuth identity link
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             INSERT INTO admin_oauth_identities (user_id, provider, provider_user_id, provider_email, provider_name, provider_picture_url)
             VALUES (:user_id, :provider, :provider_user_id, :email, :name, :picture)
@@ -489,7 +490,7 @@ async def link_oauth_identity(
     user_info: OAuthUserInfo,
 ) -> None:
     """Link OAuth identity to existing user."""
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             INSERT INTO admin_oauth_identities (user_id, provider, provider_user_id, provider_email, provider_name, provider_picture_url)
             VALUES (:user_id, :provider, :provider_user_id, :email, :name, :picture)
@@ -514,7 +515,7 @@ async def link_oauth_identity(
 
 async def update_oauth_last_login(db: AsyncSession, provider: str, provider_user_id: str) -> None:
     """Update last login timestamp for OAuth identity."""
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             UPDATE admin_oauth_identities
             SET last_login_at = NOW()
@@ -536,7 +537,7 @@ async def create_session(
     token_hash = hash_token(session_token)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=SESSION_DURATION_HOURS)
 
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             INSERT INTO admin_sessions (user_id, token_hash, ip_address, user_agent, expires_at)
             VALUES (:user_id, :token_hash, :ip, :ua, :expires)
@@ -551,7 +552,7 @@ async def create_session(
     )
 
     # Update last login
-    await db.execute(
+    await execute_with_retry(db,
         text("UPDATE admin_users SET last_login = :now WHERE id = :id"),
         {"now": datetime.now(timezone.utc), "id": user_id}
     )
@@ -569,7 +570,7 @@ async def log_oauth_audit(
     ip_address: Optional[str],
 ) -> None:
     """Log an OAuth-related audit event."""
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             INSERT INTO admin_audit_log (user_id, username, action, target, details, ip_address)
             VALUES (:user_id, :username, :action, 'oauth', :details, :ip)
@@ -598,7 +599,7 @@ async def get_enabled_providers():
     async_session = await get_db_session()
 
     async with async_session() as db:
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("SELECT provider, enabled FROM oauth_config WHERE enabled = TRUE")
         )
         rows = result.fetchall()
@@ -890,7 +891,7 @@ async def get_my_oauth_identities(user: Dict = Depends(require_auth)):
     async_session = await get_db_session()
 
     async with async_session() as db:
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("""
                 SELECT provider, provider_email, provider_name, linked_at, last_login_at
                 FROM admin_oauth_identities
@@ -929,7 +930,7 @@ async def link_oauth_to_account(
 
     async with async_session() as db:
         # Check if already linked
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("SELECT 1 FROM admin_oauth_identities WHERE user_id = :user_id AND provider = :provider"),
             {"user_id": user["id"], "provider": provider}
         )
@@ -1001,7 +1002,7 @@ async def unlink_oauth_from_account(
 
     async with async_session() as db:
         # Check if identity exists
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("SELECT 1 FROM admin_oauth_identities WHERE user_id = :user_id AND provider = :provider"),
             {"user_id": user["id"], "provider": provider}
         )
@@ -1009,13 +1010,13 @@ async def unlink_oauth_from_account(
             raise HTTPException(status_code=404, detail=f"{provider} is not linked to your account")
 
         # Check if user has password or another OAuth
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("SELECT password_hash FROM admin_users WHERE id = :id"),
             {"id": user["id"]}
         )
         has_password = bool(result.fetchone()[0])
 
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("SELECT COUNT(*) FROM admin_oauth_identities WHERE user_id = :user_id"),
             {"user_id": user["id"]}
         )
@@ -1028,7 +1029,7 @@ async def unlink_oauth_from_account(
             )
 
         # Delete the identity
-        await db.execute(
+        await execute_with_retry(db,
             text("DELETE FROM admin_oauth_identities WHERE user_id = :user_id AND provider = :provider"),
             {"user_id": user["id"], "provider": provider}
         )
@@ -1052,7 +1053,7 @@ async def get_oauth_admin_config(user: Dict = Depends(require_admin)):
     async_session = await get_db_session()
 
     async with async_session() as db:
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("""
                 SELECT provider, client_id, tenant_id, enabled, allow_registration,
                        default_role, require_admin_approval, allowed_domains, created_at, updated_at
@@ -1133,7 +1134,7 @@ async def update_oauth_config(
             params["allowed_domains"] = body["allowed_domains"]
 
         if updates:
-            await db.execute(
+            await execute_with_retry(db,
                 text(f"UPDATE oauth_config SET {', '.join(updates)} WHERE provider = :provider"),
                 params
             )
@@ -1150,7 +1151,7 @@ async def get_pending_oauth_users(user: Dict = Depends(require_admin)):
     async_session = await get_db_session()
 
     async with async_session() as db:
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("""
                 SELECT u.id, u.username, u.email, u.display_name, u.role, u.created_at,
                        oi.provider, oi.provider_email
@@ -1191,7 +1192,7 @@ async def approve_pending_user(
 
     async with async_session() as db:
         # Check user exists and is pending
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("SELECT username, pending_approval FROM admin_users WHERE id = :id"),
             {"id": user_id}
         )
@@ -1204,7 +1205,7 @@ async def approve_pending_user(
             raise HTTPException(status_code=400, detail="User is not pending approval")
 
         # Approve
-        await db.execute(
+        await execute_with_retry(db,
             text("""
                 UPDATE admin_users
                 SET pending_approval = FALSE, approved_by = :approved_by, approved_at = NOW()
@@ -1231,7 +1232,7 @@ async def reject_pending_user(
 
     async with async_session() as db:
         # Check user exists and is pending
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("SELECT username, pending_approval FROM admin_users WHERE id = :id"),
             {"id": user_id}
         )
@@ -1246,7 +1247,7 @@ async def reject_pending_user(
         username = row[0]
 
         # Delete (cascade deletes OAuth identities)
-        await db.execute(
+        await execute_with_retry(db,
             text("DELETE FROM admin_users WHERE id = :id"),
             {"id": user_id}
         )

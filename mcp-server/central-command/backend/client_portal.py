@@ -48,6 +48,42 @@ from .phi_boundary import sanitize_evidence_checks
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# COMPLIANCE CATEGORY MAP — single source of truth for check-type → category
+# =============================================================================
+
+COMPLIANCE_CATEGORIES = {
+    "patching": ["nixos_generation", "windows_update", "linux_patching",
+                 "linux_unattended_upgrades", "linux_kernel_params"],
+    "antivirus": ["windows_defender", "windows_defender_exclusions",
+                  "defender_exclusions"],
+    "backup": ["backup_status", "windows_backup_status"],
+    "logging": ["audit_logging", "windows_audit_policy", "linux_audit",
+                "linux_logging", "security_audit", "audit_policy",
+                "linux_log_forwarding"],
+    "firewall": ["firewall", "windows_firewall_status", "firewall_status",
+                 "linux_firewall", "network_profile", "net_unexpected_ports"],
+    "encryption": ["bitlocker", "windows_bitlocker_status", "linux_crypto",
+                   "windows_smb_signing", "bitlocker_status", "smb_signing",
+                   "smb1_protocol"],
+    "access_control": ["rogue_admin_users", "linux_accounts", "windows_password_policy",
+                       "linux_permissions", "linux_ssh_config", "windows_screen_lock_policy",
+                       "screen_lock", "screen_lock_policy", "password_policy",
+                       "guest_account", "rdp_nla", "rogue_scheduled_tasks"],
+    "services": ["critical_services", "linux_services", "windows_service_dns",
+                 "windows_service_netlogon", "windows_service_spooler",
+                 "windows_service_w32time", "windows_service_wuauserv", "agent_status",
+                 "service_dns", "service_netlogon", "service_status",
+                 "spooler_service", "linux_failed_services", "ntp_sync",
+                 "winrm", "dns_config", "net_dns_resolution",
+                 "net_expected_service", "net_host_reachability"],
+}
+
+COMPLIANCE_REVERSE_MAP = {}
+for _cat, _types in COMPLIANCE_CATEGORIES.items():
+    for _ct in _types:
+        COMPLIANCE_REVERSE_MAP[_ct] = _cat
+
+# =============================================================================
 # CONFIGURATION
 # =============================================================================
 
@@ -802,37 +838,8 @@ async def get_site_compliance_health(
             """)
             disabled_set = {r["check_type"] for r in defaults}
 
-        # Expanded category map covering Windows bundles + Linux/NixOS incidents
-        categories = {
-            "patching": ["nixos_generation", "windows_update", "linux_patching",
-                        "linux_unattended_upgrades", "linux_kernel_params"],
-            "antivirus": ["windows_defender", "windows_defender_exclusions",
-                         "defender_exclusions"],
-            "backup": ["backup_status", "windows_backup_status"],
-            "logging": ["audit_logging", "windows_audit_policy", "linux_audit",
-                       "linux_logging", "security_audit", "audit_policy",
-                       "linux_log_forwarding"],
-            "firewall": ["firewall", "windows_firewall_status", "firewall_status",
-                        "linux_firewall", "network_profile", "net_unexpected_ports"],
-            "encryption": ["bitlocker", "windows_bitlocker_status", "linux_crypto",
-                          "windows_smb_signing", "bitlocker_status", "smb_signing",
-                          "smb1_protocol"],
-            "access_control": ["rogue_admin_users", "linux_accounts", "windows_password_policy",
-                              "linux_permissions", "linux_ssh_config", "windows_screen_lock_policy",
-                              "screen_lock", "screen_lock_policy", "password_policy",
-                              "guest_account", "rdp_nla", "rogue_scheduled_tasks"],
-            "services": ["critical_services", "linux_services", "windows_service_dns",
-                        "windows_service_netlogon", "windows_service_spooler",
-                        "windows_service_w32time", "windows_service_wuauserv", "agent_status",
-                        "service_dns", "service_netlogon", "service_status",
-                        "spooler_service", "linux_failed_services", "ntp_sync",
-                        "winrm", "dns_config", "net_dns_resolution",
-                        "net_expected_service", "net_host_reachability"],
-        }
-        reverse_map = {}
-        for cat, types in categories.items():
-            for ct in types:
-                reverse_map[ct] = cat
+        categories = COMPLIANCE_CATEGORIES
+        reverse_map = COMPLIANCE_REVERSE_MAP
 
         # --- Source 1: Compliance bundles (Windows drift scans) ---
         bundles = await conn.fetch("""
@@ -980,23 +987,8 @@ async def get_client_devices_at_risk(
     pool = await get_pool()
     org_id = user["org_id"]
 
-    categories = {
-        "patching": ["nixos_generation", "windows_update", "linux_patching"],
-        "antivirus": ["windows_defender", "windows_defender_exclusions"],
-        "backup": ["backup_status", "windows_backup_status"],
-        "logging": ["audit_logging", "windows_audit_policy", "linux_audit", "linux_logging"],
-        "firewall": ["firewall", "windows_firewall_status", "firewall_status", "linux_firewall"],
-        "encryption": ["bitlocker", "windows_bitlocker_status", "linux_crypto", "windows_smb_signing"],
-        "access_control": ["rogue_admin_users", "linux_accounts", "windows_password_policy",
-                          "linux_permissions", "linux_ssh_config", "windows_screen_lock_policy"],
-        "services": ["critical_services", "linux_services", "windows_service_dns",
-                    "windows_service_netlogon", "windows_service_spooler",
-                    "windows_service_w32time", "windows_service_wuauserv", "agent_status"],
-    }
-    reverse_map = {}
-    for cat, types in categories.items():
-        for ct in types:
-            reverse_map[ct] = cat
+    categories = COMPLIANCE_CATEGORIES
+    reverse_map = COMPLIANCE_REVERSE_MAP
 
     async with org_connection(pool, org_id=org_id) as conn:
         # Verify site belongs to org

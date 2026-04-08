@@ -358,7 +358,7 @@ func (c *GRPCClient) saveCerts(caCert, agentCert, agentKey []byte) error {
 	if err := os.WriteFile(c.config.CAFile, caCert, 0644); err != nil {
 		return fmt.Errorf("write CA cert: %w", err)
 	}
-	if err := os.WriteFile(c.config.CertFile, agentCert, 0644); err != nil {
+	if err := os.WriteFile(c.config.CertFile, agentCert, 0600); err != nil {
 		return fmt.Errorf("write agent cert: %w", err)
 	}
 	if err := os.WriteFile(c.config.KeyFile, agentKey, 0600); err != nil {

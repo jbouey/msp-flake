@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/phiscrub"
@@ -30,9 +31,9 @@ var ErrAuthFailed = errors.New("authentication failed")
 
 // PhoneHomeClient handles communication with Central Command.
 type PhoneHomeClient struct {
-	config              *Config
-	client              *http.Client
-	consecutiveFailures int
+	config                 *Config
+	client                 *http.Client
+	consecutiveFailures    atomic.Int32
 	maxFailuresBeforeReset int
 }
 
@@ -122,7 +123,7 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 // from stuck connection pools or stale TLS state. Clears the TOFU pin so the
 // next connection re-pins (handles cert rotation from Let's Encrypt renewals).
 func (c *PhoneHomeClient) RecreateClient() {
-	log.Printf("[phonehome] Recreating HTTP client after %d consecutive failures — clearing TLS pin for re-TOFU", c.consecutiveFailures)
+	log.Printf("[phonehome] Recreating HTTP client after %d consecutive failures — clearing TLS pin for re-TOFU", c.consecutiveFailures.Load())
 	c.client.CloseIdleConnections()
 	// Delete stale TOFU pin so NewPhoneHomeClient will re-pin on next connection
 	pinPath := filepath.Join(c.config.StateDir, "server_cert_pin.hex")
@@ -131,12 +132,12 @@ func (c *PhoneHomeClient) RecreateClient() {
 	}
 	fresh := NewPhoneHomeClient(c.config)
 	c.client = fresh.client
-	c.consecutiveFailures = 0
+	c.consecutiveFailures.Store(0)
 }
 
 // ConsecutiveFailures returns the current failure count.
 func (c *PhoneHomeClient) ConsecutiveFailures() int {
-	return c.consecutiveFailures
+	return int(c.consecutiveFailures.Load())
 }
 
 // FetchPendingOrders polls the fleet order fallback endpoint when checkin is broken.
@@ -156,7 +157,7 @@ func (c *PhoneHomeClient) FetchPendingOrders(ctx context.Context, applianceID st
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -373,22 +374,20 @@ func (c *PhoneHomeClient) Checkin(ctx context.Context, req *CheckinRequest) (*Ch
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		c.consecutiveFailures++
-		if c.consecutiveFailures >= c.maxFailuresBeforeReset {
+		if c.consecutiveFailures.Add(1) >= int32(c.maxFailuresBeforeReset) {
 			c.RecreateClient()
 		}
 		return nil, fmt.Errorf("checkin request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		c.consecutiveFailures++
-		if c.consecutiveFailures >= c.maxFailuresBeforeReset {
+		if c.consecutiveFailures.Add(1) >= int32(c.maxFailuresBeforeReset) {
 			c.RecreateClient()
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
@@ -402,7 +401,7 @@ func (c *PhoneHomeClient) Checkin(ctx context.Context, req *CheckinRequest) (*Ch
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
-	c.consecutiveFailures = 0
+	c.consecutiveFailures.Store(0)
 	return &result, nil
 }
 
@@ -467,7 +466,7 @@ func (c *PhoneHomeClient) SyncDevices(ctx context.Context, payload *deviceSyncPa
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return fmt.Errorf("device sync returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -574,7 +573,7 @@ func (c *PhoneHomeClient) RequestRekey(ctx context.Context) (*rekeyResponse, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read rekey response: %w", err)
 	}

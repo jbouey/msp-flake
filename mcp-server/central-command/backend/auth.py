@@ -268,7 +268,7 @@ async def authenticate_user(
         (success, session_token, user_data) or (False, None, error_message)
     """
     # Get user by username or email
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT id, username, password_hash, display_name, role, status,
                    failed_login_attempts, locked_until
@@ -306,7 +306,7 @@ async def authenticate_user(
             locked_until_new = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
             logger.warning(f"Account {username} locked due to {new_attempts} failed attempts")
 
-        await db.execute(
+        await execute_with_retry(db,
             text("""
                 UPDATE admin_users
                 SET failed_login_attempts = :attempts, locked_until = :locked
@@ -320,7 +320,7 @@ async def authenticate_user(
         return False, None, {"error": "Invalid username or password"}
 
     # Check MFA status (enabled + required)
-    mfa_result = await db.execute(
+    mfa_result = await execute_with_retry(db,
         text("SELECT mfa_enabled, mfa_required FROM admin_users WHERE id = :id"),
         {"id": user_id}
     )
@@ -369,7 +369,7 @@ async def authenticate_user(
     token_hash = hash_token(session_token)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=SESSION_DURATION_HOURS)
 
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             INSERT INTO admin_sessions (user_id, token_hash, ip_address, user_agent, expires_at)
             VALUES (:user_id, :token_hash, :ip, :ua, :expires)
@@ -384,7 +384,7 @@ async def authenticate_user(
     )
 
     # Reset failed attempts and update last login
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             UPDATE admin_users
             SET failed_login_attempts = 0, locked_until = NULL, last_login = :now
@@ -673,7 +673,7 @@ async def get_audit_logs(
     query += " ORDER BY created_at DESC LIMIT :limit"
     params["limit"] = limit
 
-    result = await db.execute(text(query), params)
+    result = await execute_with_retry(db, text(query), params)
     rows = result.fetchall()
 
     import json
@@ -714,7 +714,7 @@ async def _log_audit(
 ) -> None:
     """Log an audit event."""
     import json
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             INSERT INTO admin_audit_log (user_id, username, action, target, details, ip_address)
             VALUES (:user_id, :username, :action, :target, :details, :ip)
@@ -733,7 +733,7 @@ async def _log_audit(
 
 async def cleanup_expired_sessions(db: AsyncSession) -> int:
     """Remove expired sessions. Returns count deleted."""
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("DELETE FROM admin_sessions WHERE expires_at < :now"),
         {"now": datetime.now(timezone.utc)}
     )

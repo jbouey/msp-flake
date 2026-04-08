@@ -30,6 +30,38 @@ def is_email_configured() -> bool:
     return bool(SMTP_USER and SMTP_PASSWORD)
 
 
+def _send_smtp_with_retry(
+    msg: MIMEMultipart,
+    recipients: list[str],
+    label: str = "email",
+    max_retries: int = 3,
+) -> bool:
+    """Send an email via SMTP with exponential backoff retry.
+
+    Centralizes the retry logic used by all email-sending functions.
+    Returns True on success, False on failure (after exhausting retries).
+    """
+    import time as _time
+
+    for attempt in range(max_retries):
+        try:
+            context = ssl.create_default_context()
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+                server.starttls(context=context)
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.sendmail(SMTP_FROM, recipients, msg.as_string())
+            logger.info(f"{label} sent successfully")
+            return True
+        except (smtplib.SMTPException, OSError) as smtp_err:
+            if attempt < max_retries - 1:
+                logger.warning(f"SMTP attempt {attempt + 1}/{max_retries} failed for {label}: {smtp_err}")
+                _time.sleep(2 ** attempt)
+            else:
+                logger.error(f"Failed to send {label} after {max_retries} attempts: {smtp_err}")
+                return False
+    return False
+
+
 def _build_details_section(details: dict) -> str:
     """Build HTML for incident details (expected vs actual, drift info)."""
     if not details:
@@ -326,27 +358,10 @@ def send_critical_alert(
         msg.attach(MIMEText(text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
 
-        # Send email with retry
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                context = ssl.create_default_context()
-                with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-                    server.starttls(context=context)
-                    server.login(SMTP_USER, SMTP_PASSWORD)
-                    server.sendmail(SMTP_FROM, ALERT_EMAIL, msg.as_string())
-                logger.info(f"Critical alert email sent: {title}")
-                return True
-            except (smtplib.SMTPException, OSError) as smtp_err:
-                if attempt < max_retries - 1:
-                    logger.warning(f"SMTP attempt {attempt + 1}/{max_retries} failed: {smtp_err}")
-                    import time as _time
-                    _time.sleep(2 ** attempt)  # 1s, 2s backoff
-                else:
-                    raise
+        return _send_smtp_with_retry(msg, [ALERT_EMAIL], f"critical alert: {title}")
 
     except Exception as e:
-        logger.error(f"Failed to send critical alert email after {max_retries} attempts: {e}")
+        logger.error(f"Failed to build critical alert email: {e}")
         return False
 
 
@@ -471,26 +486,10 @@ def send_digest_email(
         if cc_email:
             recipients.append(cc_email)
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                context = ssl.create_default_context()
-                with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-                    server.starttls(context=context)
-                    server.login(SMTP_USER, SMTP_PASSWORD)
-                    server.sendmail(SMTP_FROM, recipients, msg.as_string())
-                logger.info(f"Digest email sent to {to_email}: {subject}")
-                return True
-            except (smtplib.SMTPException, OSError) as smtp_err:
-                if attempt < max_retries - 1:
-                    logger.warning(f"SMTP attempt {attempt + 1}/{max_retries} failed: {smtp_err}")
-                    import time as _time
-                    _time.sleep(2 ** attempt)  # 1s, 2s backoff
-                else:
-                    raise
+        return _send_smtp_with_retry(msg, recipients, f"digest to {to_email}: {subject}")
 
     except Exception as e:
-        logger.error(f"Failed to send digest email after {max_retries} attempts: {e}")
+        logger.error(f"Failed to build digest email: {e}")
         return False
 
 
@@ -619,26 +618,10 @@ https://dashboard.osiriscare.net/companion
         msg.attach(MIMEText(text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                context = ssl.create_default_context()
-                with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-                    server.starttls(context=context)
-                    server.login(SMTP_USER, SMTP_PASSWORD)
-                    server.sendmail(SMTP_FROM, to_email, msg.as_string())
-                logger.info(f"Companion alert email sent to {to_email}: {module_label} / {org_name}")
-                return True
-            except (smtplib.SMTPException, OSError) as smtp_err:
-                if attempt < max_retries - 1:
-                    logger.warning(f"SMTP attempt {attempt + 1}/{max_retries} failed: {smtp_err}")
-                    import time as _time
-                    _time.sleep(2 ** attempt)
-                else:
-                    raise
+        return _send_smtp_with_retry(msg, [to_email], f"companion alert to {to_email}: {module_label}")
 
     except Exception as e:
-        logger.error(f"Failed to send companion alert email after retries: {e}")
+        logger.error(f"Failed to build companion alert email: {e}")
         return False
 
 
@@ -711,14 +694,4 @@ Please update the remediation plans in your Security Risk Assessment or mark the
     msg.attach(MIMEText(text, "plain"))
     msg.attach(MIMEText(html, "html"))
 
-    try:
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-            server.starttls(context=context)
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
-        logger.info(f"[sra-email] Sent overdue reminder to {to_email} ({count} items)")
-        return True
-    except Exception as e:
-        logger.error(f"[sra-email] Failed to send: {e}")
-        return False
+    return _send_smtp_with_retry(msg, [to_email], f"SRA overdue reminder to {to_email} ({count} items)")

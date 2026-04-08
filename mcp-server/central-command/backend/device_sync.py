@@ -872,6 +872,15 @@ async def receive_device_sync(report: DeviceSyncReport, auth_site_id: str = Depe
     Called by local-portal on appliances to push discovered devices
     to Central Command for fleet-wide visibility.
     """
+    # C2 fix: enforce Bearer site matches request body
+    if report.site_id and report.site_id != auth_site_id:
+        logger.warning(
+            "device_sync site_id mismatch",
+            auth_site_id=auth_site_id,
+            request_site_id=report.site_id,
+        )
+        raise HTTPException(status_code=403, detail="Site ID mismatch: token does not authorize this site")
+    report.site_id = auth_site_id
     try:
         return await sync_devices(report)
     except Exception as e:

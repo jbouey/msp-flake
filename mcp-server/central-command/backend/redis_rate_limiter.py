@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 class RedisRateLimiter:
     """Redis-backed rate limiter with sliding window counters."""
 
+    # Atomic INCR+EXPIRE Lua script — prevents orphaned keys on crash between the two ops
+    _INCR_WITH_TTL_SCRIPT = """
+    local count = redis.call('INCR', KEYS[1])
+    if count == 1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+    end
+    return count
+    """
+
     def __init__(
         self,
         requests_per_minute: int = 60,
@@ -25,6 +34,7 @@ class RedisRateLimiter:
         self.burst_limit = burst_limit
         self.auth_requests_per_minute = auth_requests_per_minute
         self._redis = None
+        self._incr_script = None
 
     async def _get_redis(self):
         """Lazy-load Redis client from shared module."""
@@ -35,6 +45,16 @@ class RedisRateLimiter:
                 from shared import get_redis_client  # type: ignore[no-redef]
             self._redis = get_redis_client()
         return self._redis
+
+    async def _atomic_incr(self, redis, key: str, ttl: int) -> int:
+        """Atomically INCR a key and set TTL on first creation via Lua script.
+
+        Prevents orphaned keys (no TTL) if the process crashes between
+        separate INCR and EXPIRE calls.
+        """
+        if self._incr_script is None:
+            self._incr_script = redis.register_script(self._INCR_WITH_TTL_SCRIPT)
+        return await self._incr_script(keys=[key], args=[ttl])
 
     async def check_rate_limit(
         self, client_key: str, is_auth: bool = False
@@ -61,9 +81,7 @@ class RedisRateLimiter:
     ) -> Tuple[bool, Optional[int], dict]:
         """Stricter limit for auth endpoints."""
         key = f"rl:auth:{client_key}"
-        count = await redis.incr(key)
-        if count == 1:
-            await redis.expire(key, 60)
+        count = await self._atomic_incr(redis, key, 60)
 
         if count > self.auth_requests_per_minute:
             ttl = await redis.ttl(key)
@@ -78,26 +96,20 @@ class RedisRateLimiter:
         """General rate limit: per-minute and per-hour windows."""
         # Burst check (per-second)
         burst_key = f"rl:burst:{client_key}"
-        burst_count = await redis.incr(burst_key)
-        if burst_count == 1:
-            await redis.expire(burst_key, 1)
+        burst_count = await self._atomic_incr(redis, burst_key, 1)
         if burst_count > self.burst_limit:
             return False, 1, {"backend": "redis", "window": "burst"}
 
         # Per-minute check
         min_key = f"rl:min:{client_key}"
-        min_count = await redis.incr(min_key)
-        if min_count == 1:
-            await redis.expire(min_key, 60)
+        min_count = await self._atomic_incr(redis, min_key, 60)
         if min_count > self.requests_per_minute:
             ttl = await redis.ttl(min_key)
             return False, max(1, ttl if ttl > 0 else 60), {"backend": "redis", "window": "minute"}
 
         # Per-hour check
         hr_key = f"rl:hr:{client_key}"
-        hr_count = await redis.incr(hr_key)
-        if hr_count == 1:
-            await redis.expire(hr_key, 3600)
+        hr_count = await self._atomic_incr(redis, hr_key, 3600)
         if hr_count > self.requests_per_hour:
             ttl = await redis.ttl(hr_key)
             return False, max(1, ttl if ttl > 0 else 3600), {"backend": "redis", "window": "hour"}

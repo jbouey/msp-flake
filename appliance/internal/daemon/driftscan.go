@@ -538,6 +538,36 @@ type driftFinding struct {
 	Details      map[string]string
 }
 
+// reportDriftGeneric is the shared core for all platform-specific drift reporters.
+// Platform-specific wrappers add DC credentials (Windows) or PHI scrubbing (network).
+func reportDriftGeneric(d *Daemon, f *driftFinding, platform, source string, extraMeta map[string]string) {
+	metadata := map[string]string{
+		"platform": platform,
+		"source":   source,
+	}
+	for k, v := range f.Details {
+		metadata[k] = v
+	}
+	for k, v := range extraMeta {
+		metadata[k] = v
+	}
+
+	req := grpcserver.HealRequest{
+		Hostname:     f.Hostname,
+		CheckType:    f.CheckType,
+		Expected:     f.Expected,
+		Actual:       f.Actual,
+		HIPAAControl: f.HIPAAControl,
+		AgentID:      source,
+		Metadata:     metadata,
+	}
+
+	log.Printf("[%s] DRIFT: %s/%s expected=%s actual=%s hipaa=%s",
+		source, f.Hostname, f.CheckType, f.Expected, f.Actual, f.HIPAAControl)
+
+	d.healIncident(context.Background(), &req)
+}
+
 // checkTarget runs all drift checks against a single Windows target.
 func (ds *driftScanner) checkTarget(ctx context.Context, t scanTarget) []driftFinding {
 	// Single comprehensive PowerShell script that checks everything in one WinRM call.
@@ -1679,37 +1709,15 @@ func (ds *driftScanner) checkStaleCredentials(targets []scanTarget) {
 
 // reportDrift sends a drift finding through the L1→L2→L3 healing pipeline.
 func (ds *driftScanner) reportDrift(f *driftFinding) {
-	metadata := map[string]string{
-		"platform": "windows",
-		"source":   "driftscan",
-	}
-	for k, v := range f.Details {
-		metadata[k] = v
-	}
-
-	// If the daemon has DC credentials, include them for healing
+	extra := map[string]string{}
+	// Include DC credentials for Windows healing
 	if ds.svc.Config.DCUsername != nil {
-		metadata["winrm_username"] = *ds.svc.Config.DCUsername
+		extra["winrm_username"] = *ds.svc.Config.DCUsername
 	}
 	if ds.svc.Config.DCPassword != nil {
-		metadata["winrm_password"] = *ds.svc.Config.DCPassword
+		extra["winrm_password"] = *ds.svc.Config.DCPassword
 	}
-
-	req := grpcserver.HealRequest{
-		Hostname:     f.Hostname,
-		CheckType:    f.CheckType,
-		Expected:     f.Expected,
-		Actual:       f.Actual,
-		HIPAAControl: f.HIPAAControl,
-		AgentID:      "driftscan",
-		Metadata:     metadata,
-	}
-
-	log.Printf("[driftscan] DRIFT: %s/%s expected=%s actual=%s hipaa=%s",
-		f.Hostname, f.CheckType, f.Expected, f.Actual, f.HIPAAControl)
-
-	// Route through the healing pipeline
-	ds.daemon.healIncident(context.Background(), &req)
+	reportDriftGeneric(ds.daemon, f, "windows", "driftscan", extra)
 }
 
 // unreachableFinding creates a device_unreachable drift finding for a target

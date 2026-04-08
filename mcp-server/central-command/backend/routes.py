@@ -81,6 +81,7 @@ from .db_queries import (
 from .email_alerts import send_critical_alert
 from . import auth as auth_module
 from .auth import check_site_access_sa, check_site_access_pool
+from .shared import execute_with_retry
 
 
 # ---- Safe enum converters (prevent crashes on unknown DB values) ----
@@ -170,7 +171,7 @@ async def get_fleet_overview(
     if org_scope:
         params["org_scope_ids"] = org_scope
 
-    result = await db.execute(text(query_str), params)
+    result = await execute_with_retry(db,text(query_str), params)
     rows = result.fetchall()
 
     # Get compliance scores for all sites
@@ -268,7 +269,7 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), us
     """Get detailed view of a single client."""
     await check_site_access_sa(db, user, site_id)
     # Get site info
-    site_result = await db.execute(
+    site_result = await execute_with_retry(db,
         text("SELECT site_id, clinic_name, tier FROM sites WHERE site_id = :site_id"),
         {"site_id": site_id}
     )
@@ -299,7 +300,7 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), us
         compliance_score = 0.0
 
     # Get appliances
-    appliances_result = await db.execute(
+    appliances_result = await execute_with_retry(db,
         text("""
             SELECT id, appliance_id, hostname, ip_addresses, agent_version,
                    status, last_checkin, first_checkin, display_name,
@@ -430,7 +431,7 @@ async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)
         encryption = 0
         compliance_score = 0.0
 
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT id, appliance_id, hostname, ip_addresses, agent_version,
                    status, last_checkin, first_checkin
@@ -497,6 +498,7 @@ async def get_incidents(
     level: Optional[str] = None,
     resolved: Optional[bool] = None,
     db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
 ):
     """Get recent incidents, optionally filtered.
 
@@ -509,7 +511,10 @@ async def get_incidents(
     Returns:
         List of incidents with resolution details.
     """
-    incidents = await get_incidents_from_db(db, site_id=site_id, limit=limit, offset=offset, resolved=resolved, level=level)
+    incidents = await get_incidents_from_db(
+        db, site_id=site_id, limit=limit, offset=offset,
+        resolved=resolved, level=level, org_scope=user.get("org_scope"),
+    )
 
     return [
         Incident(
@@ -531,9 +536,9 @@ async def get_incidents(
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentDetail)
-async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_db)):
+async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get full incident detail including evidence bundle."""
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT i.*, a.site_id, a.host_id as hostname
             FROM incidents i
@@ -547,10 +552,13 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
     if not row:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
+    # Org-scope IDOR prevention: verify this incident's site is accessible
+    await check_site_access_sa(db, user, row.site_id)
+
     # Fetch remediation steps from relational table (migration 137)
     remediation_history = []
     try:
-        steps_result = await db.execute(
+        steps_result = await execute_with_retry(db,
             text("""
                 SELECT tier, runbook_id, result, confidence, created_at
                 FROM incident_remediation_steps
@@ -943,7 +951,7 @@ async def get_coverage_gaps(db: AsyncSession = Depends(get_db)):
 @router.get("/learning/history", response_model=List[PromotionHistory])
 async def get_promotion_history(limit: int = Query(default=20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
     """Get recently promoted L2->L1 patterns from learning_promotion_candidates."""
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT
             lpc.id,
             lpc.pattern_signature,
@@ -997,7 +1005,7 @@ async def promote_pattern(
         return {"status": "promoted", "pattern_id": pattern_id, "new_rule_id": rule_id}
 
     # Try aggregated_pattern_stats (new path)
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT id, pattern_signature, site_id, recommended_action
         FROM aggregated_pattern_stats
         WHERE id::text = :pid AND promotion_eligible = true
@@ -1019,7 +1027,7 @@ async def promote_pattern(
 
     try:
         # Create L1 rule
-        await db.execute(text("""
+        await execute_with_retry(db,text("""
             INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled)
             VALUES (:rule_id, :pattern, :runbook_id, 0.95, true, true)
             ON CONFLICT (rule_id) DO NOTHING
@@ -1031,7 +1039,7 @@ async def promote_pattern(
 
         # Cross-site learning: create a synced version available to all appliances
         synced_rule_id = f"SYNC-{rule_id}"
-        await db.execute(text("""
+        await execute_with_retry(db,text("""
             INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled, source)
             VALUES (:rule_id, :pattern, :runbook_id, 0.95, true, true, 'synced')
             ON CONFLICT (rule_id) DO NOTHING
@@ -1042,12 +1050,12 @@ async def promote_pattern(
         })
 
         # Mark as no longer eligible
-        await db.execute(text("""
+        await execute_with_retry(db,text("""
             UPDATE aggregated_pattern_stats SET promotion_eligible = false WHERE id = :pid
         """), {"pid": int(pattern_id)})
 
         # Record in learning_promotion_candidates
-        await db.execute(text("""
+        await execute_with_retry(db,text("""
             INSERT INTO learning_promotion_candidates (
                 site_id, pattern_signature, approval_status,
                 approved_at, custom_rule_name
@@ -1077,20 +1085,20 @@ async def reject_pattern(
 ):
     """Reject a promotion candidate, marking it as dismissed."""
     # Try legacy patterns table first
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT pattern_id, status FROM patterns WHERE pattern_id = :pid"),
         {"pid": pattern_id}
     )
     pattern = result.fetchone()
     if pattern:
-        await db.execute(text("""
+        await execute_with_retry(db,text("""
             UPDATE patterns SET status = 'rejected' WHERE pattern_id = :pid
         """), {"pid": pattern_id})
         await db.commit()
         return {"status": "rejected", "pattern_id": pattern_id}
 
     # Try aggregated_pattern_stats
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT id, pattern_signature, site_id
         FROM aggregated_pattern_stats
         WHERE id::text = :pid AND promotion_eligible = true
@@ -1104,12 +1112,12 @@ async def reject_pattern(
     await check_site_access_sa(db, user, aps_row.site_id)
 
     # Mark as no longer eligible
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE aggregated_pattern_stats SET promotion_eligible = false WHERE id = :pid
     """), {"pid": int(pattern_id)})
 
     # Record rejection
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         INSERT INTO learning_promotion_candidates (
             site_id, pattern_signature, approval_status, rejection_reason
         ) VALUES (:site_id, :sig, 'rejected', 'Manually rejected by admin')
@@ -1142,7 +1150,7 @@ async def report_pattern(report: PatternReport, db: AsyncSession = Depends(get_d
     pattern_id = hashlib.sha256(pattern_signature.encode()).hexdigest()[:16]
 
     # Check if pattern exists
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT pattern_id, occurrences, success_count, failure_count FROM patterns WHERE pattern_id = :pid"),
         {"pid": pattern_id}
     )
@@ -1155,7 +1163,7 @@ async def report_pattern(report: PatternReport, db: AsyncSession = Depends(get_d
         failure_count = existing.failure_count + (0 if report.success else 1)
         success_rate = (success_count / occurrences) * 100 if occurrences > 0 else 0.0
 
-        await db.execute(text("""
+        await execute_with_retry(db,text("""
             UPDATE patterns
             SET occurrences = :occ,
                 success_count = :sc,
@@ -1185,7 +1193,7 @@ async def report_pattern(report: PatternReport, db: AsyncSession = Depends(get_d
         failure_count = 0 if report.success else 1
         success_rate = 100.0 if report.success else 0.0
 
-        await db.execute(text("""
+        await execute_with_retry(db,text("""
             INSERT INTO patterns (
                 pattern_id, pattern_signature, description, incident_type, runbook_id,
                 occurrences, success_count, failure_count, success_rate,
@@ -1361,7 +1369,7 @@ async def get_onboarding_pipeline(db: AsyncSession = Depends(get_db)):
         ORDER BY created_at DESC
     """)
 
-    result = await db.execute(query)
+    result = await execute_with_retry(db,query)
     rows = result.fetchall()
 
     
@@ -1437,7 +1445,7 @@ async def get_onboarding_metrics(db: AsyncSession = Depends(get_db)):
         Counts by stage, avg time to deploy, at-risk clients.
     """
     # Count sites by onboarding stage
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT onboarding_stage, COUNT(*) as count FROM sites GROUP BY onboarding_stage
     """))
     stage_counts = {row.onboarding_stage: row.count for row in result.fetchall()}
@@ -1464,26 +1472,26 @@ async def get_onboarding_metrics(db: AsyncSession = Depends(get_db)):
     total = sum(stage_counts.values())
 
     # Calculate real metrics from sites table
-    ship_result = await db.execute(text("""
+    ship_result = await execute_with_retry(db,text("""
         SELECT AVG(EXTRACT(EPOCH FROM (shipped_at - lead_at)) / 86400.0)
         FROM sites WHERE shipped_at IS NOT NULL AND lead_at IS NOT NULL
     """))
     avg_ship = round(ship_result.scalar() or 0.0, 1)
 
-    active_result = await db.execute(text("""
+    active_result = await execute_with_retry(db,text("""
         SELECT AVG(EXTRACT(EPOCH FROM (active_at - lead_at)) / 86400.0)
         FROM sites WHERE active_at IS NOT NULL AND lead_at IS NOT NULL
     """))
     avg_active = round(active_result.scalar() or 0.0, 1)
 
-    stalled_result = await db.execute(text("""
+    stalled_result = await execute_with_retry(db,text("""
         SELECT COUNT(*) FROM sites
         WHERE onboarding_stage NOT IN ('active', 'compliant')
         AND created_at < NOW() - INTERVAL '14 days'
     """))
     stalled = stalled_result.scalar() or 0
 
-    conn_result = await db.execute(text("""
+    conn_result = await execute_with_retry(db,text("""
         SELECT COUNT(*) FROM sites
         WHERE onboarding_stage = 'connectivity'
         AND connectivity_at IS NOT NULL
@@ -1533,7 +1541,7 @@ async def create_site(
     now = datetime.now(timezone.utc)
 
     try:
-        await db.execute(text("""
+        await execute_with_retry(db,text("""
             INSERT INTO sites (site_id, clinic_name, contact_name, contact_email,
                                tier, status, onboarding_stage, lead_at, created_at)
             VALUES (:site_id, :clinic_name, :contact_name, :contact_email,
@@ -1562,7 +1570,7 @@ async def list_unclaimed_appliances(
     user: dict = Depends(auth_module.require_auth),
 ):
     """List appliances that have called home but aren't assigned to a site."""
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT id, mac_address, notes, registered_at, provisioned_at
         FROM appliance_provisioning
         WHERE site_id IS NULL
@@ -1597,7 +1605,7 @@ async def claim_appliance_to_site(
         raise HTTPException(status_code=400, detail="mac_address and site_id are required")
 
     # Verify site exists
-    site = await db.execute(text("SELECT site_id FROM sites WHERE site_id = :s"), {"s": site_id})
+    site = await execute_with_retry(db,text("SELECT site_id FROM sites WHERE site_id = :s"), {"s": site_id})
     if not site.fetchone():
         raise HTTPException(status_code=404, detail="Site not found")
 
@@ -1606,7 +1614,7 @@ async def claim_appliance_to_site(
     import hashlib
     api_key = secrets.token_urlsafe(32)
 
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         UPDATE appliance_provisioning
         SET site_id = :site_id, api_key = :api_key, provisioned_at = NOW(),
             notes = COALESCE(notes, '') || ' | Claimed via dashboard'
@@ -1620,7 +1628,7 @@ async def claim_appliance_to_site(
     # Register the API key in api_keys table so checkin auth (require_appliance_bearer) works.
     # Without this, the appliance gets a 401 on every checkin because the key_hash doesn't exist.
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         INSERT INTO api_keys (site_id, key_hash, key_prefix, description, active, created_at)
         VALUES (:site_id, :key_hash, :key_prefix, 'Auto-generated during drop-ship claim', true, NOW())
         ON CONFLICT DO NOTHING
@@ -1663,14 +1671,14 @@ async def transfer_appliance(
         raise HTTPException(status_code=400, detail="Source and destination sites must be different")
 
     # Verify both sites exist
-    from_site = await db.execute(
+    from_site = await execute_with_retry(db,
         text("SELECT site_id, clinic_name FROM sites WHERE site_id = :s"), {"s": from_site_id}
     )
     from_row = from_site.fetchone()
     if not from_row:
         raise HTTPException(status_code=404, detail=f"Source site '{from_site_id}' not found")
 
-    to_site = await db.execute(
+    to_site = await execute_with_retry(db,
         text("SELECT site_id, clinic_name FROM sites WHERE site_id = :s"), {"s": to_site_id}
     )
     to_row = to_site.fetchone()
@@ -1678,7 +1686,7 @@ async def transfer_appliance(
         raise HTTPException(status_code=404, detail=f"Destination site '{to_site_id}' not found")
 
     # 1. Update appliance_provisioning
-    prov_result = await db.execute(text("""
+    prov_result = await execute_with_retry(db,text("""
         UPDATE appliance_provisioning
         SET site_id = :to_site_id,
             notes = COALESCE(notes, '') || :transfer_note
@@ -1693,14 +1701,14 @@ async def transfer_appliance(
     prov_row = prov_result.fetchone()
 
     # 2. Update appliances table (match by mac_address and from_site_id)
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE appliances
         SET site_id = :to_site_id
         WHERE UPPER(mac_address) = :mac AND site_id = :from_site_id
     """), {"to_site_id": to_site_id, "mac": mac_address, "from_site_id": from_site_id})
 
     # 3. Update site_appliances (match by mac in appliance_id or by site)
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE site_appliances
         SET site_id = :to_site_id
         WHERE site_id = :from_site_id
@@ -1733,7 +1741,7 @@ async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(g
     now = datetime.now(timezone.utc)
 
     # Insert into DB
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         INSERT INTO sites (site_id, clinic_name, contact_name, contact_email, contact_phone,
                            onboarding_stage, notes, lead_at, created_at)
         VALUES (:site_id, :name, :contact_name, :contact_email, :contact_phone,
@@ -1787,7 +1795,7 @@ async def advance_stage(
     ]
 
     # Get current stage
-    current = await db.execute(
+    current = await execute_with_retry(db,
         text("SELECT onboarding_stage FROM sites WHERE site_id = :client_id"),
         {"client_id": client_id}
     )
@@ -1812,7 +1820,7 @@ async def advance_stage(
                 detail=f"Cannot go back from '{current_stage}' to '{stage_val}'. Max 1 stage backward."
             )
 
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE sites
         SET onboarding_stage = :new_stage
         WHERE site_id = :client_id
@@ -1828,7 +1836,7 @@ async def advance_stage(
     ts_col = stage_col_map.get(stage_val)
     if ts_col:
         try:
-            await db.execute(
+            await execute_with_retry(db,
                 text(f"UPDATE sites SET {ts_col} = :now WHERE site_id = :client_id"),
                 {"now": now, "client_id": client_id},
             )
@@ -1836,7 +1844,7 @@ async def advance_stage(
             pass  # Column may not exist
 
     if request.notes:
-        await db.execute(text("""
+        await execute_with_retry(db,text("""
             UPDATE sites SET notes = COALESCE(notes || E'\\n', '') || :note
             WHERE site_id = :client_id
         """), {"note": request.notes, "client_id": client_id})
@@ -1854,7 +1862,7 @@ async def update_blockers(
 ):
     """Update blockers for a client."""
     await check_site_access_sa(db, user, client_id)
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE sites SET blockers = :blockers WHERE site_id = :client_id
     """), {"blockers": json.dumps(request.blockers), "client_id": client_id})
     await db.commit()
@@ -1870,7 +1878,7 @@ async def add_note(
 ):
     """Add a note to client's onboarding record."""
     await check_site_access_sa(db, user, client_id)
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE sites SET notes = COALESCE(notes || E'\\n', '') || :note
         WHERE site_id = :client_id
     """), {"note": request.note, "client_id": client_id})
@@ -1951,7 +1959,7 @@ async def get_stats_deltas(db: AsyncSession = Depends(get_db)):
     """
     try:
         # --- Current compliance score (same logic as get_global_stats) ---
-        comp_now = await db.execute(text("""
+        comp_now = await execute_with_retry(db,text("""
             SELECT
                 COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant')) as passed,
                 COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total
@@ -1964,7 +1972,7 @@ async def get_stats_deltas(db: AsyncSession = Depends(get_db)):
         compliance_now = round((cn.passed or 0) / max(cn.total or 1, 1) * 100, 1)
 
         # --- 7-day-ago compliance score (24h window starting 7 days ago) ---
-        comp_prev = await db.execute(text("""
+        comp_prev = await execute_with_retry(db,text("""
             SELECT
                 COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant')) as passed,
                 COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total
@@ -1979,7 +1987,7 @@ async def get_stats_deltas(db: AsyncSession = Depends(get_db)):
         compliance_delta = round(compliance_now - compliance_prev, 1)
 
         # --- Incident counts: 24h now vs 24h window 7 days ago ---
-        inc_row = await db.execute(text("""
+        inc_row = await execute_with_retry(db,text("""
             SELECT
                 COUNT(*) FILTER (
                     WHERE reported_at > NOW() - INTERVAL '24 hours'
@@ -2003,7 +2011,7 @@ async def get_stats_deltas(db: AsyncSession = Depends(get_db)):
         # --- L1 resolution rate: current vs 7d-ago window ---
         l1_rate_now = round((ir.l1_now or 0) / max(ir.resolved_now or 1, 1) * 100, 1)
 
-        l1_prev_row = await db.execute(text("""
+        l1_prev_row = await execute_with_retry(db,text("""
             SELECT
                 COUNT(*) FILTER (
                     WHERE resolution_tier = 'L1' AND status = 'resolved'
@@ -2019,11 +2027,11 @@ async def get_stats_deltas(db: AsyncSession = Depends(get_db)):
         l1_rate_delta = round(l1_rate_now - l1_rate_prev, 1)
 
         # --- Client count delta ---
-        sites_now = await db.execute(text("SELECT COUNT(*) as cnt FROM sites"))
+        sites_now = await execute_with_retry(db,text("SELECT COUNT(*) as cnt FROM sites"))
         sn = sites_now.fetchone()
 
         # Sites that existed 7 days ago (created_at <= 7 days ago)
-        sites_prev = await db.execute(text("""
+        sites_prev = await execute_with_retry(db,text("""
             SELECT COUNT(*) as cnt FROM sites
             WHERE created_at <= NOW() - INTERVAL '7 days'
         """))
@@ -2049,7 +2057,7 @@ async def get_stats_deltas(db: AsyncSession = Depends(get_db)):
 async def get_fleet_posture(db: AsyncSession = Depends(get_db)):
     """Fleet-wide health matrix: per-site health, incidents, trend, sorted by needs-attention."""
     try:
-        result = await db.execute(text("""
+        result = await execute_with_retry(db,text("""
             WITH site_health AS (
                 SELECT
                     s.site_id,
@@ -2191,7 +2199,7 @@ async def get_incident_trends(
         if site_id:
             params["site_id"] = site_id
 
-        result = await db.execute(text(f"""
+        result = await execute_with_retry(db,text(f"""
             SELECT
                 {trunc} as bucket,
                 COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') as l1,
@@ -2247,7 +2255,7 @@ async def get_incident_breakdown(
             params["site_id"] = site_id
 
         # Tier counts
-        tier_result = await db.execute(text(f"""
+        tier_result = await execute_with_retry(db,text(f"""
             SELECT
                 COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') as l1,
                 COUNT(*) FILTER (WHERE i.resolution_tier = 'L2') as l2,
@@ -2263,7 +2271,7 @@ async def get_incident_breakdown(
         tier = tier_result.fetchone()
 
         # Top incident types with tier breakdown
-        types_result = await db.execute(text(f"""
+        types_result = await execute_with_retry(db,text(f"""
             SELECT
                 COALESCE(i.incident_type, i.check_type, 'unknown') as incident_type,
                 COUNT(*) as count,
@@ -2281,7 +2289,7 @@ async def get_incident_breakdown(
         types_rows = types_result.fetchall()
 
         # MTTR by tier (average minutes from reported to resolved)
-        mttr_result = await db.execute(text(f"""
+        mttr_result = await execute_with_retry(db,text(f"""
             SELECT
                 i.resolution_tier,
                 ROUND(AVG(EXTRACT(EPOCH FROM (i.resolved_at - i.reported_at)) / 60)::numeric, 1) as avg_minutes,
@@ -2326,11 +2334,14 @@ async def get_incident_breakdown(
 
 
 @router.get("/attention-required")
-async def get_attention_required(db: AsyncSession = Depends(get_db)):
+async def get_attention_required(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Items that need human attention: L3 escalations, failed healings, offline appliances."""
+    org_scope = user.get("org_scope")
+    org_filter = "AND s.client_org_id = ANY(:org_ids)" if org_scope else ""
+    org_params = {"org_ids": org_scope} if org_scope else {}
     try:
         # L3 escalations (unresolved)
-        l3_result = await db.execute(text("""
+        l3_result = await execute_with_retry(db,text(f"""
             SELECT
                 i.id, a.site_id, i.incident_type, i.check_type, i.severity,
                 i.reported_at, s.clinic_name
@@ -2339,13 +2350,14 @@ async def get_attention_required(db: AsyncSession = Depends(get_db)):
             LEFT JOIN sites s ON s.site_id = a.site_id
             WHERE i.resolution_tier = 'L3'
             AND i.status != 'resolved'
+            {org_filter}
             ORDER BY i.reported_at DESC
             LIMIT 20
-        """))
+        """), org_params)
         l3_rows = l3_result.fetchall()
 
         # Repeat offenders: same check_type, same site, 3+ incidents in 24h (healing not sticking)
-        repeat_result = await db.execute(text("""
+        repeat_result = await execute_with_retry(db,text(f"""
             SELECT
                 a.site_id, i.check_type, COUNT(*) as occurrences,
                 MAX(i.reported_at) as latest,
@@ -2355,25 +2367,27 @@ async def get_attention_required(db: AsyncSession = Depends(get_db)):
             LEFT JOIN sites s ON s.site_id = a.site_id
             WHERE i.reported_at > NOW() - INTERVAL '24 hours'
             AND i.resolution_tier = 'L1'
+            {org_filter}
             GROUP BY a.site_id, i.check_type, s.clinic_name
             HAVING COUNT(*) >= 3
             ORDER BY COUNT(*) DESC
             LIMIT 20
-        """))
+        """), org_params)
         repeat_rows = repeat_result.fetchall()
 
         # Offline appliances (no checkin > 30 min)
-        offline_result = await db.execute(text("""
+        offline_result = await execute_with_retry(db,text(f"""
             SELECT
                 sa.site_id, sa.hostname, sa.last_checkin, sa.agent_version,
                 s.clinic_name
             FROM site_appliances sa
             LEFT JOIN sites s ON s.site_id = sa.site_id
-            WHERE sa.last_checkin < NOW() - INTERVAL '30 minutes'
-            OR sa.last_checkin IS NULL
+            WHERE (sa.last_checkin < NOW() - INTERVAL '30 minutes'
+            OR sa.last_checkin IS NULL)
+            {"AND s.client_org_id = ANY(:org_ids)" if org_scope else ""}
             ORDER BY sa.last_checkin ASC NULLS FIRST
             LIMIT 20
-        """))
+        """), org_params)
         offline_rows = offline_result.fetchall()
 
         items = []
@@ -2435,7 +2449,7 @@ async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db), use
     """Get statistics for a specific client."""
     await check_site_access_sa(db, user, site_id)
     # Check site exists
-    site_result = await db.execute(
+    site_result = await execute_with_retry(db,
         text("SELECT site_id FROM sites WHERE site_id = :site_id"),
         {"site_id": site_id}
     )
@@ -2443,7 +2457,7 @@ async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db), use
         raise HTTPException(status_code=404, detail=f"Client {site_id} not found")
 
     # Get appliance counts
-    appliance_result = await db.execute(text("""
+    appliance_result = await execute_with_retry(db,text("""
         SELECT COUNT(*) as total,
                COUNT(*) FILTER (WHERE status = 'online') as online
         FROM site_appliances WHERE site_id = :site_id
@@ -2451,7 +2465,7 @@ async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db), use
     app_row = appliance_result.fetchone()
 
     # Get incident stats
-    incident_result = await db.execute(text("""
+    incident_result = await execute_with_retry(db,text("""
         SELECT
             COUNT(*) FILTER (WHERE i.reported_at > NOW() - INTERVAL '24 hours') as day,
             COUNT(*) FILTER (WHERE i.reported_at > NOW() - INTERVAL '7 days') as week,
@@ -2466,7 +2480,7 @@ async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db), use
     inc_row = incident_result.fetchone()
 
     # Calculate compliance score from individual checks within bundles
-    compliance_result = await db.execute(text("""
+    compliance_result = await execute_with_retry(db,text("""
         WITH expanded AS (
             SELECT c->>'status' as check_status
             FROM compliance_bundles cb,
@@ -2672,7 +2686,7 @@ async def get_notifications(
         query += " ORDER BY created_at DESC LIMIT :limit"
         params["limit"] = limit
 
-        result = await db.execute(text(query), params)
+        result = await execute_with_retry(db,text(query), params)
         rows = result.fetchall()
 
         return [Notification(
@@ -2698,7 +2712,7 @@ async def get_notifications(
 async def get_notification_summary(db: AsyncSession = Depends(get_db)):
     """Get notification counts by severity."""
     try:
-        result = await db.execute(text("""
+        result = await execute_with_retry(db,text("""
             SELECT
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE is_read = FALSE) as unread,
@@ -2726,7 +2740,7 @@ async def get_notification_summary(db: AsyncSession = Depends(get_db)):
 @router.post("/notifications/{notification_id}/read")
 async def mark_notification_read(notification_id: str, db: AsyncSession = Depends(get_db)):
     """Mark a notification as read."""
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE notifications
         SET is_read = TRUE, read_at = NOW()
         WHERE id = :id
@@ -2738,7 +2752,7 @@ async def mark_notification_read(notification_id: str, db: AsyncSession = Depend
 @router.post("/notifications/read-all")
 async def mark_all_notifications_read(db: AsyncSession = Depends(get_db)):
     """Mark all notifications as read."""
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         UPDATE notifications
         SET is_read = TRUE, read_at = NOW()
         WHERE is_read = FALSE
@@ -2750,7 +2764,7 @@ async def mark_all_notifications_read(db: AsyncSession = Depends(get_db)):
 @router.post("/notifications/{notification_id}/dismiss")
 async def dismiss_notification(notification_id: str, db: AsyncSession = Depends(get_db)):
     """Dismiss a notification (hide it)."""
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE notifications
         SET is_dismissed = TRUE
         WHERE id = :id
@@ -2768,7 +2782,7 @@ async def create_notification(
     import json
 
     # Insert notification
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         INSERT INTO notifications (site_id, appliance_id, severity, category, title, message, metadata)
         VALUES (:site_id, :appliance_id, :severity, :category, :title, :message, :metadata)
         RETURNING id, site_id, appliance_id, severity, category, title, message, metadata, is_read, is_dismissed, created_at, read_at
@@ -3048,7 +3062,7 @@ class SystemSettingsModel(BaseModel):
 
 async def ensure_settings_table(db: AsyncSession):
     """Ensure the system_settings table exists."""
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         CREATE TABLE IF NOT EXISTS system_settings (
             id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
             settings JSONB NOT NULL DEFAULT '{}',
@@ -3056,7 +3070,7 @@ async def ensure_settings_table(db: AsyncSession):
             updated_by VARCHAR(255)
         )
     """))
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         INSERT INTO system_settings (id, settings)
         VALUES (1, '{}')
         ON CONFLICT (id) DO NOTHING
@@ -3069,7 +3083,7 @@ async def get_system_settings(db: AsyncSession = Depends(get_db)):
     """Get current system settings."""
     await ensure_settings_table(db)
 
-    result = await db.execute(text(
+    result = await execute_with_retry(db,text(
         "SELECT settings FROM system_settings WHERE id = 1"
     ))
     row = result.fetchone()
@@ -3091,7 +3105,7 @@ async def update_system_settings(
     await ensure_settings_table(db)
 
     import json
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             UPDATE system_settings
             SET settings = :settings::jsonb,
@@ -3112,7 +3126,7 @@ async def purge_old_telemetry(db: AsyncSession = Depends(get_db)):
     retention_days = settings.telemetry_retention_days
 
     # SECURITY: Use parameterized query to prevent SQL injection
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("DELETE FROM execution_telemetry WHERE created_at < NOW() - INTERVAL '1 day' * :days"),
         {"days": retention_days}
     )
@@ -3124,8 +3138,8 @@ async def purge_old_telemetry(db: AsyncSession = Depends(get_db)):
 @router.post("/admin/settings/reset-learning")
 async def reset_learning_data(db: AsyncSession = Depends(get_db)):
     """Reset all learning data (patterns and L1 rules)."""
-    patterns_result = await db.execute(text("DELETE FROM patterns"))
-    rules_result = await db.execute(text(
+    patterns_result = await execute_with_retry(db,text("DELETE FROM patterns"))
+    rules_result = await execute_with_retry(db,text(
         "DELETE FROM l1_rules WHERE promoted_from_l2 = true"
     ))
     await db.commit()
@@ -3139,7 +3153,7 @@ async def reset_learning_data(db: AsyncSession = Depends(get_db)):
 @router.post("/admin/rules/{rule_id}/disable")
 async def disable_promoted_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
     """Disable a promoted L1 rule (rollback). Logs to audit trail."""
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT rule_id, runbook_id, source, enabled FROM l1_rules WHERE rule_id = :rid"),
         {"rid": rule_id}
     )
@@ -3150,12 +3164,12 @@ async def disable_promoted_rule(rule_id: str, db: AsyncSession = Depends(get_db)
     if not rule.enabled:
         return {"status": "already_disabled", "rule_id": rule_id}
 
-    await db.execute(
+    await execute_with_retry(db,
         text("UPDATE l1_rules SET enabled = false WHERE rule_id = :rid"),
         {"rid": rule_id}
     )
     # Audit log
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         INSERT INTO audit_log (event_type, actor, resource_type, resource_id, details)
         VALUES ('rule.disabled', 'admin', 'l1_rule', :rid,
                 :details::jsonb)
@@ -3175,7 +3189,7 @@ async def disable_promoted_rule(rule_id: str, db: AsyncSession = Depends(get_db)
 @router.post("/admin/rules/{rule_id}/enable")
 async def enable_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
     """Re-enable a disabled L1 rule."""
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("UPDATE l1_rules SET enabled = true WHERE rule_id = :rid RETURNING rule_id"),
         {"rid": rule_id}
     )
@@ -3357,7 +3371,7 @@ async def list_organizations(
             where_clause = "WHERE co.status = :status_filter"
         params["status_filter"] = status_filter
 
-    count_result = await db.execute(text(f"""
+    count_result = await execute_with_retry(db,text(f"""
         SELECT COUNT(*) FROM client_orgs co {where_clause}
     """), params)
     total = count_result.scalar()
@@ -3365,7 +3379,7 @@ async def list_organizations(
     params["limit"] = limit
     params["offset"] = offset
 
-    result = await db.execute(text(f"""
+    result = await execute_with_retry(db,text(f"""
         SELECT
             co.id,
             co.name,
@@ -3389,7 +3403,7 @@ async def list_organizations(
     rows = result.fetchall()
 
     # Build site→org mapping from a single query (eliminates N+1)
-    site_org_result = await db.execute(text(
+    site_org_result = await execute_with_retry(db,text(
         "SELECT site_id, client_org_id FROM sites WHERE client_org_id IS NOT NULL"
     ))
     site_org_map = {}
@@ -3442,7 +3456,7 @@ async def create_organization(
     if not name or not email:
         raise HTTPException(status_code=400, detail="Name and primary_email are required")
 
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         INSERT INTO client_orgs (name, primary_email, primary_phone, practice_type, provider_count, status)
         VALUES (:name, :email, :phone, :practice_type, :provider_count, 'active')
         RETURNING id, name, primary_email, created_at
@@ -3482,7 +3496,7 @@ async def update_organization(
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
     sql = f"UPDATE client_orgs SET {', '.join(fields)}, updated_at = NOW() WHERE id = :org_id RETURNING id, name"
-    result = await db.execute(text(sql), params)
+    result = await execute_with_retry(db,text(sql), params)
     row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Organization not found")
@@ -3498,7 +3512,7 @@ async def delete_organization(
 ):
     """Delete an organization. Fails if it has sites assigned."""
     # Check for assigned sites
-    sites = await db.execute(text(
+    sites = await execute_with_retry(db,text(
         "SELECT COUNT(*) FROM sites WHERE client_org_id = :org_id"
     ), {"org_id": org_id})
     count = sites.scalar()
@@ -3507,7 +3521,7 @@ async def delete_organization(
             status_code=409,
             detail=f"Cannot delete organization with {count} assigned site(s). Unassign sites first."
         )
-    result = await db.execute(text(
+    result = await execute_with_retry(db,text(
         "DELETE FROM client_orgs WHERE id = :org_id RETURNING id, name"
     ), {"org_id": org_id})
     row = result.fetchone()
@@ -3526,7 +3540,7 @@ async def get_organization_detail(
     """Get organization detail with nested site list."""
     auth_module._check_org_access(user, org_id)
     # Get org info
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT id, name, primary_email, primary_phone, address_line1,
                city, state, postal_code, npi_number, practice_type,
                provider_count, status, created_at
@@ -3538,7 +3552,7 @@ async def get_organization_detail(
         raise HTTPException(status_code=404, detail="Organization not found")
 
     # Get org's sites with appliance data
-    sites_result = await db.execute(text("""
+    sites_result = await execute_with_retry(db,text("""
         SELECT
             s.site_id,
             s.clinic_name,
@@ -3614,7 +3628,7 @@ async def get_available_sites(
     user: dict = Depends(auth_module.require_auth),
 ):
     """Get sites not yet assigned to this org (or any org)."""
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT s.site_id, s.clinic_name, s.tier,
                sa.last_checkin, sa.status
         FROM sites s
@@ -3650,16 +3664,16 @@ async def assign_site_to_org(
     await check_site_access_sa(db, user, site_id)
 
     # Verify org exists
-    org = await db.execute(text("SELECT id FROM client_orgs WHERE id = :org_id"), {"org_id": org_id})
+    org = await execute_with_retry(db,text("SELECT id FROM client_orgs WHERE id = :org_id"), {"org_id": org_id})
     if not org.fetchone():
         raise HTTPException(status_code=404, detail="Organization not found")
 
     # Verify site exists
-    site = await db.execute(text("SELECT site_id FROM sites WHERE site_id = :site_id"), {"site_id": site_id})
+    site = await execute_with_retry(db,text("SELECT site_id FROM sites WHERE site_id = :site_id"), {"site_id": site_id})
     if not site.fetchone():
         raise HTTPException(status_code=404, detail="Site not found")
 
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE sites SET client_org_id = :org_id WHERE site_id = :site_id
     """), {"org_id": org_id, "site_id": site_id})
     await db.commit()
@@ -3675,7 +3689,7 @@ async def unassign_site_from_org(
 ):
     """Remove a site from an organization."""
     await check_site_access_sa(db, user, site_id)
-    await db.execute(text("""
+    await execute_with_retry(db,text("""
         UPDATE sites SET client_org_id = NULL
         WHERE site_id = :site_id AND client_org_id = :org_id
     """), {"org_id": org_id, "site_id": site_id})
@@ -3693,7 +3707,7 @@ async def get_organization_health(
     auth_module._check_org_access(user, org_id)
 
     # Verify org exists
-    org_check = await db.execute(
+    org_check = await execute_with_retry(db,
         text("SELECT id FROM client_orgs WHERE id = :org_id"),
         {"org_id": org_id}
     )
@@ -3701,7 +3715,7 @@ async def get_organization_health(
         raise HTTPException(status_code=404, detail="Organization not found")
 
     # Get org's site_ids
-    sites_result = await db.execute(
+    sites_result = await execute_with_retry(db,
         text("SELECT site_id FROM sites WHERE client_org_id = :org_id"),
         {"org_id": org_id}
     )
@@ -3730,7 +3744,7 @@ async def get_organization_health(
     avg_score = round(sum(scores_list) / len(scores_list), 1) if scores_list else 0
 
     # Incident counts (24h, 7d, 30d)
-    incident_result = await db.execute(text("""
+    incident_result = await execute_with_retry(db,text("""
         SELECT
             COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as total_24h,
             COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') as total_7d,
@@ -3745,7 +3759,7 @@ async def get_organization_health(
     inc = incident_result.fetchone()
 
     # Healing metrics (mirrors db_queries.py get_all_healing_metrics pattern)
-    healing_inc_result = await db.execute(text("""
+    healing_inc_result = await execute_with_retry(db,text("""
         SELECT
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE i.status = 'resolved') as resolved
@@ -3754,7 +3768,7 @@ async def get_organization_health(
     """), {"site_ids": site_ids})
     heal_inc = healing_inc_result.fetchone()
 
-    healing_ord_result = await db.execute(text("""
+    healing_ord_result = await execute_with_retry(db,text("""
         SELECT
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE status = 'completed') as completed
@@ -3771,7 +3785,7 @@ async def get_organization_health(
     )
 
     # Fleet status
-    fleet_result = await db.execute(text("""
+    fleet_result = await execute_with_retry(db,text("""
         SELECT
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '15 minutes') as online,
@@ -3790,7 +3804,7 @@ async def get_organization_health(
     # Per-category compliance breakdown — uses DISTINCT ON to get the latest
     # bundle per (site_id, check_type) instead of a correlated subquery that
     # times out on 200K+ rows.
-    cat_result = await db.execute(text("""
+    cat_result = await execute_with_retry(db,text("""
         SELECT check_type,
             COUNT(*) FILTER (WHERE check_result = 'pass') as passes,
             COUNT(*) FILTER (WHERE check_result = 'fail') as fails,
@@ -3815,7 +3829,7 @@ async def get_organization_health(
         }
 
     # Go agent compliance data across org sites
-    go_agent_result = await db.execute(text("""
+    go_agent_result = await execute_with_retry(db,text("""
         SELECT sg.site_id,
                COALESCE(sg.total_agents, 0) as total_agents,
                COALESCE(sg.active_agents, 0) as active_agents,
@@ -3896,7 +3910,7 @@ async def get_organization_health(
 async def _get_org_witness_stats(db, site_ids: list) -> dict:
     """Witness attestation stats for an org's sites."""
     try:
-        result = await db.execute(text("""
+        result = await execute_with_retry(db,text("""
             SELECT
                 count(DISTINCT wa.bundle_id) as witnessed_bundles,
                 count(*) as total_attestations,
@@ -3907,7 +3921,7 @@ async def _get_org_witness_stats(db, site_ids: list) -> dict:
             )
         """), {"site_ids": site_ids})
         row = result.fetchone()
-        total_bundles_result = await db.execute(text("""
+        total_bundles_result = await execute_with_retry(db,text("""
             SELECT count(DISTINCT bundle_id) FROM compliance_bundles
             WHERE site_id = ANY(:site_ids) AND checked_at > NOW() - interval '24h'
         """), {"site_ids": site_ids})
@@ -3953,7 +3967,7 @@ async def get_organization_incidents(
 
     where = " AND ".join(conditions)
 
-    result = await db.execute(text(f"""
+    result = await execute_with_retry(db,text(f"""
         SELECT i.id, i.site_id, s.clinic_name, i.incident_type, i.severity,
                i.status, i.created_at, i.resolved_at
         FROM incidents i
@@ -3964,7 +3978,7 @@ async def get_organization_incidents(
     """), {**params, "limit": limit, "offset": offset})
     rows = result.fetchall()
 
-    count_result = await db.execute(text(f"""
+    count_result = await execute_with_retry(db,text(f"""
         SELECT COUNT(*) FROM incidents i
         JOIN sites s ON s.site_id = i.site_id
         WHERE {where}

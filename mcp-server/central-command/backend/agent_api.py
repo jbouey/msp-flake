@@ -52,6 +52,25 @@ logger = structlog.get_logger()
 
 router = APIRouter(tags=["agent"])
 
+
+def _enforce_site_id(auth_site_id: str, request_site_id: str, endpoint: str = "") -> None:
+    """Enforce that the request site_id matches the Bearer-authenticated site_id.
+
+    Prevents appliance spoofing — an appliance authenticated for site-A
+    must not be able to act on behalf of site-B.
+    """
+    if request_site_id and request_site_id != auth_site_id:
+        logger.warning(
+            "site_id mismatch: appliance attempted cross-site action",
+            auth_site_id=auth_site_id,
+            request_site_id=request_site_id,
+            endpoint=endpoint,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Site ID mismatch: token does not authorize this site",
+        )
+
 # Check types that are monitoring-only — detect drift but don't attempt auto-remediation.
 # Only checks that genuinely cannot be auto-fixed belong here.
 # NOTE: bitlocker, screen_lock, backup_status REMOVED — L1 runbooks exist and work.
@@ -255,6 +274,8 @@ async def checkin(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Appliance check-in endpoint. Registers or updates appliance, returns pending orders."""
+    # C1 fix: enforce Bearer site matches request body
+    _enforce_site_id(auth_site_id, req.site_id, "checkin")
     allowed, remaining = await check_rate_limit(req.site_id, "checkin")
     if not allowed:
         raise HTTPException(
@@ -401,6 +422,7 @@ async def get_orders(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Get pending orders for an appliance."""
+    _enforce_site_id(auth_site_id, site_id, "get_orders")
     allowed, remaining = await check_rate_limit(site_id, "orders")
     if not allowed:
         raise HTTPException(
@@ -480,6 +502,7 @@ async def report_incident(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Report an incident from an appliance. Creates an order for remediation if a matching runbook is found."""
+    _enforce_site_id(auth_site_id, incident.site_id, "report_incident")
     allowed, remaining = await check_rate_limit(incident.site_id, "incidents")
     if not allowed:
         raise HTTPException(
@@ -1106,6 +1129,9 @@ async def resolve_incident_by_type(
     """Resolve the latest open incident matching site_id + host_id + check_type."""
     body = await request.json()
     site_id = body.get("site_id")
+    # C1 fix: override body site_id with authenticated site
+    _enforce_site_id(auth_site_id, site_id, "resolve_incident_by_type")
+    site_id = auth_site_id
     host_id = body.get("host_id")
     check_type = body.get("check_type")
     resolution_tier = body.get("resolution_tier", "L1")
@@ -1164,6 +1190,7 @@ async def report_drift(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Report drift detection results."""
+    _enforce_site_id(auth_site_id, drift.site_id, "report_drift")
     allowed, remaining = await check_rate_limit(drift.site_id, "drift")
     if not allowed:
         raise HTTPException(
@@ -1380,6 +1407,7 @@ async def list_evidence(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """List evidence bundles for an appliance."""
+    _enforce_site_id(auth_site_id, site_id, "list_evidence")
     result = await db.execute(
         text("""
             SELECT e.bundle_id, e.check_type, e.outcome, e.timestamp_start, e.timestamp_end,
@@ -1503,6 +1531,7 @@ async def sync_pattern_stats(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Receive pattern statistics from agent for cross-appliance aggregation."""
+    _enforce_site_id(auth_site_id, request.site_id, "sync_pattern_stats")
     accepted = 0
     merged = 0
     failed = 0
@@ -1646,6 +1675,7 @@ async def get_promoted_rules(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Return server-approved promoted rules for agent deployment."""
+    _enforce_site_id(auth_site_id, site_id, "get_promoted_rules")
     since_dt = datetime.fromisoformat(since.replace('Z', '+00:00')) if since else datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     result = await db.execute(text("""
@@ -1691,6 +1721,7 @@ async def report_execution_telemetry(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Receive rich execution telemetry from agents for learning engine."""
+    _enforce_site_id(auth_site_id, request.site_id, "report_execution_telemetry")
     if request.execution:
         exec_data = request.execution
     else:
@@ -1922,6 +1953,7 @@ async def agent_l2_plan(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """L2 LLM planner endpoint for appliance daemons."""
+    _enforce_site_id(auth_site_id, request.site_id, "agent_l2_plan")
     from dashboard_api.l2_planner import analyze_incident as l2_analyze, record_l2_decision, is_l2_available
 
     if not is_l2_available():
@@ -2147,6 +2179,7 @@ async def upload_evidence_worm(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """WORM Evidence Upload Proxy Endpoint."""
+    _enforce_site_id(auth_site_id, x_client_id, "worm_evidence_upload")
     allowed, remaining = await check_rate_limit(x_client_id, "evidence_upload")
     if not allowed:
         raise HTTPException(
@@ -2349,6 +2382,8 @@ async def agent_sync_rules(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Return L1 rules for agents to sync."""
+    if site_id:
+        _enforce_site_id(auth_site_id, site_id, "agent_sync_rules")
     healing_tier = "standard"
     if site_id:
         try:
@@ -2579,6 +2614,7 @@ async def appliances_checkin(
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Appliance agent checkin endpoint - updates site_appliances table."""
+    _enforce_site_id(auth_site_id, req.site_id, "appliances_checkin")
     try:
         mac = req.mac_address or "00:00:00:00:00:00"
         appliance_id = f"{req.site_id}-{mac}"

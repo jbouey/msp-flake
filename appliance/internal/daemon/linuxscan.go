@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/osiriscare/appliance/internal/evidence"
-	"github.com/osiriscare/appliance/internal/grpcserver"
 	"github.com/osiriscare/appliance/internal/maputil"
 	"github.com/osiriscare/appliance/internal/sshexec"
 	"github.com/osiriscare/appliance/internal/winrm"
@@ -880,28 +879,7 @@ func (ds *driftScanner) parseLinuxFindings(output, hostname string) []driftFindi
 
 // reportLinuxDrift sends a Linux drift finding through the L1→L2→L3 healing pipeline.
 func (ds *driftScanner) reportLinuxDrift(f *driftFinding) {
-	metadata := map[string]string{
-		"platform": "linux",
-		"source":   "linuxscan",
-	}
-	for k, v := range f.Details {
-		metadata[k] = v
-	}
-
-	req := grpcserver.HealRequest{
-		Hostname:     f.Hostname,
-		CheckType:    f.CheckType,
-		Expected:     f.Expected,
-		Actual:       f.Actual,
-		HIPAAControl: f.HIPAAControl,
-		AgentID:      "linuxscan",
-		Metadata:     metadata,
-	}
-
-	log.Printf("[linuxscan] DRIFT: %s/%s expected=%s actual=%s hipaa=%s",
-		f.Hostname, f.CheckType, f.Expected, f.Actual, f.HIPAAControl)
-
-	ds.daemon.healIncident(context.Background(), &req)
+	reportDriftGeneric(ds.daemon, f, "linux", "linuxscan", nil)
 }
 
 // linuxTarget represents a remote Linux machine to scan.

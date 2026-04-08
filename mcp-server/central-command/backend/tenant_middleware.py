@@ -84,15 +84,23 @@ async def tenant_connection(
 async def admin_connection(pool: asyncpg.Pool):
     """Shortcut for admin-level connections that bypass RLS.
 
-    Explicitly sets app.is_admin='true' to ensure RLS bypass even when
-    PgBouncer recycles a connection that had tenant context set.
+    Relies on the database default (app.is_admin = 'true') rather than
+    SET LOCAL, because SET LOCAL is scoped to the current transaction and
+    we intentionally do NOT wrap admin connections in a transaction to avoid
+    transaction poisoning on long multi-query endpoints.
+
+    This is safe with PgBouncer transaction pooling: any SET LOCAL from a
+    prior tenant_connection was already discarded when that transaction ended.
+    PgBouncer returns a clean connection with DB defaults intact.
+
+    NOTE: If pooling mode ever changes from 'transaction' to 'session',
+    this must be revisited — session-level SET would persist across borrows.
 
     Usage:
         async with admin_connection(pool) as conn:
             rows = await conn.fetch("SELECT * FROM incidents")  # all tenants
     """
     async with pool.acquire() as conn:
-        await conn.execute("SET LOCAL app.is_admin = 'true'")
         yield conn
 
 
