@@ -621,10 +621,12 @@ async def _ots_resubmit_expired_loop():
                     consecutive_zero += 1
                     if consecutive_zero >= 5:
                         logger.error(
-                            "OTS resubmission stopped: 5 consecutive zero-success batches. "
-                            "Calendars may be down. Will retry on next server restart."
+                            "OTS calendars appear down: 5 consecutive zero-success batches. "
+                            "Backing off for 1 hour before retrying."
                         )
-                        return
+                        await asyncio.sleep(3600)  # 1 hour backoff
+                        consecutive_zero = 0  # Reset and retry
+                        continue
                 else:
                     consecutive_zero = 0
 
@@ -1250,12 +1252,42 @@ async def lifespan(app: FastAPI):
                             try:
                                 from dashboard_api.compliance_packet import CompliancePacket
                                 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-                                engine = create_async_engine(os.getenv("DATABASE_URL", ""), echo=False)
-                                async_session = async_sessionmaker(engine, class_=AsyncSession)
-                                async with async_session() as session:
+                                _pkt_engine = create_async_engine(os.getenv("DATABASE_URL", ""), echo=False)
+                                _pkt_session = async_sessionmaker(_pkt_engine, class_=AsyncSession)
+                                async with _pkt_session() as session:
                                     pkt = CompliancePacket(sid, prev_month, prev_year, session)
                                     result = await pkt.generate_packet()
-                                    logger.info(f"Auto-generated compliance packet: {result['packet_id']}")
+                                    data = result.get("data", {})
+
+                                    # Persist to compliance_packets table for audit trail
+                                    await conn.execute("""
+                                        INSERT INTO compliance_packets (
+                                            site_id, month, year, packet_id,
+                                            compliance_score, critical_issues, auto_fixes,
+                                            mttr_hours, framework, controls_summary,
+                                            markdown_content, generated_by
+                                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, 'system')
+                                        ON CONFLICT (site_id, month, year, framework) DO UPDATE SET
+                                            compliance_score = EXCLUDED.compliance_score,
+                                            critical_issues = EXCLUDED.critical_issues,
+                                            markdown_content = EXCLUDED.markdown_content,
+                                            generated_at = NOW()
+                                    """,
+                                        sid, prev_month, prev_year, result["packet_id"],
+                                        data.get("compliance_pct"),
+                                        data.get("critical_issue_count", 0),
+                                        data.get("auto_fixed_count", 0),
+                                        data.get("mttr_hours"),
+                                        "hipaa",
+                                        json.dumps(data.get("controls", {})),
+                                        open(result["markdown_path"]).read() if result.get("markdown_path") else None,
+                                    )
+                                    logger.info(
+                                        "Compliance packet generated and persisted",
+                                        packet_id=result["packet_id"],
+                                        site_id=sid,
+                                        compliance_pct=data.get("compliance_pct"),
+                                    )
                             except Exception as e:
                                 logger.warning(f"Compliance packet auto-gen failed for {sid}: {e}")
             except asyncio.CancelledError:

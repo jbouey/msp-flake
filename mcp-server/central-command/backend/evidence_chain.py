@@ -552,6 +552,61 @@ def parse_ots_file(ots_bytes: bytes) -> Optional[Dict[str, Any]]:
     }
 
 
+async def mark_proof_anchored(
+    db: AsyncSession,
+    bundle_id: str,
+    block_height: Optional[int],
+    calendar_url: Optional[str] = None,
+    proof_data: Optional[str] = None,
+):
+    """Mark an OTS proof as anchored to Bitcoin. Single source of truth for status updates.
+
+    Updates ots_proofs, compliance_bundles, and ots_merkle_batches (if batch proof).
+    Also writes an audit log entry for HIPAA compliance.
+    """
+    params: Dict[str, Any] = {"bundle_id": bundle_id, "block": block_height}
+    update_fields = "status = 'anchored', bitcoin_block = :block, anchored_at = NOW(), last_upgrade_attempt = NOW()"
+
+    if proof_data:
+        update_fields += ", proof_data = :proof_data, error = NULL"
+        params["proof_data"] = proof_data
+    if calendar_url:
+        update_fields += ", calendar_url = :calendar_url"
+        params["calendar_url"] = calendar_url
+
+    await db.execute(text(f"""
+        UPDATE ots_proofs SET {update_fields}, upgrade_attempts = upgrade_attempts + 1
+        WHERE bundle_id = :bundle_id
+    """), params)
+
+    # Update merkle batch table if this is a batch proof
+    if bundle_id.startswith("MB-"):
+        await db.execute(text("""
+            UPDATE ots_merkle_batches
+            SET ots_status = 'anchored', bitcoin_block = :block, anchored_at = NOW()
+            WHERE batch_id = :batch_id
+        """), {"block": block_height, "batch_id": bundle_id})
+
+    # Audit log: record proof anchoring for HIPAA compliance
+    try:
+        await db.execute(text("""
+            INSERT INTO admin_audit_log (user_id, username, action, target, details, ip_address)
+            VALUES (NULL, 'system', 'OTS_PROOF_ANCHORED', :bundle_id,
+                    :details, '127.0.0.1')
+        """), {
+            "bundle_id": bundle_id,
+            "details": json.dumps({
+                "bitcoin_block": block_height,
+                "calendar_url": calendar_url,
+                "is_batch": bundle_id.startswith("MB-"),
+            }),
+        })
+    except Exception:
+        pass  # Audit log failure must not block proof anchoring
+
+    logger.info(f"OTS anchored: {bundle_id[:8]}... block={block_height}")
+
+
 async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
     """
     Background task to upgrade pending OTS proofs using the reference library.
@@ -626,25 +681,10 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
 
                     for msg, attestation in dtf.timestamp.all_attestations():
                         if isinstance(attestation, BitcoinBlockHeaderAttestation):
-                            # Already anchored
-                            await db.execute(text("""
-                                UPDATE ots_proofs
-                                SET status = 'anchored',
-                                    bitcoin_block = :block,
-                                    anchored_at = NOW(),
-                                    last_upgrade_attempt = NOW()
-                                WHERE bundle_id = :bundle_id
-                            """), {"bundle_id": proof.bundle_id, "block": attestation.height})
-                            # If this was a Merkle batch proof, update the batch table too
-                            if proof.bundle_id.startswith("MB-"):
-                                await db.execute(text("""
-                                    UPDATE ots_merkle_batches
-                                    SET ots_status = 'anchored', bitcoin_block = :block, anchored_at = NOW()
-                                    WHERE batch_id = :batch_id
-                                """), {"block": attestation.height, "batch_id": proof.bundle_id})
+                            # Already anchored — use DRY helper
+                            await mark_proof_anchored(db, proof.bundle_id, attestation.height)
                             upgraded += 1
                             upgrade_success = True
-                            logger.info(f"OTS already anchored: {proof.bundle_id[:8]}... block={attestation.height}")
                             break
 
                         if isinstance(attestation, PendingAttestation):
@@ -669,35 +709,12 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
                                                            dtf.file_digest + upgrade_data)
                                             proof_b64 = base64.b64encode(upgraded_ots).decode('ascii')
 
-                                            await db.execute(text("""
-                                                UPDATE ots_proofs
-                                                SET status = 'anchored',
-                                                    proof_data = :proof_data,
-                                                    bitcoin_block = :block,
-                                                    calendar_url = :calendar_url,
-                                                    anchored_at = NOW(),
-                                                    last_upgrade_attempt = NOW(),
-                                                    upgrade_attempts = upgrade_attempts + 1,
-                                                    error = NULL
-                                                WHERE bundle_id = :bundle_id
-                                            """), {
-                                                "proof_data": proof_b64,
-                                                "block": block_height,
-                                                "bundle_id": proof.bundle_id,
-                                                "calendar_url": calendar_url,
-                                            })
-
-                                            # If this was a Merkle batch proof, update the batch table too
-                                            if proof.bundle_id.startswith("MB-"):
-                                                await db.execute(text("""
-                                                    UPDATE ots_merkle_batches
-                                                    SET ots_status = 'anchored', bitcoin_block = :block, anchored_at = NOW()
-                                                    WHERE batch_id = :batch_id
-                                                """), {"block": block_height, "batch_id": proof.bundle_id})
-
+                                            await mark_proof_anchored(
+                                                db, proof.bundle_id, block_height,
+                                                calendar_url=calendar_url, proof_data=proof_b64,
+                                            )
                                             upgraded += 1
                                             upgrade_success = True
-                                            logger.info(f"OTS upgraded: {proof.bundle_id[:8]}... block={block_height}")
                                             break
                                         else:
                                             last_error = f"No Bitcoin attestation yet from {calendar_url}"
