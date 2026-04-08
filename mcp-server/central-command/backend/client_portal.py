@@ -388,7 +388,8 @@ async def login_with_password(request: Request, body: PasswordLogin):
     async with admin_connection(pool) as conn:
         user = await conn.fetchrow("""
             SELECT cu.id, cu.password_hash, cu.is_active, cu.client_org_id,
-                   co.status as org_status
+                   co.status as org_status,
+                   cu.failed_login_attempts, cu.locked_until
             FROM client_users cu
             JOIN client_orgs co ON co.id = cu.client_org_id
             WHERE cu.email = $1
@@ -396,6 +397,12 @@ async def login_with_password(request: Request, body: PasswordLogin):
 
         if not user or not user["is_active"] or user["org_status"] != "active":
             raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # Account lockout: 5 failed attempts = 15-minute lockout
+        from datetime import timezone as _tz
+        if user.get("locked_until") and user["locked_until"] > datetime.now(_tz.utc):
+            remaining = (user["locked_until"] - datetime.now(_tz.utc)).seconds // 60
+            raise HTTPException(status_code=429, detail=f"Account locked. Try again in {remaining + 1} minutes.")
 
         # Check SSO enforcement
         sso_row = await conn.fetchrow(
@@ -415,6 +422,16 @@ async def login_with_password(request: Request, body: PasswordLogin):
         # Verify password (bcrypt with constant-time comparison)
         from .auth import verify_password
         if not verify_password(body.password, user["password_hash"]):
+            # Increment failed attempts, lock after 5
+            attempts = (user.get("failed_login_attempts") or 0) + 1
+            locked = None
+            if attempts >= 5:
+                locked = datetime.now(_tz.utc) + timedelta(minutes=15)
+                logger.warning(f"Client account locked after {attempts} failed attempts")
+            await conn.execute(
+                "UPDATE client_users SET failed_login_attempts = $1, locked_until = $2 WHERE id = $3",
+                attempts, locked, user["id"],
+            )
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         # Check MFA status: user enrollment + org-level requirement
@@ -454,6 +471,12 @@ async def login_with_password(request: Request, body: PasswordLogin):
                 content='{"status": "mfa_required", "mfa_token": "' + mfa_token + '"}',
                 media_type="application/json"
             )
+
+        # Reset lockout counters on successful login
+        await conn.execute(
+            "UPDATE client_users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1",
+            user["id"],
+        )
 
         # Create session
         session_token = generate_token()

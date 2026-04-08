@@ -1117,7 +1117,8 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
 
     async with admin_connection(pool) as conn:
         partner = await conn.fetchrow("""
-            SELECT id, name, slug, password_hash, status, pending_approval
+            SELECT id, name, slug, password_hash, status, pending_approval,
+                   failed_login_attempts, locked_until
             FROM partners
             WHERE (contact_email = $1 OR oauth_email = $1)
               AND auth_provider = 'email'
@@ -1129,6 +1130,11 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
         if not partner:
             raise _generic_error
 
+        # Account lockout: 5 failed attempts = 15-minute lockout
+        if partner.get("locked_until") and partner["locked_until"] > datetime.now(timezone.utc):
+            remaining = (partner["locked_until"] - datetime.now(timezone.utc)).seconds // 60
+            raise HTTPException(status_code=429, detail=f"Account locked. Try again in {remaining + 1} minutes.")
+
         if partner.get("pending_approval") or partner["status"] != "active":
             raise _generic_error
 
@@ -1137,6 +1143,16 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
 
         from .auth import verify_password
         if not verify_password(password, partner["password_hash"]):
+            # Increment failed attempts, lock after 5
+            attempts = (partner.get("failed_login_attempts") or 0) + 1
+            locked = None
+            if attempts >= 5:
+                locked = datetime.now(timezone.utc) + timedelta(minutes=15)
+                logger.warning(f"Partner account locked after {attempts} failed attempts")
+            await conn.execute(
+                "UPDATE partners SET failed_login_attempts = $1, locked_until = $2 WHERE id = $3",
+                attempts, locked, partner["id"],
+            )
             raise _generic_error
 
         # Check MFA status (enabled + required)
@@ -1190,6 +1206,13 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
         )
         if pu_row:
             partner_user_id = pu_row["id"]
+
+    # Reset lockout counters on successful login
+    async with admin_connection(pool) as conn:
+        await conn.execute(
+            "UPDATE partners SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1",
+            partner["id"],
+        )
 
     session_token = await create_partner_session(partner["id"], request, pool, partner_user_id=partner_user_id)
 
