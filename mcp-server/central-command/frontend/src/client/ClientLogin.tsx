@@ -293,7 +293,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
               </button>
             </form>
 
-            <p className="text-center text-sm text-slate-400 mt-4">
+            <p className="text-center text-sm text-gray-500 mt-4">
               Or use a backup code
             </p>
 
@@ -471,7 +471,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
                     loginMode === 'password'
                       ? 'bg-white text-gray-700 shadow-sm'
-                      : 'text-gray-400 hover:text-gray-500'
+                      : 'text-gray-500 hover:text-gray-600'
                   }`}
                 >
                   Email &amp; Password
@@ -482,7 +482,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
                     loginMode === 'magic'
                       ? 'bg-white text-gray-700 shadow-sm'
-                      : 'text-gray-400 hover:text-gray-500'
+                      : 'text-gray-500 hover:text-gray-600'
                   }`}
                 >
                   Magic Link
@@ -568,7 +568,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                       'Send Login Link'
                     )}
                   </button>
-                  <p className="text-center text-sm text-label-tertiary">
+                  <p className="text-center text-sm text-gray-500">
                     No password required. We&apos;ll send you a secure link.
                   </p>
                 </form>
@@ -580,7 +580,7 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
                   <div className="w-full border-t border-separator-light" />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-slate-400">or</span>
+                  <span className="px-2 bg-white text-gray-500">or</span>
                 </div>
               </div>
 
