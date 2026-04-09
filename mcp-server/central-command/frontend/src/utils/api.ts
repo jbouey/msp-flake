@@ -176,6 +176,22 @@ export const fleetApi = {
   getAppliances: (siteId: string) => fetchApi<Appliance[]>(`/fleet/${siteId}/appliances`),
 };
 
+// Org management API (Session 203 enterprise hardening)
+export const orgManagementApi = {
+  getHealth: (orgId: string) => fetchApi<Record<string, unknown>>(`/admin/orgs/${orgId}/health`),
+  search: (query: string, includeDeprovisioned = false) =>
+    fetchApi<Record<string, unknown>>(
+      `/admin/orgs/search?q=${encodeURIComponent(query)}&include_deprovisioned=${includeDeprovisioned}`
+    ),
+  getQuota: (orgId: string) => fetchApi<Record<string, unknown>>(`/admin/orgs/${orgId}/quota`),
+  getCompliancePacket: (orgId: string, month: string) =>
+    fetchApi<Record<string, unknown>>(`/admin/orgs/${orgId}/compliance-packet?month=${month}`),
+  getAuditBundle: (orgId: string, startDate: string, endDate: string) =>
+    fetchApi<Record<string, unknown>>(
+      `/admin/orgs/${orgId}/audit-bundle?start_date=${startDate}&end_date=${endDate}`
+    ),
+};
+
 // =============================================================================
 // INCIDENT API
 // =============================================================================

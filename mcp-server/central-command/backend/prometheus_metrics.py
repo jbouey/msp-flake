@@ -325,6 +325,99 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: CVE watch query failed")
 
+            # --- Organization health (gauge) ---
+            try:
+                # Per-org counts
+                org_stats = await conn.fetch("""
+                    SELECT
+                        co.id::text as org_id,
+                        co.name,
+                        co.status,
+                        co.max_sites,
+                        co.max_users,
+                        (SELECT COUNT(*) FROM sites WHERE client_org_id = co.id) as site_count,
+                        (SELECT COUNT(*) FROM client_users WHERE client_org_id = co.id) as user_count,
+                        (SELECT COUNT(*) FROM incidents i
+                         JOIN sites s ON s.site_id = i.site_id
+                         WHERE s.client_org_id = co.id
+                           AND i.reported_at > NOW() - INTERVAL '24 hours') as incidents_24h,
+                        co.baa_expiration_date,
+                        co.deprovisioned_at
+                    FROM client_orgs co
+                    WHERE co.deprovisioned_at IS NULL
+                """)
+
+                if org_stats:
+                    sections.append(_gauge(
+                        "osiriscare_orgs_total",
+                        "Total active organizations",
+                        [({}, float(len(org_stats)))],
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_org_sites",
+                        "Number of sites per organization",
+                        [({"org": o["name"][:40]}, float(o["site_count"])) for o in org_stats],
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_org_users",
+                        "Number of client_users per organization",
+                        [({"org": o["name"][:40]}, float(o["user_count"])) for o in org_stats],
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_org_incidents_24h",
+                        "Incidents per organization in last 24h",
+                        [({"org": o["name"][:40]}, float(o["incidents_24h"])) for o in org_stats],
+                    ))
+                    # Quota usage as percentage
+                    site_quota = [
+                        ({"org": o["name"][:40]},
+                         float(o["site_count"]) / max(o["max_sites"] or 1, 1) * 100)
+                        for o in org_stats if o["max_sites"]
+                    ]
+                    if site_quota:
+                        sections.append(_gauge(
+                            "osiriscare_org_site_quota_pct",
+                            "Site quota usage percentage per org (alert if >90)",
+                            site_quota,
+                        ))
+
+                # BAA expiration alerts
+                baa_expiring = await conn.fetchval("""
+                    SELECT COUNT(*) FROM client_orgs
+                    WHERE baa_expiration_date IS NOT NULL
+                      AND baa_expiration_date <= CURRENT_DATE + INTERVAL '30 days'
+                      AND baa_expiration_date > CURRENT_DATE
+                      AND deprovisioned_at IS NULL
+                """)
+                baa_expired = await conn.fetchval("""
+                    SELECT COUNT(*) FROM client_orgs
+                    WHERE baa_expiration_date IS NOT NULL
+                      AND baa_expiration_date <= CURRENT_DATE
+                      AND deprovisioned_at IS NULL
+                """)
+                sections.append(_gauge(
+                    "osiriscare_org_baa_expiring_30d",
+                    "Orgs with BAA expiring in next 30 days",
+                    [({}, float(baa_expiring or 0))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_org_baa_expired",
+                    "Orgs with expired BAA (CRITICAL — blocks operations)",
+                    [({}, float(baa_expired or 0))],
+                ))
+
+                # Deprovisioned orgs (audit trail)
+                deprov = await conn.fetchval("""
+                    SELECT COUNT(*) FROM client_orgs WHERE deprovisioned_at IS NOT NULL
+                """)
+                sections.append(_gauge(
+                    "osiriscare_orgs_deprovisioned",
+                    "Orgs in deprovisioning/retention state",
+                    [({}, float(deprov or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: org query failed")
+
             # --- Flywheel promotion pipeline health (gauge) ---
             try:
                 # Candidate pipeline stages

@@ -1556,6 +1556,8 @@ app.include_router(integrations_public_router)  # OAuth callback (no auth)
 app.include_router(frameworks_router)
 app.include_router(fleet_updates_router)
 app.include_router(device_sync_router)  # Device inventory sync from appliances
+from dashboard_api.org_management import router as org_management_router
+app.include_router(org_management_router)  # Org lifecycle + quotas + export (Session 203)
 app.include_router(ops_health_router)  # Ops center health + traffic lights
 app.include_router(audit_report_router)  # Audit readiness + BAA config
 app.include_router(oauth_public_router, prefix="/api/auth")  # OAuth login public endpoints
