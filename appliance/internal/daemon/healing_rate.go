@@ -1,7 +1,8 @@
 package daemon
 
 import (
-	"log"
+	"log/slog"
+	"math"
 	"sync"
 	"time"
 )
@@ -70,5 +71,5 @@ func (d *Daemon) logHealingRate() {
 	if total == 0 {
 		return // No healing attempts yet — nothing to log
 	}
-	log.Printf("[daemon] Healing rate: %.0f%% (%d/%d in last 24h)", pct, ok, total)
+	slog.Info("healing rate", "component", "daemon", "rate_pct", math.Round(pct), "healed", ok, "total", total)
 }

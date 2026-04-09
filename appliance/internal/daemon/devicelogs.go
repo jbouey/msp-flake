@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -111,7 +111,7 @@ $events | ConvertTo-Json -Compress -Depth 2
 			Msg string `json:"msg"`
 		}
 		if err2 := json.Unmarshal([]byte(stdout), &single); err2 != nil {
-			log.Printf("[devicelogs] Parse error for %s: %v", t.hostname, err)
+			slog.Error("parse error", "component", "devicelogs", "hostname", t.hostname, "error", err)
 			return nil
 		}
 		rawEvents = append(rawEvents, single)
@@ -143,7 +143,7 @@ $events | ConvertTo-Json -Compress -Depth 2
 	}
 
 	if len(entries) > 0 {
-		log.Printf("[devicelogs] Collected %d security events from %s", len(entries), t.hostname)
+		slog.Info("collected security events", "component", "devicelogs", "count", len(entries), "hostname", t.hostname)
 	}
 	return entries
 }
@@ -193,7 +193,7 @@ func (ds *driftScanner) collectAndAnalyzeDeviceLogs(ctx context.Context, targets
 			}
 		}
 		if len(owned) < len(targets) {
-			log.Printf("[devicelogs] Mesh filter: %d/%d targets owned by this appliance", len(owned), len(targets))
+			slog.Info("mesh filter applied", "component", "devicelogs", "owned", len(owned), "total", len(targets))
 		}
 		targets = owned
 	}
@@ -285,7 +285,7 @@ func (ds *driftScanner) archiveSecurityEvents(ctx context.Context, hostname stri
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("[devicelogs] Marshal error for archive: %v", err)
+		slog.Error("marshal error for archive", "component", "devicelogs", "error", err)
 		return
 	}
 
@@ -295,7 +295,7 @@ func (ds *driftScanner) archiveSecurityEvents(ctx context.Context, hostname stri
 
 	req, err := http.NewRequestWithContext(archiveCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("[devicelogs] Archive request error: %v", err)
+		slog.Error("archive request error", "component", "devicelogs", "error", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -304,17 +304,17 @@ func (ds *driftScanner) archiveSecurityEvents(ctx context.Context, hostname stri
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[devicelogs] Archive POST failed: %v", err)
+		slog.Error("archive POST failed", "component", "devicelogs", "error", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		log.Printf("[devicelogs] Archive POST returned %d for %s (%d events)", resp.StatusCode, hostname, len(events))
+		slog.Warn("archive POST returned unexpected status", "component", "devicelogs", "status_code", resp.StatusCode, "hostname", hostname, "events", len(events))
 		return
 	}
 
-	log.Printf("[devicelogs] Archived %d security events from %s to Central Command", len(events), hostname)
+	slog.Info("archived security events to Central Command", "component", "devicelogs", "count", len(events), "hostname", hostname)
 }
 
 func truncate(s string, n int) string {

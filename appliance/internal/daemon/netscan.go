@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -157,7 +157,7 @@ func (ns *netScanner) runNetScanIfNeeded(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[netscan] Starting network scan cycle")
+	slog.Info("starting network scan cycle", "component", "netscan")
 	ns.mu.Lock()
 	ns.lastScanTime = time.Now()
 	ns.mu.Unlock()
@@ -198,7 +198,7 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 			}
 		}
 		if err := ns.daemon.evidenceSubmitter.BuildAndSubmitNetwork(ctx, evFindings, scannedHosts); err != nil {
-			log.Printf("[netscan] Evidence submission failed: %v", err)
+			slog.Error("evidence submission failed", "component", "netscan", "error", err)
 		}
 	}
 
@@ -236,11 +236,11 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 			}
 		}
 		adJoinedCount := countTrue(devices, func(d discoveredDevice) bool { return d.ADJoined })
-		log.Printf("[netscan] Probed %d devices: %d SSH, %d WinRM, %d AD-joined",
-			len(devices),
-			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeSSH }),
-			countTrue(devices, func(d discoveredDevice) bool { return d.ProbeWinRM }),
-			adJoinedCount)
+		slog.Info("probed devices", "component", "netscan",
+			"total", len(devices),
+			"ssh", countTrue(devices, func(d discoveredDevice) bool { return d.ProbeSSH }),
+			"winrm", countTrue(devices, func(d discoveredDevice) bool { return d.ProbeWinRM }),
+			"ad_joined", adJoinedCount)
 	}
 
 	// Update mesh peer list from discovered devices
@@ -256,9 +256,9 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 	// Subnet topology analysis
 	subnetGroups := groupBySubnet(devices)
 	if len(subnetGroups) > 1 {
-		log.Printf("[netscan] Multiple subnets detected: %d subnets", len(subnetGroups))
+		slog.Info("multiple subnets detected", "component", "netscan", "subnet_count", len(subnetGroups))
 		for _, g := range subnetGroups {
-			log.Printf("[netscan]   %s: %d devices", g.Subnet, len(g.Devices))
+			slog.Info("subnet detail", "component", "netscan", "subnet", g.Subnet, "devices", len(g.Devices))
 		}
 
 		// Flag devices on unexpected subnets
@@ -308,13 +308,13 @@ func (ns *netScanner) scanNetwork(ctx context.Context) {
 		})
 	}
 	if len(rogues) > 0 {
-		log.Printf("[netscan] Rogue devices detected: %d new MACs", len(rogues))
+		slog.Warn("rogue devices detected", "component", "netscan", "new_macs", len(rogues))
 	}
 
 	// Sync discovered devices (with probe data + IP changes) to Central Command
 	ns.syncDiscoveredDevices(ctx, devices, ipChanges)
 
-	log.Printf("[netscan] Scan complete: findings=%d, arp_devices=%d, ip_changes=%d", len(findings), len(devices), len(ipChanges))
+	slog.Info("scan complete", "component", "netscan", "findings", len(findings), "arp_devices", len(devices), "ip_changes", len(ipChanges))
 }
 
 // expectedPorts are the ports the appliance should have open.
@@ -515,8 +515,7 @@ func (ns *netScanner) detectIPChanges(devices []discoveredDevice) []ipChange {
 		prevIP, known := ns.macIPHistory[d.MACAddress]
 		ns.macIPHistory[d.MACAddress] = d.IPAddress
 		if known && prevIP != d.IPAddress {
-			log.Printf("[netscan] IP change detected: MAC %s moved from %s to %s",
-				d.MACAddress, prevIP, d.IPAddress)
+			slog.Info("IP change detected", "component", "netscan", "mac", d.MACAddress, "old_ip", prevIP, "new_ip", d.IPAddress)
 			changes = append(changes, ipChange{
 				MACAddress: d.MACAddress,
 				OldIP:      prevIP,
@@ -526,7 +525,7 @@ func (ns *netScanner) detectIPChanges(devices []discoveredDevice) []ipChange {
 		}
 	}
 	if len(changes) > 0 {
-		log.Printf("[netscan] %d IP change(s) detected this cycle", len(changes))
+		slog.Info("IP changes detected this cycle", "component", "netscan", "count", len(changes))
 	}
 	return changes
 }
@@ -661,9 +660,9 @@ func (ns *netScanner) syncDiscoveredDevices(ctx context.Context, devices []disco
 	}
 
 	if err := ns.daemon.phoneCli.SyncDevices(ctx, payload); err != nil {
-		log.Printf("[netscan] Device sync failed: %v", err)
+		slog.Error("device sync failed", "component", "netscan", "error", err)
 	} else {
-		log.Printf("[netscan] Device sync OK: %d devices sent to Central Command", len(entries))
+		slog.Info("device sync OK", "component", "netscan", "devices_sent", len(entries))
 	}
 }
 
@@ -690,7 +689,7 @@ func (ns *netScanner) DiscoveredDevices() []discoveredDevice {
 func discoverARPDevices() []discoveredDevice {
 	f, err := os.Open("/proc/net/arp")
 	if err != nil {
-		log.Printf("[netscan] Cannot read /proc/net/arp: %v", err)
+		slog.Error("cannot read /proc/net/arp", "component", "netscan", "error", err)
 		return nil
 	}
 	defer f.Close()
@@ -788,7 +787,7 @@ func resolveHostnames(devices []discoveredDevice) {
 		}
 	}
 	if resolved > 0 {
-		log.Printf("[netscan] Resolved %d/%d device hostnames via reverse DNS", resolved, len(devices))
+		slog.Info("resolved device hostnames via reverse DNS", "component", "netscan", "resolved", resolved, "total", len(devices))
 	}
 }
 

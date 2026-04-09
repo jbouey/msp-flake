@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/osiriscare/appliance/internal/maputil"
@@ -17,7 +17,7 @@ import (
 // matching the provided hints. Results are stored in daemon.discoveryResults
 // and sent to Central Command on the next checkin.
 func (ds *driftScanner) RunAppDiscovery(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
-	log.Printf("[app_discovery] Starting app discovery scan")
+	slog.Info("starting app discovery scan", "component", "app_discovery")
 
 	profileID := maputil.String(params, "profile_id")
 	profileName := maputil.String(params, "profile_name")
@@ -49,23 +49,23 @@ func (ds *driftScanner) RunAppDiscovery(ctx context.Context, params map[string]i
 		default:
 		}
 
-		log.Printf("[app_discovery] Scanning %s (%s)", t.hostname, t.label)
+		slog.Info("scanning target", "component", "app_discovery", "hostname", t.hostname, "label", t.label)
 		result := ds.svc.WinRM.ExecuteCtx(ctx, t.target, script, "APP-DISCOVERY", "detect", 120, 1, 0, nil)
 		if !result.Success {
-			log.Printf("[app_discovery] Failed to scan %s: %s", t.hostname, result.Error)
+			slog.Error("failed to scan target", "component", "app_discovery", "hostname", t.hostname, "error", result.Error)
 			continue
 		}
 
 		// Extract stdout from the execution result
 		stdout := maputil.String(result.Output, "std_out")
 		if stdout == "" {
-			log.Printf("[app_discovery] Empty output from %s", t.hostname)
+			slog.Warn("empty output from target", "component", "app_discovery", "hostname", t.hostname)
 			continue
 		}
 
 		var hostAssets map[string][]map[string]interface{}
 		if err := json.Unmarshal([]byte(stdout), &hostAssets); err != nil {
-			log.Printf("[app_discovery] Failed to parse results from %s: %v", t.hostname, err)
+			slog.Error("failed to parse results", "component", "app_discovery", "hostname", t.hostname, "error", err)
 			continue
 		}
 
@@ -76,7 +76,7 @@ func (ds *driftScanner) RunAppDiscovery(ctx context.Context, params map[string]i
 			}
 			allAssets[assetType] = append(allAssets[assetType], items...)
 		}
-		log.Printf("[app_discovery] Found assets on %s: %v", t.hostname, summarizeAssets(hostAssets))
+		slog.Info("found assets", "component", "app_discovery", "hostname", t.hostname, "summary", summarizeAssets(hostAssets))
 	}
 
 	// Store results for next checkin
@@ -95,7 +95,7 @@ func (ds *driftScanner) RunAppDiscovery(ctx context.Context, params map[string]i
 		totalAssets += len(items)
 	}
 
-	log.Printf("[app_discovery] Discovery complete: %d assets found across %d targets", totalAssets, len(targets))
+	slog.Info("discovery complete", "component", "app_discovery", "total_assets", totalAssets, "targets", len(targets))
 	return map[string]interface{}{
 		"status":       "discovery_complete",
 		"profile_id":   profileID,

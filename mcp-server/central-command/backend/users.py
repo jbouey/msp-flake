@@ -135,7 +135,7 @@ async def list_users(
     db=Depends(get_db)
 ):
     """List all admin users."""
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT id, username, email, display_name, role, status, last_login, created_at
         FROM admin_users
         ORDER BY created_at DESC
@@ -173,7 +173,7 @@ async def list_all_accounts(
 
     # Admin users
     if not account_type or account_type == "admin":
-        result = await db.execute(text("""
+        result = await execute_with_retry(db,text("""
             SELECT id, username, email, display_name, role, status, last_login, created_at
             FROM admin_users
         """))
@@ -194,7 +194,7 @@ async def list_all_accounts(
 
     # Partner users
     if not account_type or account_type == "partner":
-        result = await db.execute(text("""
+        result = await execute_with_retry(db,text("""
             SELECT pu.id, pu.email, pu.name, pu.role, pu.status,
                    pu.last_login_at, pu.created_at,
                    p.name as partner_name
@@ -219,7 +219,7 @@ async def list_all_accounts(
 
     # Client users
     if not account_type or account_type == "client":
-        result = await db.execute(text("""
+        result = await execute_with_retry(db,text("""
             SELECT cu.id, cu.email, cu.name, cu.role, cu.is_active,
                    cu.last_login_at, cu.created_at,
                    co.name as org_name
@@ -291,7 +291,7 @@ async def update_user(
 ):
     """Update a user's role, status, or display name."""
     # Check user exists
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT id, username FROM admin_users WHERE id = :id"),
         {"id": user_id}
     )
@@ -326,7 +326,7 @@ async def update_user(
         if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', update.email):
             raise HTTPException(status_code=400, detail="Invalid email format")
         # Check uniqueness
-        email_check = await db.execute(
+        email_check = await execute_with_retry(db,
             text("SELECT id FROM admin_users WHERE email = :email AND id != :uid"),
             {"email": update.email, "uid": user_id}
         )
@@ -339,7 +339,7 @@ async def update_user(
         updates.append("updated_at = :now")
         params["now"] = datetime.now(timezone.utc)
 
-        await db.execute(
+        await execute_with_retry(db,
             text(f"UPDATE admin_users SET {', '.join(updates)} WHERE id = :id"),
             params
         )
@@ -354,7 +354,7 @@ async def update_user(
         await db.commit()
 
     # Return updated user
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT id, username, email, display_name, role, status, last_login, created_at
         FROM admin_users WHERE id = :id
     """), {"id": user_id})
@@ -385,7 +385,7 @@ async def delete_user(
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
 
     # Check user exists
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT username FROM admin_users WHERE id = :id"),
         {"id": user_id}
     )
@@ -394,25 +394,25 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Delete sessions first
-    await db.execute(
+    await execute_with_retry(db,
         text("DELETE FROM admin_sessions WHERE user_id = :id"),
         {"id": user_id}
     )
 
     # Delete OAuth identities if any
-    await db.execute(
+    await execute_with_retry(db,
         text("DELETE FROM admin_oauth_identities WHERE user_id = :id"),
         {"id": user_id}
     )
 
     # Set audit log user_id to NULL to preserve audit trail
-    await db.execute(
+    await execute_with_retry(db,
         text("UPDATE admin_audit_log SET user_id = NULL WHERE user_id = :id"),
         {"id": user_id}
     )
 
     # Delete user
-    await db.execute(
+    await execute_with_retry(db,
         text("DELETE FROM admin_users WHERE id = :id"),
         {"id": user_id}
     )
@@ -578,7 +578,7 @@ async def list_invites(
     db=Depends(get_db)
 ):
     """List pending invites."""
-    result = await db.execute(text("""
+    result = await execute_with_retry(db,text("""
         SELECT i.id, i.email, i.role, i.display_name, i.status,
                i.invited_by, u.display_name as inviter_name,
                i.expires_at, i.created_at
@@ -614,7 +614,7 @@ async def invite_user(
 ):
     """Invite a new user via email."""
     # Check if email already has an active user
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT id FROM admin_users WHERE email = :email"),
         {"email": invite.email}
     )
@@ -622,7 +622,7 @@ async def invite_user(
         raise HTTPException(status_code=400, detail="User with this email already exists")
 
     # Check if there's already a pending invite
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT id FROM admin_user_invites WHERE email = :email AND status = 'pending'"),
         {"email": invite.email}
     )
@@ -635,7 +635,7 @@ async def invite_user(
     expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_EXPIRY_DAYS)
 
     # Create invite record
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             INSERT INTO admin_user_invites (email, role, display_name, token_hash, invited_by, expires_at)
             VALUES (:email, :role, :display_name, :token_hash, :invited_by, :expires_at)
@@ -696,7 +696,7 @@ async def resend_invite(
 ):
     """Resend an invite email with a new token."""
     # Get invite
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT email, role, display_name, status FROM admin_user_invites WHERE id = :id"),
         {"id": invite_id}
     )
@@ -714,7 +714,7 @@ async def resend_invite(
     expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_EXPIRY_DAYS)
 
     # Update invite
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             UPDATE admin_user_invites
             SET token_hash = :token_hash, expires_at = :expires_at, invited_at = :now
@@ -757,7 +757,7 @@ async def revoke_invite(
     db=Depends(get_db)
 ):
     """Revoke a pending invite."""
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT email, status FROM admin_user_invites WHERE id = :id"),
         {"id": invite_id}
     )
@@ -770,13 +770,13 @@ async def revoke_invite(
         raise HTTPException(status_code=400, detail=f"Invite is already {status}")
 
     # Delete any existing revoked invites for this email to avoid unique constraint violation
-    await db.execute(
+    await execute_with_retry(db,
         text("DELETE FROM admin_user_invites WHERE email = :email AND status = 'revoked'"),
         {"email": email}
     )
 
     # Update status to revoked
-    await db.execute(
+    await execute_with_retry(db,
         text("UPDATE admin_user_invites SET status = 'revoked' WHERE id = :id"),
         {"id": invite_id}
     )
@@ -802,7 +802,7 @@ async def validate_invite(token: str, db=Depends(get_db)):
     """Validate an invite token (public endpoint)."""
     token_hash = hash_token(token)
 
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT email, role, display_name, status, expires_at
             FROM admin_user_invites
@@ -846,7 +846,7 @@ async def accept_invite(accept: InviteAcceptRequest, request: Request, db=Depend
     token_hash = hash_token(accept.token)
 
     # Get and validate invite
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT id, email, role, display_name, status, expires_at
             FROM admin_user_invites
@@ -874,7 +874,7 @@ async def accept_invite(accept: InviteAcceptRequest, request: Request, db=Depend
     base_username = username
     counter = 1
     while True:
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("SELECT id FROM admin_users WHERE username = :username"),
             {"username": username}
         )
@@ -885,7 +885,7 @@ async def accept_invite(accept: InviteAcceptRequest, request: Request, db=Depend
 
     # Create user
     password_hash = hash_password(accept.password)
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             INSERT INTO admin_users (username, email, password_hash, display_name, role)
             VALUES (:username, :email, :password_hash, :display_name, :role)
@@ -902,7 +902,7 @@ async def accept_invite(accept: InviteAcceptRequest, request: Request, db=Depend
     user_id = str(result.fetchone()[0])
 
     # Update invite status
-    await db.execute(
+    await execute_with_retry(db,
         text("""
             UPDATE admin_user_invites
             SET status = 'accepted', accepted_at = :now, accepted_user_id = :user_id
@@ -938,7 +938,7 @@ async def accept_invite(accept: InviteAcceptRequest, request: Request, db=Depend
 @router.get("/me", response_model=UserResponse)
 async def get_my_profile(current_user: dict = Depends(require_auth), db=Depends(get_db)):
     """Get current user's profile."""
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT id, username, email, display_name, role, status, last_login, created_at
             FROM admin_users WHERE id = :id
@@ -1158,7 +1158,7 @@ async def list_my_sessions(
             token = auth_header[7:]
     current_token_hash = hash_token(token) if token else None
 
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("""
             SELECT id, ip_address, user_agent, created_at, last_activity_at, token_hash
             FROM admin_sessions
@@ -1191,14 +1191,14 @@ async def revoke_session(
 ):
     """Revoke a specific session."""
     # Verify session belongs to current user
-    result = await db.execute(
+    result = await execute_with_retry(db,
         text("SELECT id FROM admin_sessions WHERE id = :sid AND user_id = :uid"),
         {"sid": session_id, "uid": current_user["id"]}
     )
     if not result.fetchone():
         raise HTTPException(status_code=404, detail="Session not found")
 
-    await db.execute(
+    await execute_with_retry(db,
         text("DELETE FROM admin_sessions WHERE id = :sid AND user_id = :uid"),
         {"sid": session_id, "uid": current_user["id"]}
     )
@@ -1230,7 +1230,7 @@ async def revoke_all_sessions(
     current_token_hash = hash_token(token) if token else None
 
     if current_token_hash:
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("""
                 DELETE FROM admin_sessions
                 WHERE user_id = :uid AND token_hash != :current_hash
@@ -1238,7 +1238,7 @@ async def revoke_all_sessions(
             {"uid": current_user["id"], "current_hash": current_token_hash}
         )
     else:
-        result = await db.execute(
+        result = await execute_with_retry(db,
             text("DELETE FROM admin_sessions WHERE user_id = :uid"),
             {"uid": current_user["id"]}
         )

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -93,7 +93,7 @@ func (r *incidentReporter) ReportDriftIncident(
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("[incidents] Marshal error: %v", err)
+		slog.Error("marshal error", "component", "incidents", "error", err)
 		return
 	}
 
@@ -102,7 +102,7 @@ func (r *incidentReporter) ReportDriftIncident(
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("[incidents] Request error: %v", err)
+		slog.Error("request error", "component", "incidents", "error", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -110,13 +110,13 @@ func (r *incidentReporter) ReportDriftIncident(
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		log.Printf("[incidents] POST failed: %v", err)
+		slog.Error("POST failed", "component", "incidents", "error", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		log.Printf("[incidents] POST returned %d for %s/%s", resp.StatusCode, hostname, checkType)
+		slog.Warn("POST returned unexpected status", "component", "incidents", "status_code", resp.StatusCode, "hostname", hostname, "check_type", checkType)
 		return
 	}
 }

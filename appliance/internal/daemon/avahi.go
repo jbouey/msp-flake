@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -18,7 +18,7 @@ func (d *Daemon) publishAvahiService() {
 
 	// Check if NixOS already deployed the service file
 	if _, err := os.Stat(servicePath); err == nil {
-		log.Printf("[avahi] mDNS service file exists (NixOS-managed) — _osiris-grpc._tcp on port 50051")
+		slog.Info("mDNS service file exists (NixOS-managed)", "component", "avahi", "service", "_osiris-grpc._tcp", "port", 50051)
 		return
 	}
 
@@ -36,14 +36,14 @@ func (d *Daemon) publishAvahiService() {
 `, d.config.SiteID, d.config.GRPCPort, d.config.SiteID)
 
 	if _, err := os.Stat(avahiServicesDir); os.IsNotExist(err) {
-		log.Printf("[avahi] Services directory %s not found — mDNS publishing requires NixOS rebuild", avahiServicesDir)
+		slog.Warn("services directory not found — mDNS publishing requires NixOS rebuild", "component", "avahi", "dir", avahiServicesDir)
 		return
 	}
 
 	if err := os.WriteFile(servicePath, []byte(serviceXML), 0644); err != nil {
-		log.Printf("[avahi] Cannot write service file (expected under ProtectSystem=strict) — NixOS rebuild will enable mDNS")
+		slog.Warn("cannot write service file (expected under ProtectSystem=strict) — NixOS rebuild will enable mDNS", "component", "avahi")
 		return
 	}
 
-	log.Printf("[avahi] Published _osiris-grpc._tcp on port %d (site=%s)", d.config.GRPCPort, d.config.SiteID)
+	slog.Info("published mDNS service", "component", "avahi", "service", "_osiris-grpc._tcp", "port", d.config.GRPCPort, "site_id", d.config.SiteID)
 }

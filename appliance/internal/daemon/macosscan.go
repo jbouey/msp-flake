@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -341,9 +341,9 @@ func (ds *driftScanner) scanMacOSRemote(ctx context.Context, target *sshexec.Tar
 	if probeErr != nil {
 		mac := resolveMAC(target.Hostname)
 		if mac != "" {
-			log.Printf("[macosscan] SSH probe failed for %s, sending Wake-on-LAN to %s", target.Hostname, mac)
+			slog.Info("SSH probe failed, sending Wake-on-LAN", "component", "macosscan", "hostname", target.Hostname, "mac", mac)
 			if err := sendWakeOnLAN(mac); err != nil {
-				log.Printf("[macosscan] WoL failed: %v", err)
+				slog.Error("WoL failed", "component", "macosscan", "error", err)
 			} else {
 				// Wait for Mac to wake up (typically 10-15s).
 				// Use select so we bail early if the scan context is cancelled.
@@ -354,7 +354,7 @@ func (ds *driftScanner) scanMacOSRemote(ctx context.Context, target *sshexec.Tar
 				}
 			}
 		} else {
-			log.Printf("[macosscan] SSH probe failed for %s, no MAC found for WoL", target.Hostname)
+			slog.Warn("SSH probe failed, no MAC found for WoL", "component", "macosscan", "hostname", target.Hostname)
 		}
 	} else {
 		probeConn.Close()
@@ -368,8 +368,7 @@ func (ds *driftScanner) scanMacOSRemote(ctx context.Context, target *sshexec.Tar
 
 	if !result.Success {
 		stderr := maputil.String(result.Output, "stderr")
-		log.Printf("[macosscan] Remote scan failed for %s (%s): error=%q exit=%d stderr=%q",
-			target.Hostname, label, result.Error, result.ExitCode, stderr)
+		slog.Error("remote scan failed", "component", "macosscan", "hostname", target.Hostname, "label", label, "error", result.Error, "exit_code", result.ExitCode, "stderr", stderr)
 		// Report unreachable so it surfaces as an incident in the dashboard.
 		// Cooldown in healIncident prevents spam for the same host.
 		errMsg := result.Error
@@ -401,14 +400,14 @@ func (ds *driftScanner) parseMacOSFindings(output, hostname string) []driftFindi
 	// Find the JSON in the output (skip any non-JSON lines)
 	jsonStart := strings.Index(output, "{")
 	if jsonStart < 0 {
-		log.Printf("[macosscan] No JSON in output for %s", hostname)
+		slog.Warn("no JSON in output", "component", "macosscan", "hostname", hostname)
 		return nil
 	}
 	output = output[jsonStart:]
 
 	var state macosScanState
 	if err := json.Unmarshal([]byte(output), &state); err != nil {
-		log.Printf("[macosscan] Parse error for %s: %v (raw: %.200s)", hostname, err, output)
+		slog.Error("parse error", "component", "macosscan", "hostname", hostname, "error", err, "raw_prefix", output[:min(200, len(output))])
 		return nil
 	}
 
@@ -633,7 +632,7 @@ func (ds *driftScanner) parseMacOSFindings(output, hostname string) []driftFindi
 	}
 
 	if len(findings) > 0 {
-		log.Printf("[macosscan] %s: %d drift findings", hostname, len(findings))
+		slog.Info("drift findings for target", "component", "macosscan", "hostname", hostname, "count", len(findings))
 	}
 
 	return findings

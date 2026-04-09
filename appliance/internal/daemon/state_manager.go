@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -177,7 +177,7 @@ func (sm *StateManager) ProbeWinRMPort(hostname string) winrmSettings {
 		if err2 == nil {
 			conn2.Close()
 			result = winrmSettings{Port: 5985, UseSSL: false, CachedAt: time.Now()}
-			log.Printf("[daemon] WinRM: %s using HTTP (5985) — HTTPS unavailable", hostname)
+			slog.Info("WinRM using HTTP (5985) — HTTPS unavailable", "component", "daemon", "hostname", hostname)
 		}
 	}
 
@@ -288,8 +288,7 @@ func (sm *StateManager) ShouldSuppress(key string) bool {
 			entry.count++
 			if entry.count >= flapThreshold {
 				entry.cooldownDur = flapCooldown
-				log.Printf("[daemon] Flap detected for %s (%d in %v), cooldown extended to %v",
-					key, entry.count, elapsed.Round(time.Second), flapCooldown)
+				slog.Warn("flap detected, cooldown extended", "component", "daemon", "key", key, "count", entry.count, "elapsed", elapsed.Round(time.Second), "cooldown", flapCooldown)
 			}
 		}
 		return true
@@ -441,7 +440,7 @@ func (sm *StateManager) LoadWindowsTargets(targets []map[string]interface{}, con
 	config.DCPassword = &dcPass
 
 	if prev != dcHost {
-		log.Printf("[daemon] Windows credentials loaded: dc=%s user=%s targets=%d", dcHost, dcUser, len(allTargets))
+		slog.Info("Windows credentials loaded", "component", "daemon", "dc", dcHost, "user", dcUser, "targets", len(allTargets))
 	}
 }
 
@@ -450,7 +449,7 @@ func (sm *StateManager) SetL2Mode(mode string) {
 	sm.l2ModeMu.Lock()
 	defer sm.l2ModeMu.Unlock()
 	if sm.l2Mode != mode {
-		log.Printf("[daemon] L2 mode changed: %s → %s", sm.l2Mode, mode)
+		slog.Info("L2 mode changed", "component", "daemon", "from", sm.l2Mode, "to", mode)
 	}
 	sm.l2Mode = mode
 }
@@ -467,7 +466,7 @@ func (sm *StateManager) SetSubscriptionStatus(status string) {
 	sm.subscriptionMu.Lock()
 	defer sm.subscriptionMu.Unlock()
 	if sm.subscriptionStatus != status {
-		log.Printf("[daemon] Subscription status changed: %s → %s", sm.subscriptionStatus, status)
+		slog.Info("subscription status changed", "component", "daemon", "from", sm.subscriptionStatus, "to", status)
 	}
 	sm.subscriptionStatus = status
 }
@@ -613,18 +612,18 @@ func (sm *StateManager) SaveToDisk(stateDir string) {
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		log.Printf("[daemon] Failed to marshal state: %v", err)
+		slog.Error("failed to marshal state", "component", "daemon", "error", err)
 		return
 	}
 
 	path := filepath.Join(stateDir, stateFileName)
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		log.Printf("[daemon] Failed to write state file: %v", err)
+		slog.Error("failed to write state file", "component", "daemon", "error", err)
 		return
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		log.Printf("[daemon] Failed to rename state file: %v", err)
+		slog.Error("failed to rename state file", "component", "daemon", "error", err)
 	}
 }
 
@@ -678,8 +677,7 @@ func (sm *StateManager) LoadFromDisk(stateDir string) error {
 		sm.lastSuccessfulScanMu.Unlock()
 	}
 
-	log.Printf("[daemon] Restored state from disk: %d linux_targets, l2=%s, sub=%s, cooldowns=%d, scan_times=%d (saved %s ago)",
-		len(saved.LinuxTargets), saved.L2Mode, saved.SubscriptionStatus, restored, restoredScans, time.Since(saved.SavedAt).Round(time.Second))
+	slog.Info("restored state from disk", "component", "daemon", "linux_targets", len(saved.LinuxTargets), "l2_mode", saved.L2Mode, "subscription", saved.SubscriptionStatus, "cooldowns", restored, "scan_times", restoredScans, "saved_ago", time.Since(saved.SavedAt).Round(time.Second))
 
 	return nil
 }

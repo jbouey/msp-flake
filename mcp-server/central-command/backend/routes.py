@@ -793,6 +793,7 @@ async def get_events(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
 ):
     """Get recent events from compliance bundles.
 
@@ -807,7 +808,7 @@ async def get_events(
     Returns:
         List of recent events with check results.
     """
-    events = await get_events_from_db(db, site_id=site_id, limit=limit, offset=offset)
+    events = await get_events_from_db(db, site_id=site_id, limit=limit, offset=offset, org_scope=user.get("org_scope"))
     return events
 
 
@@ -816,7 +817,7 @@ async def get_events(
 # =============================================================================
 
 @router.get("/runbooks", response_model=List[Runbook])
-async def get_runbooks(db: AsyncSession = Depends(get_db)):
+async def get_runbooks(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get all runbooks in the library.
 
     Returns:
@@ -841,7 +842,7 @@ async def get_runbooks(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/runbooks/{runbook_id}", response_model=RunbookDetail)
-async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db)):
+async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get runbook detail including steps, params, execution history."""
     rb = await get_runbook_detail_from_db(db, runbook_id)
 
@@ -871,6 +872,7 @@ async def get_runbook_executions(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
 ):
     """Get recent executions of a specific runbook from orders table."""
     executions = await get_runbook_executions_from_db(db, runbook_id, limit, offset=offset)
@@ -896,7 +898,7 @@ async def get_runbook_executions(
 # =============================================================================
 
 @router.get("/learning/status", response_model=LearningStatus)
-async def get_learning_status(db: AsyncSession = Depends(get_db)):
+async def get_learning_status(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get current state of the L2->L1 learning loop.
 
     Returns:
@@ -915,7 +917,7 @@ async def get_learning_status(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/learning/candidates", response_model=List[PromotionCandidate])
-async def get_promotion_candidates(db: AsyncSession = Depends(get_db)):
+async def get_promotion_candidates(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get patterns that are candidates for L1 promotion.
 
     Criteria: 5+ occurrences, 90%+ success rate.
@@ -941,7 +943,7 @@ async def get_promotion_candidates(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/learning/coverage-gaps", response_model=List[CoverageGap])
-async def get_coverage_gaps(db: AsyncSession = Depends(get_db)):
+async def get_coverage_gaps(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get check_types seen in telemetry that lack L1 rules."""
     from .db_queries import get_coverage_gaps_from_db
     gaps = await get_coverage_gaps_from_db(db)
@@ -949,7 +951,7 @@ async def get_coverage_gaps(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/learning/history", response_model=List[PromotionHistory])
-async def get_promotion_history(limit: int = Query(default=20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
+async def get_promotion_history(limit: int = Query(default=20, ge=1, le=100), db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get recently promoted L2->L1 patterns from learning_promotion_candidates."""
     result = await execute_with_retry(db,text("""
         SELECT
@@ -1354,7 +1356,7 @@ async def test_l2_planner(request: L2TestRequest):
 # =============================================================================
 
 @router.get("/onboarding", response_model=List[OnboardingClient])
-async def get_onboarding_pipeline(db: AsyncSession = Depends(get_db)):
+async def get_onboarding_pipeline(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get all prospects in the onboarding pipeline."""
     query = text("""
         SELECT
@@ -1438,7 +1440,7 @@ async def get_onboarding_pipeline(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/onboarding/metrics", response_model=OnboardingMetrics)
-async def get_onboarding_metrics(db: AsyncSession = Depends(get_db)):
+async def get_onboarding_metrics(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get aggregate pipeline metrics.
 
     Returns:
@@ -1512,7 +1514,7 @@ async def get_onboarding_metrics(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/onboarding/{client_id}", response_model=OnboardingClient)
-async def get_onboarding_detail(client_id: int, db: AsyncSession = Depends(get_db)):
+async def get_onboarding_detail(client_id: int, db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get detailed onboarding status for a single client."""
     clients = await get_onboarding_pipeline(db)
     for client in clients:
@@ -1736,7 +1738,7 @@ async def transfer_appliance(
 
 
 @router.post("/onboarding", response_model=OnboardingClient)
-async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(get_db)):
+async def create_prospect(prospect: ProspectCreate, db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Create new prospect (Lead stage)."""
     now = datetime.now(timezone.utc)
 
@@ -1891,7 +1893,7 @@ async def add_note(
 # =============================================================================
 
 @router.get("/stats", response_model=GlobalStats)
-async def get_global_stats(db: AsyncSession = Depends(get_db)):
+async def get_global_stats(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get aggregate statistics across all clients."""
     stats = await get_global_stats_from_db(db)
 
@@ -1948,7 +1950,7 @@ async def get_global_stats(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/stats/deltas", response_model=StatsDeltas)
-async def get_stats_deltas(db: AsyncSession = Depends(get_db)):
+async def get_stats_deltas(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Week-over-week delta indicators for dashboard KPI cards.
 
     Compares current metrics against 7-day-ago values:
@@ -2054,7 +2056,7 @@ async def get_stats_deltas(db: AsyncSession = Depends(get_db)):
 # =============================================================================
 
 @router.get("/fleet-posture")
-async def get_fleet_posture(db: AsyncSession = Depends(get_db)):
+async def get_fleet_posture(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Fleet-wide health matrix: per-site health, incidents, trend, sorted by needs-attention."""
     try:
         result = await execute_with_retry(db,text("""

@@ -10,7 +10,7 @@ package daemon
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -160,14 +160,14 @@ func (j *HealingJournal) recover() {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("[healing-journal] Failed to read journal: %v", err)
+			slog.Error("failed to read journal", "component", "healing-journal", "error", err)
 		}
 		return
 	}
 
 	var jd journalData
 	if err := json.Unmarshal(data, &jd); err != nil {
-		log.Printf("[healing-journal] Failed to parse journal: %v", err)
+		slog.Error("failed to parse journal", "component", "healing-journal", "error", err)
 		return
 	}
 
@@ -186,8 +186,7 @@ func (j *HealingJournal) recover() {
 	}
 
 	if crashed > 0 {
-		log.Printf("[healing-journal] Recovered %d crashed healing operations from prior session (saved %s ago)",
-			crashed, time.Since(jd.SavedAt).Round(time.Second))
+		slog.Warn("recovered crashed healing operations from prior session", "component", "healing-journal", "crashed", crashed, "saved_ago", time.Since(jd.SavedAt).Round(time.Second))
 		j.persistLocked()
 	}
 
@@ -213,17 +212,17 @@ func (j *HealingJournal) persistLocked() {
 
 	data, err := json.MarshalIndent(jd, "", "  ")
 	if err != nil {
-		log.Printf("[healing-journal] Marshal error: %v", err)
+		slog.Error("marshal error", "component", "healing-journal", "error", err)
 		return
 	}
 
 	path := filepath.Join(j.stateDir, healingJournalFile)
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		log.Printf("[healing-journal] Write error: %v", err)
+		slog.Error("write error", "component", "healing-journal", "error", err)
 		return
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		log.Printf("[healing-journal] Rename error: %v", err)
+		slog.Error("rename error", "component", "healing-journal", "error", err)
 	}
 }

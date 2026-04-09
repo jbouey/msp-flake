@@ -183,6 +183,7 @@ async def get_events_from_db(
     site_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    org_scope: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Get recent events from compliance_bundles.
@@ -203,6 +204,9 @@ async def get_events_from_db(
     """
 
     params = {}
+    if org_scope is not None:
+        query_str += " AND cb.site_id IN (SELECT site_id FROM sites WHERE client_org_id = ANY(:org_scope_ids))"
+        params["org_scope_ids"] = org_scope
     if site_id:
         query_str += " AND cb.site_id = :site_id"
         params["site_id"] = site_id

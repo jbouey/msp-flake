@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -129,7 +129,7 @@ func (a *autoDeployer) processPendingDeploys(ctx context.Context, deploys []Pend
 		if d.DeployMethod == "ssh" && !seen[d.OSType] {
 			seen[d.OSType] = true
 			if err := a.ensureLocalBinary(ctx, d.OSType); err != nil {
-				log.Printf("[autodeploy] Warning: could not cache binary for os=%s: %v", d.OSType, err)
+				slog.Warn("could not cache binary", "component", "autodeploy", "os_type", d.OSType, "error", err)
 			}
 		}
 	}
@@ -145,7 +145,7 @@ func (a *autoDeployer) processPendingDeploys(ctx context.Context, deploys []Pend
 		batch := deploys[i:end]
 		batchNum := (i / deployBatchSize) + 1
 
-		log.Printf("[autodeploy] Deploying batch %d/%d (%d devices)", batchNum, totalBatches, len(batch))
+		slog.Info("deploying batch", "component", "autodeploy", "batch", batchNum, "total_batches", totalBatches, "devices", len(batch))
 
 		// Deploy batch sequentially (each deploy takes a minute or so)
 		for _, deploy := range batch {
@@ -156,12 +156,12 @@ func (a *autoDeployer) processPendingDeploys(ctx context.Context, deploys []Pend
 			if !preflight.Passed {
 				result.Status = "failed"
 				result.Error = "Pre-flight failed: " + strings.Join(preflight.Blockers, "; ")
-				log.Printf("[autodeploy] Pre-flight failed for %s: %v", deploy.Hostname, preflight.Blockers)
+				slog.Warn("pre-flight failed", "component", "autodeploy", "hostname", deploy.Hostname, "blockers", preflight.Blockers)
 				allResults = append(allResults, result)
 				continue
 			}
 			if len(preflight.Warnings) > 0 {
-				log.Printf("[autodeploy] Pre-flight warnings for %s: %v", deploy.Hostname, preflight.Warnings)
+				slog.Warn("pre-flight warnings", "component", "autodeploy", "hostname", deploy.Hostname, "warnings", preflight.Warnings)
 			}
 
 			var err error
@@ -177,17 +177,17 @@ func (a *autoDeployer) processPendingDeploys(ctx context.Context, deploys []Pend
 			if err != nil {
 				result.Status = "failed"
 				result.Error = err.Error()
-				log.Printf("[autodeploy] Deploy failed: %s — %v", deploy.Hostname, err)
+				slog.Error("deploy failed", "component", "autodeploy", "hostname", deploy.Hostname, "error", err)
 			} else {
 				result.Status = "success"
-				log.Printf("[autodeploy] Deploy succeeded: %s (%s)", deploy.Hostname, deploy.OSType)
+				slog.Info("deploy succeeded", "component", "autodeploy", "hostname", deploy.Hostname, "os_type", deploy.OSType)
 			}
 			allResults = append(allResults, result)
 		}
 
 		// Gap between batches (except after the last one)
 		if end < len(deploys) {
-			log.Printf("[autodeploy] Batch complete, waiting %v before next batch...", deployBatchGap)
+			slog.Info("batch complete, waiting before next batch", "component", "autodeploy", "wait", deployBatchGap)
 			select {
 			case <-ctx.Done():
 				return allResults
@@ -243,7 +243,7 @@ func (a *autoDeployer) ensureLocalBinary(ctx context.Context, osType string) err
 		apiEndpoint = "https://api.osiriscare.net"
 	}
 	url := fmt.Sprintf("%s/updates/osiris-agent-%s-amd64", apiEndpoint, osType)
-	log.Printf("[autodeploy] Downloading agent binary from %s", url)
+	slog.Info("downloading agent binary", "component", "autodeploy", "url", url)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -277,12 +277,12 @@ func (a *autoDeployer) ensureLocalBinary(ctx context.Context, osType string) err
 		return fmt.Errorf("write binary: %w", err)
 	}
 
-	log.Printf("[autodeploy] Cached agent binary at %s", path)
+	slog.Info("cached agent binary", "component", "autodeploy", "path", path)
 
 	// Re-scan the bin directory so the manifest picks up the new binary.
 	if a.daemon.agentManifest != nil {
 		if err := a.daemon.agentManifest.ScanDirectory(filepath.Dir(path)); err != nil {
-			log.Printf("[autodeploy] Manifest re-scan after download: %v", err)
+			slog.Warn("manifest re-scan after download failed", "component", "autodeploy", "error", err)
 		}
 	}
 
@@ -319,7 +319,7 @@ func (ad *autoDeployer) runAutoDeployIfNeeded(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[autodeploy] Starting workstation discovery and agent deployment")
+	slog.Info("starting workstation discovery and agent deployment", "component", "autodeploy")
 	ad.runAutoDeployOnce(ctx)
 }
 
@@ -341,7 +341,7 @@ func (ad *autoDeployer) ensureWinRMViaGPO(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[autodeploy] Configuring WinRM on domain workstations via GPO on %s", dc)
+	slog.Info("configuring WinRM on domain workstations via GPO", "component", "autodeploy", "dc", dc)
 
 	target := ad.dcTarget()
 
@@ -567,9 +567,9 @@ $Result | ConvertTo-Json -Compress
 	result := ad.daemon.winrmExec.Execute(target, gpoScript, "WINRM-GPO", "autodeploy", 120, 1, 15.0, nil)
 	if result.Success {
 		stdout := maputil.String(result.Output, "std_out")
-		log.Printf("[autodeploy] WinRM GPO configured on %s: %s", dc, stdout)
+		slog.Info("WinRM GPO configured", "component", "autodeploy", "dc", dc, "output", stdout)
 	} else {
-		log.Printf("[autodeploy] WinRM GPO config failed on %s: %s (will use DC proxy)", dc, result.Error)
+		slog.Warn("WinRM GPO config failed (will use DC proxy)", "component", "autodeploy", "dc", dc, "error", result.Error)
 		winrmGPODone.Delete(dc) // allow retry
 	}
 }
@@ -597,7 +597,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 	// We split manually so we can build the AD host cache before continuing.
 	allComputers, err := enumerator.EnumerateAllComputers(ctx)
 	if err != nil {
-		log.Printf("[autodeploy] AD enumeration failed: %v", err)
+		slog.Error("AD enumeration failed", "component", "autodeploy", "error", err)
 		return
 	}
 
@@ -634,14 +634,14 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 	ad.adKnownHosts = adHosts
 	ad.mu.Unlock()
 
-	log.Printf("[autodeploy] AD host cache updated: %d computer objects, %d entries", len(allComputers), len(adHosts))
+	slog.Info("AD host cache updated", "component", "autodeploy", "computer_objects", len(allComputers), "entries", len(adHosts))
 
 	if len(workstations) == 0 {
-		log.Printf("[autodeploy] No deployable targets in AD (workstations + member servers)")
+		slog.Info("no deployable targets in AD", "component", "autodeploy")
 		return
 	}
 
-	log.Printf("[autodeploy] Found %d deployable targets in AD (workstations + member servers)", len(workstations))
+	slog.Info("found deployable targets in AD", "component", "autodeploy", "count", len(workstations))
 
 	// Resolve missing IPs
 	enumerator.ResolveMissingIPs(ctx, workstations)
@@ -670,8 +670,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		}
 	}
 
-	log.Printf("[autodeploy] %d/%d reachable directly, %d need DC proxy",
-		len(reachable), len(workstations), len(unreachableDirect))
+	slog.Info("reachability check complete", "component", "autodeploy", "reachable", len(reachable), "total", len(workstations), "need_dc_proxy", len(unreachableDirect))
 
 	// Deploy to each workstation with fallback chain
 	deployed := 0
@@ -687,7 +686,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		// Bail out if daemon is shutting down
 		select {
 		case <-ctx.Done():
-			log.Printf("[autodeploy] Context cancelled, aborting deploy loop")
+			slog.Warn("context cancelled, aborting deploy loop", "component", "autodeploy")
 			return
 		default:
 		}
@@ -713,7 +712,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		// Skip if escalated recently (back off for 4 hours after escalation)
 		if t, ok := ad.escalated[hostname]; ok && time.Since(t) < 4*time.Hour {
 			ad.mu.Unlock()
-			log.Printf("[autodeploy] Skipping %s — escalated %s ago, backing off", hostname, time.Since(t).Round(time.Minute))
+			slog.Info("skipping host — escalated recently, backing off", "component", "autodeploy", "hostname", hostname, "elapsed", time.Since(t).Round(time.Minute))
 			skipped++
 			continue
 		}
@@ -723,7 +722,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		// A "Take Over" deploy from Central Command may already be in progress.
 		tmu := ad.targetLock(hostname)
 		if !tmu.TryLock() {
-			log.Printf("[autodeploy] [%s] Skipping — another deploy is already in progress", hostname)
+			slog.Info("skipping — another deploy is already in progress", "component", "autodeploy", "hostname", hostname)
 			skipped++
 			continue
 		}
@@ -732,7 +731,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		err := ad.deployWithFallback(ctx, &ws)
 		tmu.Unlock()
 		if err != nil {
-			log.Printf("[autodeploy] Deploy to %s failed (all methods): %v", hostname, err)
+			slog.Error("deploy failed (all methods)", "component", "autodeploy", "hostname", hostname, "error", err)
 			ad.mu.Lock()
 			ad.failures[hostname]++
 			failCount := ad.failures[hostname]
@@ -745,7 +744,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		} else {
 			// Deploy succeeded — internal verification confirmed service is running.
 			// Now verify the agent actually connects to our gRPC server.
-			log.Printf("[autodeploy] Successfully deployed agent to %s — waiting for gRPC registration", hostname)
+			slog.Info("successfully deployed agent — waiting for gRPC registration", "component", "autodeploy", "hostname", hostname)
 			ad.mu.Lock()
 			ad.deployed[hostname] = time.Now()
 			ad.failures[hostname] = 0
@@ -765,8 +764,7 @@ func (ad *autoDeployer) runAutoDeployOnce(ctx context.Context) {
 		}
 	}
 
-	log.Printf("[autodeploy] Complete: deployed=%d, skipped=%d, failed=%d",
-		deployed, skipped, failed)
+	slog.Info("autodeploy complete", "component", "autodeploy", "deployed", deployed, "skipped", skipped, "failed", failed)
 }
 
 // verifyAgentConnection waits up to 60 seconds for a deployed agent to register
@@ -789,12 +787,12 @@ func (ad *autoDeployer) verifyAgentConnection(ctx context.Context, hostname stri
 			return
 		case <-deadline:
 			// Agent didn't connect — run diagnostic
-			log.Printf("[autodeploy] WARNING: %s deployed but did not register via gRPC within 60s", hostname)
+			slog.Warn("deployed but did not register via gRPC within 60s", "component", "autodeploy", "hostname", hostname)
 			ad.runPostDeployDiagnostic(hostname)
 			return
 		case <-ticker.C:
 			if registry.HasAgentForHost(hostname) {
-				log.Printf("[autodeploy] %s confirmed: gRPC registration successful", hostname)
+				slog.Info("gRPC registration confirmed", "component", "autodeploy", "hostname", hostname)
 				return
 			}
 		}
@@ -857,7 +855,7 @@ func (ad *autoDeployer) runPostDeployDiagnostic(hostname string) {
 		res := ad.daemon.winrmExec.Execute(target, diagScript, "AGENT-DIAG", "autodeploy", 30, 0, 10.0, nil)
 		if res.Success {
 			stdout := maputil.String(res.Output, "std_out")
-			log.Printf("[autodeploy] [%s] Post-deploy diagnostic: %s", hostname, strings.TrimSpace(stdout))
+			slog.Info("post-deploy diagnostic", "component", "autodeploy", "hostname", hostname, "output", strings.TrimSpace(stdout))
 			return
 		}
 	}
@@ -881,9 +879,9 @@ func (ad *autoDeployer) runPostDeployDiagnostic(hostname string) {
 	dcRes := ad.daemon.winrmExec.Execute(dcTarget, proxyScript, "AGENT-DIAG-DC", "autodeploy", 45, 0, 10.0, nil)
 	if dcRes.Success {
 		stdout := maputil.String(dcRes.Output, "std_out")
-		log.Printf("[autodeploy] [%s] Post-deploy diagnostic (via DC): %s", hostname, strings.TrimSpace(stdout))
+		slog.Info("post-deploy diagnostic (via DC)", "component", "autodeploy", "hostname", hostname, "output", strings.TrimSpace(stdout))
 	} else {
-		log.Printf("[autodeploy] [%s] Post-deploy diagnostic failed: %s", hostname, dcRes.Error)
+		slog.Warn("post-deploy diagnostic failed", "component", "autodeploy", "hostname", hostname, "error", dcRes.Error)
 	}
 }
 
@@ -977,27 +975,27 @@ if ($ver -eq "%s" -and $cfg.appliance_addr -eq "%s") { "OK" } else { "STALE|ver=
 					return nil // Already deployed, correct version and config
 				}
 				if trimmed == "NOT_RUNNING" {
-					log.Printf("[autodeploy] [%s] Agent not running, deploying", hostname)
+					slog.Info("agent not running, deploying", "component", "autodeploy", "hostname", hostname)
 				} else {
-					log.Printf("[autodeploy] [%s] Agent needs update: %s", hostname, trimmed)
+					slog.Info("agent needs update", "component", "autodeploy", "hostname", hostname, "status", trimmed)
 				}
 				// Direct WinRM works — proceed with full deploy
 				err := ad.deployAgentDirect(ctx, target, ws)
 				if err == nil {
 					return nil
 				}
-				log.Printf("[autodeploy] [%s] Direct deploy failed: %v — trying DC proxy", hostname, err)
+				slog.Warn("direct deploy failed — trying DC proxy", "component", "autodeploy", "hostname", hostname, "error", err)
 			case strings.Contains(probeResult.Error, "401"):
-				log.Printf("[autodeploy] [%s] Direct WinRM auth failed (401) — switching to DC proxy", hostname)
+				slog.Warn("direct WinRM auth failed (401) — switching to DC proxy", "component", "autodeploy", "hostname", hostname)
 				ad.needsProxy.Store(hostname, true)
 			default:
-				log.Printf("[autodeploy] [%s] Direct WinRM failed: %s — trying DC proxy", hostname, probeResult.Error)
+				slog.Warn("direct WinRM failed — trying DC proxy", "component", "autodeploy", "hostname", hostname, "error", probeResult.Error)
 			}
 		}
 	}
 
 	// Fallback 2: DC Proxy via Invoke-Command (Kerberos)
-	log.Printf("[autodeploy] [%s] Deploying via DC proxy (Kerberos)", hostname)
+	slog.Info("deploying via DC proxy (Kerberos)", "component", "autodeploy", "hostname", hostname)
 
 	// First check if already installed via DC proxy
 	installed, running := ad.checkAgentStatusViaDC(ctx, hostname)
@@ -1022,19 +1020,19 @@ func (ad *autoDeployer) dcTarget() *winrm.Target {
 			conn.Close()
 			ad.dcUseSSL = true
 			ad.dcPort = 5986
-			log.Printf("[autodeploy] DC %s: WinRM HTTPS (5986) available", dc)
+			slog.Info("WinRM HTTPS (5986) available", "component", "autodeploy", "dc", dc)
 		} else {
 			conn2, err2 := dialer.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", dc, 5985))
 			if err2 == nil {
 				conn2.Close()
 				ad.dcUseSSL = false
 				ad.dcPort = 5985
-				log.Printf("[autodeploy] DC %s: WinRM HTTPS unavailable, using HTTP (5985)", dc)
+				slog.Info("WinRM HTTPS unavailable, using HTTP (5985)", "component", "autodeploy", "dc", dc)
 			} else {
 				// Neither port open — default to SSL, will fail with useful error
 				ad.dcUseSSL = true
 				ad.dcPort = 5986
-				log.Printf("[autodeploy] DC %s: neither WinRM port reachable, defaulting to 5986", dc)
+				slog.Warn("neither WinRM port reachable, defaulting to 5986", "component", "autodeploy", "dc", dc)
 			}
 		}
 	}
@@ -1070,7 +1068,7 @@ func (ad *autoDeployer) buildTarget(ws *discovery.ADComputer) *winrm.Target {
 	if wt, ok := ad.daemon.LookupWinTarget(hostname); ok && wt.Role != "domain_admin" {
 		username = wt.Username
 		password = wt.Password
-		log.Printf("[autodeploy] [%s] Using workstation-specific credentials (role=%s, user=%s)", ws.Hostname, wt.Role, username)
+		slog.Info("using workstation-specific credentials", "component", "autodeploy", "hostname", ws.Hostname, "role", wt.Role, "user", username)
 	} else if cfg.DCUsername != nil && cfg.DCPassword != nil {
 		username = *cfg.DCUsername
 		password = *cfg.DCPassword
@@ -1209,7 +1207,7 @@ try {
 	}
 
 	if status.Error != "" {
-		log.Printf("[autodeploy] [%s] DC proxy status check error: %s", hostname, status.Error)
+		slog.Warn("DC proxy status check error", "component", "autodeploy", "hostname", hostname, "error", status.Error)
 	}
 
 	return status.Installed, status.Running
@@ -1232,7 +1230,7 @@ func (ad *autoDeployer) escalateDeployFailure(hostname string, failCount int, la
 		"or verify GPO startup script is applied and reboot.",
 		hostname, failCount, lastErr)
 
-	log.Printf("[autodeploy] ESCALATION: %s", errMsg)
+	slog.Warn("ESCALATION", "component", "autodeploy", "error", errMsg)
 
 	// Report as incident to Central Command via the daemon's healing pipeline
 	req := grpcserver.HealRequest{
@@ -1278,7 +1276,7 @@ func (ad *autoDeployer) loadAgentBinary() (string, error) {
 		return "", fmt.Errorf("agent binary not found at %v", paths)
 	}
 
-	log.Printf("[autodeploy] Loaded agent binary from %s (%d bytes)", loadPath, len(data))
+	slog.Info("loaded agent binary", "component", "autodeploy", "path", loadPath, "size", len(data))
 	ad.agentB64 = base64.StdEncoding.EncodeToString(data)
 	ad.agentLoaded = true
 	return ad.agentB64, nil
@@ -1301,7 +1299,7 @@ func (ad *autoDeployer) deployAgentDirect(ctx context.Context, target *winrm.Tar
 	downloadURL := fmt.Sprintf("http://%s:8090/agent/%s", applianceIP, agentBinaryName)
 
 	// Step 1: Create install directory
-	log.Printf("[autodeploy] [%s] Direct: Step 1/4 Creating directory", hostname)
+	slog.Info("direct: step 1/4 creating directory", "component", "autodeploy", "hostname", hostname)
 	mkdirResult := ad.daemon.winrmExec.Execute(target,
 		fmt.Sprintf(`New-Item -ItemType Directory -Force -Path "%s" | Out-Null; "OK"`, agentInstallDir),
 		"AGENT-DEPLOY-MKDIR", "autodeploy", 30, 0, 10.0, nil)
@@ -1310,7 +1308,7 @@ func (ad *autoDeployer) deployAgentDirect(ctx context.Context, target *winrm.Tar
 	}
 
 	// Step 2: Download binary via HTTP from appliance file server
-	log.Printf("[autodeploy] [%s] Direct: Step 2/4 Downloading binary from %s", hostname, downloadURL)
+	slog.Info("direct: step 2/4 downloading binary", "component", "autodeploy", "hostname", hostname, "url", downloadURL)
 	dlScript := fmt.Sprintf(`
 $dest = "%s\%s"
 try {
@@ -1329,11 +1327,11 @@ try {
 		return fmt.Errorf("download failed: err=%s stderr=%s", dlResult.Error, stderr)
 	}
 	stdout := maputil.String(dlResult.Output, "std_out")
-	log.Printf("[autodeploy] [%s] Direct: Download result: %s", hostname, strings.TrimSpace(stdout))
+	slog.Info("direct: download result", "component", "autodeploy", "hostname", hostname, "output", strings.TrimSpace(stdout))
 
 	// Check if the PowerShell download script reported failure — try NETLOGON UNC fallback
 	if strings.Contains(stdout, `"Success":false`) || strings.Contains(stdout, `"Success": false`) {
-		log.Printf("[autodeploy] [%s] HTTP download failed, trying NETLOGON UNC copy", hostname)
+		slog.Warn("HTTP download failed, trying NETLOGON UNC copy", "component", "autodeploy", "hostname", hostname)
 
 		// Stage binary to NETLOGON first (idempotent, cached per version)
 		if err := ad.stageAgentToNETLOGON(ctx); err != nil {
@@ -1364,9 +1362,9 @@ try {
 			return fmt.Errorf("both HTTP and NETLOGON download failed: %s", strings.TrimSpace(stdout))
 		}
 		uncStdout := maputil.String(uncResult.Output, "std_out")
-		log.Printf("[autodeploy] [%s] Direct: NETLOGON copy result: %s", hostname, strings.TrimSpace(uncStdout))
+		slog.Info("direct: NETLOGON copy result", "component", "autodeploy", "hostname", hostname, "output", strings.TrimSpace(uncStdout))
 		if strings.Contains(uncStdout, `"Success":false`) {
-			log.Printf("[autodeploy] [%s] NETLOGON copy failed, falling back to WinRM base64 transfer", hostname)
+			slog.Warn("NETLOGON copy failed, falling back to WinRM base64 transfer", "component", "autodeploy", "hostname", hostname)
 			goto winrmB64Transfer
 		}
 
@@ -1378,7 +1376,7 @@ try {
 			// Parse size from UNC result
 			var uncParsed struct{ Size int }
 			if json.Unmarshal([]byte(uncStdout), &uncParsed) == nil && uncParsed.Size != expectedSize {
-				log.Printf("[autodeploy] [%s] NETLOGON copy size mismatch: got %d, expected %d — falling back to WinRM base64", hostname, uncParsed.Size, expectedSize)
+				slog.Warn("NETLOGON copy size mismatch — falling back to WinRM base64", "component", "autodeploy", "hostname", hostname, "got", uncParsed.Size, "expected", expectedSize)
 				goto winrmB64Transfer
 			}
 		}
@@ -1388,7 +1386,7 @@ try {
 winrmB64Transfer:
 	{
 		// Last resort: push binary via WinRM base64 chunks
-		log.Printf("[autodeploy] [%s] Direct: WinRM base64 transfer (slow but reliable)", hostname)
+		slog.Info("Direct: WinRM base64 transfer (slow but reliable)", "component", "autodeploy", "detail", hostname)
 		b64Data, err := ad.loadAgentBinary()
 		if err != nil {
 			return fmt.Errorf("load agent binary for b64 transfer: %w", err)
@@ -1426,16 +1424,16 @@ winrmB64Transfer:
 				return fmt.Errorf("b64 chunk %d/%d write failed at offset %d: err=%s stderr=%s", chunkNum, totalChunks, i, res.Error, stderr)
 			}
 			if chunkNum%50 == 0 || chunkNum == totalChunks {
-				log.Printf("[autodeploy] [%s] Direct: Base64 chunk %d/%d", hostname, chunkNum, totalChunks)
+				slog.Info("Direct: Base64 chunk", "component", "autodeploy", "hostname", hostname, "chunk", chunkNum, "total_chunks", totalChunks)
 			}
 		}
-		log.Printf("[autodeploy] [%s] Direct: Base64 transfer complete (%d chars in %d chunks)", hostname, len(b64Data), totalChunks)
+		slog.Info("Direct: Base64 transfer complete", "component", "autodeploy", "hostname", hostname, "chars", len(b64Data), "chunks", totalChunks)
 	}
 
 downloadDone:
 
 	// Step 3: Write config + install service
-	log.Printf("[autodeploy] [%s] Direct: Step 3/4 Writing config + installing service", hostname)
+	slog.Info("Direct: Step 3/4 Writing config + installing service", "component", "autodeploy", "detail", hostname)
 	if err := ad.writeConfigToTarget(target, grpcAddr); err != nil {
 		return err
 	}
@@ -1444,7 +1442,7 @@ downloadDone:
 	}
 
 	// Step 4: Verify
-	log.Printf("[autodeploy] [%s] Direct: Step 4/4 Verifying", hostname)
+	slog.Info("Direct: Step 4/4 Verifying", "component", "autodeploy", "detail", hostname)
 	installed, running := ad.checkAgentStatus(ctx, target)
 	if !installed || !running {
 		return fmt.Errorf("verification failed: installed=%v running=%v", installed, running)
@@ -1490,7 +1488,7 @@ func (ad *autoDeployer) stageAgentToNETLOGON(ctx context.Context) error {
 		if len(hashLabel) > 12 {
 			hashLabel = hashLabel[:12]
 		}
-		log.Printf("[autodeploy] Agent binary changed (hash=%s), re-staging to NETLOGON", hashLabel)
+		slog.Info("agent binary changed, re-staging to NETLOGON", "component", "autodeploy", "hash", hashLabel)
 		// Invalidate the binary cache so we re-read from disk
 		ad.mu.Lock()
 		ad.agentLoaded = false
@@ -1514,7 +1512,7 @@ func (ad *autoDeployer) stageAgentToNETLOGON(ctx context.Context) error {
 
 	downloadURL := fmt.Sprintf("http://%s:8090/agent/%s", applianceIP, agentBinaryName)
 
-	log.Printf("[autodeploy] Staging agent binary to NETLOGON via HTTP download from %s", downloadURL)
+	slog.Info("Staging agent binary to NETLOGON via HTTP download from", "component", "autodeploy", "detail", downloadURL)
 
 	// Single WinRM command: download from appliance HTTP server → save to NETLOGON
 	stageScript := fmt.Sprintf(`
@@ -1542,7 +1540,7 @@ try {
 	}
 
 	stdout := maputil.String(result.Output, "std_out")
-	log.Printf("[autodeploy] Agent staged to NETLOGON: %s", stdout)
+	slog.Info("Agent staged to NETLOGON", "component", "autodeploy", "detail", stdout)
 
 	// Check if the script reported success
 	if strings.Contains(stdout, `"Success":false`) {
@@ -1567,9 +1565,9 @@ try {
 	configResult := ad.daemon.winrmExec.Execute(dcTarget, configScript, "NETLOGON-CONFIG", "autodeploy", 30, 1, 15.0, nil)
 	if configResult.Success {
 		configStdout := maputil.String(configResult.Output, "std_out")
-		log.Printf("[autodeploy] Config staged to NETLOGON: %s", configStdout)
+		slog.Info("Config staged to NETLOGON", "component", "autodeploy", "detail", configStdout)
 	} else {
-		log.Printf("[autodeploy] Config staging failed (non-fatal): %s", configResult.Error)
+		slog.Info("Config staging failed (non-fatal)", "component", "autodeploy", "detail", configResult.Error)
 	}
 
 	netlogonStaged.Store(dc, currentHash)
@@ -1595,7 +1593,7 @@ func (ad *autoDeployer) deployAgentViaDC(ctx context.Context, ws *discovery.ADCo
 		return fmt.Errorf("stage to NETLOGON: %w", err)
 	}
 
-	log.Printf("[autodeploy] [%s] DC proxy: Deploying via NETLOGON + Invoke-Command", hostname)
+	slog.Info("DC proxy: Deploying via NETLOGON + Invoke-Command", "component", "autodeploy", "detail", hostname)
 
 	configJSON := fmt.Sprintf(`{"appliance_addr":"%s","check_interval":300}`, grpcAddr)
 
@@ -1812,7 +1810,7 @@ $Result | ConvertTo-Json -Compress
 	deployResult := ad.daemon.winrmExec.Execute(dcTarget, deployScript, "AGENT-DEPLOY-PROXY", "autodeploy", 300, 1, 60.0, nil)
 
 	stdout := maputil.String(deployResult.Output, "std_out")
-	log.Printf("[autodeploy] [%s] DC proxy result: %s", hostname, stdout)
+	slog.Info("DC proxy result", "component", "autodeploy", "detail", hostname, "arg1", stdout)
 
 	if !deployResult.Success {
 		return fmt.Errorf("DC proxy deploy failed: %s", deployResult.Error)
@@ -1843,8 +1841,7 @@ $Result | ConvertTo-Json -Compress
 			proxyResult.Installed, proxyResult.Running)
 	}
 
-	log.Printf("[autodeploy] [%s] DC proxy: Deployed via %s — agent installed and running",
-		hostname, proxyResult.Method)
+	slog.Info("DC proxy: deployed — agent installed and running", "component", "autodeploy", "hostname", hostname, "method", proxyResult.Method)
 	return nil
 }
 
@@ -1934,7 +1931,7 @@ func (ad *autoDeployer) DeployWindowsAgentByHostname(ctx context.Context, hostna
 	// Acquire per-target lock to prevent concurrent deploys to the same host
 	mu := ad.targetLock(hostname)
 	if !mu.TryLock() {
-		log.Printf("[autodeploy] [%s] Skipping — another deploy is already in progress", hostname)
+		slog.Info("skipping — another deploy is already in progress", "component", "autodeploy", "hostname", hostname)
 		return fmt.Errorf("deploy already in progress for %s", hostname)
 	}
 	defer mu.Unlock()

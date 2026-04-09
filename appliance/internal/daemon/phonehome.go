@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -83,12 +83,12 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 				if err != nil {
 					// First connection: save pin (TOFU)
 					if mkErr := os.MkdirAll(filepath.Dir(pinPath), 0700); mkErr != nil {
-						log.Printf("[tls-pin] WARNING: could not create pin directory: %v", mkErr)
+						slog.Warn("could not create pin directory", "component", "tls-pin", "error", mkErr)
 					}
 					if wErr := os.WriteFile(pinPath, []byte(fpHex), 0600); wErr != nil {
-						log.Printf("[tls-pin] WARNING: could not save pin file: %v", wErr)
+						slog.Warn("could not save pin file", "component", "tls-pin", "error", wErr)
 					}
-					log.Printf("[tls-pin] TOFU: pinned server certificate fingerprint: %s...", fpHex[:16])
+					slog.Info("TOFU: pinned server certificate fingerprint", "component", "tls-pin", "fingerprint", fpHex[:16])
 					return nil
 				}
 
@@ -106,7 +106,7 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 	}
 
 	if spkiPinHash != "" {
-		log.Printf("[tls-pin] SPKI public key pinning enabled: %s...", spkiPinHash[:min(16, len(spkiPinHash))])
+		slog.Info("SPKI public key pinning enabled", "component", "tls-pin", "hash_prefix", spkiPinHash[:min(16, len(spkiPinHash))])
 	}
 
 	return &PhoneHomeClient{
@@ -123,12 +123,12 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 // from stuck connection pools or stale TLS state. Clears the TOFU pin so the
 // next connection re-pins (handles cert rotation from Let's Encrypt renewals).
 func (c *PhoneHomeClient) RecreateClient() {
-	log.Printf("[phonehome] Recreating HTTP client after %d consecutive failures — clearing TLS pin for re-TOFU", c.consecutiveFailures.Load())
+	slog.Warn("recreating HTTP client — clearing TLS pin for re-TOFU", "component", "phonehome", "consecutive_failures", c.consecutiveFailures.Load())
 	c.client.CloseIdleConnections()
 	// Delete stale TOFU pin so NewPhoneHomeClient will re-pin on next connection
 	pinPath := filepath.Join(c.config.StateDir, "server_cert_pin.hex")
 	if err := os.Remove(pinPath); err != nil && !os.IsNotExist(err) {
-		log.Printf("[phonehome] WARNING: could not remove stale pin file: %v", err)
+		slog.Warn("could not remove stale pin file", "component", "phonehome", "error", err)
 	}
 	fresh := NewPhoneHomeClient(c.config)
 	c.client = fresh.client
@@ -725,7 +725,7 @@ func applyWireguardConfig(wg *WireguardConfig) {
 	}
 
 	if err := os.MkdirAll(configDir, 0700); err != nil {
-		log.Printf("[wireguard] Failed to create config directory: %v", err)
+		slog.Error("failed to create config directory", "component", "wireguard", "error", err)
 		return
 	}
 
@@ -735,21 +735,21 @@ func applyWireguardConfig(wg *WireguardConfig) {
 		"my_ip":        wg.MyIP,
 	}, "", "  ")
 	if err != nil {
-		log.Printf("[wireguard] Failed to marshal config: %v", err)
+		slog.Error("failed to marshal config", "component", "wireguard", "error", err)
 		return
 	}
 
 	if err := os.WriteFile(configPath, data, 0600); err != nil {
-		log.Printf("[wireguard] Failed to write config: %v", err)
+		slog.Error("failed to write config", "component", "wireguard", "error", err)
 		return
 	}
 
 	// Restart the wireguard-tunnel systemd service
 	cmd := execCommand("systemctl", "restart", "wireguard-tunnel")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("[wireguard] Failed to restart tunnel service: %v (%s)", err, string(out))
+		slog.Error("failed to restart tunnel service", "component", "wireguard", "error", err, "output", string(out))
 	} else {
-		log.Printf("[wireguard] Config written, tunnel restarting: %s -> %s", wg.MyIP, wg.HubEndpoint)
+		slog.Info("config written, tunnel restarting", "component", "wireguard", "my_ip", wg.MyIP, "hub_endpoint", wg.HubEndpoint)
 	}
 }
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -55,11 +55,11 @@ func clampScanInterval(d time.Duration) time.Duration {
 	const minInterval = 5 * time.Minute  // 300 seconds
 	const maxInterval = 1 * time.Hour    // 3600 seconds
 	if d < minInterval {
-		log.Printf("[driftscan] Scan interval %v clamped to minimum %v", d, minInterval)
+		slog.Warn("scan interval clamped to minimum", "component", "driftscan", "requested", d, "minimum", minInterval)
 		return minInterval
 	}
 	if d > maxInterval {
-		log.Printf("[driftscan] Scan interval %v clamped to maximum %v", d, maxInterval)
+		slog.Warn("scan interval clamped to maximum", "component", "driftscan", "requested", d, "maximum", maxInterval)
 		return maxInterval
 	}
 	return d
@@ -139,8 +139,7 @@ func (ds *driftScanner) updateLastDriftHosts(findings []driftFinding, scannedHos
 	ds.lastDriftHostsMu.Unlock()
 
 	if count > 0 {
-		log.Printf("[driftscan] Adaptive interval: %d host(s) with drift, next scan in %v",
-			count, driftRescanInterval)
+		slog.Info("adaptive interval: hosts with drift detected", "component", "driftscan", "drift_hosts", count, "next_scan_in", driftRescanInterval)
 	}
 }
 
@@ -166,7 +165,7 @@ func (ds *driftScanner) shouldSuppressIPMismatch(hostname string) bool {
 // ForceScan runs both Windows and Linux drift scans immediately,
 // bypassing the interval check. Called from run_drift fleet order handler.
 func (ds *driftScanner) ForceScan(ctx context.Context) map[string]interface{} {
-	log.Printf("[driftscan] Force scan triggered by fleet order")
+	slog.Info("force scan triggered by fleet order", "component", "driftscan")
 
 	windowsDone := false
 	linuxDone := false
@@ -221,7 +220,7 @@ func (ds *driftScanner) runDriftScanIfNeeded(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[driftscan] Starting drift scan cycle (interval=%v)", interval)
+	slog.Info("starting drift scan cycle", "component", "driftscan", "interval", interval)
 	ds.mu.Lock()
 	ds.lastScanTime = time.Now()
 	ds.mu.Unlock()
@@ -271,12 +270,12 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 			// If a Go agent is actively heartbeating for this host, skip WinRM — push covers it.
 			// Stale/dead agents (no heartbeat in 10min) fall back to WinRM pull scan.
 			if ds.svc.Registry != nil && ds.svc.Registry.HasActiveAgentForHost(hostname, agentStaleTimeout) {
-				log.Printf("[driftscan] Skipping WinRM for %s (covered by active Go agent)", hostname)
+				slog.Info("skipping WinRM for host (covered by active Go agent)", "component", "driftscan", "hostname", hostname)
 				scanned[hostname] = true
 				continue
 			}
 			if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
-				log.Printf("[driftscan] Agent %s registered but stale — falling back to WinRM pull scan", hostname)
+				slog.Info("agent registered but stale — falling back to WinRM pull scan", "component", "driftscan", "hostname", hostname)
 			}
 			ws := ds.svc.Targets.ProbeWinRMPort(hostname)
 			// Use per-workstation credentials if available.
@@ -328,15 +327,14 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 			continue
 		}
 		if ds.svc.Registry != nil && ds.svc.Registry.HasAgentForHost(hostname) {
-			log.Printf("[driftscan] Credential target %s has stale agent — WinRM fallback scan", hostname)
+			slog.Info("credential target has stale agent — WinRM fallback scan", "component", "driftscan", "hostname", hostname)
 		}
 		connectHost := hostname
 		// DNS re-resolution: if the credential is stored by hostname and the
 		// connect address looks like a stale IP, check if DNS has a newer address.
 		// We log the mismatch but don't auto-update (security decision for partner).
 		if newIP := dnsReResolve(ctx, hostname, wt.Hostname); newIP != "" {
-			log.Printf("[driftscan] Credential %q stored IP %s differs from DNS %s — using stored IP (partner must update credentials to switch)",
-				hostname, wt.Hostname, newIP)
+			slog.Warn("credential stored IP differs from DNS — using stored IP", "component", "driftscan", "hostname", hostname, "stored_ip", wt.Hostname, "dns_ip", newIP)
 		}
 		if wt.Hostname != "" {
 			connectHost = wt.Hostname
@@ -346,8 +344,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 		// drift finding and use the discovered IP for the scan attempt (the stale
 		// credential IP is likely unreachable after a DHCP change).
 		if discoveredIP, found := ds.lookupDeviceIP(hostname); found && discoveredIP != connectHost {
-			log.Printf("[driftscan] Credential for %s points to %s but device discovered at %s",
-				hostname, connectHost, discoveredIP)
+			slog.Warn("credential IP mismatch with discovered device", "component", "driftscan", "hostname", hostname, "credential_ip", connectHost, "discovered_ip", discoveredIP)
 			// Report credential_ip_mismatch drift finding with 1-hour cooldown
 			if !ds.isCheckDisabled("credential_ip_mismatch") && !ds.shouldSuppressIPMismatch(hostname) {
 				mismatchFinding := driftFinding{
@@ -406,7 +403,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 			}
 		}
 		if len(owned) < len(targets) {
-			log.Printf("[driftscan] Mesh filter: %d/%d Windows targets owned by this appliance", len(owned), len(targets))
+			slog.Info("mesh filter applied to Windows targets", "component", "driftscan", "owned", len(owned), "total", len(targets))
 		}
 		targets = owned
 	}
@@ -438,7 +435,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 				if ds.daemon.deployer != nil {
 					adHosts := ds.svc.Targets.GetADHostnames()
 					if adHosts[t.hostname] || adHosts[drifts[i].Hostname] {
-						log.Printf("[driftscan] Unreachable host %s is domain-joined — GPO should enable WinRM on next boot", t.hostname)
+						slog.Info("unreachable host is domain-joined — GPO should enable WinRM on next boot", "component", "driftscan", "hostname", t.hostname)
 					}
 				}
 			}
@@ -463,8 +460,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 
 	// Report a single aggregate finding when subnet appears dark
 	if len(targets) >= 3 && unreachableCount*100/len(targets) >= 80 {
-		log.Printf("[driftscan] SUBNET DARK: %d/%d targets unreachable — suppressing individual incidents",
-			unreachableCount, len(targets))
+		slog.Warn("SUBNET DARK: suppressing individual incidents", "component", "driftscan", "unreachable", unreachableCount, "total", len(targets))
 		ds.reportDrift(&driftFinding{
 			Hostname:     "network",
 			CheckType:    "subnet_dark",
@@ -478,8 +474,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 	// successful scan in 7+ days (or never scanned at all).
 	ds.checkStaleCredentials(targets)
 
-	log.Printf("[driftscan] Scan complete: targets=%d, drifts_found=%d",
-		len(targets), len(allFindings))
+	slog.Info("scan complete", "component", "driftscan", "targets", len(targets), "drifts_found", len(allFindings))
 
 	// Update adaptive scan interval: track which hosts had drift
 	ds.updateLastDriftHosts(allFindings, scannedHosts)
@@ -516,7 +511,7 @@ func (ds *driftScanner) scanWindowsTargets(ctx context.Context) {
 			}
 		}
 		if err := ds.daemon.evidenceSubmitter.BuildAndSubmit(ctx, evFindings, scannedHosts); err != nil {
-			log.Printf("[driftscan] Evidence submission failed: %v", err)
+			slog.Error("evidence submission failed", "component", "driftscan", "error", err)
 		}
 	}
 }
@@ -562,8 +557,7 @@ func reportDriftGeneric(d *Daemon, f *driftFinding, platform, source string, ext
 		Metadata:     metadata,
 	}
 
-	log.Printf("[%s] DRIFT: %s/%s expected=%s actual=%s hipaa=%s",
-		source, f.Hostname, f.CheckType, f.Expected, f.Actual, f.HIPAAControl)
+	slog.Warn("DRIFT detected", "component", source, "hostname", f.Hostname, "check_type", f.CheckType, "expected", f.Expected, "actual", f.Actual, "hipaa_control", f.HIPAAControl)
 
 	d.healIncident(context.Background(), &req)
 }
@@ -916,12 +910,12 @@ $result | ConvertTo-Json -Depth 3 -Compress
 			return ds.checkTargetViaDCProxy(ctx, t)
 		}
 		errMsg := scanResult.Error
-		log.Printf("[driftscan] Scan failed for %s (%s): %s", t.hostname, t.label, errMsg)
+		slog.Error("scan failed", "component", "driftscan", "hostname", t.hostname, "label", t.label, "error", errMsg)
 
 		// Distinguish auth failures from connectivity failures — auth errors
 		// mean credentials are wrong, not that the host is unreachable.
 		if isAuthError(errMsg) {
-			log.Printf("[driftscan] ERROR: Credential auth failure for %s — check credential_name/password in site_credentials", t.hostname)
+			slog.Error("credential auth failure — check credential_name/password in site_credentials", "component", "driftscan", "hostname", t.hostname)
 			return ds.credentialFailureFinding(t, errMsg)
 		}
 		return ds.unreachableFinding(t, "windows", errMsg)
@@ -934,7 +928,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 
 	var state windowsScanState
 	if err := json.Unmarshal([]byte(stdout), &state); err != nil {
-		log.Printf("[driftscan] Parse error for %s: %v", t.hostname, err)
+		slog.Error("parse error", "component", "driftscan", "hostname", t.hostname, "error", err)
 		return nil
 	}
 
@@ -1465,7 +1459,7 @@ func (ds *driftScanner) evaluateWindowsFindings(state *windowsScanState, t scanT
 	}
 
 	if len(findings) > 0 {
-		log.Printf("[driftscan] %s (%s): %d drift findings", t.hostname, t.label, len(findings))
+		slog.Info("drift findings for target", "component", "driftscan", "hostname", t.hostname, "label", t.label, "count", len(findings))
 	}
 
 	return findings
@@ -1549,7 +1543,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
 
 	scanResult := ds.svc.WinRM.Execute(dcTarget, proxyScript, "DRIFT-SCAN-PROXY", "driftscan", 60, 0, 30.0, nil)
 	if !scanResult.Success {
-		log.Printf("[driftscan] DC proxy scan failed for %s: %s", t.hostname, scanResult.Error)
+		slog.Error("DC proxy scan failed", "component", "driftscan", "hostname", t.hostname, "error", scanResult.Error)
 		// Direct WinRM and DC proxy both failed — try direct fallback with per-host creds
 		return ds.checkTargetDirectFallback(ctx, t)
 	}
@@ -1565,11 +1559,11 @@ $result | ConvertTo-Json -Depth 3 -Compress
 		Error string `json:"Error"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &proxyState); err != nil {
-		log.Printf("[driftscan] DC proxy parse error for %s: %v (raw: %.200s)", t.hostname, err, stdout)
+		slog.Error("DC proxy parse error", "component", "driftscan", "hostname", t.hostname, "error", err, "raw_prefix", stdout[:min(200, len(stdout))])
 		return nil
 	}
 	if proxyState.Error != "" {
-		log.Printf("[driftscan] DC proxy session error for %s: %s — trying direct WinRM fallback", t.hostname, proxyState.Error)
+		slog.Warn("DC proxy session error — trying direct WinRM fallback", "component", "driftscan", "hostname", t.hostname, "error", proxyState.Error)
 		// Fallback: try direct WinRM with workstation-specific credentials.
 		// The initial direct attempt (in checkTarget) used DC admin creds which
 		// may not have local admin rights on the workstation. Here we try with
@@ -1594,7 +1588,7 @@ func (ds *driftScanner) checkTargetDirectFallback(ctx context.Context, t scanTar
 		wt, ok = ds.svc.Targets.LookupWinTarget(t.target.Hostname)
 	}
 	if !ok || wt.Username == "" {
-		log.Printf("[driftscan] No workstation-specific credentials for %s, cannot fallback", t.hostname)
+		slog.Warn("no workstation-specific credentials, cannot fallback", "component", "driftscan", "hostname", t.hostname)
 		// All three scan paths failed (direct, DC proxy, direct fallback).
 		// Report unreachable so it appears as an incident in the dashboard.
 		return ds.unreachableFinding(t, "windows", "all scan methods failed (direct WinRM, DC proxy, direct fallback — no per-host credentials)")
@@ -1615,8 +1609,7 @@ func (ds *driftScanner) checkTargetDirectFallback(ctx context.Context, t scanTar
 		},
 	}
 
-	log.Printf("[driftscan] Direct fallback scan for %s using %s@%s",
-		t.hostname, wt.Username, wt.Hostname)
+	slog.Info("direct fallback scan", "component", "driftscan", "hostname", t.hostname, "username", wt.Username, "connect_host", wt.Hostname)
 
 	return ds.checkTarget(ctx, directTarget)
 }
@@ -1647,7 +1640,7 @@ func (ds *driftScanner) runLinuxScanIfNeeded(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[linuxscan] Starting Linux drift scan cycle (interval=%v)", interval)
+	slog.Info("starting Linux drift scan cycle", "component", "linuxscan", "interval", interval)
 	ds.linuxMu.Lock()
 	ds.lastLinuxScanTime = time.Now()
 	ds.linuxMu.Unlock()
@@ -1809,8 +1802,7 @@ func dnsReResolve(ctx context.Context, credName, storedIP string) string {
 		}
 	}
 
-	log.Printf("[driftscan] DNS mismatch for credential %q: stored=%s, DNS=%s (possible DHCP change)",
-		credName, storedIP, addrs[0])
+	slog.Warn("DNS mismatch for credential (possible DHCP change)", "component", "driftscan", "credential", credName, "stored_ip", storedIP, "dns_ip", addrs[0])
 	return addrs[0]
 }
 
@@ -1841,6 +1833,6 @@ func resolveHostnameWithFallback(ctx context.Context, hostname, adDNSServer stri
 		return "", fmt.Errorf("resolve %s: system=%v, ad_dns=%v", hostname, err, err2)
 	}
 
-	log.Printf("[driftscan] Resolved %s via AD DNS (%s) → %s", hostname, adDNSServer, addrs[0])
+	slog.Info("resolved hostname via AD DNS", "component", "driftscan", "hostname", hostname, "ad_dns", adDNSServer, "resolved_ip", addrs[0])
 	return addrs[0], nil
 }

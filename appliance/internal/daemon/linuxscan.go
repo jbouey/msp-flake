@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -468,7 +468,7 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 			}
 		}
 		if len(owned) < len(targets) {
-			log.Printf("[linuxscan] Mesh filter: %d/%d Linux targets owned by this appliance", len(owned), len(targets))
+			slog.Info("mesh filter applied to Linux targets", "component", "linuxscan", "owned", len(owned), "total", len(targets))
 		}
 		targets = owned
 	}
@@ -476,7 +476,7 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 	for _, lt := range targets {
 		select {
 		case <-scanCtx.Done():
-			log.Printf("[linuxscan] Scan aborted: %v (scanned %d/%d targets)", scanCtx.Err(), len(scannedHosts), len(targets))
+			slog.Warn("scan aborted", "component", "linuxscan", "error", scanCtx.Err(), "scanned", len(scannedHosts), "total", len(targets))
 			return
 		default:
 		}
@@ -515,8 +515,7 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 		}
 	}
 
-	log.Printf("[linuxscan] Scan complete: targets=%d, drifts_found=%d",
-		len(scannedHosts), len(allFindings))
+	slog.Info("scan complete", "component", "linuxscan", "targets", len(scannedHosts), "drifts_found", len(allFindings))
 
 	// Update adaptive scan interval with Linux findings
 	ds.updateLastDriftHosts(allFindings, scannedHosts)
@@ -538,7 +537,7 @@ func (ds *driftScanner) scanLinuxTargets(ctx context.Context) {
 			}
 		}
 		if err := ds.daemon.evidenceSubmitter.BuildAndSubmitLinux(scanCtx, evFindings, scannedHosts); err != nil {
-			log.Printf("[linuxscan] Evidence submission failed: %v", err)
+			slog.Error("evidence submission failed", "component", "linuxscan", "error", err)
 		}
 	}
 }
@@ -558,8 +557,7 @@ func (ds *driftScanner) scanLinuxRemote(ctx context.Context, target *sshexec.Tar
 
 	if !result.Success {
 		stderr := maputil.String(result.Output, "stderr")
-		log.Printf("[linuxscan] Remote scan failed for %s (%s): error=%q exit=%d stderr=%q",
-			target.Hostname, label, result.Error, result.ExitCode, stderr)
+		slog.Error("remote scan failed", "component", "linuxscan", "hostname", target.Hostname, "label", label, "error", result.Error, "exit_code", result.ExitCode, "stderr", stderr)
 		// Report unreachable so it surfaces as an incident in the dashboard.
 		// Cooldown in healIncident prevents spam for the same host.
 		errMsg := result.Error
@@ -591,14 +589,14 @@ func (ds *driftScanner) parseLinuxFindings(output, hostname string) []driftFindi
 	// Find the JSON in the output (skip any non-JSON lines)
 	jsonStart := strings.Index(output, "{")
 	if jsonStart < 0 {
-		log.Printf("[linuxscan] No JSON in output for %s", hostname)
+		slog.Warn("no JSON in output", "component", "linuxscan", "hostname", hostname)
 		return nil
 	}
 	output = output[jsonStart:]
 
 	var state linuxScanState
 	if err := json.Unmarshal([]byte(output), &state); err != nil {
-		log.Printf("[linuxscan] Parse error for %s: %v (raw: %.200s)", hostname, err, output)
+		slog.Error("parse error", "component", "linuxscan", "hostname", hostname, "error", err, "raw_prefix", output[:min(200, len(output))])
 		return nil
 	}
 
@@ -871,7 +869,7 @@ func (ds *driftScanner) parseLinuxFindings(output, hostname string) []driftFindi
 	}
 
 	if len(findings) > 0 {
-		log.Printf("[linuxscan] %s: %d drift findings", hostname, len(findings))
+		slog.Info("drift findings for target", "component", "linuxscan", "hostname", hostname, "count", len(findings))
 	}
 
 	return findings

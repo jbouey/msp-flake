@@ -2,7 +2,8 @@ package daemon
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -110,7 +111,7 @@ func (m *wgMonitor) check() *wgStatus {
 	if status == nil {
 		// Not configured — only log transition from connected to unconfigured
 		if m.lastConnected != nil && *m.lastConnected {
-			log.Printf("[wireguard] Tunnel wg0 no longer present (interface removed or deconfigured)")
+			slog.Warn("tunnel wg0 no longer present (interface removed or deconfigured)", "component", "wireguard")
 			f := false
 			m.lastConnected = &f
 		}
@@ -122,23 +123,16 @@ func (m *wgMonitor) check() *wgStatus {
 	if m.lastConnected == nil {
 		// First check — log initial state
 		if connected {
-			log.Printf("[wireguard] Tunnel UP — peer=%s, handshake=%s ago, rx=%d tx=%d",
-				status.PeerEndpoint,
-				time.Since(status.LastHandshake).Truncate(time.Second),
-				status.BytesReceived, status.BytesSent)
+			slog.Info("tunnel UP", "component", "wireguard", "peer", status.PeerEndpoint, "handshake_ago", time.Since(status.LastHandshake).Truncate(time.Second), "rx", status.BytesReceived, "tx", status.BytesSent)
 		} else {
-			log.Printf("[wireguard] Tunnel DOWN — peer=%s, last_handshake=%s",
-				status.PeerEndpoint, status.LastHandshake.Format(time.RFC3339))
+			slog.Warn("tunnel DOWN", "component", "wireguard", "peer", status.PeerEndpoint, "last_handshake", status.LastHandshake.Format(time.RFC3339))
 		}
 	} else if connected != *m.lastConnected {
 		// State transition
 		if connected {
-			log.Printf("[wireguard] Tunnel RECONNECTED — peer=%s, handshake=%s ago",
-				status.PeerEndpoint,
-				time.Since(status.LastHandshake).Truncate(time.Second))
+			slog.Info("tunnel RECONNECTED", "component", "wireguard", "peer", status.PeerEndpoint, "handshake_ago", time.Since(status.LastHandshake).Truncate(time.Second))
 		} else {
-			log.Printf("[wireguard] Tunnel DISCONNECTED — peer=%s, last_handshake=%s",
-				status.PeerEndpoint, status.LastHandshake.Format(time.RFC3339))
+			slog.Warn("tunnel DISCONNECTED", "component", "wireguard", "peer", status.PeerEndpoint, "last_handshake", status.LastHandshake.Format(time.RFC3339))
 		}
 	}
 
@@ -158,7 +152,7 @@ func checkKeyIntegrity(stateDir string) {
 	// Check permissions — private key must be 0600 (owner read/write only)
 	perm := info.Mode().Perm()
 	if perm != 0o600 {
-		log.Printf("[wireguard] WARNING: private key has wrong permissions: %04o (expected 0600)", perm)
+		slog.Warn("private key has wrong permissions", "component", "wireguard", "permissions", fmt.Sprintf("%04o", perm), "expected", "0600")
 	}
 }
 

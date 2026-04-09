@@ -3,7 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -44,7 +44,7 @@ func (d *Daemon) handleConfigureWorkstationAgent(_ context.Context, params map[s
 	}
 
 	// Step 1: Set execution policy to allow scripts
-	log.Printf("[configure-agent] [%s] Step 1: Setting execution policy", hostname)
+	slog.Info("step 1: setting execution policy", "component", "configure-agent", "hostname", hostname)
 	epResult := d.winrmExec.Execute(target,
 		`Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force; Get-ExecutionPolicy`,
 		"AGENT-CFG-EP", "configure", 15, 0, 10.0, nil)
@@ -56,7 +56,7 @@ func (d *Daemon) handleConfigureWorkstationAgent(_ context.Context, params map[s
 	}
 
 	// Step 2: Check binary exists and version matches
-	log.Printf("[configure-agent] [%s] Step 2: Checking binary", hostname)
+	slog.Info("step 2: checking binary", "component", "configure-agent", "hostname", hostname)
 	expectedVersion := readVersionFile(filepath.Join(d.config.StateDir, "agent"))
 	checkResult := d.winrmExec.Execute(target,
 		fmt.Sprintf(`$exe = "C:\OsirisCare\osiris-agent.exe"
@@ -82,7 +82,7 @@ if (Test-Path $exe) {
 	}
 
 	if needsDownload {
-		log.Printf("[configure-agent] [%s] Step 2b: Downloading correct binary", hostname)
+		slog.Info("step 2b: downloading correct binary", "component", "configure-agent", "hostname", hostname)
 		applianceIP := d.config.GRPCListenAddr()
 		if idx := strings.LastIndex(applianceIP, ":"); idx >= 0 {
 			applianceIP = applianceIP[:idx]
@@ -111,7 +111,7 @@ try {
 
 		if !dlResult.Success || strings.Contains(dlStdout, `"Success":false`) {
 			// HTTP failed — try NETLOGON UNC
-			log.Printf("[configure-agent] [%s] HTTP download failed, trying NETLOGON", hostname)
+			slog.Warn("HTTP download failed, trying NETLOGON", "component", "configure-agent", "hostname", hostname)
 			if d.config.DomainController != nil && *d.config.DomainController != "" {
 				dcIP := *d.config.DomainController
 				uncScript := fmt.Sprintf(`
@@ -131,11 +131,11 @@ try {
 			}
 		}
 		addStep(fmt.Sprintf("download=%s", strings.TrimSpace(dlStdout)))
-		log.Printf("[configure-agent] [%s] Download result: %s", hostname, strings.TrimSpace(dlStdout))
+		slog.Info("download result", "component", "configure-agent", "hostname", hostname, "result", strings.TrimSpace(dlStdout))
 	}
 
 	// Step 3: Write config to BOTH locations (install dir + data dir)
-	log.Printf("[configure-agent] [%s] Step 3: Writing config (addr=%s)", hostname, applianceAddr)
+	slog.Info("step 3: writing config", "component", "configure-agent", "hostname", hostname, "addr", applianceAddr)
 	configJSON := fmt.Sprintf(`{"appliance_addr":"%s","check_interval":300,"data_dir":"C:\\ProgramData\\OsirisCare"}`, applianceAddr)
 	configScript := fmt.Sprintf(
 		`New-Item -ItemType Directory -Force -Path "C:\ProgramData\OsirisCare" | Out-Null; Set-Content -Path "C:\OsirisCare\config.json" -Value '%s' -Encoding UTF8 -Force; Set-Content -Path "C:\ProgramData\OsirisCare\config.json" -Value '%s' -Encoding UTF8 -Force; "OK"`,
@@ -147,7 +147,7 @@ try {
 	addStep("config_written")
 
 	// Step 3b: Clear stale TLS certificates (forces re-enrollment with current appliance)
-	log.Printf("[configure-agent] [%s] Step 3b: Clearing stale TLS certs", hostname)
+	slog.Info("step 3b: clearing stale TLS certs", "component", "configure-agent", "hostname", hostname)
 	certCleanScript := `
 $paths = @(
     "C:\OsirisCare\agent.crt", "C:\OsirisCare\agent.key", "C:\OsirisCare\ca.crt",
@@ -169,7 +169,7 @@ foreach ($p in $paths) { if (Test-Path $p) { Remove-Item $p -Force; $removed++ }
 	}
 
 	// Step 4: Open firewall for outbound gRPC (port 50051)
-	log.Printf("[configure-agent] [%s] Step 4: Firewall rule for gRPC", hostname)
+	slog.Info("step 4: firewall rule for gRPC", "component", "configure-agent", "hostname", hostname)
 	fwResult := d.winrmExec.Execute(target,
 		`$r = Get-NetFirewallRule -DisplayName "OsirisCare Agent gRPC" -EA SilentlyContinue; if (-not $r) { New-NetFirewallRule -DisplayName "OsirisCare Agent gRPC" -Direction Outbound -Action Allow -Protocol TCP -RemotePort 50051 -Program "C:\OsirisCare\osiris-agent.exe" | Out-Null; "created" } else { "exists" }`,
 		"AGENT-CFG-FW", "configure", 15, 0, 10.0, nil)
@@ -190,7 +190,7 @@ foreach ($p in $paths) { if (Test-Path $p) { Remove-Item $p -Force; $removed++ }
 	}
 
 	// Step 6: Install and start service
-	log.Printf("[configure-agent] [%s] Step 5: Installing service", hostname)
+	slog.Info("step 5: installing service", "component", "configure-agent", "hostname", hostname)
 	svcScript := `
 $serviceName = "OsirisCareAgent"
 $exePath = "C:\OsirisCare\osiris-agent.exe"
@@ -221,7 +221,7 @@ $svc = Get-Service -Name $serviceName
 	}
 	svcStdout := maputil.String(svcResult.Output, "std_out")
 	addStep(fmt.Sprintf("service=%s", strings.TrimSpace(svcStdout)))
-	log.Printf("[configure-agent] [%s] Service result: %s", hostname, strings.TrimSpace(svcStdout))
+	slog.Info("service result", "component", "configure-agent", "hostname", hostname, "result", strings.TrimSpace(svcStdout))
 
 	results["success"] = true
 	results["message"] = fmt.Sprintf("Agent configured on %s — should register via gRPC within 30 seconds", hostname)
