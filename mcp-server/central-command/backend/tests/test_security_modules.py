@@ -230,9 +230,10 @@ from cryptography.fernet import Fernet
 test_key = Fernet.generate_key().decode()
 os.environ["CREDENTIAL_ENCRYPTION_KEY"] = test_key
 
-# Reset the cached fernet instance
+# Reset the cached keyring so the test key is picked up. `reset_cache()`
+# is the public helper that replaced the private `_fernet = None` reach-in.
 import credential_crypto
-credential_crypto._fernet = None
+credential_crypto.reset_cache()
 
 from credential_crypto import encrypt_credential, decrypt_credential
 
@@ -276,13 +277,18 @@ class TestCredentialEncryption:
     def test_missing_key_raises(self):
         """RuntimeError when no key is configured."""
         import credential_crypto as cc
-        old_fernet = cc._fernet
-        cc._fernet = None
+        cc.reset_cache()
         old_env = os.environ.pop("CREDENTIAL_ENCRYPTION_KEY", None)
+        old_keys = os.environ.pop("CREDENTIAL_ENCRYPTION_KEYS", None)
         try:
             with pytest.raises(RuntimeError):
-                cc._get_fernet()
+                # encrypt_credential triggers the keyring load; since both
+                # env vars are gone and there's no key file in the test env,
+                # this should raise
+                cc.encrypt_credential("x")
         finally:
             if old_env:
                 os.environ["CREDENTIAL_ENCRYPTION_KEY"] = old_env
-            cc._fernet = old_fernet
+            if old_keys:
+                os.environ["CREDENTIAL_ENCRYPTION_KEYS"] = old_keys
+            cc.reset_cache()
