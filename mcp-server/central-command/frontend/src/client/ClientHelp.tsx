@@ -287,7 +287,7 @@ export const ClientHelp: React.FC = () => {
           <div className="bg-teal-50 p-4 rounded-lg">
             <h5 className="font-medium text-teal-800 mb-2">Key Features</h5>
             <ul className="list-disc list-inside text-teal-700 space-y-2 text-sm">
-              <li><strong>Immutable Records</strong> - Once recorded, evidence cannot be altered</li>
+              <li><strong>Tamper-evident Records</strong> — each evidence record is hash-chained and blockchain-anchored so later alterations are detectable</li>
               <li><strong>Digital Signatures</strong> - Ed25519 cryptographic signatures prove authenticity</li>
               <li><strong>Chain Verification</strong> - Each bundle links to the previous, creating an audit trail</li>
               <li><strong>Timestamping</strong> - NTP-synchronized times prove when checks occurred</li>

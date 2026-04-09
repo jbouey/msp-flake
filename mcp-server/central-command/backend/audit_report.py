@@ -205,9 +205,15 @@ async def get_audit_readiness(org_id: int, user: dict = Depends(require_auth)):
             if not org:
                 raise HTTPException(status_code=404, detail="Organization not found")
 
-            # Gather site IDs for this org
+            # Gather site IDs for this org.
+            #
+            # Session 203 audit fix: the column is `client_org_id`, not
+            # `org_id`. Original code referenced `sites.org_id` which
+            # doesn't exist in the schema — every call to this endpoint
+            # was HTTP 500'ing in prod, meaning the literal "ready for
+            # audit" badge on the Ops Center page never rendered.
             site_rows = await conn.fetch(
-                "SELECT site_id FROM sites WHERE org_id = $1", org_id
+                "SELECT site_id FROM sites WHERE client_org_id = $1::uuid", org_id
             )
             site_ids = [r["site_id"] for r in site_rows]
 
@@ -224,28 +230,46 @@ async def get_audit_readiness(org_id: int, user: dict = Depends(require_auth)):
                 countdown = compute_audit_countdown(org["next_audit_date"])
                 return {"org_id": org_id, "org_name": org["name"], **readiness, "countdown": countdown}
 
-            # Evidence metrics — signing rate + chain integrity
+            # Evidence metrics — signing rate + chain integrity.
+            #
+            # Session 203 audit fix: there is no `chain_valid` column on
+            # compliance_bundles. Chain validity is derived at verification
+            # time by walking the hash chain (see verify_chain_integrity).
+            # As a cheap at-rest proxy we treat "every bundle is signed" as
+            # "chain is intact" — if a bundle was tampered, its signature
+            # would fail re-verification and `signature_valid` would be
+            # false. Zero bundles or any failed signature → chain unbroken
+            # reports false, which is the intent of the original query.
             evidence = await conn.fetchrow("""
                 SELECT
                     COUNT(*) AS total,
                     COUNT(*) FILTER (WHERE signature_valid = true) AS signed,
-                    bool_and(chain_valid) AS chain_unbroken
+                    COUNT(*) FILTER (WHERE signature_valid = false) AS failed_signatures
                 FROM compliance_bundles
                 WHERE site_id = ANY($1::text[])
             """, site_ids)
 
             total_bundles = evidence["total"] or 0
             signed_bundles = evidence["signed"] or 0
-            chain_unbroken = bool(evidence["chain_unbroken"]) if total_bundles > 0 else False
+            failed_signatures = evidence["failed_signatures"] or 0
+            chain_unbroken = (
+                total_bundles > 0 and failed_signatures == 0 and signed_bundles > 0
+            )
             signing_rate = (signed_bundles / total_bundles * 100.0) if total_bundles > 0 else 0.0
 
-            # OTS health — most recent anchoring within 24h
+            # OTS health — most recent anchoring within 24h.
+            #
+            # Session 203 audit fix: the join used `compliance_bundles.id`
+            # (uuid) against `ots_proofs.bundle_id` (varchar), a cross-type
+            # comparison that errors at runtime. The correct join key is
+            # `compliance_bundles.bundle_id` (varchar) which matches the
+            # format of `ots_proofs.bundle_id`.
             ots_row = await conn.fetchrow("""
                 SELECT MAX(anchored_at) AS last_anchor
                 FROM ots_proofs
                 WHERE status = 'anchored'
                   AND bundle_id IN (
-                      SELECT id FROM compliance_bundles WHERE site_id = ANY($1::text[])
+                      SELECT bundle_id FROM compliance_bundles WHERE site_id = ANY($1::text[])
                   )
             """, site_ids)
             last_anchor = ots_row["last_anchor"] if ots_row else None
@@ -265,13 +289,18 @@ async def get_audit_readiness(org_id: int, user: dict = Depends(require_auth)):
             """, site_ids)
             critical_unresolved = crit_row["cnt"] or 0
 
-            # Packet downloadable — check if any packet exists for this org
+            # Packet downloadable — check if any packet exists for this org.
+            #
+            # Session 203 audit fix: `compliance_packets` has no `org_id`
+            # column (verified via information_schema) — it's keyed on
+            # `site_id`, `month`, `year`, `framework`. An org-level check
+            # is therefore "any packet for any site owned by this org".
             packet_row = await conn.fetchrow("""
                 SELECT EXISTS(
                     SELECT 1 FROM compliance_packets
-                    WHERE org_id = $1
+                    WHERE site_id = ANY($1::text[])
                 ) AS has_packet
-            """, org_id)
+            """, site_ids)
             packet_downloadable = bool(packet_row["has_packet"]) if packet_row else False
 
     except HTTPException:

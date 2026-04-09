@@ -2405,8 +2405,18 @@ async def get_partner_drift_config(site_id: str, partner=Depends(require_partner
 
 
 @router.put("/me/sites/{site_id}/drift-config")
-async def update_partner_drift_config(site_id: str, body: dict, partner=Depends(require_partner)):
-    """Update drift scan configuration for a partner-managed site."""
+async def update_partner_drift_config(
+    site_id: str,
+    body: dict,
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Update drift scan configuration for a partner-managed site.
+
+    RBAC: admin or tech role only. A billing-scoped partner user has no
+    business flipping compliance scan configuration, and the Session 203
+    round-table flagged this as a gap (the prior dep was plain
+    `require_partner` which defaulted everyone to admin).
+    """
     pool = await get_pool()
     async with tenant_connection(pool, site_id=site_id) as conn:
         owner = await conn.fetchval(
@@ -2775,8 +2785,16 @@ async def update_asset(
 
 
 @router.post("/me/sites/{site_id}/discovery/trigger")
-async def trigger_discovery(request: Request, site_id: str, partner=Depends(require_partner)):
-    """Trigger a network discovery scan for a site."""
+async def trigger_discovery(
+    request: Request,
+    site_id: str,
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Trigger a network discovery scan for a site.
+
+    RBAC: admin or tech role only. Billing-scoped partner users should
+    not be able to trigger scans — Session 203 round-table fix.
+    """
     pool = await get_pool()
 
     async with tenant_connection(pool, site_id=site_id) as conn:

@@ -23,7 +23,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, Cookie, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -37,6 +37,62 @@ except ImportError:
     require_auth = None  # type: ignore[assignment]
     require_appliance_bearer = None  # type: ignore[assignment]
 import asyncpg
+
+
+# =============================================================================
+# AUTH GUARDS FOR EVIDENCE ENDPOINTS
+# =============================================================================
+#
+# The per-site evidence endpoints (/verify-chain, /bundles, /blockchain-status,
+# /chain-of-custody) were historically registered with no auth, which made
+# them a bulk-disclosure path for compliance metadata (C3 from the Session 203
+# audit proof round-table). The fix must accept BOTH admin sessions (used by
+# the admin dashboard when an operator reviews a site) AND portal tokens /
+# client sessions (used by the scorecard link shared with clients / auditors).
+#
+# `require_evidence_view_access` is the single chokepoint. It tries the three
+# auth paths in order and 403s if none match. Read-only endpoints should add
+# it via `Depends(require_evidence_view_access)` — they don't need the return
+# value, just the enforcement side effect.
+
+async def require_evidence_view_access(
+    site_id: str,
+    request: Request,
+    portal_session: Optional[str] = Cookie(None),
+    token: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    """Gate read-only per-site evidence endpoints.
+
+    Accepts any of:
+      1. An authenticated admin dashboard session (cookie `session` → admin)
+      2. A client portal session cookie (`portal_session`) bound to this site
+      3. A legacy portal token query param (`?token=…`) bound to this site
+
+    The fallback ordering matches the rest of the portal: admin paths get
+    in first, then client session, then shared-link token. On failure we
+    raise HTTPException(403) with a single generic message so auditors
+    can't enumerate which path failed.
+    """
+    # 1. Admin session — reuse the existing admin auth (expects session cookie).
+    if require_auth is not None:
+        try:
+            admin_user = await require_auth(request)
+            return {"method": "admin", "user": admin_user}
+        except HTTPException:
+            pass  # fall through — not an admin, try portal paths
+
+    # 2/3. Client portal session cookie OR legacy token query param.
+    try:
+        from .portal import validate_session as _validate_portal_session
+        portal_ctx = await _validate_portal_session(site_id, portal_session, token)
+        return {"method": "portal", **portal_ctx}
+    except HTTPException:
+        pass
+
+    raise HTTPException(
+        status_code=403,
+        detail="Evidence access requires an admin session or a valid portal link",
+    )
 
 # Ed25519 signature verification
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -1840,7 +1896,8 @@ async def verify_evidence(
 async def verify_chain_integrity(
     site_id: str,
     max_broken: int = 100,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
     """
     Walk and verify the entire hash chain for a site.
@@ -1946,7 +2003,8 @@ async def list_evidence_bundles(
     site_id: str,
     limit: int = 50,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
     """List evidence bundles for a site with OTS blockchain status."""
     result = await db.execute(text("""
@@ -1981,7 +2039,8 @@ async def list_evidence_bundles(
 @router.get("/sites/{site_id}/blockchain-status")
 async def get_blockchain_status(
     site_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
     """Get blockchain anchoring summary for a site.
 
@@ -3280,16 +3339,22 @@ async def export_chain_of_custody(
     if not site:
         raise HTTPException(404, "Site not found")
 
-    # Fetch all bundles in range with their OTS proofs and batch info
+    # Fetch all bundles in range with their OTS proofs and batch info.
+    #
+    # NOTE on column names (Session 203 audit fix): the actual DB columns are
+    # `prev_hash` + `agent_signature`. An earlier version of this query used
+    # the wrong names (`prev_bundle_hash`, `signature`) and HTTP 500'd on every
+    # call, meaning the auditor "chain of custody" export has never actually
+    # worked in production. Verified against information_schema on 2026-04-09.
     result = await db.execute(text("""
         SELECT
             cb.bundle_id,
             cb.bundle_hash,
-            cb.prev_bundle_hash,
+            cb.prev_hash,
             cb.chain_position,
             cb.check_type,
             cb.created_at,
-            cb.signature,
+            cb.agent_signature,
             cb.ots_status,
             cb.merkle_batch_id,
             cb.merkle_proof,
@@ -3317,11 +3382,11 @@ async def export_chain_of_custody(
         entry = {
             "bundle_id": r.bundle_id,
             "sha256": r.bundle_hash,
-            "prev_sha256": r.prev_bundle_hash,
+            "prev_sha256": r.prev_hash,
             "chain_position": r.chain_position,
             "check_type": r.check_type,
             "created_at": r.created_at.isoformat() if r.created_at else None,
-            "ed25519_signature": r.signature,
+            "ed25519_signature": r.agent_signature,
             "ots_status": r.ots_status,
         }
         if r.merkle_batch_id:

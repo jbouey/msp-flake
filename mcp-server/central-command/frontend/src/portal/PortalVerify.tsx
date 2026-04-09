@@ -250,10 +250,15 @@ const BlockchainSection: React.FC<{ data: BlockchainStatus }> = ({ data }) => {
       {/* Auditor explanation */}
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
         <p className="text-sm text-amber-900">
-          <strong>For auditors and legal:</strong> Each evidence bundle's SHA-256 hash is submitted to the
-          Bitcoin blockchain via OpenTimestamps. Once anchored in a Bitcoin block, the timestamp becomes
-          independently verifiable by any third party — proving this evidence existed at a specific point in
-          time and has not been altered. This provides non-repudiation that cannot be forged or backdated.
+          <strong>For auditors and legal:</strong> Each evidence bundle's
+          SHA-256 hash is submitted to the Bitcoin blockchain via
+          OpenTimestamps. Once anchored in a Bitcoin block, the hash is
+          timestamped in a way that is designed to support independent
+          verification by any third party using open-source OpenTimestamps
+          tooling. This approach is tamper-evident: a modified record will
+          no longer match its anchored hash. Verification is an offline
+          exercise the auditor runs against the Bitcoin blockchain — it
+          does not require trusting this platform.
         </p>
       </div>
 

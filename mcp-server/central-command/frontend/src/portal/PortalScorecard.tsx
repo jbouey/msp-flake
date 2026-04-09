@@ -136,7 +136,9 @@ const HeroScore: React.FC<{ site: PortalSite; kpis: PortalKPIs; generatedAt: str
             </span>
           </div>
           <p className="text-slate-700 mb-4">
-            Your HIPAA compliance is being actively monitored and maintained.
+            OsirisCare monitors your HIPAA-relevant controls and captures
+            tamper-evident evidence of each check. This scorecard summarizes
+            the evidence captured for this site.
           </p>
           <p className="text-slate-600 text-sm">{grade.message}</p>
           <div className="mt-4 flex items-center gap-6 text-sm text-slate-500">
@@ -272,9 +274,11 @@ const BlockchainTrustStamp: React.FC<{ data: BlockchainStatus | null }> = ({ dat
           </svg>
         </div>
         <div className="flex-1">
-          <h3 className="font-semibold text-amber-900">Your compliance evidence is verified on the Bitcoin blockchain<InfoTip text="Your evidence records are anchored to the Bitcoin blockchain, proving they have not been altered since creation." /></h3>
+          <h3 className="font-semibold text-amber-900">Compliance evidence anchored to the Bitcoin blockchain<InfoTip text="Evidence record hashes are submitted to OpenTimestamps calendars and later anchored into a Bitcoin block, producing a timestamp that is designed to support independent verification." /></h3>
           <p className="text-sm text-amber-800 mt-1">
-            This means your records cannot be tampered with or backdated. Anyone can independently verify this.
+            This is a tamper-evident design: an auditor can independently
+            verify each record against the Bitcoin blockchain using open-source
+            OpenTimestamps tooling.
           </p>
         </div>
       </div>
