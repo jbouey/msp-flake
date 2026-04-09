@@ -14,3 +14,4 @@ export { ClientHealingLogs } from './ClientHealingLogs';
 export { ClientEscalations } from './ClientEscalations';
 export { ClientCompliance } from './ClientCompliance';
 export { ClientDriftConfig } from './ClientDriftConfig';
+export { ClientAuditLog } from './ClientAuditLog';

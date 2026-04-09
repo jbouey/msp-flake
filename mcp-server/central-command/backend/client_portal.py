@@ -1288,7 +1288,12 @@ async def get_client_drift_config(site_id: str, user: dict = Depends(require_cli
 
 
 @auth_router.put("/sites/{site_id}/drift-config")
-async def update_client_drift_config(site_id: str, body: dict, user: dict = Depends(require_client_user)):
+async def update_client_drift_config(
+    site_id: str,
+    body: dict,
+    request: Request,
+    user: dict = Depends(require_client_user),
+):
     """Update drift scan configuration for a client's site."""
     pool = await get_pool()
     async with tenant_connection(pool, site_id=site_id) as conn:
@@ -1314,6 +1319,14 @@ async def update_client_drift_config(site_id: str, body: dict, user: dict = Depe
                     ON CONFLICT (site_id, check_type)
                     DO UPDATE SET enabled = $3, status = $5, exception_reason = $6, modified_by = $4, modified_at = NOW()
                 """, site_id, item["check_type"], effective_enabled, f"client:{user.get('email', user['id'])}", status, exception_reason)
+
+            await _audit_client_action(
+                conn, user,
+                action="DRIFT_CONFIG_UPDATED",
+                target=site_id,
+                details={"check_count": len(checks)},
+                request=request,
+            )
     return {"status": "ok", "site_id": site_id, "updated": len(checks)}
 
 
@@ -1895,7 +1908,11 @@ async def list_users(user: dict = Depends(require_client_admin)):
 
 
 @auth_router.post("/users/invite")
-async def invite_user(invite: InviteUser, user: dict = Depends(require_client_admin)):
+async def invite_user(
+    invite: InviteUser,
+    request: Request,
+    user: dict = Depends(require_client_admin),
+):
     """Invite a user to the org."""
     pool = await get_pool()
     org_id = user["org_id"]
@@ -1922,6 +1939,14 @@ async def invite_user(invite: InviteUser, user: dict = Depends(require_client_ad
             ) VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
         """, org_id, email, invite.role, token_hash, user["user_id"], expires_at)
+
+        await _audit_client_action(
+            conn, user,
+            action="USER_INVITED",
+            target=email,
+            details={"role": invite.role, "invite_id": str(invite_id)},
+            request=request,
+        )
 
     # Send invite email
     invite_link = f"{BASE_URL}/client/invite?token={invite_token}"
@@ -3089,6 +3114,7 @@ async def client_totp_setup(user: dict = Depends(require_client_user)):
 @auth_router.post("/totp/verify")
 async def client_totp_verify(
     body: ClientTOTPVerifyRequest,
+    request: Request,
     user: dict = Depends(require_client_user),
 ):
     """Verify TOTP code to enable client 2FA."""
@@ -3132,12 +3158,20 @@ async def client_totp_verify(
             WHERE id = $2
         """, backup_codes_json, user_id)
 
+        await _audit_client_action(
+            conn, user,
+            action="MFA_ENABLED",
+            target=user_id,
+            request=request,
+        )
+
     return {"status": "enabled", "backup_codes": backup_codes}
 
 
 @auth_router.delete("/totp")
 async def client_totp_disable(
     body: ClientTOTPDisableRequest,
+    request: Request,
     user: dict = Depends(require_client_user),
 ):
     """Disable client 2FA. Requires password."""
@@ -3166,6 +3200,13 @@ async def client_totp_disable(
             SET mfa_enabled = FALSE, mfa_secret = NULL, mfa_backup_codes = NULL
             WHERE id = $1
         """, user_id)
+
+        await _audit_client_action(
+            conn, user,
+            action="MFA_DISABLED",
+            target=user_id,
+            request=request,
+        )
 
     return {"status": "disabled"}
 
@@ -3586,6 +3627,105 @@ async def get_agent_mobileconfig(
 
 
 # =============================================================================
+# DISCLOSURE ACCOUNTING — HIPAA §164.528 (Session 203 Batch 7)
+# =============================================================================
+#
+# Every mutation in the client portal writes to client_audit_log via the
+# `_audit_client_action` helper. This endpoint exposes those rows back to
+# the client portal UI so practice managers can satisfy a §164.528
+# disclosure-accounting request without contacting their MSP — they just
+# download the org's own audit log.
+#
+# Scoped to the requesting user's org via tenant_connection (RLS), so a
+# user can never see another org's events. The endpoint is paginated and
+# supports filtering by action prefix + date range.
+
+@auth_router.get("/audit-log")
+async def list_client_audit_log(
+    request: Request,
+    action: Optional[str] = Query(None, description="Filter by action prefix (e.g. 'USER_' or 'CREDENTIAL_')"),
+    days: int = Query(90, ge=1, le=2555),  # default 90d, max 7 years
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(require_client_user),
+):
+    """Return the client_audit_log entries for the caller's org.
+
+    Used by the disclosure-accounting view in the client portal — gives
+    the practice manager a self-serve §164.528 audit trail without
+    needing to contact OsirisCare or their MSP.
+
+    Filtering:
+      - `action` matches by prefix (case-sensitive). Common prefixes:
+        USER_, PASSWORD_, MFA_, CREDENTIAL_, DRIFT_CONFIG_, DEVICE_,
+        ALERT_, ESCALATION_, ESCALATION_PREFS_
+      - `days` bounds the lookback window (1..2555). Default 90 days
+        is the right window for routine audits; auditors can extend
+        to 7 years for the full HIPAA retention period.
+      - `limit` + `offset` paginate (max 500 per page).
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    where_clauses = ["org_id = $1::uuid", f"created_at > NOW() - INTERVAL '{int(days)} days'"]
+    params: list = [org_id]
+    if action:
+        where_clauses.append("action LIKE $2")
+        params.append(f"{action}%")
+
+    where_sql = " AND ".join(where_clauses)
+    params_with_paging = [*params, limit, offset]
+    limit_idx = len(params) + 1
+    offset_idx = len(params) + 2
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT id, actor_user_id, actor_email, action, target,
+                   details, ip_address, created_at
+            FROM client_audit_log
+            WHERE {where_sql}
+            ORDER BY created_at DESC
+            LIMIT ${limit_idx} OFFSET ${offset_idx}
+            """,
+            *params_with_paging,
+        )
+
+        total_row = await conn.fetchrow(
+            f"SELECT COUNT(*) AS total FROM client_audit_log WHERE {where_sql}",
+            *params,
+        )
+        total = int(total_row["total"]) if total_row else 0
+
+    import json as _json
+
+    return {
+        "org_id": str(org_id),
+        "events": [
+            {
+                "id": int(r["id"]),
+                "actor_user_id": str(r["actor_user_id"]) if r["actor_user_id"] else None,
+                "actor_email": r["actor_email"],
+                "action": r["action"],
+                "target": r["target"],
+                "details": (
+                    _json.loads(r["details"]) if isinstance(r["details"], str)
+                    else r["details"]
+                ) if r["details"] else None,
+                "ip_address": r["ip_address"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "days": days,
+        "action_filter": action,
+    }
+
+
+# =============================================================================
 # ESCALATION PREFERENCES + TICKET MANAGEMENT
 # =============================================================================
 
@@ -3636,6 +3776,7 @@ async def get_escalation_preferences(user: dict = Depends(require_client_user)):
 @auth_router.put("/escalation-preferences")
 async def update_escalation_preferences(
     body: EscalationPreferencesUpdate,
+    request: Request,
     user: dict = Depends(require_client_admin),
 ):
     """Update client org's L3 escalation routing preferences. Requires admin role."""
@@ -3670,6 +3811,20 @@ async def update_escalation_preferences(
             body.teams_enabled,
             body.teams_webhook_url,
             body.escalation_timeout_minutes,
+        )
+
+        await _audit_client_action(
+            conn, user,
+            action="ESCALATION_PREFS_UPDATED",
+            target=str(org_id),
+            details={
+                "escalation_mode": body.escalation_mode,
+                "email_enabled": body.email_enabled,
+                "slack_enabled": body.slack_enabled,
+                "teams_enabled": body.teams_enabled,
+                "timeout_minutes": body.escalation_timeout_minutes,
+            },
+            request=request,
         )
 
     return {"status": "updated", "escalation_mode": body.escalation_mode}
@@ -3777,6 +3932,7 @@ async def get_client_escalation_detail(
 @auth_router.post("/escalations/{ticket_id}/acknowledge")
 async def client_acknowledge_ticket(
     ticket_id: str,
+    request: Request,
     user: dict = Depends(require_client_user),
 ):
     """Client acknowledges an escalation ticket."""
@@ -3800,6 +3956,13 @@ async def client_acknowledge_ticket(
         if result == "UPDATE 0":
             raise HTTPException(status_code=404, detail="Ticket not found or already acknowledged")
 
+        await _audit_client_action(
+            conn, user,
+            action="ESCALATION_ACKNOWLEDGED",
+            target=ticket_id,
+            request=request,
+        )
+
     return {"status": "acknowledged"}
 
 
@@ -3807,6 +3970,7 @@ async def client_acknowledge_ticket(
 async def client_resolve_ticket(
     ticket_id: str,
     body: dict,
+    request: Request,
     user: dict = Depends(require_client_user),
 ):
     """Client resolves an escalation ticket with notes."""
@@ -3835,6 +3999,14 @@ async def client_resolve_ticket(
 
         if result == "UPDATE 0":
             raise HTTPException(status_code=404, detail="Ticket not found or already resolved")
+
+        await _audit_client_action(
+            conn, user,
+            action="ESCALATION_RESOLVED",
+            target=ticket_id,
+            details={"resolution_notes": resolution_notes[:500]},
+            request=request,
+        )
 
     return {"status": "resolved"}
 
@@ -3937,6 +4109,7 @@ async def register_device(
     site_id: str,
     device_id: int,
     body: DeviceRegistration,
+    request: Request,
     user: dict = Depends(require_client_user),
 ):
     """Register credentials for a discovered device.
@@ -4001,6 +4174,18 @@ async def register_device(
             WHERE id = $1
         """, device_id)
 
+        await _audit_client_action(
+            conn, user,
+            action="DEVICE_REGISTERED",
+            target=str(device_id),
+            details={
+                "site_id": site_id,
+                "host": host,
+                "credential_type": cred_type,
+            },
+            request=request,
+        )
+
         logger.info(
             "Device registered by client",
             extra={"site_id": site_id, "device_id": device_id, "host": host,
@@ -4014,6 +4199,7 @@ async def register_device(
 async def ignore_device(
     site_id: str,
     device_id: int,
+    request: Request,
     user: dict = Depends(require_client_user),
 ):
     """Mark a discovered device as expected/non-managed.
@@ -4036,6 +4222,14 @@ async def ignore_device(
 
         if result == "UPDATE 0":
             raise HTTPException(status_code=404, detail="Device not found or already managed")
+
+        await _audit_client_action(
+            conn, user,
+            action="DEVICE_IGNORED",
+            target=str(device_id),
+            details={"site_id": site_id},
+            request=request,
+        )
 
         logger.info(
             "Device ignored by client",
@@ -4190,6 +4384,18 @@ async def action_client_alert(
                 WHERE id = $1
             """, str(alert["incident_id"]))
 
+        await _audit_client_action(
+            conn, user,
+            action=f"ALERT_{action.upper()}",
+            target=alert_id,
+            details={
+                "incident_id": str(alert["incident_id"]) if alert["incident_id"] else None,
+                "site_id": str(alert["site_id"]),
+                "notes": (notes or "")[:500] if notes else None,
+            },
+            request=request,
+        )
+
     logger.info(
         "Client alert action taken",
         extra={
@@ -4301,6 +4507,18 @@ async def submit_client_credentials(
                 str(_uuid.uuid4()), org_id, site_id, alert_id, user["user_id"],
                 f"Credential type: {credential_type}, name: {credential_name}",
             )
+
+        await _audit_client_action(
+            conn, user,
+            action="CREDENTIAL_CREATED",
+            target=site_id,
+            details={
+                "credential_id": cred_id,
+                "credential_type": credential_type,
+                "credential_name": credential_name,
+            },
+            request=request,
+        )
 
         logger.info(
             "Client credential submitted",
