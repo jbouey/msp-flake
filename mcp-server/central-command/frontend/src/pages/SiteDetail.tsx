@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge, ActionDropdown, EmptyState, OnboardingChecklist } from '../components/shared';
 import type { ActionItem } from '../components/shared';
 import { StatusBadge } from '../components/composed';
+import { MeshHealthPanel } from '../components/composed/MeshHealthPanel';
 import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier, useUpdateL2Mode } from '../hooks';
 import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
@@ -1535,6 +1536,9 @@ export const SiteDetail: React.FC = () => {
               )}
             </div>
           </GlassCard>
+
+          {/* Mesh health panel — only renders for multi-appliance sites */}
+          <MeshHealthPanel siteId={siteId || ''} />
 
           {/* Appliances */}
           <GlassCard>

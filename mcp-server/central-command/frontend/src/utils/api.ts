@@ -597,6 +597,9 @@ export const sitesApi = {
 
   getSite: (siteId: string) => fetchSitesApi<SiteDetail>(`/sites/${siteId}`),
 
+  // Mesh health for multi-appliance sites (Session 203 enterprise hardening)
+  getMeshState: (siteId: string) => fetchSitesApi<any>(`/${siteId}/mesh`),
+
   createSite: (data: {
     clinic_name: string;
     site_id?: string;

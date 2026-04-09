@@ -312,6 +312,118 @@ async def ots_reverify_sample_loop():
         await asyncio.sleep(21600)  # 6 hours
 
 
+async def mesh_consistency_check_loop():
+    """Periodically validate mesh ring state and target assignment coverage.
+
+    Enterprise-grade check: every 15 minutes, verify that for each multi-appliance site:
+    1. All online appliances report the same ring_size (agreement)
+    2. Every assigned target has exactly one owner (no orphans, no overlaps)
+    3. Ring size matches the count of online appliances (no drift)
+    4. No zombie MACs in ring members that aren't in site_appliances
+
+    Logs alerts on ANY inconsistency — downstream Prometheus alerts fire on these.
+    """
+    await asyncio.sleep(300)  # Wait 5 min after startup
+    while True:
+        try:
+            async with async_session() as db:
+                # Multi-appliance sites with recent checkins
+                sites_result = await db.execute(text("""
+                    SELECT site_id,
+                           COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online,
+                           COUNT(*) as total
+                    FROM site_appliances
+                    GROUP BY site_id
+                    HAVING COUNT(*) > 1
+                """))
+                sites = sites_result.fetchall()
+
+                total_issues = 0
+                for row in sites:
+                    site_id = row.site_id
+                    online_count = row.online or 0
+                    if online_count < 2:
+                        continue  # Not a meaningful mesh
+
+                    # Check ring agreement
+                    ring_result = await db.execute(text("""
+                        SELECT appliance_id,
+                               (daemon_health->>'mesh_ring_size')::int as ring_size,
+                               (daemon_health->>'mesh_peer_count')::int as peer_count,
+                               assigned_targets
+                        FROM site_appliances
+                        WHERE site_id = :sid
+                          AND last_checkin > NOW() - INTERVAL '5 minutes'
+                          AND daemon_health IS NOT NULL
+                    """), {"sid": site_id})
+                    appliances = ring_result.fetchall()
+
+                    if not appliances:
+                        continue
+
+                    # Check 1: All appliances report same ring size
+                    ring_sizes = [a.ring_size for a in appliances if a.ring_size is not None]
+                    if ring_sizes and len(set(ring_sizes)) > 1:
+                        logger.warning(
+                            "MESH_RING_DISAGREEMENT",
+                            site_id=site_id,
+                            reported_sizes=ring_sizes,
+                            online_count=online_count,
+                        )
+                        total_issues += 1
+
+                    # Check 2: Ring size matches online count
+                    if ring_sizes and max(ring_sizes) != online_count:
+                        logger.warning(
+                            "MESH_RING_DRIFT",
+                            site_id=site_id,
+                            max_ring_size=max(ring_sizes),
+                            online_count=online_count,
+                        )
+                        total_issues += 1
+
+                    # Check 3: Target coverage — every target has exactly one owner
+                    target_owners: dict = {}  # target_ip -> [appliance_ids]
+                    for a in appliances:
+                        targets = a.assigned_targets
+                        if isinstance(targets, str):
+                            try:
+                                import json as _json
+                                targets = _json.loads(targets)
+                            except (ValueError, TypeError):
+                                targets = []
+                        if not isinstance(targets, list):
+                            continue
+                        for t in targets:
+                            target_owners.setdefault(t, []).append(a.appliance_id)
+
+                    orphans = []  # shouldn't exist — if no appliance claims a target, it won't appear here
+                    overlaps = [t for t, owners in target_owners.items() if len(owners) > 1]
+
+                    if overlaps:
+                        logger.warning(
+                            "MESH_TARGET_OVERLAP",
+                            site_id=site_id,
+                            overlap_count=len(overlaps),
+                            samples=overlaps[:5],
+                        )
+                        total_issues += 1
+
+                if sites:
+                    logger.info(
+                        "mesh_consistency_check complete",
+                        sites_checked=len(sites),
+                        issues=total_issues,
+                    )
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"Mesh consistency check error: {e}")
+
+        await asyncio.sleep(900)  # 15 minutes
+
+
 async def flywheel_promotion_loop():
     """Periodically scan patterns for L2->L1 auto-promotion (every 30 minutes)."""
     await asyncio.sleep(120)

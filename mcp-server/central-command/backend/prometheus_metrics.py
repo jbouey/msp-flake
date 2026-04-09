@@ -325,6 +325,119 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: CVE watch query failed")
 
+            # --- Mesh health (gauge) ---
+            try:
+                # Per-site mesh state: ring size, peers, assignment coverage
+                rows = await conn.fetch("""
+                    SELECT
+                        site_id,
+                        COUNT(*) as appliance_count,
+                        COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online_count,
+                        AVG(
+                            CASE WHEN daemon_health IS NOT NULL
+                                THEN (daemon_health->>'mesh_ring_size')::int
+                                ELSE NULL END
+                        ) as avg_ring_size,
+                        AVG(
+                            CASE WHEN daemon_health IS NOT NULL
+                                THEN (daemon_health->>'mesh_peer_count')::int
+                                ELSE NULL END
+                        ) as avg_peer_count
+                    FROM site_appliances
+                    WHERE last_checkin > NOW() - INTERVAL '10 minutes'
+                    GROUP BY site_id
+                    HAVING COUNT(*) > 1
+                """)
+                if rows:
+                    sections.append(_gauge(
+                        "osiriscare_mesh_appliance_count",
+                        "Number of appliances per mesh site",
+                        [({"site": r["site_id"][:40]}, float(r["appliance_count"])) for r in rows],
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_mesh_online_count",
+                        "Online appliances per mesh site",
+                        [({"site": r["site_id"][:40]}, float(r["online_count"])) for r in rows],
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_mesh_avg_ring_size",
+                        "Average ring size reported by appliances (should equal online_count)",
+                        [({"site": r["site_id"][:40]}, float(r["avg_ring_size"] or 0)) for r in rows],
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_mesh_avg_peer_count",
+                        "Average peer count per appliance (should equal ring_size - 1)",
+                        [({"site": r["site_id"][:40]}, float(r["avg_peer_count"] or 0)) for r in rows],
+                    ))
+
+                # Assignment drift: ring_size vs online_count mismatch
+                drift_row = await conn.fetchrow("""
+                    SELECT COUNT(DISTINCT site_id) as drift_sites
+                    FROM (
+                        SELECT site_id,
+                               COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online,
+                               AVG((daemon_health->>'mesh_ring_size')::int) as ring
+                        FROM site_appliances
+                        WHERE last_checkin > NOW() - INTERVAL '10 minutes'
+                          AND daemon_health IS NOT NULL
+                        GROUP BY site_id
+                        HAVING COUNT(*) > 1
+                    ) s
+                    WHERE s.online != s.ring
+                """)
+                sections.append(_gauge(
+                    "osiriscare_mesh_drift_sites",
+                    "Sites where ring size disagrees with online appliance count (alert if >0)",
+                    [({}, float(drift_row["drift_sites"] or 0))],
+                ))
+
+                # Coverage gaps: targets with wrong number of assignments
+                # (should be exactly 1 owner per target in a healthy mesh)
+                try:
+                    gap_row = await conn.fetchrow("""
+                        WITH all_targets AS (
+                            SELECT site_id,
+                                   jsonb_array_elements_text(assigned_targets) as target
+                            FROM site_appliances
+                            WHERE assigned_targets IS NOT NULL
+                              AND last_checkin > NOW() - INTERVAL '10 minutes'
+                        )
+                        SELECT
+                            COUNT(*) FILTER (WHERE assignment_count > 1) as overlaps,
+                            COUNT(*) FILTER (WHERE assignment_count = 0) as orphans
+                        FROM (
+                            SELECT site_id, target, COUNT(*) as assignment_count
+                            FROM all_targets
+                            GROUP BY site_id, target
+                        ) t
+                    """)
+                    sections.append(_gauge(
+                        "osiriscare_mesh_target_overlaps",
+                        "Targets assigned to multiple appliances (duplicate scans, alert if >0)",
+                        [({}, float(gap_row["overlaps"] or 0))],
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_mesh_target_orphans",
+                        "Targets with no owner (coverage hole, alert if >0)",
+                        [({}, float(gap_row["orphans"] or 0))],
+                    ))
+                except Exception:
+                    pass
+
+                # Audit log rate (assignments changing per hour)
+                audit_row = await conn.fetchrow("""
+                    SELECT COUNT(*) as changes_1h
+                    FROM mesh_assignment_audit
+                    WHERE created_at > NOW() - INTERVAL '1 hour'
+                """)
+                sections.append(_gauge(
+                    "osiriscare_mesh_assignment_changes_1h",
+                    "Mesh assignment changes in last hour (high rate = instability)",
+                    [({}, float(audit_row["changes_1h"] or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: mesh query failed")
+
             # --- OTS proof pipeline health (gauge) ---
             try:
                 row = await conn.fetchrow("""

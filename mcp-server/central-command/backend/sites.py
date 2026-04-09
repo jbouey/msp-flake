@@ -1249,6 +1249,149 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
         }
 
 
+@router.get("/{site_id}/mesh")
+async def get_mesh_state(site_id: str, user: dict = Depends(require_auth)):
+    """Get comprehensive mesh state for admin dashboard panel.
+
+    Returns:
+    - ring_size, peer_count per appliance
+    - ring agreement status (all appliances see same ring)
+    - target assignments per appliance
+    - coverage gaps (overlaps/orphans)
+    - recent assignment audit history
+    - mesh health score
+    """
+    pool = await get_pool()
+
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        # Current appliance state
+        appliances = await conn.fetch("""
+            SELECT appliance_id, display_name, hostname, mac_address,
+                   status, last_checkin, daemon_health, assigned_targets,
+                   assignment_epoch
+            FROM site_appliances
+            WHERE site_id = $1
+            ORDER BY first_checkin ASC
+        """, site_id)
+
+        if not appliances:
+            return {"site_id": site_id, "appliances": [], "mesh_active": False}
+
+        # Parse mesh state from each appliance
+        now = datetime.now(timezone.utc)
+        appliance_list = []
+        online_count = 0
+        ring_sizes = []
+        target_owners: dict = {}  # target_ip -> [appliance_ids]
+
+        for row in appliances:
+            last_checkin = row["last_checkin"]
+            if last_checkin and last_checkin.tzinfo is None:
+                last_checkin = last_checkin.replace(tzinfo=timezone.utc)
+            online = last_checkin and (now - last_checkin).total_seconds() < 300
+
+            dh = row["daemon_health"]
+            if isinstance(dh, str):
+                try:
+                    dh = json.loads(dh)
+                except (ValueError, TypeError):
+                    dh = {}
+            dh = dh or {}
+
+            ring_size = dh.get("mesh_ring_size", 0)
+            peer_count = dh.get("mesh_peer_count", 0)
+
+            assigned = row["assigned_targets"]
+            if isinstance(assigned, str):
+                try:
+                    assigned = json.loads(assigned)
+                except (ValueError, TypeError):
+                    assigned = []
+            assigned = assigned or []
+
+            if online:
+                online_count += 1
+                if ring_size > 0:
+                    ring_sizes.append(ring_size)
+                for t in assigned:
+                    target_owners.setdefault(t, []).append(row["appliance_id"])
+
+            appliance_list.append({
+                "appliance_id": row["appliance_id"],
+                "display_name": row["display_name"] or row["hostname"],
+                "hostname": row["hostname"],
+                "mac_address": row["mac_address"],
+                "online": online,
+                "ring_size": ring_size,
+                "peer_count": peer_count,
+                "target_count": len(assigned),
+                "assigned_targets": assigned,
+                "assignment_epoch": row["assignment_epoch"],
+                "last_checkin": row["last_checkin"].isoformat() if row["last_checkin"] else None,
+            })
+
+        # Mesh health analysis
+        ring_agreement = len(set(ring_sizes)) <= 1 if ring_sizes else True
+        ring_drift = bool(ring_sizes) and max(ring_sizes) != online_count
+        overlaps = [t for t, owners in target_owners.items() if len(owners) > 1]
+        total_assigned = sum(len(owners) for owners in target_owners.values())
+        unique_targets = len(target_owners)
+
+        # Recent audit history (last 10 changes)
+        audit_rows = await conn.fetch("""
+            SELECT appliance_id, assignment_epoch, ring_size, target_count, created_at
+            FROM mesh_assignment_audit
+            WHERE site_id = $1
+            ORDER BY created_at DESC
+            LIMIT 10
+        """, site_id)
+
+        audit_history = [
+            {
+                "appliance_id": r["appliance_id"],
+                "assignment_epoch": r["assignment_epoch"],
+                "ring_size": r["ring_size"],
+                "target_count": r["target_count"],
+                "changed_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in audit_rows
+        ]
+
+        # Overall health score
+        health_issues = []
+        if not ring_agreement:
+            health_issues.append("Appliances disagree on ring size")
+        if ring_drift:
+            health_issues.append(f"Ring size ({max(ring_sizes)}) != online count ({online_count})")
+        if overlaps:
+            health_issues.append(f"{len(overlaps)} targets owned by multiple appliances")
+        if online_count < len(appliances):
+            health_issues.append(f"{len(appliances) - online_count} appliances offline")
+
+        health_status = "healthy" if not health_issues else "degraded"
+        if len(health_issues) >= 3:
+            health_status = "critical"
+
+        return {
+            "site_id": site_id,
+            "mesh_active": online_count > 1,
+            "appliances": appliance_list,
+            "summary": {
+                "total_appliances": len(appliances),
+                "online_count": online_count,
+                "ring_agreement": ring_agreement,
+                "ring_drift": ring_drift,
+                "unique_targets": unique_targets,
+                "total_assignments": total_assigned,
+                "overlap_count": len(overlaps),
+                "overlap_samples": overlaps[:5],
+                "health_status": health_status,
+                "health_issues": health_issues,
+            },
+            "audit_history": audit_history,
+        }
+
+
 @router.get("/{site_id}/appliances/mesh/assignments")
 async def get_mesh_scan_assignments(site_id: str, user: dict = Depends(require_auth)):
     """Get per-target scan assignments across appliances (mesh debug view).
@@ -3292,6 +3435,44 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                             SET assigned_targets = $1::jsonb, assignment_epoch = $2
                             WHERE appliance_id = $3
                         """, json.dumps(my_targets), epoch, canonical_id)
+
+                        # Immutable audit log — only insert when assignment actually changes
+                        # to avoid flooding the table with identical rows every checkin.
+                        last_audit = await conn.fetchrow("""
+                            SELECT assigned_targets, ring_members
+                            FROM mesh_assignment_audit
+                            WHERE appliance_id = $1
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        """, canonical_id)
+
+                        # Deterministic comparison: parse JSONB (may come back as list OR str)
+                        def _as_sorted_list(v):
+                            if v is None:
+                                return []
+                            if isinstance(v, str):
+                                try:
+                                    v = json.loads(v)
+                                except (ValueError, TypeError):
+                                    return []
+                            return sorted(v) if isinstance(v, list) else []
+
+                        prev_targets = _as_sorted_list(last_audit["assigned_targets"]) if last_audit else None
+                        prev_ring = _as_sorted_list(last_audit["ring_members"]) if last_audit else None
+                        new_targets_sorted = sorted(my_targets)
+                        new_ring_sorted = sorted(ring_macs)
+
+                        if prev_targets != new_targets_sorted or prev_ring != new_ring_sorted:
+                            await conn.execute("""
+                                INSERT INTO mesh_assignment_audit (
+                                    site_id, appliance_id, appliance_mac, assignment_epoch,
+                                    ring_size, ring_members, assigned_targets, target_count
+                                ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)
+                            """,
+                                checkin.site_id, canonical_id, this_mac, epoch,
+                                len(ring_macs), json.dumps(ring_macs),
+                                json.dumps(my_targets), len(my_targets),
+                            )
 
                         logger.info(
                             "target_assignment site_id=%s appliance_mac=%s target_count=%d ring_size=%d epoch=%d",
