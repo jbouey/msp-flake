@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { BRANDING } from '../constants';
 import { BrowserVerifiedBadge } from './BrowserVerifiedBadge';
+import { FullChainVerifyPanel } from './FullChainVerifyPanel';
 
 interface VerificationResult {
   status: 'valid' | 'invalid' | 'empty' | 'error' | 'verified' | 'broken' | 'signature_invalid';
@@ -268,8 +269,9 @@ const BlockchainSection: React.FC<{ data: BlockchainStatus; siteId?: string }> =
           verification badge isn't just the backend's self-reported
           verdict. */}
       {siteId && (
-        <div className="mb-6">
+        <div className="mb-6 space-y-4">
           <BrowserVerifiedBadge siteId={siteId} />
+          <FullChainVerifyPanel siteId={siteId} />
         </div>
       )}
 

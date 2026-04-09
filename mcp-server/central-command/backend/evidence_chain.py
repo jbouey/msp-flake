@@ -2082,23 +2082,42 @@ async def list_evidence_bundles(
     site_id: str,
     limit: int = 50,
     offset: int = 0,
+    order: str = "desc",
+    include_signatures: bool = False,
     db: AsyncSession = Depends(get_db),
     _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
-    """List evidence bundles for a site with OTS blockchain status."""
-    result = await db.execute(text("""
+    """List evidence bundles for a site with OTS blockchain status.
+
+    Session 203 Tier 2.1 changes:
+    - `order=asc` returns bundles in chain_position ascending order so the
+      browser-side full-chain verifier can walk the chain in the same order
+      it was originally built (otherwise prev_hash linkage cannot be checked).
+    - `include_signatures=true` adds `agent_signature` and `chain_hash` to
+      the response so the browser can verify Ed25519 + chain-hash locally.
+      Default is false to keep the admin UI's existing payload size unchanged.
+    """
+    direction = "ASC" if order.lower() == "asc" else "DESC"
+    order_col = "cb.chain_position" if order.lower() == "asc" else "cb.checked_at"
+
+    sig_cols = ", cb.agent_signature, cb.chain_hash" if include_signatures else ""
+
+    # Direction is whitelisted above (ASC/DESC); order_col is whitelisted from
+    # two literals. No user input reaches the SQL string directly.
+    sql = f"""
         SELECT cb.bundle_id, cb.bundle_hash, cb.prev_hash, cb.check_type, cb.check_result,
                cb.checked_at, cb.chain_position,
                cb.agent_signature IS NOT NULL as signed,
-               cb.signature_valid,
+               cb.signature_valid{sig_cols},
                COALESCE(op.status, cb.ots_status, 'none') as ots_status,
                op.bitcoin_block, op.anchored_at, op.calendar_url
         FROM compliance_bundles cb
         LEFT JOIN ots_proofs op ON op.bundle_id = cb.bundle_id
         WHERE cb.site_id = :site_id
-        ORDER BY cb.checked_at DESC
+        ORDER BY {order_col} {direction}
         LIMIT :limit OFFSET :offset
-    """), {"site_id": site_id, "limit": limit, "offset": offset})
+    """
+    result = await db.execute(text(sql), {"site_id": site_id, "limit": limit, "offset": offset})
 
     bundles = result.fetchall()
 
@@ -2112,6 +2131,7 @@ async def list_evidence_bundles(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "order": direction.lower(),
     }
 
 
