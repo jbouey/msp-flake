@@ -1220,47 +1220,98 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(300)  # 5 minutes
 
     async def _compliance_packet_loop():
-        """Auto-generate monthly compliance packets on the 1st at 02:00 UTC.
+        """Auto-generate + persist monthly compliance packets.
 
-        Checks hourly if it's the 1st of the month between 02:00-03:00 UTC.
-        Generates packets for all active sites that don't already have one
-        for the previous month.
+        SESSION 203 C5 FIX: the prior version gated on
+        `now.day == 1 AND now.hour == 2` — a one-hour window per month.
+        Any container restart during that window skipped the month and
+        there was no catch-up, which is why `compliance_packets` had 0
+        rows across the entire fleet. HIPAA §164.316(b)(2)(i) requires
+        6-year retention of these packets, so a missed month is a real
+        compliance gap.
+
+        New behaviour: runs every hour regardless of day, and catches up
+        any completed month that doesn't yet have a packet. Only the
+        most recent N=3 ended months are considered per pass — older
+        gaps can be backfilled via an admin endpoint if needed.
+
+        Idempotent: the INSERT uses ON CONFLICT so re-running the loop
+        after partial success is safe.
         """
-        await asyncio.sleep(900)  # 15-minute startup delay
+        await asyncio.sleep(900)  # 15-minute startup delay — let DB pool warm up
+
+        # Catch-up window — how many completed months to check each pass.
+        # 3 months covers the normal case (one skipped month + buffer) without
+        # running away if the loop has been down for a quarter.
+        CATCH_UP_MONTHS = 3
+
+        def _ended_months(now: datetime, count: int):
+            """Yield (year, month) tuples for the last `count` completed months.
+            Most recent first. Excludes the current month (not yet ended)."""
+            y, m = now.year, now.month
+            for _ in range(count):
+                m -= 1
+                if m == 0:
+                    m = 12
+                    y -= 1
+                yield y, m
+
         while True:
             try:
                 now = datetime.now(timezone.utc)
-                # Only run on the 1st of the month, 02:00-03:00 UTC window
-                if now.day == 1 and now.hour == 2:
-                    prev_month = now.month - 1 if now.month > 1 else 12
-                    prev_year = now.year if now.month > 1 else now.year - 1
+                pool = await get_pool()
 
-                    pool = await get_pool()
-                    async with pool.acquire() as conn:
-                        # Get all active sites
-                        sites = await conn.fetch(
-                            "SELECT site_id FROM sites WHERE status != 'decommissioned'"
-                        )
-                        for site_row in sites:
-                            sid = site_row["site_id"]
-                            # Check if packet already exists for this month
+                async with pool.acquire() as conn:
+                    sites = await conn.fetch(
+                        "SELECT site_id FROM sites WHERE status != 'decommissioned'"
+                    )
+                    if not sites:
+                        await asyncio.sleep(3600)
+                        continue
+
+                    generated = 0
+                    skipped = 0
+                    errors = 0
+
+                    for site_row in sites:
+                        sid = site_row["site_id"]
+
+                        # For each site, walk backwards through recent ended
+                        # months and generate the first one that's missing.
+                        # Generating more than one per site per loop iteration
+                        # risks overloading the generator on startup after a
+                        # long outage — we prefer steady progress.
+                        for year, month in _ended_months(now, CATCH_UP_MONTHS):
                             existing = await conn.fetchval(
-                                "SELECT 1 FROM compliance_packets WHERE site_id = $1 AND month = $2 AND year = $3",
-                                sid, prev_month, prev_year,
+                                "SELECT 1 FROM compliance_packets WHERE site_id = $1 AND month = $2 AND year = $3 AND framework = 'hipaa'",
+                                sid, month, year,
                             )
                             if existing:
+                                skipped += 1
                                 continue
+
                             try:
                                 from dashboard_api.compliance_packet import CompliancePacket
                                 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
                                 _pkt_engine = create_async_engine(os.getenv("DATABASE_URL", ""), echo=False)
                                 _pkt_session = async_sessionmaker(_pkt_engine, class_=AsyncSession)
                                 async with _pkt_session() as session:
-                                    pkt = CompliancePacket(sid, prev_month, prev_year, session)
+                                    pkt = CompliancePacket(sid, month, year, session)
                                     result = await pkt.generate_packet()
                                     data = result.get("data", {})
 
-                                    # Persist to compliance_packets table for audit trail
+                                    # Persist to compliance_packets for the
+                                    # HIPAA §164.316(b)(2)(i) 6-year retention.
+                                    markdown = None
+                                    if result.get("markdown_path"):
+                                        try:
+                                            with open(result["markdown_path"]) as _mf:
+                                                markdown = _mf.read()
+                                        except Exception as _read_err:
+                                            logger.warning(
+                                                f"Could not read generated markdown for {sid}/{year}-{month:02d}: {_read_err}"
+                                            )
+
                                     await conn.execute("""
                                         INSERT INTO compliance_packets (
                                             site_id, month, year, packet_id,
@@ -1274,23 +1325,40 @@ async def lifespan(app: FastAPI):
                                             markdown_content = EXCLUDED.markdown_content,
                                             generated_at = NOW()
                                     """,
-                                        sid, prev_month, prev_year, result["packet_id"],
+                                        sid, month, year, result["packet_id"],
                                         data.get("compliance_pct"),
                                         data.get("critical_issue_count", 0),
                                         data.get("auto_fixed_count", 0),
                                         data.get("mttr_hours"),
                                         "hipaa",
                                         json.dumps(data.get("controls", {})),
-                                        open(result["markdown_path"]).read() if result.get("markdown_path") else None,
+                                        markdown,
                                     )
                                     logger.info(
                                         "Compliance packet generated and persisted",
                                         packet_id=result["packet_id"],
                                         site_id=sid,
+                                        year=year,
+                                        month=month,
                                         compliance_pct=data.get("compliance_pct"),
                                     )
+                                    generated += 1
+                                    # Only generate one missing month per site
+                                    # per iteration to keep load steady.
+                                    break
                             except Exception as e:
-                                logger.warning(f"Compliance packet auto-gen failed for {sid}: {e}")
+                                errors += 1
+                                logger.warning(f"Compliance packet auto-gen failed for {sid}/{year}-{month:02d}: {e}")
+                                break  # Move on to the next site
+
+                    if generated or errors:
+                        logger.info(
+                            "Compliance packet loop pass complete",
+                            generated=generated,
+                            skipped=skipped,
+                            errors=errors,
+                            sites=len(sites),
+                        )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
