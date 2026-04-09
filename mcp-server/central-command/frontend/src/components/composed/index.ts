@@ -13,3 +13,4 @@ export { SiteSLAIndicator } from './SiteSLAIndicator';
 export { SiteSearchBar } from './SiteSearchBar';
 export { FloatingActionButton } from './FloatingActionButton';
 export type { FloatingAction } from './FloatingActionButton';
+export { Sparkline } from './Sparkline';

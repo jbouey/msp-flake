@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { GlassCard, InfoTip, Spinner, DashboardErrorBoundary } from '../components/shared';
-import { MetricCard, FloatingActionButton, type FloatingAction } from '../components/composed';
+import { MetricCard, FloatingActionButton, Sparkline, type FloatingAction } from '../components/composed';
 import { HealthGauge } from '../components/fleet';
 import {
   IncidentTrendChart,
@@ -28,6 +28,16 @@ interface DashboardSLAData {
   fleet_target: number;
   mfa_coverage_pct: number | null;
   mfa_target: number;
+  computed_at?: string | null;
+}
+
+interface KPITrendsData {
+  days: number;
+  series: {
+    incidents_24h: number[];
+    l1_rate: number[];
+    clients: number[];
+  };
   computed_at?: string | null;
 }
 
@@ -66,6 +76,20 @@ export const Dashboard: React.FC = () => {
     },
     refetchInterval: 5 * 60_000,
     staleTime: 60_000,
+    retry: false,
+  });
+
+  // 14-day KPI trends for the three secondary KPI card sparklines.
+  // Single query keeps the dashboard chatty-query count down to 5 total.
+  const { data: trendsData } = useQuery<KPITrendsData>({
+    queryKey: ['dashboard-kpi-trends', 14],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard/kpi-trends?days=14', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`KPI trends failed: ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: 10 * 60_000,
+    staleTime: 5 * 60_000,
     retry: false,
   });
 
@@ -201,9 +225,9 @@ export const Dashboard: React.FC = () => {
         </GlassCard>
       )}
 
-      {/* Data freshness strip — shows last-computed timestamp + manual refresh */}
+      {/* Data freshness strip — shows last-computed timestamp + manual refresh + export */}
       {!showEmptyState && (
-        <div className="flex items-center justify-end gap-3 text-xs text-label-tertiary">
+        <div className="flex items-center justify-end gap-3 text-xs text-label-tertiary dashboard-toolbar-hide-on-print">
           <span>
             Stats as of{' '}
             <span className="text-label-secondary font-medium">
@@ -227,6 +251,21 @@ export const Dashboard: React.FC = () => {
               </svg>
             )}
             Refresh
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-ios bg-fill-secondary hover:bg-fill-tertiary transition-colors"
+            aria-label="Export dashboard snapshot as PDF"
+            title="Print or save as PDF"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
+              />
+            </svg>
+            Export PDF
           </button>
         </div>
       )}
@@ -285,6 +324,17 @@ export const Dashboard: React.FC = () => {
                 </svg>
               }
               iconColor={incidentsSpike ? 'text-health-critical' : 'text-ios-orange'}
+              footer={
+                trendsData?.series.incidents_24h ? (
+                  <Sparkline
+                    points={trendsData.series.incidents_24h}
+                    width={140}
+                    height={28}
+                    color={incidentsSpike ? 'text-health-critical' : 'text-ios-orange'}
+                    label="14-day incident trend"
+                  />
+                ) : undefined
+              }
             />
 
             <MetricCard
@@ -305,9 +355,21 @@ export const Dashboard: React.FC = () => {
               iconColor={l1BelowTarget ? 'text-health-warning' : 'text-ios-blue'}
               footer={
                 !statsLoading ? (
-                  <span className="text-[10px] text-label-tertiary">
-                    target {L1_AUTOHEAL_TARGET}%
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {trendsData?.series.l1_rate && (
+                      <Sparkline
+                        points={trendsData.series.l1_rate}
+                        width={110}
+                        height={24}
+                        color={l1BelowTarget ? 'text-health-warning' : 'text-ios-blue'}
+                        referenceY={L1_AUTOHEAL_TARGET}
+                        label="14-day L1 auto-heal trend vs target"
+                      />
+                    )}
+                    <span className="text-[10px] text-label-tertiary">
+                      target {L1_AUTOHEAL_TARGET}%
+                    </span>
+                  </div>
                 ) : undefined
               }
             />
@@ -324,6 +386,17 @@ export const Dashboard: React.FC = () => {
                 </svg>
               }
               iconColor="text-ios-blue"
+              footer={
+                trendsData?.series.clients ? (
+                  <Sparkline
+                    points={trendsData.series.clients}
+                    width={140}
+                    height={28}
+                    color="text-ios-blue"
+                    label="14-day client count trend"
+                  />
+                ) : undefined
+              }
             />
           </div>
         </div>

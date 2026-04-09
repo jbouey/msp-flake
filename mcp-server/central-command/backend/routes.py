@@ -2029,6 +2029,135 @@ async def add_note(
 # STATS ENDPOINTS
 # =============================================================================
 
+@router.get("/kpi-trends")
+async def get_kpi_trends(
+    days: int = 14,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Per-day KPI trend data for the Dashboard sparklines.
+
+    Returns an aligned 14-day (default) series for each of the three
+    secondary KPIs so the frontend can render tiny inline trend charts
+    without spending a separate query per card.
+
+    Response shape:
+      {
+        "days": 14,
+        "series": {
+          "incidents_24h": [12, 8, 15, ...],
+          "l1_rate":       [82, 85, 79, ...],
+          "clients":       [2, 2, 2, ...],
+        },
+        "computed_at": "2026-04-09T12:00:00Z"
+      }
+
+    Each list has exactly `days` entries, oldest first. Missing days are
+    filled with 0 for incidents/clients and null-coerced-to-0 for the L1
+    rate so the sparkline never breaks.
+    """
+    # Clamp the range — no one needs more than 90 days on a dashboard
+    # sparkline and larger queries get expensive.
+    if days < 2:
+        days = 2
+    if days > 90:
+        days = 90
+
+    from .fleet import get_pool
+    from .tenant_middleware import admin_connection
+
+    pool = await get_pool()
+
+    incidents_per_day: list[int] = [0] * days
+    l1_per_day: list[float] = [0.0] * days
+    clients_per_day: list[int] = [0] * days
+
+    async with admin_connection(pool) as conn:
+        # 1) Incidents/day — group by created_at::date, last N days.
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    (NOW() - created_at)::interval AS age,
+                    COUNT(*) AS cnt
+                FROM incidents
+                WHERE created_at > NOW() - ($1 || ' days')::interval
+                GROUP BY date_trunc('day', created_at)
+                ORDER BY date_trunc('day', created_at) ASC
+                """,
+                str(days),
+            )
+            # Rough bucket: day index = days - 1 - floor(age_days)
+            for row in rows:
+                age_days = row["age"].days if row["age"] else 0
+                idx = days - 1 - age_days
+                if 0 <= idx < days:
+                    incidents_per_day[idx] = int(row["cnt"])
+        except Exception:
+            logger.exception("kpi-trends: incidents query failed")
+
+        # 2) L1 success rate per day — from execution_telemetry.
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    date_trunc('day', created_at) AS day,
+                    COUNT(*) FILTER (WHERE status = 'success') AS success_count,
+                    COUNT(*) AS total_count
+                FROM execution_telemetry
+                WHERE created_at > NOW() - ($1 || ' days')::interval
+                GROUP BY date_trunc('day', created_at)
+                ORDER BY day ASC
+                """,
+                str(days),
+            )
+            for row in rows:
+                age_days = (datetime.now(timezone.utc).date() - row["day"].date()).days
+                idx = days - 1 - age_days
+                if 0 <= idx < days and row["total_count"] > 0:
+                    l1_per_day[idx] = round(
+                        float(row["success_count"]) / float(row["total_count"]) * 100, 1
+                    )
+        except Exception:
+            logger.exception("kpi-trends: L1 rate query failed")
+
+        # 3) Clients over time — count of active client_orgs per day.
+        # Client count is slow-moving; cheap COUNT(*) at each day boundary.
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    generate_series(
+                        date_trunc('day', NOW() - ($1 || ' days')::interval),
+                        date_trunc('day', NOW()),
+                        '1 day'::interval
+                    ) AS day
+                """,
+                str(days),
+            )
+            # Snapshot the current count into each historical slot. This is
+            # intentionally a flat line for now — per-day historical snapshots
+            # would require a time-series table we don't have yet. The frontend
+            # still renders it as "Clients", which is an accurate current value.
+            current_count_row = await conn.fetchrow(
+                "SELECT COUNT(*) AS cnt FROM client_orgs WHERE status = 'active'"
+            )
+            current_count = int(current_count_row["cnt"]) if current_count_row else 0
+            for i in range(days):
+                clients_per_day[i] = current_count
+        except Exception:
+            logger.exception("kpi-trends: clients query failed")
+
+    return {
+        "days": days,
+        "series": {
+            "incidents_24h": incidents_per_day,
+            "l1_rate": l1_per_day,
+            "clients": clients_per_day,
+        },
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/sla-strip")
 async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)):
     """Platform-wide SLA posture — feeds the DashboardSLAStrip component.

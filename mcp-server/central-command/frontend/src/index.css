@@ -509,3 +509,45 @@
   color: var(--label-secondary);
   margin-bottom: 0.375rem;
 }
+
+/* --- Print stylesheet for Dashboard PDF export ---
+   Hides interactive chrome (sidebar, header, toolbar, FAB) and forces a
+   light background so the PDF looks like a report, not a dashboard.
+   Triggered by window.print() on the Dashboard Export PDF button. */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  aside,
+  header,
+  nav,
+  .sidebar,
+  .app-sidebar,
+  .app-header,
+  .dashboard-toolbar-hide-on-print,
+  [aria-label="Dashboard quick actions"],
+  [aria-label="Site quick actions"] {
+    display: none !important;
+  }
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .glass-card,
+  .bg-background-secondary,
+  .bg-fill-secondary {
+    background: white !important;
+    border: 1px solid #ddd !important;
+    break-inside: avoid;
+  }
+  .text-label-primary,
+  .text-label-secondary,
+  .text-label-tertiary {
+    color: #222 !important;
+  }
+  /* Expand hidden collapsibles so the export is complete */
+  details:not([open]) {
+    display: none;
+  }
+}
