@@ -1408,15 +1408,22 @@ async def get_site_activity(
             limit,
         )
 
-        # 2) Fleet order events — delivered/completed in the last 30 days
+        # 2) Fleet order events — orders completed by an appliance belonging
+        #    to this site in the last 30 days. fleet_orders is global (no
+        #    site_id column); we join through fleet_order_completions →
+        #    site_appliances to get site-scoped activity.
         order_rows = await conn.fetch(
             """
-            SELECT id, order_type, status, created_at, updated_at,
-                   delivered_at, completed_at, result_data
-            FROM fleet_orders
-            WHERE site_id = $1
-              AND updated_at > NOW() - INTERVAL '30 days'
-            ORDER BY updated_at DESC
+            SELECT DISTINCT ON (fo.id, foc.appliance_id)
+                   fo.id, fo.order_type, fo.status,
+                   fo.created_at, foc.completed_at, foc.appliance_id,
+                   foc.status AS completion_status
+            FROM fleet_orders fo
+            JOIN fleet_order_completions foc ON foc.fleet_order_id = fo.id
+            JOIN site_appliances sa ON sa.appliance_id = foc.appliance_id
+            WHERE sa.site_id = $1
+              AND foc.completed_at > NOW() - INTERVAL '30 days'
+            ORDER BY fo.id, foc.appliance_id, foc.completed_at DESC
             LIMIT $2
             """,
             site_id,
@@ -1457,45 +1464,22 @@ async def get_site_activity(
         })
 
     for r in order_rows:
-        # Emit one event per lifecycle transition we actually observed
-        if r["completed_at"]:
-            events.append({
-                "kind": "fleet_order",
-                "event_id": f"order-{r['id']}-completed",
-                "at": r["completed_at"].isoformat(),
-                "actor": "appliance",
-                "action": "FLEET_ORDER_COMPLETED",
-                "details": {
-                    "order_id": str(r["id"]),
-                    "order_type": r["order_type"],
-                    "status": r["status"],
-                },
-            })
-        elif r["delivered_at"]:
-            events.append({
-                "kind": "fleet_order",
-                "event_id": f"order-{r['id']}-delivered",
-                "at": r["delivered_at"].isoformat(),
-                "actor": "appliance",
-                "action": "FLEET_ORDER_DELIVERED",
-                "details": {
-                    "order_id": str(r["id"]),
-                    "order_type": r["order_type"],
-                },
-            })
-        else:
-            events.append({
-                "kind": "fleet_order",
-                "event_id": f"order-{r['id']}-created",
-                "at": r["created_at"].isoformat() if r["created_at"] else None,
-                "actor": "system",
-                "action": "FLEET_ORDER_CREATED",
-                "details": {
-                    "order_id": str(r["id"]),
-                    "order_type": r["order_type"],
-                    "status": r["status"],
-                },
-            })
+        # fleet_order_completions is the source of truth for "this site's
+        # appliance executed this order". One row per (order, appliance).
+        events.append({
+            "kind": "fleet_order",
+            "event_id": f"order-{r['id']}-{r['appliance_id']}-completed",
+            "at": r["completed_at"].isoformat() if r["completed_at"] else None,
+            "actor": r["appliance_id"],
+            "action": "FLEET_ORDER_COMPLETED",
+            "details": {
+                "order_id": str(r["id"]),
+                "order_type": r["order_type"],
+                "order_status": r["status"],
+                "completion_status": r["completion_status"],
+                "appliance_id": r["appliance_id"],
+            },
+        })
 
     for r in incident_rows:
         events.append({
