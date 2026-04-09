@@ -2058,6 +2058,70 @@ class DiscoveredAssetUpdate(BaseModel):
     asset_type: Optional[str] = None
 
 
+@router.get("/me/audit-log")
+async def get_my_audit_log(
+    request: Request,
+    event_category: Optional[str] = Query(None, description="Filter by category: auth/admin/site/credential/etc"),
+    days: int = Query(30, ge=1, le=2555, description="Lookback window in days (max 7 years)"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Return the partner's own activity audit log (Tier 3 H7-partner).
+
+    Mirrors the client-side `GET /api/client/audit-log` shipped in Batch 7.
+    Self-service: a partner sees only their own org's audit trail, not
+    other partners'. Categories: auth, admin, site, provision, credential,
+    asset, discovery, learning. The full event types live in
+    `partner_activity_logger.PartnerEventType`.
+
+    Lookback window can be set up to 2,555 days (7 years) to satisfy the
+    HIPAA §164.316(b)(2)(i) retention requirement during periodic audits.
+    """
+    pool = await get_pool()
+
+    # Get the recent activity rows scoped to this partner
+    rows = await get_partner_activity(
+        partner_id=str(partner['id']),
+        event_category=event_category,
+        limit=limit,
+        offset=offset,
+    )
+
+    # Filter by lookback window — get_partner_activity doesn't support a
+    # date filter, so we filter on the application side. The OR clause keeps
+    # rows whose created_at is missing (shouldn't happen but defensive).
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    filtered = [
+        r for r in rows
+        if not r.get("created_at") or
+        datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")) >= cutoff
+    ]
+
+    # Total count of all events for this partner (for pagination UI)
+    async with admin_connection(pool) as conn:
+        total = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM partner_activity_log
+            WHERE partner_id = $1::uuid
+              AND created_at >= $2
+            """,
+            str(partner['id']),
+            cutoff,
+        ) or 0
+
+    return {
+        "partner_id": str(partner['id']),
+        "partner_name": partner.get('name'),
+        "events": filtered,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "days_lookback": days,
+        "category_filter": event_category,
+    }
+
+
 @router.get("/me/sites/{site_id}")
 async def get_partner_site_detail(request: Request, site_id: str, partner=Depends(require_partner)):
     """Get detailed site info including assets and credentials."""

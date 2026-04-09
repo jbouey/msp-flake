@@ -101,13 +101,14 @@ const PortalScorecard = lazy(() => import('./portal/PortalScorecard').then(m => 
 // Partner module - lazy loaded with provider
 const PartnerRoutes = lazy(() => import('./partner').then(m => ({
   default: () => {
-    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity } = m;
+    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity, PartnerAuditLog } = m;
     return (
       <PartnerProvider>
         <Routes>
           <Route path="login" element={<PartnerLogin />} />
           <Route path="dashboard" element={<PartnerDashboard />} />
           <Route path="security" element={<PartnerSecurity />} />
+          <Route path="audit-log" element={<PartnerAuditLog />} />
           <Route path="*" element={<PartnerLogin />} />
         </Routes>
       </PartnerProvider>

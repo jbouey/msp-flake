@@ -54,12 +54,23 @@ interface PortalIncident {
   resolved_at?: string;
 }
 
+interface PortalFrameworks {
+  primary: string;
+  primary_label: string;
+  enabled: string[];
+  enabled_labels: string[];
+}
+
 interface PortalData {
   site: PortalSite;
   kpis: PortalKPIs;
   controls: PortalControl[];
   incidents: PortalIncident[];
   generated_at: string;
+  /** Tier 3 H6/H8 — framework labels for dynamic headings. Optional so
+   *  the field can land before the backend deploy without breaking the
+   *  client. Defaults to HIPAA when absent. */
+  frameworks?: PortalFrameworks;
 }
 
 interface BlockchainStatus {
@@ -120,8 +131,14 @@ const statusLabel: Record<string, { label: string; bg: string }> = {
 
 // ─── Section 1: Hero Score ───────────────────────────────────────────────────
 
-const HeroScore: React.FC<{ site: PortalSite; kpis: PortalKPIs; generatedAt: string }> = ({ site, kpis, generatedAt }) => {
+const HeroScore: React.FC<{
+  site: PortalSite;
+  kpis: PortalKPIs;
+  generatedAt: string;
+  frameworks?: PortalFrameworks;
+}> = ({ site, kpis, generatedAt, frameworks }) => {
   const grade = getGrade(kpis.compliance_pct);
+  const frameworkLabel = frameworks?.primary_label || 'HIPAA';
 
   return (
     <section className={`${grade.bg} border ${grade.border} rounded-2xl p-8 mb-8`}>
@@ -136,7 +153,7 @@ const HeroScore: React.FC<{ site: PortalSite; kpis: PortalKPIs; generatedAt: str
             </span>
           </div>
           <p className="text-slate-700 mb-4">
-            OsirisCare monitors your HIPAA-relevant controls and captures
+            OsirisCare monitors your {frameworkLabel}-relevant controls and captures
             tamper-evident evidence of each check. This scorecard summarizes
             the evidence captured for this site.
           </p>
@@ -322,7 +339,21 @@ const AuditorDeepDive: React.FC<{
   siteId: string;
   token: string | null;
   navigate: ReturnType<typeof useNavigate>;
-}> = ({ controls, chain, incidents, siteId, token, navigate }) => {
+  frameworks?: PortalFrameworks;
+}> = ({ controls, chain, incidents, siteId, token, navigate, frameworks }) => {
+  // Tier 3 H6/H8 — frameworkLabel drives heading text. When the backend
+  // ships the frameworks payload, this becomes "SOC 2 Compliance Mapping"
+  // for SOC 2 sites etc. Defaults to HIPAA for backwards compat.
+  const frameworkLabel = frameworks?.primary_label || 'HIPAA';
+  const frameworkCode = frameworks?.primary || 'hipaa';
+  const enabledLabels = frameworks?.enabled_labels || [];
+  const isMultiFramework = enabledLabels.length > 1;
+  const codeColumnLabel =
+    frameworkCode === 'hipaa' ? 'HIPAA Code' :
+    frameworkCode === 'soc2' ? 'SOC 2 Trust Service' :
+    frameworkCode === 'pci_dss' ? 'PCI DSS Req' :
+    frameworkCode === 'nist_csf' ? 'NIST Function' :
+    `${frameworkLabel} Code`;
   const [open, setOpen] = useState(false);
 
   const verifyUrl = token
@@ -342,8 +373,27 @@ const AuditorDeepDive: React.FC<{
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Auditor & Insurance Details</h2>
           <p className="text-sm text-slate-500 mt-1">
-            Full HIPAA control mapping, evidence chain integrity, and incident log
+            Full {frameworkLabel} control mapping, evidence chain integrity, and incident log
           </p>
+          {isMultiFramework && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 self-center mr-1">
+                Frameworks:
+              </span>
+              {enabledLabels.map((label) => (
+                <span
+                  key={label}
+                  className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                    label === frameworkLabel
+                      ? 'bg-blue-50 text-blue-800 border-blue-200 font-semibold'
+                      : 'bg-slate-50 text-slate-600 border-slate-200'
+                  }`}
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <svg
           className={`w-5 h-5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
@@ -354,14 +404,14 @@ const AuditorDeepDive: React.FC<{
       </button>
 
       <div className={`${open ? '' : 'hidden'} auditor-content border-t border-slate-200`}>
-        {/* 4a: HIPAA Control Table */}
+        {/* 4a: Framework Control Table (Tier 3 H6/H8 — dynamic label) */}
         <div className="p-6">
-          <h3 className="font-semibold text-slate-900 mb-4">HIPAA Control Mapping</h3>
+          <h3 className="font-semibold text-slate-900 mb-4">{frameworkLabel} Control Mapping</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-left">
-                  <th className="py-2 pr-4 text-slate-500 font-medium">HIPAA Code</th>
+                  <th className="py-2 pr-4 text-slate-500 font-medium">{codeColumnLabel}</th>
                   <th className="py-2 pr-4 text-slate-500 font-medium">Section</th>
                   <th className="py-2 pr-4 text-slate-500 font-medium">Control</th>
                   <th className="py-2 pr-4 text-slate-500 font-medium">Status</th>
@@ -399,7 +449,27 @@ const AuditorDeepDive: React.FC<{
         </div>
 
         {/* 4b: Evidence Chain Integrity */}
-        {chain && (
+        {chain && (() => {
+          // Tier 3 H1 — surface the legacy bundle ratio next to the
+          // "Chain Status" badge so the badge cannot say "Valid" while
+          // 22.6% of the chain is unsigned legacy material. The Merkle
+          // disclosure explains the legacy classification.
+          const sigPct = chain.signatures_total > 0
+            ? Math.round((chain.signatures_valid / chain.signatures_total) * 100)
+            : 0;
+          const legacyCount = Math.max(0, chain.chain_length - chain.signatures_total);
+          const legacyPct = chain.chain_length > 0
+            ? Math.round((legacyCount / chain.chain_length) * 100)
+            : 0;
+          const hasLegacy = legacyCount > 0;
+          const chainTone = chain.status === 'valid'
+            ? (hasLegacy ? 'text-amber-700' : 'text-health-healthy')
+            : 'text-health-critical';
+          const chainLabel = chain.status === 'valid'
+            ? (hasLegacy ? `Valid · ${100 - legacyPct}% signed` : 'Valid')
+            : 'Broken';
+
+          return (
           <div className="p-6 border-t border-slate-200">
             <h3 className="font-semibold text-slate-900 mb-4">Evidence Chain Integrity<InfoTip text="Cryptographically signed records of your system's security state at a point in time. Supports compliance documentation." /></h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -408,14 +478,21 @@ const AuditorDeepDive: React.FC<{
                 <p className="text-xs text-slate-500 mt-1">Evidence Bundles</p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
-                <span className={`text-2xl font-bold ${chain.status === 'valid' ? 'text-health-healthy' : 'text-health-critical'}`}>
-                  {chain.status === 'valid' ? 'Valid' : 'Broken'}
+                <span className={`text-2xl font-bold ${chainTone}`}>
+                  {chainLabel}
                 </span>
-                <p className="text-xs text-slate-500 mt-1">Chain Status</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Chain Status
+                  {hasLegacy && (
+                    <InfoTip
+                      text={`${legacyCount.toLocaleString()} of ${chain.chain_length.toLocaleString()} bundles (${legacyPct}%) are pre-Ed25519 legacy. Their hash chain still verifies, but they were not signed at write time. See the public Merkle disclosure (OSIRIS-2026-04-09-MERKLE-COLLISION) for context.`}
+                    />
+                  )}
+                </p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <span className="text-2xl font-bold text-health-healthy">{chain.signatures_valid.toLocaleString()}</span>
-                <p className="text-xs text-slate-500 mt-1">Valid Signatures</p>
+                <p className="text-xs text-slate-500 mt-1">Valid Signatures<span className="text-slate-400"> · {sigPct}%</span></p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <span className="text-sm text-slate-700">
@@ -487,12 +564,30 @@ const AuditorDeepDive: React.FC<{
               </div>
             )}
 
+            {hasLegacy && (
+              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <strong>{legacyPct}% of this chain is pre-Ed25519 legacy.</strong>{' '}
+                {legacyCount.toLocaleString()} of {chain.chain_length.toLocaleString()} bundles
+                were written before per-appliance signing was deployed and are honestly
+                labeled <code className="bg-amber-100 px-1 rounded">legacy</code>. Their
+                hash-chain linkage still verifies — only the per-bundle Ed25519 signature
+                is missing. Read the{' '}
+                <a
+                  href="/docs/security/SECURITY_ADVISORY_2026-04-09_MERKLE.md"
+                  className="underline font-medium"
+                >
+                  Merkle disclosure
+                </a>{' '}
+                for full context.
+              </div>
+            )}
             <p className="text-sm text-slate-600">
               Each compliance scan produces a cryptographically signed evidence bundle. Bundles are hash-chained
               (SHA-256) so any tampering breaks the chain. Signatures use Ed25519 keys unique to each appliance.
             </p>
           </div>
-        )}
+          );
+        })()}
 
         {/* 4c: Incident Log */}
         <div className="p-6 border-t border-slate-200">
@@ -631,7 +726,9 @@ export const PortalScorecard: React.FC = () => {
         <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center">
           <div>
             <h1 className="text-xl font-bold text-slate-900">Compliance Scorecard</h1>
-            <p className="text-sm text-slate-500">HIPAA compliance summary for {data.site.name}</p>
+            <p className="text-sm text-slate-500">
+              {data.frameworks?.primary_label || 'HIPAA'} compliance summary for {data.site.name}
+            </p>
           </div>
           <button
             onClick={() => navigate(dashboardUrl)}
@@ -643,7 +740,7 @@ export const PortalScorecard: React.FC = () => {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8">
-        <HeroScore site={data.site} kpis={data.kpis} generatedAt={data.generated_at} />
+        <HeroScore site={data.site} kpis={data.kpis} generatedAt={data.generated_at} frameworks={data.frameworks} />
         <StatusCards controls={data.controls} />
         <BlockchainTrustStamp data={blockchain} />
         <AuditorDeepDive
@@ -653,6 +750,7 @@ export const PortalScorecard: React.FC = () => {
           siteId={siteId!}
           token={token}
           navigate={navigate}
+          frameworks={data.frameworks}
         />
 
         {/* Footer */}

@@ -289,6 +289,18 @@ class PortalSite(BaseModel):
     last_checkin: Optional[datetime] = None
 
 
+class PortalFrameworks(BaseModel):
+    """Framework configuration for the site (Tier 3 H6/H8).
+
+    Backend has supported 9 frameworks since Migration 013, but the portal
+    UI was hardcoded to HIPAA. This payload tells the frontend which
+    framework labels to render in headings, tables, and disclaimers."""
+    primary: str = "hipaa"
+    primary_label: str = "HIPAA"
+    enabled: List[str] = []
+    enabled_labels: List[str] = []
+
+
 class PortalData(BaseModel):
     """Complete portal data response."""
     site: PortalSite
@@ -298,6 +310,7 @@ class PortalData(BaseModel):
     evidence_bundles: List[PortalEvidenceBundle]
     device_count: int = 0
     generated_at: datetime
+    frameworks: PortalFrameworks = PortalFrameworks()
 
 
 class TokenResponse(BaseModel):
@@ -988,6 +1001,66 @@ async def set_site_contact_endpoint(site_id: str, email: EmailStr, user: dict = 
 
 
 # =============================================================================
+# Framework info helper (Tier 3 H6/H8)
+# =============================================================================
+
+# Framework display labels (8 frameworks across `frameworks.py` + Migration 013).
+_FRAMEWORK_LABELS = {
+    "hipaa": "HIPAA",
+    "soc2": "SOC 2",
+    "pci_dss": "PCI DSS",
+    "nist_csf": "NIST CSF",
+    "cis": "CIS Controls",
+    "sox": "SOX",
+    "gdpr": "GDPR",
+    "cmmc": "CMMC",
+    "iso_27001": "ISO 27001",
+    "nist_800_171": "NIST 800-171",
+}
+
+
+async def _get_site_framework_info(db: AsyncSession, site_id: str) -> PortalFrameworks:
+    """Return the framework configuration for a site.
+
+    The portal UI uses this to label headings, tables, and disclaimers
+    dynamically. Defaults to HIPAA if the site has no per-appliance
+    framework config row (the backend default for legacy sites).
+    """
+    try:
+        result = await db.execute(
+            text("""
+                SELECT enabled_frameworks, primary_framework
+                FROM appliance_framework_configs
+                WHERE site_id = :site_id
+                ORDER BY updated_at DESC
+                LIMIT 1
+            """),
+            {"site_id": site_id},
+        )
+        row = result.fetchone()
+    except Exception as exc:
+        logger.debug("framework config query skipped: %s", exc)
+        row = None
+
+    if not row:
+        return PortalFrameworks(
+            primary="hipaa",
+            primary_label=_FRAMEWORK_LABELS["hipaa"],
+            enabled=["hipaa"],
+            enabled_labels=[_FRAMEWORK_LABELS["hipaa"]],
+        )
+
+    enabled = row.enabled_frameworks or ["hipaa"]
+    primary = row.primary_framework or (enabled[0] if enabled else "hipaa")
+    return PortalFrameworks(
+        primary=primary,
+        primary_label=_FRAMEWORK_LABELS.get(primary, primary.upper()),
+        enabled=enabled,
+        enabled_labels=[_FRAMEWORK_LABELS.get(f, f.upper()) for f in enabled],
+    )
+
+
+# =============================================================================
 # MAIN PORTAL ENDPOINT
 # =============================================================================
 
@@ -1011,6 +1084,13 @@ async def get_portal_data(
     control_results = await get_control_results_for_site(db, site_id, days=30)
     resolved_incidents = await get_resolved_incidents_for_site(db, site_id, days=30)
     evidence_bundles_data = await get_evidence_bundles_for_site(db, site_id)
+
+    # Tier 3 H6/H8 — load the per-site framework configuration so the
+    # frontend can show "SOC 2 Compliance Summary" instead of hardcoded
+    # HIPAA when the site is configured for a different framework. The
+    # backend has supported 9 frameworks since Migration 013; the portal
+    # was the only surface still rendering only HIPAA labels.
+    framework_info = await _get_site_framework_info(db, site_id)
 
     # Count SSH-monitored devices
     pool = await get_pool()
@@ -1140,7 +1220,8 @@ async def get_portal_data(
         incidents=incidents,
         evidence_bundles=bundles,
         device_count=device_count or 0,
-        generated_at=datetime.now(timezone.utc)
+        generated_at=datetime.now(timezone.utc),
+        frameworks=framework_info,
     )
 
 
