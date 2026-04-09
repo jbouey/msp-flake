@@ -99,9 +99,37 @@ get_events, get_global_stats, get_stats_deltas, get_fleet_posture, get_onboardin
 
 ---
 
+## Extended Session (continued same day)
+
+**Production fixes (post-deploy verification):**
+- Compliance report: 3 broken queries (check_count→jsonb_array_length, date string→date object, compliance_score→computed from bundles, result→status field)
+- Mesh isolation: ::text casts on all 8 queries for PgBouncer compat
+- Agent health: GREATEST(last_heartbeat, updated_at) for freshness
+- Go agents: site_id mismatch (physical-appliance-pilot→north-valley-branch-2), FK constraint (migration 144), live summary replaces stale table
+- Workstations: compliance derivation from incidents, bulk update for all workstations, per-site excluded subnet config, residential cleanup
+- Device inventory: LEFT JOIN workstations for OS/type/compliance enrichment
+- Dark mode: select dropdowns fixed with [color-scheme:dark]
+- Docker-compose: removed conflicting build-context mount
+- CI: pyotp added to requirements.txt (was breaking all deploys)
+- Princeton site deleted
+
+**Threshold-based workstation compliance:**
+- >=90% resolved = Passing (green)
+- 70-89% = Warning (amber) — new status
+- <70% = Failing (orange)
+
+**Round table recommendations executed:**
+- R1: Go agent summary computed live on read (no stale table)
+- R2: FK constraint go_agents.site_id → sites(site_id) ON DELETE CASCADE
+- R3: Docker-compose dual-mount removed
+- R4: CI already had health check + rollback (verified)
+
+**Final commit count:** 19 commits across session
+**Final test count:** 258 Python + 16/16 Go packages
+
 ## Next Session
 
-1. Write more Go daemon tests (netscan classifyDeviceType, phonehome classifyConnectivityError, state_manager ShouldSuppress)
-2. Remaining execute_with_retry in email_alerts.py, compliance_packet.py
+1. Go agent binary rebuild + fleet order deploy (version "dev" → tagged release)
+2. Integration tests with test DB fixtures
 3. PHI boundary IPv6 address redaction
-4. Go agent tests (config, discovery, transport)
+4. More Go daemon tests (netscan classifyDeviceType, phonehome classifyConnectivityError)
