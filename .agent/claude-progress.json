@@ -1,6 +1,6 @@
 {
-  "session": 201,
-  "updated": "2026-04-08T14:47:02.812202Z",
+  "session": 202,
+  "updated": "2026-04-08T23:57:01.698749Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -38,30 +38,33 @@
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
     "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
   },
-  "current_blocker": "iMac SSH port 2222 still broken. Session 202 round-table audit in progress — batch 1+2 of fixes applied.",
+  "current_blocker": "iMac SSH port 2222 still broken. Session 202 round-table audit in progress \u2014 batch 1+2 of fixes applied.",
   "session_202_work": {
     "summary": "Round-table audit: 67 files, 5 swarms, 360 test cases identified. Critical security fixes + DRY consolidation.",
     "security_fixes": [
-      "C1: agent_api.py _enforce_site_id() — 13 appliance-facing endpoints hardened against site spoofing",
+      "C1: agent_api.py _enforce_site_id() \u2014 13 appliance-facing endpoints hardened against site spoofing",
       "C2: device_sync.py auth_site_id enforcement on /api/devices/sync",
       "C3: learning_api_main.py site_id spoofing fixed (promotion reports + approved promotions)",
-      "C4: sites.py GET /api/orders/{id} — added require_auth (was unauthenticated)",
-      "C5: sites.py POST /api/alerts/email — added require_appliance_bearer (was open SMTP relay)",
-      "C5b: sites.py get_pending_orders — auth_site_id validation added",
-      "C6: tenant_middleware.py — removed no-op SET LOCAL from admin_connection, documented DB default reliance",
-      "C8: routes.py — org-scoping added to incidents list, incident detail (check_site_access_sa), attention-required (3 queries)",
+      "C4: sites.py GET /api/orders/{id} \u2014 added require_auth (was unauthenticated)",
+      "C5: sites.py POST /api/alerts/email \u2014 added require_appliance_bearer (was open SMTP relay)",
+      "C5b: sites.py get_pending_orders \u2014 auth_site_id validation added",
+      "C6: tenant_middleware.py \u2014 removed no-op SET LOCAL from admin_connection, documented DB default reliance",
+      "C8: routes.py \u2014 org-scoping added to incidents list, incident detail (check_site_access_sa), attention-required (3 queries)",
       "H1: redis_rate_limiter atomic INCR+EXPIRE via Lua script (prevents orphaned keys)",
-      "H6/H7: auth.py — authenticate_user, _log_audit, get_audit_logs, cleanup_expired_sessions migrated to execute_with_retry",
+      "H6/H7: auth.py \u2014 authenticate_user, _log_audit, get_audit_logs, cleanup_expired_sessions migrated to execute_with_retry",
       "H8: phonehome.go consecutiveFailures data race fixed (atomic.Int32)",
       "H9: agent config.go Linux gets /var/lib not C:\\ProgramData",
-      "H12: email_alerts.py — _send_smtp_with_retry() extracts 3 copy-pasted SMTP retry loops + adds retry to SRA email",
-      "H13: order_signing.py DRY — _sign_order() consolidates duplicate functions",
+      "H12: email_alerts.py \u2014 _send_smtp_with_retry() extracts 3 copy-pasted SMTP retry loops + adds retry to SRA email",
+      "H13: order_signing.py DRY \u2014 _sign_order() consolidates duplicate functions",
       "H14: oauth_login.py silent decrypt failure now logs error",
       "H15: learning_api_main.py returns proper HTTP 500 instead of 200+error body",
       "H17: client_portal.py COMPLIANCE_CATEGORIES extracted as module-level constant"
     ],
     "tests_added": 38,
-    "test_files": ["tests/test_site_id_enforcement.py (18)", "tests/test_batch3_fixes.py (20)"]
+    "test_files": [
+      "tests/test_site_id_enforcement.py (18)",
+      "tests/test_batch3_fixes.py (20)"
+    ]
   },
   "session_201_work": {
     "commits": 17,
