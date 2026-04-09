@@ -44,6 +44,14 @@ RATE_LIMIT_OVERRIDES = {
     "incidents": 200,
     "drift": 200,
     "evidence": 200,
+    # Session 203 Batch 6 H2 — client portal magic link + login.
+    # Magic link is per-IP at 5 per 5min (avoid SMTP exhaustion + email
+    # enumeration). Login is per-IP at 10 per 5min (gives the user some
+    # retries if they typo'd the password but still bounds attacker
+    # volume; the per-account 5-attempt lockout in client_users.locked_until
+    # provides the second layer).
+    "client_magic_link": 5,
+    "client_login": 10,
 }
 
 ORDER_TTL_SECONDS = int(os.getenv("ORDER_TTL_SECONDS", "900"))

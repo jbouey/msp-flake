@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
-import { OsirisCareLeaf, WelcomeModal, InfoTip } from '../components/shared';
+import { OsirisCareLeaf, WelcomeModal, InfoTip, DashboardErrorBoundary } from '../components/shared';
 import { ClientDriftConfig } from './ClientDriftConfig';
 import { ComplianceHealthInfographic } from './ComplianceHealthInfographic';
 import { DevicesAtRisk } from './DevicesAtRisk';
@@ -814,4 +814,15 @@ export const ClientDashboard: React.FC = () => {
   );
 };
 
-export default ClientDashboard;
+// Session 203 Batch 6 H2 fix: wrap the dashboard in DashboardErrorBoundary
+// so a single failing query doesn't blank the whole page. The boundary
+// renders a friendly retry screen scoped to the page content (the
+// branding header + sidebar stay mounted) and reports the error to
+// console for ops triage.
+const ClientDashboardWithBoundary: React.FC = () => (
+  <DashboardErrorBoundary section="Client Dashboard">
+    <ClientDashboard />
+  </DashboardErrorBoundary>
+);
+
+export default ClientDashboardWithBoundary;

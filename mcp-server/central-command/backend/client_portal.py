@@ -336,8 +336,27 @@ async def _audit_client_action(
 # =============================================================================
 
 @public_router.post("/request-magic-link")
-async def request_magic_link(request: MagicLinkRequest):
-    """Send magic link to user's email."""
+async def request_magic_link(request: MagicLinkRequest, http_request: Request):
+    """Send magic link to user's email.
+
+    Rate limited per source IP via the existing rate limiter (Session
+    203 Batch 6 H2 fix). Without this, an attacker could enumerate
+    valid email addresses or exhaust the SMTP quota by spamming
+    requests. The 60-second cooldown is generous enough for legitimate
+    "I clicked too fast" retries while still bounding attacker volume.
+    """
+    from .rate_limiter import check_rate_limit
+    client_ip = (
+        http_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (http_request.client.host if http_request.client else "unknown")
+    )
+    allowed, _remaining = await check_rate_limit(f"client_magic:{client_ip}", "client_magic_link")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many magic link requests. Please wait a minute and try again.",
+        )
+
     pool = await get_pool()
     email = request.email.lower()
 
@@ -470,7 +489,24 @@ async def validate_magic_link(request: Request, body: MagicLinkValidate):
 
 @public_router.post("/login")
 async def login_with_password(request: Request, body: PasswordLogin):
-    """Login with email and optional password."""
+    """Login with email and password.
+
+    Rate limited per source IP (Session 203 Batch 6 H2 fix). Account
+    lockout after 5 failed attempts is enforced separately at the row
+    level (`failed_login_attempts` + `locked_until` columns).
+    """
+    from .rate_limiter import check_rate_limit
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    allowed, _remaining = await check_rate_limit(f"client_login:{client_ip}", "client_login")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please wait a minute and try again.",
+        )
+
     pool = await get_pool()
     email = body.email.lower()
 

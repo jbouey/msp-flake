@@ -72,9 +72,75 @@ PKCE_VERIFIER_LENGTH = 64
 # State token TTL (seconds)
 STATE_TOKEN_TTL = 600  # 10 minutes
 
-# MFA pending tokens for partner login: {token: {"partner_id": ..., "expires": datetime, ...}}
+# MFA pending tokens for partner login.
+#
+# SESSION 203 BATCH 6 FIX (M1): admin auth was migrated to Redis-backed
+# MFA pending storage in Session 201 but partner_auth was not. The
+# in-memory dict below is the FALLBACK only — the Redis path is
+# preferred and used on every successful Redis connection. Without this
+# fix, an mcp-server restart between password and TOTP code would force
+# the user back to the password prompt (bad UX) and a multi-worker
+# uvicorn deployment would lose tokens between workers.
+#
+# Read/write goes through `_store_partner_mfa_pending` /
+# `_pop_partner_mfa_pending`. Direct dict access is only kept for the
+# expiry sweep on legacy in-memory entries.
 _partner_mfa_pending: Dict[str, dict] = {}
 MFA_PENDING_TTL_MINUTES = 5
+_PARTNER_MFA_REDIS_PREFIX = "partner_mfa_pending:"
+
+
+async def _store_partner_mfa_pending(token: str, data: dict) -> None:
+    """Store a partner MFA pending token in Redis (preferred) or in-memory.
+
+    The data dict contains the partner_id, login email, and an expiry
+    datetime — datetimes are serialized to ISO strings for Redis transit.
+    """
+    try:
+        from .auth import get_redis_client
+        redis = get_redis_client()
+        if redis:
+            try:
+                redis_data = {
+                    k: v.isoformat() if isinstance(v, datetime) else v
+                    for k, v in data.items()
+                }
+                await redis.setex(
+                    f"{_PARTNER_MFA_REDIS_PREFIX}{token}",
+                    MFA_PENDING_TTL_MINUTES * 60,
+                    json.dumps(redis_data),
+                )
+                return
+            except Exception as e:
+                logger.warning("Redis partner MFA store failed, using in-memory: %s", e)
+    except ImportError:
+        pass
+    # Fallback to in-memory
+    _partner_mfa_pending[token] = data
+
+
+async def _pop_partner_mfa_pending(token: str) -> Optional[dict]:
+    """Retrieve and delete a partner MFA pending token (Redis or memory)."""
+    try:
+        from .auth import get_redis_client
+        redis = get_redis_client()
+        if redis:
+            try:
+                key = f"{_PARTNER_MFA_REDIS_PREFIX}{token}"
+                raw = await redis.get(key)
+                if raw:
+                    await redis.delete(key)
+                    data = json.loads(raw)
+                    if "expires" in data:
+                        data["expires"] = datetime.fromisoformat(data["expires"])
+                    return data
+                # Not in Redis — might still be in-memory from before
+                # Redis became available
+            except Exception as e:
+                logger.warning("Redis partner MFA pop failed, checking in-memory: %s", e)
+    except ImportError:
+        pass
+    return _partner_mfa_pending.pop(token, None)
 
 
 # =============================================================================
@@ -1043,21 +1109,19 @@ async def email_login(request: Request, body: EmailLoginRequest):
             )
 
         if mfa_enabled:
-            # Issue MFA pending token
+            # Issue MFA pending token via the Redis-backed helper
+            # (Session 203 Batch 6 M1 fix). Falls back to in-memory if
+            # Redis is unavailable.
             mfa_token = secrets.token_urlsafe(32)
             now = datetime.now(timezone.utc)
-            # Clean expired tokens
-            expired = [k for k, v in _partner_mfa_pending.items() if v["expires"] < now]
-            for k in expired:
-                _partner_mfa_pending.pop(k, None)
-            _partner_mfa_pending[mfa_token] = {
+            await _store_partner_mfa_pending(mfa_token, {
                 "partner_id": str(partner["id"]),
                 "partner_name": partner["name"],
                 "partner_slug": partner["slug"],
                 "email": email,
                 "expires": now + timedelta(minutes=MFA_PENDING_TTL_MINUTES),
                 "redirect": "/partner/dashboard",
-            }
+            })
             return RedirectResponse(
                 url=f"/partner/login?mfa_required=true&mfa_token={mfa_token}",
                 status_code=303,
@@ -1171,19 +1235,17 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
             )
 
         if mfa_enabled:
-            # Issue MFA pending token
+            # Issue MFA pending token via Redis-backed helper (Session 203
+            # Batch 6 M1 fix).
             mfa_token = secrets.token_urlsafe(32)
             now = datetime.now(timezone.utc)
-            expired = [k for k, v in _partner_mfa_pending.items() if v["expires"] < now]
-            for k in expired:
-                _partner_mfa_pending.pop(k, None)
-            _partner_mfa_pending[mfa_token] = {
+            await _store_partner_mfa_pending(mfa_token, {
                 "partner_id": str(partner["id"]),
                 "partner_name": partner["name"],
                 "partner_slug": partner["slug"],
                 "email": email,
                 "expires": now + timedelta(minutes=MFA_PENDING_TTL_MINUTES),
-            }
+            })
             from fastapi.responses import JSONResponse
             return JSONResponse({
                 "status": "mfa_required",
@@ -1423,13 +1485,12 @@ async def partner_verify_totp(request: Request, body: PartnerVerifyTOTPRequest):
     from .totp import verify_totp, verify_backup_code
 
     now = datetime.now(timezone.utc)
-    # Clean expired tokens
-    expired = [k for k, v in _partner_mfa_pending.items() if v["expires"] < now]
-    for k in expired:
-        _partner_mfa_pending.pop(k, None)
 
-    pending = _partner_mfa_pending.pop(body.mfa_token, None)
-    if not pending or pending["expires"] < now:
+    # Pop the MFA pending token from Redis (preferred) or in-memory fallback.
+    # The Redis path also handles expiry via setex; the in-memory path
+    # checks the `expires` field below.
+    pending = await _pop_partner_mfa_pending(body.mfa_token)
+    if not pending or pending.get("expires", now) < now:
         raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
 
     partner_id = pending["partner_id"]
