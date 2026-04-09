@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { BRANDING } from '../constants';
+import { BrowserVerifiedBadge } from './BrowserVerifiedBadge';
 
 interface VerificationResult {
   status: 'valid' | 'invalid' | 'empty' | 'error' | 'verified' | 'broken' | 'signature_invalid';
@@ -221,7 +222,7 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
   );
 };
 
-const BlockchainSection: React.FC<{ data: BlockchainStatus }> = ({ data }) => {
+const BlockchainSection: React.FC<{ data: BlockchainStatus; siteId?: string }> = ({ data, siteId }) => {
   const bc = data.blockchain;
   const anchored = bc.anchored + bc.verified;
 
@@ -248,7 +249,7 @@ const BlockchainSection: React.FC<{ data: BlockchainStatus }> = ({ data }) => {
       </div>
 
       {/* Auditor explanation */}
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
         <p className="text-sm text-amber-900">
           <strong>For auditors and legal:</strong> Each evidence bundle's
           SHA-256 hash is submitted to the Bitcoin blockchain via
@@ -261,6 +262,16 @@ const BlockchainSection: React.FC<{ data: BlockchainStatus }> = ({ data }) => {
           does not require trusting this platform.
         </p>
       </div>
+
+      {/* Independent browser-side verification — computed locally, not
+          trusted from the server. Session 203 C4 fix: proves the
+          verification badge isn't just the backend's self-reported
+          verdict. */}
+      {siteId && (
+        <div className="mb-6">
+          <BrowserVerifiedBadge siteId={siteId} />
+        </div>
+      )}
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -592,7 +603,7 @@ export const PortalVerify: React.FC = () => {
 
         {/* Blockchain Anchoring Section */}
         {blockchain && blockchain.blockchain.total_proofs > 0 && (
-          <BlockchainSection data={blockchain} />
+          <BlockchainSection data={blockchain} siteId={siteId} />
         )}
 
         {/* Bundle Timeline */}

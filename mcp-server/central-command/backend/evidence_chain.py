@@ -1921,6 +1921,56 @@ async def verify_evidence(
     )
 
 
+@router.get("/sites/{site_id}/public-keys")
+async def get_site_public_keys(
+    site_id: str,
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
+):
+    """Return the per-appliance Ed25519 public keys for a site.
+
+    Session 203 Batch 5 (C4): this endpoint enables client-side Ed25519
+    signature verification in the portal scorecard. An auditor watching
+    browser devtools can confirm that the public keys were fetched once
+    and then used locally to verify each bundle's signature — there's
+    no trust in the backend's self-reported "signature valid" flag.
+
+    Each key is returned in the standard Ed25519 raw-key hex format
+    (64 hex chars = 32 bytes). The frontend decodes it and passes it to
+    @noble/ed25519's `verifyAsync(signature, message, publicKey)`.
+    """
+    result = await db.execute(text("""
+        SELECT
+            appliance_id,
+            display_name,
+            hostname,
+            agent_public_key,
+            first_checkin,
+            last_checkin
+        FROM site_appliances
+        WHERE site_id = :site_id
+          AND agent_public_key IS NOT NULL
+        ORDER BY first_checkin ASC
+    """), {"site_id": site_id})
+
+    rows = result.fetchall()
+    return {
+        "site_id": site_id,
+        "public_keys": [
+            {
+                "appliance_id": r.appliance_id,
+                "display_name": r.display_name or r.hostname,
+                "hostname": r.hostname,
+                "public_key_hex": r.agent_public_key,
+                "first_checkin": r.first_checkin.isoformat() if r.first_checkin else None,
+                "last_checkin": r.last_checkin.isoformat() if r.last_checkin else None,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
 @router.get("/sites/{site_id}/verify-chain")
 async def verify_chain_integrity(
     site_id: str,
