@@ -5975,7 +5975,8 @@ async def generate_admin_report(
         parts = target_month.split("-")
         if len(parts) != 2:
             raise HTTPException(400, "month must be YYYY-MM format")
-        start = f"{parts[0]}-{parts[1]}-01"
+        from datetime import date as _date
+        start = _date(int(parts[0]), int(parts[1]), 1)
 
         # Bundle stats
         bundle_stats = await conn.fetchrow("""
