@@ -133,7 +133,11 @@ class TestPromotePatternEndpoint:
 
     @pytest.mark.asyncio
     async def test_promote_from_aggregated_pattern_stats(self):
-        """When legacy table returns None, fall back to aggregated_pattern_stats."""
+        """When legacy table returns None, fall back to aggregated_pattern_stats.
+
+        Session 203: routes.py now delegates to flywheel_promote.promote_candidate
+        via asyncpg admin_connection. Test mocks the full chain.
+        """
         from dashboard_api._routes_impl import promote_pattern as promote_fn
 
         pattern_id = "42"
@@ -144,46 +148,56 @@ class TestPromotePatternEndpoint:
             columns=["id", "pattern_signature", "site_id", "recommended_action"],
         )
 
-        async def mock_execute(query, params=None):
+        async def mock_sa_execute(query, params=None):
             query_str = str(query)
-
-            # APS lookup (first db.execute after promote_pattern_in_db returns None)
+            # SA path: aggregated_pattern_stats lookup
             if "aggregated_pattern_stats" in query_str and "SELECT" in query_str:
                 return FakeResult([aps_row])
-            # INSERT INTO l1_rules
-            if "INSERT INTO l1_rules" in query_str:
-                return FakeResult([], rowcount=1)
-            # UPDATE aggregated_pattern_stats
-            if "UPDATE aggregated_pattern_stats" in query_str:
-                return FakeResult([], rowcount=1)
-            # INSERT INTO learning_promotion_candidates
-            if "learning_promotion_candidates" in query_str:
-                return FakeResult([], rowcount=1)
+            # check_site_access_sa
+            if "SELECT client_org_id FROM sites" in query_str:
+                return FakeResult([FakeRow(["org-1"], columns=["client_org_id"])])
             return FakeResult([], rowcount=0)
 
-        mock_db.execute = AsyncMock(side_effect=mock_execute)
+        mock_db.execute = AsyncMock(side_effect=mock_sa_execute)
 
-        # check_site_access_sa needs to find the site in DB — mock that query too
-        site_row = FakeRow(["org-1"], columns=["client_org_id"])
+        # Mock the asyncpg chain: get_pool → admin_connection → promote_candidate
+        mock_asyncpg_conn = AsyncMock()
+        mock_asyncpg_conn.fetchrow = AsyncMock(return_value={
+            "id": "cand-uuid",
+            "site_id": "site-abc",
+            "pattern_signature": "service_stopped:RB-AUTO-SERVICE_RESTART",
+            "success_rate": 0.95,
+            "total_occurrences": 10,
+            "l2_resolutions": 5,
+            "recommended_action": "restart_service",
+        })
+        mock_asyncpg_conn.execute = AsyncMock()
+        mock_asyncpg_conn.transaction = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock()))
 
-        original_execute = mock_db.execute
-
-        async def execute_with_site_check(query, params=None):
-            query_str = str(query)
-            if "SELECT client_org_id FROM sites" in query_str:
-                return FakeResult([site_row])
-            return await original_execute(query, params)
-
-        mock_db.execute = AsyncMock(side_effect=execute_with_site_check)
+        class MockAdminConnCtx:
+            async def __aenter__(self):
+                return mock_asyncpg_conn
+            async def __aexit__(self, *a):
+                return None
 
         with patch("dashboard_api.db_queries.promote_pattern_in_db",
-                   new_callable=AsyncMock, return_value=None):
+                   new_callable=AsyncMock, return_value=None), \
+             patch("dashboard_api.fleet.get_pool",
+                   new_callable=AsyncMock, return_value=object()), \
+             patch("dashboard_api.tenant_middleware.admin_connection",
+                   return_value=MockAdminConnCtx()), \
+             patch("dashboard_api.flywheel_promote.promote_candidate",
+                   new_callable=AsyncMock, return_value={
+                       "rule_id": "L1-AUTO-SERVICE-STOPPED",
+                       "synced_rule_id": "SYNC-L1-AUTO-SERVICE-STOPPED",
+                       "pattern_signature": "service_stopped:RB-AUTO-SERVICE_RESTART",
+                   }):
             result = await promote_fn(pattern_id=pattern_id, db=mock_db, user=MOCK_ADMIN_USER)
 
         assert result["status"] == "promoted"
         assert result["pattern_id"] == pattern_id
-        # Rule ID derived from incident_type portion of pattern_signature
-        assert result["new_rule_id"] == "L1-AUTO-SERVICE-STOPPED"
+        # Response now includes rule_id from promote_candidate
+        assert result["rule_id"] == "L1-AUTO-SERVICE-STOPPED"
 
     @pytest.mark.asyncio
     async def test_pattern_not_found_returns_404(self):
