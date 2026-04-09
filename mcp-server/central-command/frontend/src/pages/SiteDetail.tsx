@@ -935,6 +935,20 @@ const DecommissionModal: React.FC<{
   const [isDecommissioning, setIsDecommissioning] = useState(false);
   const [exportDone, setExportDone] = useState(false);
   const [confirmText, setConfirmText] = useState('');
+  // Double-confirm: user must explicitly acknowledge the irreversible nature
+  // of this action. Without this checkbox, even a correctly typed confirmation
+  // leaves the button disabled.
+  const [ackIrreversible, setAckIrreversible] = useState(false);
+  // Second-stage "arming" — once the user passes all guards and clicks the
+  // final button, we arm it for 5s and require a second click before the
+  // API call actually goes through. The timer cancels the arm state.
+  const [armed, setArmed] = useState(false);
+
+  React.useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 5_000);
+    return () => clearTimeout(t);
+  }, [armed]);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -959,6 +973,11 @@ const DecommissionModal: React.FC<{
   };
 
   const handleDecommission = async () => {
+    // First click arms, second click executes — this is the double-confirm.
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
     setIsDecommissioning(true);
     try {
       const result = await decommissionApi.decommissionSite(site.site_id);
@@ -975,9 +994,14 @@ const DecommissionModal: React.FC<{
   // This matches the user's expectation of "typing the site name" while still
   // working for admins who reference the slug out of habit.
   const confirmTarget = confirmText.trim();
-  const canDecommission =
+  const typedCorrectly =
     confirmTarget.length > 0 &&
     (confirmTarget === site.site_id || confirmTarget.toLowerCase() === (site.clinic_name || '').toLowerCase());
+  // All three guards must pass before the primary button will fire:
+  //   1) Correct name typed
+  //   2) Irreversible checkbox ticked
+  //   3) Data has been exported (offline archive exists)
+  const canDecommission = typedCorrectly && ackIrreversible && exportDone;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
@@ -1066,7 +1090,7 @@ const DecommissionModal: React.FC<{
           </div>
 
           {/* Confirmation input */}
-          <div className="mb-4">
+          <div className="mb-3">
             <label className="block text-sm text-label-secondary mb-1.5">
               Type the site name <code className="bg-fill-secondary px-1.5 py-0.5 rounded text-xs font-mono">{site.clinic_name}</code>
               {' '}or slug <code className="bg-fill-secondary px-1.5 py-0.5 rounded text-xs font-mono">{site.site_id}</code> to confirm:
@@ -1081,6 +1105,36 @@ const DecommissionModal: React.FC<{
             />
           </div>
 
+          {/* Irreversibility acknowledgment — second independent guard */}
+          <label className="flex items-start gap-2 mb-4 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={ackIrreversible}
+              onChange={e => setAckIrreversible(e.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded text-health-critical focus:ring-health-critical"
+            />
+            <span className="text-sm text-label-secondary">
+              I understand this is irreversible and that the site data will be retained
+              for HIPAA-required <strong>6 years</strong> but no new data can be collected.
+            </span>
+          </label>
+
+          {/* Preflight status indicators */}
+          <div className="mb-3 flex flex-col gap-1 text-xs">
+            <div className={`flex items-center gap-1.5 ${exportDone ? 'text-health-healthy' : 'text-label-tertiary'}`}>
+              <span>{exportDone ? '✓' : '○'}</span>
+              <span>Export downloaded {exportDone ? '' : '(required)'}</span>
+            </div>
+            <div className={`flex items-center gap-1.5 ${typedCorrectly ? 'text-health-healthy' : 'text-label-tertiary'}`}>
+              <span>{typedCorrectly ? '✓' : '○'}</span>
+              <span>Site name confirmed</span>
+            </div>
+            <div className={`flex items-center gap-1.5 ${ackIrreversible ? 'text-health-healthy' : 'text-label-tertiary'}`}>
+              <span>{ackIrreversible ? '✓' : '○'}</span>
+              <span>Irreversibility acknowledged</span>
+            </div>
+          </div>
+
           {/* Actions */}
           <div className="flex gap-3">
             <button
@@ -1093,13 +1147,19 @@ const DecommissionModal: React.FC<{
             <button
               onClick={handleDecommission}
               disabled={!canDecommission || isDecommissioning}
-              className="flex-1 px-4 py-2.5 rounded-ios bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 text-white font-semibold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              className={`flex-1 px-4 py-2.5 rounded-ios font-semibold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm ${
+                armed
+                  ? 'bg-red-700 hover:bg-red-800 text-white ring-2 ring-red-400 animate-pulse'
+                  : 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 text-white'
+              }`}
             >
               {isDecommissioning ? (
                 <span className="flex items-center justify-center gap-2">
                   <Spinner size="sm" />
                   Decommissioning...
                 </span>
+              ) : armed ? (
+                'Click again to confirm (5s)'
               ) : (
                 'Confirm Decommission'
               )}
