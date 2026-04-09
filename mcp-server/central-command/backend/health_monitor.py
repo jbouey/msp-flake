@@ -793,7 +793,7 @@ async def _check_mesh_isolation():
             appliances = await conn.fetch("""
                 SELECT appliance_id, hostname, daemon_health, ip_addresses
                 FROM site_appliances
-                WHERE site_id = $1
+                WHERE site_id = $1::text
                   AND status = 'online'
                   AND last_checkin > NOW() - INTERVAL '5 minutes'
             """, site_id)
@@ -826,7 +826,7 @@ async def _check_mesh_isolation():
                 continue
 
             site_name = await conn.fetchval(
-                "SELECT clinic_name FROM sites WHERE site_id = $1", site_id
+                "SELECT clinic_name FROM sites WHERE site_id = $1::text", site_id
             ) or site_id
 
             # === P0-3: Mesh formation notification ===
@@ -834,7 +834,7 @@ async def _check_mesh_isolation():
             if connected and not isolated:
                 existing_formation = await conn.fetchval("""
                     SELECT 1 FROM notifications
-                    WHERE site_id = $1 AND category = 'mesh_formed'
+                    WHERE site_id = $1::text AND category = 'mesh_formed'
                       AND created_at > NOW() - INTERVAL '24 hours'
                 """, site_id)
                 if not existing_formation:
@@ -842,7 +842,7 @@ async def _check_mesh_isolation():
                     await conn.execute("""
                         INSERT INTO notifications (
                             site_id, category, severity, title, message, created_at
-                        ) VALUES ($1, 'mesh_formed', 'info', $2, $3, NOW())
+                        ) VALUES ($1::text, 'mesh_formed', 'info', $2::text, $3::text, NOW())
                     """,
                         site_id,
                         f"Mesh active: {len(appliances)} appliances coordinating",
@@ -858,18 +858,18 @@ async def _check_mesh_isolation():
                     INSERT INTO notifications (
                         site_id, category, severity, title, message, created_at
                     )
-                    SELECT $1, 'mesh_isolation_resolved', 'info',
+                    SELECT $1::text, 'mesh_isolation_resolved', 'info',
                            'Mesh isolation resolved',
-                           'All appliances at ' || $2 || ' can now see their mesh peers. '
+                           'All appliances at ' || $2::text || ' can now see their mesh peers. '
                            || 'Scan coordination restored.',
                            NOW()
                     WHERE EXISTS (
                         SELECT 1 FROM notifications
-                        WHERE site_id = $1 AND category = 'mesh_isolation'
+                        WHERE site_id = $1::text AND category = 'mesh_isolation'
                           AND created_at > NOW() - INTERVAL '24 hours'
                           AND NOT EXISTS (
                               SELECT 1 FROM notifications n2
-                              WHERE n2.site_id = $1 AND n2.category = 'mesh_isolation_resolved'
+                              WHERE n2.site_id = $1::text AND n2.category = 'mesh_isolation_resolved'
                                 AND n2.created_at > notifications.created_at
                           )
                     )
@@ -886,10 +886,10 @@ async def _check_mesh_isolation():
                 # Check oldest unresolved isolation alert for this site
                 oldest_isolation = await conn.fetchval("""
                     SELECT MIN(created_at) FROM notifications
-                    WHERE site_id = $1 AND category IN ('mesh_isolation', 'mesh_topology_limitation')
+                    WHERE site_id = $1::text AND category IN ('mesh_isolation', 'mesh_topology_limitation')
                       AND NOT EXISTS (
                           SELECT 1 FROM notifications n2
-                          WHERE n2.site_id = $1 AND n2.category = 'mesh_isolation_resolved'
+                          WHERE n2.site_id = $1::text AND n2.category = 'mesh_isolation_resolved'
                             AND n2.created_at > notifications.created_at
                       )
                 """, site_id)
@@ -959,7 +959,7 @@ async def _check_mesh_isolation():
                         await conn.execute("""
                             INSERT INTO notifications (
                                 site_id, category, severity, title, message, created_at
-                            ) VALUES ($1, $2, $3, $4, $5, NOW())
+                            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, NOW())
                         """, site_id, alert_category, alert_severity, title, msg)
                         logger.warning(f"{alert_category}: {app['appliance_id']} at {site_id} "
                                        f"(severity={alert_severity})")
