@@ -1737,8 +1737,32 @@ async def submit_ots_proof_background(db: AsyncSession, bundle_id: str, bundle_h
 
 
 async def process_merkle_batch(conn, site_id: str) -> dict:
-    """Process a Merkle batch for a site: collect 'batching' bundles, build tree, submit root to OTS."""
+    """Process a Merkle batch for a site: collect 'batching' bundles, build
+    tree, submit root to OTS.
+
+    SESSION 203 BATCH 2 FIX (C1): the batch_id used to be derived purely
+    from the site_id + the current UTC hour (`MB-{site}-{YYYYMMDDHH}`).
+    When this function ran twice in the same hour for the same site (which
+    happens whenever a fresh set of bundles rolls in every ~15 minutes),
+    both calls produced the same batch_id. The first call stored a Merkle
+    root and OTS proof keyed on that batch_id; the second call hit
+    `ON CONFLICT (batch_id) DO NOTHING` and silently dropped its root, but
+    still UPDATE'd each of its bundles with a `merkle_proof` path computed
+    from the DROPPED tree. Result: the second batch's bundles had proofs
+    that could not verify against the stored root — an auditor running
+    5 lines of Python against one of these bundles would see the chain
+    fail verification.
+
+    The production audit on 2026-04-09 found 1,198+ bundles in this broken
+    state across 100+ batches. They are backfilled to `ots_status='legacy'`
+    by a one-shot migration (see migrations/148_*.sql).
+
+    The fix: make the batch_id truly unique per call by appending a short
+    random suffix. The old `MB-{site}-{YYYYMMDDHH}` prefix is preserved so
+    existing dashboards and logs still group by hour at a glance.
+    """
     from .merkle import build_merkle_tree
+    import secrets as _secrets
 
     bundles = await conn.fetch("""
         SELECT bundle_id, bundle_hash, chain_position
@@ -1754,7 +1778,10 @@ async def process_merkle_batch(conn, site_id: str) -> dict:
     root, proofs = build_merkle_tree(hashes)
 
     batch_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
-    batch_id = f"MB-{site_id[:20]}-{batch_hour.strftime('%Y%m%d%H')}"
+    # SESSION 203 C1 FIX: unique suffix prevents two concurrent sub-batches
+    # in the same UTC hour from colliding on batch_id.
+    unique_suffix = _secrets.token_hex(4)  # 8 hex chars — 2^32 space, zero real collision risk
+    batch_id = f"MB-{site_id[:20]}-{batch_hour.strftime('%Y%m%d%H')}-{unique_suffix}"
     tree_depth = len(proofs[0]) if proofs and proofs[0] else 0
 
     # Submit merkle root to OTS
@@ -1767,7 +1794,9 @@ async def process_merkle_batch(conn, site_id: str) -> dict:
     proof_data = ots_result["proof_data"]
     calendar_url = ots_result["calendar_url"]
 
-    # Record the batch
+    # Record the batch — with the unique suffix, ON CONFLICT should never
+    # actually fire, but we leave the clause as a safety net in case the
+    # same batch_id ever gets re-used by a retry or backup.
     await conn.execute("""
         INSERT INTO ots_merkle_batches (batch_id, site_id, merkle_root, bundle_count, tree_depth,
             ots_status, ots_submitted_at, batch_hour)
