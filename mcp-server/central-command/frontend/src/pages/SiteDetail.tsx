@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge, ActionDropdown, EmptyState, OnboardingChecklist, Tooltip } from '../components/shared';
 import type { ActionItem } from '../components/shared';
-import { StatusBadge, SiteComplianceHero } from '../components/composed';
+import { StatusBadge, SiteComplianceHero, SiteActivityTimeline } from '../components/composed';
 import { MeshHealthPanel } from '../components/composed/MeshHealthPanel';
 import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier, useUpdateL2Mode } from '../hooks';
@@ -1415,6 +1415,29 @@ export const SiteDetail: React.FC = () => {
         </div>
       )}
 
+      {/* Breadcrumb — Sites / [Org] / [Site] */}
+      <nav aria-label="Breadcrumb" className="text-xs text-label-tertiary flex items-center gap-1.5 flex-wrap">
+        <Link to="/sites" className="hover:text-label-secondary transition-colors">
+          Sites
+        </Link>
+        {site.client_org_id && site.org_name && (
+          <>
+            <span aria-hidden>/</span>
+            <Link
+              to={`/organizations/${site.client_org_id}`}
+              className="hover:text-label-secondary transition-colors truncate max-w-xs"
+              title={site.org_name}
+            >
+              {site.org_name}
+            </Link>
+          </>
+        )}
+        <span aria-hidden>/</span>
+        <span className="text-label-secondary truncate max-w-xs" title={site.clinic_name}>
+          {site.clinic_name}
+        </span>
+      </nav>
+
       {/* Header */}
       <div className="space-y-0">
         {/* Row 1: Site identity + status + action */}
@@ -1757,6 +1780,9 @@ export const SiteDetail: React.FC = () => {
 
         {/* Sidebar */}
         <div className="space-y-6">
+          {/* Recent Activity — admin audit + fleet orders + incidents */}
+          {siteId && <SiteActivityTimeline siteId={siteId} />}
+
           {/* Network Visibility */}
           {coverageData !== null && coverageData !== undefined && (
             <GlassCard>

@@ -88,6 +88,48 @@ def parse_ip_addresses(raw_ips) -> list:
     return []
 
 
+async def _audit_site_change(
+    conn,
+    user: dict,
+    action: str,
+    site_id: str,
+    details: Dict[str, Any],
+    request: Optional[Request] = None,
+) -> None:
+    """Write a site change event to admin_audit_log (append-only).
+
+    Uses an asyncpg connection — caller must have an active transaction.
+    Never raises — audit failures must not block the underlying mutation,
+    but they ARE logged at ERROR so we can investigate.
+    """
+    try:
+        user_id = user.get("id") or user.get("user_id")
+        username = user.get("username") or user.get("email") or "unknown"
+        ip = None
+        if request is not None:
+            ip = (
+                request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                or (request.client.host if request.client else None)
+            )
+        await conn.execute(
+            """
+            INSERT INTO admin_audit_log (user_id, username, action, target, details, ip_address)
+            VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6)
+            """,
+            str(user_id) if user_id else None,
+            username,
+            action,
+            site_id,
+            json.dumps(details),
+            ip,
+        )
+    except Exception as e:
+        logger.error(
+            f"audit write failed: action={action} site={site_id} err={e}",
+            exc_info=True,
+        )
+
+
 router = APIRouter(prefix="/api/sites", tags=["sites"])
 
 # Separate router for order lifecycle endpoints (acknowledge/complete)
@@ -217,8 +259,17 @@ def parse_parameters(params):
 # =============================================================================
 
 @router.put("/{site_id}")
-async def update_site(site_id: str, update: SiteUpdate, user: dict = Depends(require_operator)):
-    """Update site information. Requires operator or admin access."""
+async def update_site(
+    site_id: str,
+    update: SiteUpdate,
+    request: Request,
+    user: dict = Depends(require_operator),
+):
+    """Update site information. Requires operator or admin access.
+
+    Writes an admin_audit_log entry for every field that actually changed
+    (before → after) so the Site Detail activity timeline can display it.
+    """
     pool = await get_pool()
 
     updates = []
@@ -280,9 +331,52 @@ async def update_site(site_id: str, update: SiteUpdate, user: dict = Depends(req
     """
 
     async with tenant_connection(pool, site_id=site_id) as conn:
+        # Snapshot before state so we can record a diff to the audit log.
+        before = await conn.fetchrow(
+            """
+            SELECT clinic_name, contact_name, contact_email, tier,
+                   onboarding_stage, healing_tier, partner_id
+            FROM sites WHERE site_id = $1
+            """,
+            site_id,
+        )
+        if not before:
+            raise HTTPException(status_code=404, detail=f"Site {site_id} not found")
+
         result = await conn.fetchrow(query, *values)
         if not result:
             raise HTTPException(status_code=404, detail=f"Site {site_id} not found")
+
+        # Build the changed-field diff. Only record fields whose value actually moved.
+        candidates = {
+            "clinic_name": update.clinic_name,
+            "contact_name": update.contact_name,
+            "contact_email": update.contact_email,
+            "tier": update.tier,
+            "onboarding_stage": update.onboarding_stage,
+            "healing_tier": update.healing_tier.value if update.healing_tier else None,
+            "partner_id": update.partner_id,
+        }
+        diff: Dict[str, Dict[str, Any]] = {}
+        for key, new_val in candidates.items():
+            if new_val is None:
+                continue
+            old_val = before[key]
+            # Normalize uuid -> str for comparison
+            if old_val is not None and not isinstance(old_val, (str, int, float, bool)):
+                old_val = str(old_val)
+            if old_val != new_val:
+                diff[key] = {"from": old_val, "to": new_val}
+
+        if diff:
+            await _audit_site_change(
+                conn,
+                user,
+                action="SITE_UPDATED",
+                site_id=site_id,
+                details={"changes": diff},
+                request=request,
+            )
 
     return {
         "status": "updated",
@@ -301,16 +395,32 @@ class HealingTierUpdate(BaseModel):
 
 
 @router.put("/{site_id}/healing-tier")
-async def update_healing_tier(site_id: str, update: HealingTierUpdate, user: dict = Depends(require_operator)):
+async def update_healing_tier(
+    site_id: str,
+    update: HealingTierUpdate,
+    request: Request,
+    user: dict = Depends(require_operator),
+):
     """Update the healing tier for a site. Requires operator or admin access.
 
     Healing tiers control which L1 rules are active:
     - standard: 4 core rules (firewall, defender, bitlocker, ntp)
     - full_coverage: All 21 L1 rules for comprehensive auto-healing
+
+    Writes an admin_audit_log entry (action=HEALING_TIER_CHANGED) for every
+    real transition so the site activity timeline can display it.
     """
     pool = await get_pool()
 
     async with tenant_connection(pool, site_id=site_id) as conn:
+        # Capture the old value so the diff in the audit log is real.
+        before = await conn.fetchrow(
+            "SELECT healing_tier FROM sites WHERE site_id = $1",
+            site_id,
+        )
+        if not before:
+            raise HTTPException(status_code=404, detail=f"Site {site_id} not found")
+
         result = await conn.fetchrow("""
             UPDATE sites
             SET healing_tier = $1, updated_at = $2
@@ -321,7 +431,22 @@ async def update_healing_tier(site_id: str, update: HealingTierUpdate, user: dic
         if not result:
             raise HTTPException(status_code=404, detail=f"Site {site_id} not found")
 
-    logger.info(f"Updated healing tier for {site_id} to {update.healing_tier.value}")
+        old_tier = before["healing_tier"]
+        new_tier = result["healing_tier"]
+        if old_tier != new_tier:
+            await _audit_site_change(
+                conn,
+                user,
+                action="HEALING_TIER_CHANGED",
+                site_id=site_id,
+                details={"from": old_tier, "to": new_tier},
+                request=request,
+            )
+
+    logger.info(
+        f"Healing tier for {site_id}: {old_tier} → {new_tier} "
+        f"by {user.get('username') or user.get('email') or 'unknown'}"
+    )
 
     return {
         "status": "updated",
@@ -1247,6 +1372,169 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
             'appliances': appliances,
             'count': len(appliances)
         }
+
+
+@router.get("/{site_id}/activity")
+async def get_site_activity(
+    site_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    user: dict = Depends(require_auth),
+):
+    """Return the recent activity timeline for a site.
+
+    Aggregates three sources:
+      1) admin_audit_log — admin actions scoped to this site (target=site_id)
+      2) fleet_orders — order lifecycle events
+      3) incidents — opened/resolved events over the last 30 days
+
+    Ordered newest-first, truncated to ``limit`` entries.
+
+    Called by the Site Detail page activity sidebar.
+    """
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # 1) Admin actions targeting this site
+        admin_rows = await conn.fetch(
+            """
+            SELECT id::text AS id, created_at, username, action, target, details
+            FROM admin_audit_log
+            WHERE target = $1
+              AND created_at > NOW() - INTERVAL '90 days'
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            site_id,
+            limit,
+        )
+
+        # 2) Fleet order events — delivered/completed in the last 30 days
+        order_rows = await conn.fetch(
+            """
+            SELECT id, order_type, status, created_at, updated_at,
+                   delivered_at, completed_at, result_data
+            FROM fleet_orders
+            WHERE site_id = $1
+              AND updated_at > NOW() - INTERVAL '30 days'
+            ORDER BY updated_at DESC
+            LIMIT $2
+            """,
+            site_id,
+            limit,
+        )
+
+        # 3) Incident open/resolve over last 30 days — pull a bounded sample
+        incident_rows = await conn.fetch(
+            """
+            SELECT id::text AS id, incident_type, severity, status,
+                   created_at, resolved_at, title
+            FROM incidents
+            WHERE site_id = $1
+              AND created_at > NOW() - INTERVAL '30 days'
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            site_id,
+            limit,
+        )
+
+    # Normalize into a unified timeline shape
+    events: List[Dict[str, Any]] = []
+    for r in admin_rows:
+        details = r["details"]
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except Exception:
+                details = None
+        events.append({
+            "kind": "admin_action",
+            "event_id": f"audit-{r['id']}",
+            "at": r["created_at"].isoformat() if r["created_at"] else None,
+            "actor": r["username"],
+            "action": r["action"],
+            "details": details,
+        })
+
+    for r in order_rows:
+        # Emit one event per lifecycle transition we actually observed
+        if r["completed_at"]:
+            events.append({
+                "kind": "fleet_order",
+                "event_id": f"order-{r['id']}-completed",
+                "at": r["completed_at"].isoformat(),
+                "actor": "appliance",
+                "action": "FLEET_ORDER_COMPLETED",
+                "details": {
+                    "order_id": str(r["id"]),
+                    "order_type": r["order_type"],
+                    "status": r["status"],
+                },
+            })
+        elif r["delivered_at"]:
+            events.append({
+                "kind": "fleet_order",
+                "event_id": f"order-{r['id']}-delivered",
+                "at": r["delivered_at"].isoformat(),
+                "actor": "appliance",
+                "action": "FLEET_ORDER_DELIVERED",
+                "details": {
+                    "order_id": str(r["id"]),
+                    "order_type": r["order_type"],
+                },
+            })
+        else:
+            events.append({
+                "kind": "fleet_order",
+                "event_id": f"order-{r['id']}-created",
+                "at": r["created_at"].isoformat() if r["created_at"] else None,
+                "actor": "system",
+                "action": "FLEET_ORDER_CREATED",
+                "details": {
+                    "order_id": str(r["id"]),
+                    "order_type": r["order_type"],
+                    "status": r["status"],
+                },
+            })
+
+    for r in incident_rows:
+        events.append({
+            "kind": "incident",
+            "event_id": f"incident-{r['id']}-opened",
+            "at": r["created_at"].isoformat() if r["created_at"] else None,
+            "actor": "system",
+            "action": "INCIDENT_OPENED",
+            "details": {
+                "incident_id": r["id"],
+                "incident_type": r["incident_type"],
+                "severity": r["severity"],
+                "title": r["title"],
+            },
+        })
+        if r["resolved_at"]:
+            events.append({
+                "kind": "incident",
+                "event_id": f"incident-{r['id']}-resolved",
+                "at": r["resolved_at"].isoformat(),
+                "actor": "system",
+                "action": "INCIDENT_RESOLVED",
+                "details": {
+                    "incident_id": r["id"],
+                    "incident_type": r["incident_type"],
+                    "severity": r["severity"],
+                },
+            })
+
+    # Sort newest-first and truncate — `at` may be None for malformed rows
+    events.sort(key=lambda e: e["at"] or "", reverse=True)
+    events = events[:limit]
+
+    return {
+        "site_id": site_id,
+        "events": events,
+        "count": len(events),
+        "limit": limit,
+    }
 
 
 @router.get("/{site_id}/mesh")
