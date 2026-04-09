@@ -48,6 +48,7 @@ const SetPassword = lazy(() => import('./pages/SetPassword'));
 const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
 const AdminOAuthSettings = lazy(() => import('./pages/AdminOAuthSettings'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
+const RecoveryLanding = lazy(() => import('./pages/RecoveryLanding'));
 const Legal = lazy(() => import('./pages/Legal'));
 const Pricing = lazy(() => import('./pages/Pricing'));
 const Organizations = lazy(() => import('./pages/Organizations').then(m => ({ default: m.Organizations })));
@@ -450,6 +451,11 @@ const App: React.FC = () => {
                 {/* Legal + pricing pages — accessible on both domains */}
                 <Route path="/legal/:page" element={<Legal />} />
                 <Route path="/pricing" element={<Pricing />} />
+
+                {/* Recovery landing — public, accessible on both domains.
+                    Built for compliance refugees migrating from a vendor
+                    that just lost their trust (Session 203 Tier 1.3). */}
+                <Route path="/recovery" element={<RecoveryLanding />} />
 
                 {/* www.osiriscare.net → landing page; dashboard.osiriscare.net → admin */}
                 <Route path="/*" element={isLandingSite ? <LandingPage /> : <AuthenticatedApp />} />
