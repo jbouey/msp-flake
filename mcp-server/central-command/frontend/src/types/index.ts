@@ -352,6 +352,8 @@ export interface GlobalStats {
   active_drift_checks: number;
   total_go_agents: number;
   active_threats: number;
+  /** Backend-computed timestamp for data freshness ("Stats as of …"). */
+  computed_at?: string | null;
 }
 
 export interface StatsDeltas {

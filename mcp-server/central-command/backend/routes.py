@@ -2028,6 +2028,87 @@ async def add_note(
 # STATS ENDPOINTS
 # =============================================================================
 
+@router.get("/sla-strip")
+async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)):
+    """Platform-wide SLA posture — feeds the DashboardSLAStrip component.
+
+    Returns three load-bearing metrics so customer success + compliance
+    can see at a glance whether the platform is meeting contractual
+    targets:
+
+      - `healing_rate_24h`: L1+L2 auto-heal success rate over the last 24h
+      - `ots_anchor_age_minutes`: age of the oldest pending OTS proof
+        (HIPAA evidence-integrity signal)
+      - `online_appliances_pct`: fraction of appliances reporting in the
+        last 5 minutes (fleet availability)
+
+    Null values indicate "no data" and render as "—" on the frontend;
+    they never render as a breached SLA. Targets are static here (baked
+    into the response) so the frontend never has to hard-code a threshold
+    — the backend is the single source of truth.
+    """
+    from .fleet import get_pool
+    from .tenant_middleware import admin_connection
+
+    pool = await get_pool()
+    healing_rate_24h: float | None = None
+    ots_anchor_age_minutes: float | None = None
+    online_appliances_pct: float | None = None
+
+    async with admin_connection(pool) as conn:
+        # 1) Healing rate: successful L1/L2 executions over the last 24h.
+        try:
+            row = await conn.fetchrow("""
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'success') AS success_count,
+                    COUNT(*) AS total_count
+                FROM execution_telemetry
+                WHERE created_at > NOW() - INTERVAL '24 hours'
+            """)
+            if row and row["total_count"] and row["total_count"] > 0:
+                healing_rate_24h = float(row["success_count"]) / float(row["total_count"]) * 100
+        except Exception:
+            logger.exception("sla-strip: healing rate query failed")
+
+        # 2) OTS anchor age: oldest pending proof, in minutes.
+        try:
+            row = await conn.fetchrow("""
+                SELECT EXTRACT(EPOCH FROM (NOW() - MIN(submitted_at))) AS oldest_pending_seconds
+                FROM ots_proofs
+                WHERE status = 'pending'
+            """)
+            if row and row["oldest_pending_seconds"] is not None:
+                ots_anchor_age_minutes = float(row["oldest_pending_seconds"]) / 60.0
+            else:
+                # No pending proofs — SLA is trivially met. Report 0 min.
+                ots_anchor_age_minutes = 0.0
+        except Exception:
+            logger.exception("sla-strip: OTS anchor query failed")
+
+        # 3) Fleet availability: online appliances / total appliances.
+        try:
+            row = await conn.fetchrow("""
+                SELECT
+                    COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') AS online,
+                    COUNT(*) AS total
+                FROM site_appliances
+            """)
+            if row and row["total"] and row["total"] > 0:
+                online_appliances_pct = float(row["online"]) / float(row["total"]) * 100
+        except Exception:
+            logger.exception("sla-strip: fleet availability query failed")
+
+    return {
+        "healing_rate_24h": healing_rate_24h,
+        "healing_target": 85.0,
+        "ots_anchor_age_minutes": ots_anchor_age_minutes,
+        "ots_target_minutes": 120.0,
+        "online_appliances_pct": online_appliances_pct,
+        "fleet_target": 95.0,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/stats", response_model=GlobalStats)
 async def get_global_stats(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get aggregate statistics across all clients."""

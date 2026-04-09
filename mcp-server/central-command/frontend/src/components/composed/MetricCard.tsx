@@ -17,6 +17,8 @@ interface MetricCardProps {
   onClick?: () => void;
   loading?: boolean;
   children?: React.ReactNode;
+  /** Optional sub-row rendered under the delta — e.g. "target 85%". */
+  footer?: React.ReactNode;
 }
 
 /**
@@ -81,6 +83,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   onClick,
   loading = false,
   children,
+  footer,
 }) => {
   const tooltip = METRIC_TOOLTIPS[metric];
   const displayLabel = label || metric.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -106,6 +109,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
             {formattedValue}
           </p>
           {delta !== undefined && <DeltaIndicator value={delta} suffix={deltaSuffix} invertColor={deltaInvert} />}
+          {footer && <div className="mt-1">{footer}</div>}
         </div>
         {icon && (
           <div
