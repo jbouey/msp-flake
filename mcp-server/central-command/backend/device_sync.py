@@ -1299,6 +1299,19 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
         )
         upserted += 1
 
+    # Bulk-update compliance for ALL workstations (catches entries added by other paths)
+    for h, data in compliance_map.items():
+        status_val, check_time, pct_val = data
+        await conn.execute("""
+            UPDATE workstations SET
+                compliance_status = $2,
+                compliance_percentage = $3,
+                last_compliance_check = COALESCE($4, last_compliance_check),
+                updated_at = NOW()
+            WHERE site_id = $1 AND (hostname = $5 OR ip_address = $5)
+            AND (compliance_percentage IS NULL OR compliance_percentage != $3)
+        """, site_id, status_val, pct_val, check_time, h)
+
     # Cleanup: remove workstations from excluded subnets and stale entries
     cleaned_count = 0
     for prefix in excluded_subnets:
