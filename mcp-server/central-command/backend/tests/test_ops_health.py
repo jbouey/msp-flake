@@ -42,6 +42,10 @@ _fastapi.APIRouter = lambda **kw: type("FakeRouter", (), {
 })()
 _fastapi.HTTPException = Exception
 _fastapi.Depends = lambda x: x
+_fastapi.Request = object
+_fastapi.Cookie = lambda default=None, **kw: default
+_fastapi.Query = lambda default=None, **kw: default
+_fastapi.BackgroundTasks = object
 
 # Stub auth functions
 _auth = sys.modules["dashboard_api.auth"]

@@ -24,6 +24,8 @@ _fastapi.HTTPException = Exception
 _fastapi.Depends = lambda x: x
 _fastapi.BackgroundTasks = object
 _fastapi.Request = object
+_fastapi.Cookie = lambda default=None, **kw: default
+_fastapi.Query = lambda default=None, **kw: default
 _pydantic = sys.modules.setdefault("pydantic", types.ModuleType("pydantic"))
 _pydantic.BaseModel = object
 _pydantic.Field = lambda *a, **kw: None
