@@ -71,12 +71,37 @@
 | test_site_id_enforcement.py | 18 tests (NEW) |
 | test_batch3_fixes.py | 20 tests (NEW) |
 
+| users.py | 33 queries to execute_with_retry |
+| test_security_modules.py | 32 tests: totp(12), csrf(5), credential_crypto(7), backup codes(8) (NEW) |
+| driftscan_eval_test.go | 14 tests: evaluateWindowsFindings table tests (NEW) |
+| linuxscan_test.go | 19 tests: parseLinuxFindings table tests (NEW) |
+| macosscan_test.go | 14 tests: parseMacOSFindings table tests (NEW) |
+
+**Go slog migration (15 files):**
+driftscan.go, netscan.go, linuxscan.go, macosscan.go, phonehome.go, incident_reporter.go, state_manager.go, autodeploy.go, devicelogs.go, healing_journal.go, healing_rate.go, wireguard_monitor.go, agent_configure.go, app_discovery.go, avahi.go
+
+**Org-scoping completed (15 more endpoints):**
+get_events, get_global_stats, get_stats_deltas, get_fleet_posture, get_onboarding_pipeline, get_onboarding_metrics, get_onboarding_detail, create_prospect, get_runbooks, get_runbook_detail, get_runbook_executions, get_learning_status, get_promotion_candidates, get_coverage_gaps, get_promotion_history
+
+---
+
+## Final Totals
+
+- **4 commits:** 4ae8a2d, 4647faf, 24f0072, d654987
+- **47 files modified**, +3263/-698 lines
+- **258 Python tests** passing (was 226)
+- **16/16 Go packages** passing (was 15/16)
+- **70 new Python tests** (site_id enforcement 18, batch3 20, security modules 32)
+- **47 new Go tests** (evaluateWindowsFindings 14, parseLinuxFindings 19, parseMacOSFindings 14)
+- **7 Go tests fixed** (orders — Ed25519 signing helpers)
+- **15 Go files** migrated to slog structured logging
+- **All 5 round-table priorities completed and deployed**
+
 ---
 
 ## Next Session
 
-1. Remaining org-scoping on routes.py (runbooks, learning, onboarding — lower risk)
-2. Go daemon slog migration (18 files still use log.Printf)
-3. users.py execute_with_retry migration
-4. Write unit tests for Go daemon pure functions (evaluateWindowsFindings, parseLinuxFindings)
-5. Write unit tests for backend security modules (totp, csrf, credential_crypto)
+1. Write more Go daemon tests (netscan classifyDeviceType, phonehome classifyConnectivityError, state_manager ShouldSuppress)
+2. Remaining execute_with_retry in email_alerts.py, compliance_packet.py
+3. PHI boundary IPv6 address redaction
+4. Go agent tests (config, discovery, transport)
