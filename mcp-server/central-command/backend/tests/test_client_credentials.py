@@ -207,10 +207,12 @@ class TestSubmitClientCredentials:
             result = await submit_client_credentials(request=request, user=FAKE_USER)
 
         assert result["status"] == "ok"
-        # Both site_credentials INSERT and client_approvals INSERT
+        # site_credentials INSERT + client_approvals INSERT + client_audit_log INSERT (Batch 7)
         insert_calls = [e for e in conn.executed if e[0] == "execute"]
-        assert len(insert_calls) == 2
+        assert len(insert_calls) == 3
+        assert "INSERT INTO site_credentials" in insert_calls[0][1]
         assert "INSERT INTO client_approvals" in insert_calls[1][1]
+        assert "INSERT INTO client_audit_log" in insert_calls[2][1]
 
     @pytest.mark.asyncio
     async def test_invalid_type_returns_422(self):
