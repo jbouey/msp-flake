@@ -2,7 +2,14 @@ import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge, EmptyState, OnboardingChecklist } from '../components/shared';
-import { SiteComplianceHero, SiteActivityTimeline } from '../components/composed';
+import {
+  SiteComplianceHero,
+  SiteActivityTimeline,
+  SiteSLAIndicator,
+  SiteSearchBar,
+  FloatingActionButton,
+  type FloatingAction,
+} from '../components/composed';
 import { MeshHealthPanel } from '../components/composed/MeshHealthPanel';
 import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier, useUpdateL2Mode } from '../hooks';
@@ -306,6 +313,50 @@ export const SiteDetail: React.FC = () => {
     }
   };
 
+  // Quick-action launcher fan-out — rendered by the FloatingActionButton.
+  // Covers the most common tasks operators reach for on a live site:
+  // force rescan, add a credential, broadcast a fleet update, open
+  // the run-a-runbook flow. Destructive/slow actions stay in the More menu.
+  const fabActions: FloatingAction[] = [
+    {
+      label: 'Force Rescan',
+      tone: 'primary',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+      ),
+      onClick: () => handleBroadcast('run_drift'),
+    },
+    {
+      label: 'Add Credential',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+        </svg>
+      ),
+      onClick: () => setShowCredModal(true),
+    },
+    {
+      label: 'Check for Updates',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M16 12l-4 4m0 0l-4-4m4 4V4" />
+        </svg>
+      ),
+      onClick: () => handleBroadcast('force_checkin'),
+    },
+    {
+      label: 'Open Runbooks',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+        </svg>
+      ),
+      onClick: () => navigate(`/runbooks?site_id=${siteId}`),
+    },
+  ];
+
   const handleAddCredential = async (data: Parameters<typeof addCredential.mutate>[0]['data']) => {
     try {
       await addCredential.mutateAsync({ siteId: site.site_id, data });
@@ -331,6 +382,9 @@ export const SiteDetail: React.FC = () => {
         onTransferAppliance={() => setShowTransferModal(true)}
         onDecommissionSite={() => setShowDecommissionModal(true)}
       />
+
+      {/* In-site search bar — searches incidents, devices, creds, workstations */}
+      {siteId && <SiteSearchBar siteId={siteId} />}
 
       {/* Site Compliance Hero — pinned headline summary */}
       {site && <SiteComplianceHero site={site} />}
@@ -501,6 +555,9 @@ export const SiteDetail: React.FC = () => {
 
         {/* Sidebar */}
         <div className="space-y-6">
+          {/* Healing SLA — target vs current + 7-day trend sparkline */}
+          {siteId && <SiteSLAIndicator siteId={siteId} />}
+
           {/* Recent Activity — admin audit + fleet orders + incidents */}
           {siteId && <SiteActivityTimeline siteId={siteId} />}
 
@@ -648,6 +705,14 @@ export const SiteDetail: React.FC = () => {
         >
           {toast.message}
         </div>
+      )}
+
+      {/* Floating quick-action launcher — viewport-anchored FAB */}
+      {site && siteId && site.status !== 'inactive' && (
+        <FloatingActionButton
+          ariaLabel="Site quick actions"
+          actions={fabActions}
+        />
       )}
     </div>
   );
