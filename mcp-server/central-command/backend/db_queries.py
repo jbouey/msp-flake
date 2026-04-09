@@ -278,6 +278,14 @@ async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
     ))
     recently_promoted = result.scalar() or 0
 
+    # Last promotion timestamp — "Last rule promoted 3d ago" on the dashboard
+    # Learning Loop card. Proves the flywheel is alive without forcing the
+    # customer success team to dig into the Learning page.
+    result = await db.execute(text(
+        "SELECT MAX(approved_at) FROM learning_promotion_candidates WHERE approval_status = 'approved'"
+    ))
+    last_promotion_at = result.scalar()
+
     # Tier counts
     result = await db.execute(text("""
         WITH combined_tiers AS (
@@ -320,6 +328,7 @@ async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
         "promotion_success_rate": round(success_rate, 1),
         "l1_resolution_rate": round(l1_rate, 1),
         "l2_resolution_rate": round(l2_rate, 1),
+        "last_promotion_at": last_promotion_at.isoformat() if last_promotion_at else None,
     }
 
 

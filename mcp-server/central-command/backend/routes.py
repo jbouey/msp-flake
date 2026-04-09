@@ -1059,6 +1059,7 @@ async def get_learning_status(db: AsyncSession = Depends(get_db), user: dict = D
         promotion_success_rate=status.get("promotion_success_rate", 0.0),
         l1_resolution_rate=status.get("l1_resolution_rate", 0.0),
         l2_resolution_rate=status.get("l2_resolution_rate", 0.0),
+        last_promotion_at=status.get("last_promotion_at"),
     )
 
 
@@ -2032,15 +2033,16 @@ async def add_note(
 async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)):
     """Platform-wide SLA posture — feeds the DashboardSLAStrip component.
 
-    Returns three load-bearing metrics so customer success + compliance
-    can see at a glance whether the platform is meeting contractual
-    targets:
+    Returns load-bearing metrics so customer success + compliance can see
+    at a glance whether the platform is meeting contractual targets:
 
       - `healing_rate_24h`: L1+L2 auto-heal success rate over the last 24h
       - `ots_anchor_age_minutes`: age of the oldest pending OTS proof
         (HIPAA evidence-integrity signal)
       - `online_appliances_pct`: fraction of appliances reporting in the
         last 5 minutes (fleet availability)
+      - `mfa_coverage_pct`: percentage of admin users with MFA enrolled
+        (security posture)
 
     Null values indicate "no data" and render as "—" on the frontend;
     they never render as a breached SLA. Targets are static here (baked
@@ -2054,6 +2056,7 @@ async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)
     healing_rate_24h: float | None = None
     ots_anchor_age_minutes: float | None = None
     online_appliances_pct: float | None = None
+    mfa_coverage_pct: float | None = None
 
     async with admin_connection(pool) as conn:
         # 1) Healing rate: successful L1/L2 executions over the last 24h.
@@ -2098,6 +2101,21 @@ async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)
         except Exception:
             logger.exception("sla-strip: fleet availability query failed")
 
+        # 4) MFA coverage: fraction of admin users with MFA enrolled.
+        # Compliance control — HIPAA §164.312(d) person/entity auth.
+        try:
+            row = await conn.fetchrow("""
+                SELECT
+                    COUNT(*) FILTER (WHERE mfa_enabled = true) AS enrolled,
+                    COUNT(*) AS total
+                FROM admin_users
+                WHERE is_active = true
+            """)
+            if row and row["total"] and row["total"] > 0:
+                mfa_coverage_pct = float(row["enrolled"]) / float(row["total"]) * 100
+        except Exception:
+            logger.exception("sla-strip: MFA coverage query failed")
+
     return {
         "healing_rate_24h": healing_rate_24h,
         "healing_target": 85.0,
@@ -2105,6 +2123,8 @@ async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)
         "ots_target_minutes": 120.0,
         "online_appliances_pct": online_appliances_pct,
         "fleet_target": 95.0,
+        "mfa_coverage_pct": mfa_coverage_pct,
+        "mfa_target": 100.0,
         "computed_at": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -262,6 +262,7 @@ class LearningStatus(BaseModel):
     promotion_success_rate: float
     l1_resolution_rate: float
     l2_resolution_rate: float
+    last_promotion_at: Optional[str] = None
 
 
 class PromotionCandidate(BaseModel):

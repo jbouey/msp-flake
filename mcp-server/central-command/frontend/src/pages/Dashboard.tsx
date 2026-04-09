@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
-import { GlassCard, InfoTip, Spinner } from '../components/shared';
-import { MetricCard } from '../components/composed';
+import { useQueryClient, useQuery } from '@tanstack/react-query';
+import { GlassCard, InfoTip, Spinner, DashboardErrorBoundary } from '../components/shared';
+import { MetricCard, FloatingActionButton, type FloatingAction } from '../components/composed';
 import { HealthGauge } from '../components/fleet';
 import {
   IncidentTrendChart,
@@ -15,6 +15,21 @@ import {
 import { IncidentFeed } from '../components/incidents';
 import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents } from '../hooks';
 import { METRIC_TOOLTIPS, getScoreStatus, formatTimeAgo } from '../constants';
+
+// Shape of the /api/dashboard/sla-strip response — shared between
+// DashboardSLAStrip (which renders the pills) and this page (which
+// surfaces OTS/MFA in System Health).
+interface DashboardSLAData {
+  healing_rate_24h: number | null;
+  healing_target: number;
+  ots_anchor_age_minutes: number | null;
+  ots_target_minutes: number;
+  online_appliances_pct: number | null;
+  fleet_target: number;
+  mfa_coverage_pct: number | null;
+  mfa_target: number;
+  computed_at?: string | null;
+}
 
 const INCIDENT_FEED_LIMIT = 8;
 const L1_AUTOHEAL_TARGET = 85;
@@ -38,6 +53,21 @@ export const Dashboard: React.FC = () => {
     isLoading: incidentsLoading,
     error: incidentsError,
   } = useIncidents({ limit: INCIDENT_FEED_LIMIT });
+
+  // Dedicated SLA strip query — also used to surface OTS delay + MFA coverage
+  // in the System Health card without adding more fields to the generic
+  // /stats endpoint (which is shared by many pages).
+  const { data: slaData } = useQuery<DashboardSLAData>({
+    queryKey: ['dashboard-sla-strip'],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard/sla-strip', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`SLA strip failed: ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: 5 * 60_000,
+    staleTime: 60_000,
+    retry: false,
+  });
 
   const activeThreats = stats?.active_threats ?? 0;
   const complianceScore = stats?.avg_compliance_score ?? 0;
@@ -66,7 +96,50 @@ export const Dashboard: React.FC = () => {
 
   const showEmptyState = !statsLoading && (stats?.total_clients ?? 0) === 0;
 
+  // Quick-action fan-out — the most common ops tasks an admin reaches for
+  // from the dashboard without having to nav into a specific site first.
+  const fabActions: FloatingAction[] = [
+    {
+      label: 'Refresh Dashboard',
+      tone: 'primary',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+      ),
+      onClick: handleRefresh,
+    },
+    {
+      label: 'Open Incidents',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+      ),
+      onClick: () => navigate('/incidents'),
+    },
+    {
+      label: 'Open Learning',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+        </svg>
+      ),
+      onClick: () => navigate('/learning'),
+    },
+    {
+      label: 'Open Sites',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1" />
+        </svg>
+      ),
+      onClick: () => navigate('/sites'),
+    },
+  ];
+
   return (
+    <DashboardErrorBoundary section="Dashboard">
     <div className="space-y-5 page-enter">
       {/* Active Threat Banner — dismissable */}
       {activeThreats > 0 && !threatBannerDismissed && (
@@ -301,17 +374,55 @@ export const Dashboard: React.FC = () => {
                 Control Coverage row intentionally REMOVED — it was a duplicate
                 of the Fleet Compliance hero gauge above. Same query, same
                 number, confusing to see it twice on the same page.
+
+                Evidence Delay + MFA Coverage come from /sla-strip (not /stats)
+                so we don't bloat the generic stats endpoint with dashboard-only
+                compliance metrics.
               */}
               {[
-                { label: 'Connectivity', value: statsLoading ? null : `${stats?.avg_connectivity_score ?? 0}%`, tip: METRIC_TOOLTIPS.connectivity },
-                { label: 'Appliances Online', value: statsLoading ? null : `${stats?.online_appliances ?? 0}/${stats?.total_appliances ?? 0}`, tip: METRIC_TOOLTIPS.appliances_online },
-                { label: 'Incidents (7d)', value: statsLoading ? null : `${stats?.incidents_7d ?? 0}`, tip: METRIC_TOOLTIPS.incidents_7d },
-                { label: 'Incidents (30d)', value: statsLoading ? null : `${stats?.incidents_30d ?? 0}`, tip: METRIC_TOOLTIPS.incidents_30d },
+                { label: 'Connectivity', value: statsLoading ? null : `${stats?.avg_connectivity_score ?? 0}%`, tip: METRIC_TOOLTIPS.connectivity, color: '' },
+                { label: 'Appliances Online', value: statsLoading ? null : `${stats?.online_appliances ?? 0}/${stats?.total_appliances ?? 0}`, tip: METRIC_TOOLTIPS.appliances_online, color: '' },
+                { label: 'Incidents (7d)', value: statsLoading ? null : `${stats?.incidents_7d ?? 0}`, tip: METRIC_TOOLTIPS.incidents_7d, color: '' },
+                { label: 'Incidents (30d)', value: statsLoading ? null : `${stats?.incidents_30d ?? 0}`, tip: METRIC_TOOLTIPS.incidents_30d, color: '' },
+                {
+                  label: 'Evidence Delay',
+                  value:
+                    slaData?.ots_anchor_age_minutes === undefined
+                      ? null
+                      : slaData.ots_anchor_age_minutes === null
+                        ? '—'
+                        : `${Math.round(slaData.ots_anchor_age_minutes)}m`,
+                  tip: 'Age of the oldest pending OpenTimestamps anchor. Target: ≤120min for HIPAA evidence integrity.',
+                  color:
+                    slaData?.ots_anchor_age_minutes === null || slaData?.ots_anchor_age_minutes === undefined
+                      ? 'text-label-tertiary'
+                      : slaData.ots_anchor_age_minutes > (slaData.ots_target_minutes ?? 120)
+                        ? 'text-health-critical'
+                        : 'text-health-healthy',
+                },
+                {
+                  label: 'MFA Coverage',
+                  value:
+                    slaData?.mfa_coverage_pct === undefined
+                      ? null
+                      : slaData.mfa_coverage_pct === null
+                        ? '—'
+                        : `${slaData.mfa_coverage_pct.toFixed(0)}%`,
+                  tip: 'Percentage of active admin users with MFA enrolled. HIPAA §164.312(d) target: 100%.',
+                  color:
+                    slaData?.mfa_coverage_pct === null || slaData?.mfa_coverage_pct === undefined
+                      ? 'text-label-tertiary'
+                      : slaData.mfa_coverage_pct >= 100
+                        ? 'text-health-healthy'
+                        : slaData.mfa_coverage_pct >= 75
+                          ? 'text-health-warning'
+                          : 'text-health-critical',
+                },
               ].map((row) => (
                 <div key={row.label} className="flex items-center justify-between py-0.5">
                   <span className="text-sm text-label-secondary">{row.label}{row.tip && <InfoTip text={row.tip} />}</span>
                   {row.value !== null ? (
-                    <span className="text-sm font-semibold tabular-nums text-label-primary">{row.value}</span>
+                    <span className={`text-sm font-semibold tabular-nums ${row.color || 'text-label-primary'}`}>{row.value}</span>
                   ) : (
                     <span className="skeleton inline-block w-10 h-4" />
                   )}
@@ -346,11 +457,32 @@ export const Dashboard: React.FC = () => {
                   )}
                 </div>
               ))}
+              {/* Last promotion — "is the flywheel alive?" signal at a glance */}
+              {!learningLoading && learning?.last_promotion_at && (
+                <div className="pt-2 mt-2 border-t border-glass-border text-xs text-label-tertiary">
+                  Last rule promoted{' '}
+                  <span className="text-label-secondary font-medium">
+                    {formatTimeAgo(learning.last_promotion_at)}
+                  </span>
+                </div>
+              )}
+              {!learningLoading && !learning?.last_promotion_at && (
+                <div className="pt-2 mt-2 border-t border-glass-border text-xs text-label-tertiary">
+                  No promotions yet — flywheel will promote the first eligible pattern
+                  automatically.
+                </div>
+              )}
             </div>
           </GlassCard>
         </div>
       )}
+
+      {/* Floating quick actions — reusable FAB component from composed/ */}
+      {!showEmptyState && (
+        <FloatingActionButton ariaLabel="Dashboard quick actions" actions={fabActions} />
+      )}
     </div>
+    </DashboardErrorBoundary>
   );
 };
 

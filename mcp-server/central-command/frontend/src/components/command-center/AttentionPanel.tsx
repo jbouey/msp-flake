@@ -55,12 +55,41 @@ const AttentionItemRow: React.FC<{
   </button>
 );
 
+// Items older than this age count as "backlog" instead of "fresh attention".
+// 24h is the threshold where an unresolved L3 escalation is no longer a
+// surprise — it's an operational debt we're actively servicing.
+const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
+function isStale(timestamp: string | null): boolean {
+  if (!timestamp) return false;
+  const age = Date.now() - new Date(timestamp).getTime();
+  return age > STALE_THRESHOLD_MS;
+}
+
 export const AttentionPanel: React.FC<{ className?: string }> = ({ className = '' }) => {
   const navigate = useNavigate();
   const { data, isLoading } = useAttentionRequired();
+  // Backlog sub-list (items >24h old) is collapsed by default so the fresh
+  // items stay above the fold. Operator can expand when they want to work
+  // through the debt pile.
+  const [showBacklog, setShowBacklog] = React.useState(false);
 
   const items = data?.items ?? [];
+  const { freshItems, staleItems } = React.useMemo(() => {
+    const fresh: AttentionItem[] = [];
+    const stale: AttentionItem[] = [];
+    for (const item of items) {
+      if (isStale(item.timestamp)) {
+        stale.push(item);
+      } else {
+        fresh.push(item);
+      }
+    }
+    return { freshItems: fresh, staleItems: stale };
+  }, [items]);
+
   const count = data?.count ?? 0;
+  const freshCount = freshItems.length;
 
   const handleItemClick = (item: AttentionItem) => {
     if (item.site_id) {
@@ -73,9 +102,17 @@ export const AttentionPanel: React.FC<{ className?: string }> = ({ className = '
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2.5">
           <h3 className="text-base font-semibold text-label-primary">Needs Attention</h3>
-          {count > 0 && (
+          {freshCount > 0 && (
             <span className="px-2 py-0.5 text-xs font-bold bg-health-critical text-white rounded-full leading-snug">
-              {count}
+              {freshCount}
+            </span>
+          )}
+          {staleItems.length > 0 && (
+            <span
+              className="px-2 py-0.5 text-[10px] font-medium bg-fill-secondary text-label-tertiary rounded-full leading-snug"
+              title={`${staleItems.length} item(s) older than 24h — backlog`}
+            >
+              +{staleItems.length} backlog
             </span>
           )}
         </div>
@@ -117,15 +154,64 @@ export const AttentionPanel: React.FC<{ className?: string }> = ({ className = '
             <p className="text-xs text-label-tertiary mt-0.5">No items require human attention</p>
           </div>
         ) : (
-          <div className="space-y-0.5">
-            {items.map((item, i) => (
-              <AttentionItemRow
-                key={`${item.type}-${item.site_id}-${i}`}
-                item={item}
-                onClick={() => handleItemClick(item)}
-              />
-            ))}
-          </div>
+          <>
+            {/* Fresh items — things that happened in the last 24h */}
+            {freshItems.length > 0 && (
+              <div className="space-y-0.5">
+                {freshItems.map((item, i) => (
+                  <AttentionItemRow
+                    key={`fresh-${item.type}-${item.site_id}-${i}`}
+                    item={item}
+                    onClick={() => handleItemClick(item)}
+                  />
+                ))}
+              </div>
+            )}
+
+            {freshItems.length === 0 && staleItems.length > 0 && (
+              <div className="py-6 text-center">
+                <p className="text-sm text-label-secondary">No new items in the last 24h</p>
+                <p className="text-xs text-label-tertiary mt-0.5">
+                  {staleItems.length} older item(s) in backlog below
+                </p>
+              </div>
+            )}
+
+            {/* Collapsible backlog — items >24h old that haven't been resolved */}
+            {staleItems.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-glass-border">
+                <button
+                  onClick={() => setShowBacklog((v) => !v)}
+                  className="w-full flex items-center justify-between text-xs text-label-tertiary hover:text-label-secondary px-3 py-1.5 rounded-ios-sm hover:bg-fill-secondary transition-colors"
+                >
+                  <span className="uppercase tracking-wide font-medium">
+                    Backlog ({staleItems.length}) — older than 24h
+                  </span>
+                  <svg
+                    className={`w-3 h-3 transition-transform ${showBacklog ? 'rotate-180' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2.5}
+                    aria-hidden
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showBacklog && (
+                  <div className="space-y-0.5 mt-1 opacity-75">
+                    {staleItems.map((item, i) => (
+                      <AttentionItemRow
+                        key={`stale-${item.type}-${item.site_id}-${i}`}
+                        item={item}
+                        onClick={() => handleItemClick(item)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </GlassCard>

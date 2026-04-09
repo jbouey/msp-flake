@@ -226,6 +226,9 @@ export interface LearningStatus {
   l2_resolution_rate: number;
   promoted_rule_matches_30d: number;
   active_promoted_rules: number;
+  /** ISO timestamp of the most recent approved promotion — powers the
+   *  "Last rule promoted 3d ago" hint on the Dashboard Learning Loop card. */
+  last_promotion_at?: string | null;
 }
 
 export interface PromotionCandidate {
