@@ -26,6 +26,11 @@ _fastapi.HTTPException = Exception
 _fastapi.Depends = lambda x: x
 _fastapi.BackgroundTasks = object
 _fastapi.Request = object
+# Session 203 C3 fix: evidence_chain.py now imports Cookie + Query from
+# fastapi for the new require_evidence_view_access guard. Stub them here
+# — the pure-function tests don't actually exercise auth.
+_fastapi.Cookie = lambda default=None, **kw: default
+_fastapi.Query = lambda default=None, **kw: default
 
 _pydantic = sys.modules.setdefault("pydantic", types.ModuleType("pydantic"))
 _pydantic.BaseModel = object
