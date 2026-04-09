@@ -49,6 +49,7 @@ const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
 const AdminOAuthSettings = lazy(() => import('./pages/AdminOAuthSettings'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const RecoveryLanding = lazy(() => import('./pages/RecoveryLanding'));
+const PublicChangelog = lazy(() => import('./pages/PublicChangelog'));
 const Legal = lazy(() => import('./pages/Legal'));
 const Pricing = lazy(() => import('./pages/Pricing'));
 const Organizations = lazy(() => import('./pages/Organizations').then(m => ({ default: m.Organizations })));
@@ -456,6 +457,11 @@ const App: React.FC = () => {
                     Built for compliance refugees migrating from a vendor
                     that just lost their trust (Session 203 Tier 1.3). */}
                 <Route path="/recovery" element={<RecoveryLanding />} />
+
+                {/* Public changelog — Session 203 Tier 2.6. Customer-relevant
+                    changes with dates, categories, and links to security
+                    advisories. Read by auditors. */}
+                <Route path="/changelog" element={<PublicChangelog />} />
 
                 {/* www.osiriscare.net → landing page; dashboard.osiriscare.net → admin */}
                 <Route path="/*" element={isLandingSite ? <LandingPage /> : <AuthenticatedApp />} />

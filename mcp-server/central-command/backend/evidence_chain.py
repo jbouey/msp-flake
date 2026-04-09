@@ -2135,6 +2135,100 @@ async def list_evidence_bundles(
     }
 
 
+@router.get("/sites/{site_id}/random-sample")
+async def get_random_bundle_sample(
+    site_id: str,
+    count: int = 10,
+    seed: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
+):
+    """Return N random bundles from a site's chain for auditor spot-checks.
+
+    SESSION 203 Tier 2.4: an auditor often does not want to walk every
+    bundle — they want to pick a random sample, verify those few by hand,
+    and infer chain health from the sample. This endpoint exists so the
+    auditor can request a *reproducible* random sample (via `seed`) without
+    having to write SQL or trust the platform's pagination order.
+
+    Parameters:
+      count: 1..100. Number of bundles to return.
+      seed: Optional integer. When provided, PostgreSQL's `setseed()` is
+            used so that two requests with the same seed return the same
+            bundle set. This lets the auditor say "verify the sample for
+            seed 4242" and reproduce it exactly.
+
+    Each bundle returned includes the full signature + chain_hash payload
+    so the auditor can verify it independently with the auditor kit's
+    verify.sh or with the browser FullChainVerifyPanel.
+
+    Spot-checking design notes:
+      - The sample is drawn uniformly at random across the entire chain,
+        not weighted toward recent or high-status bundles. An attacker
+        cannot bias the sample by knowing which bundles are likely to be
+        picked.
+      - Legacy/unsigned bundles ARE included in the sample because the
+        auditor's job is to confirm they exist and are honestly labeled,
+        not to skip them.
+      - Caps at count=100 to prevent the endpoint being used as an alternate
+        bulk-export route.
+    """
+    if count < 1 or count > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="count must be between 1 and 100",
+        )
+
+    # Verify the site exists so we return 404 instead of an empty array
+    site_check = await db.execute(
+        text("SELECT site_id FROM sites WHERE site_id = :site_id"),
+        {"site_id": site_id},
+    )
+    if not site_check.fetchone():
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    # Set the per-transaction random seed if requested. setseed() takes a
+    # double in [-1.0, 1.0]; we map the user's int to that range deterministically.
+    if seed is not None:
+        # Map any int to [-1.0, 1.0] using a stable hash. The float must be
+        # exact across calls so we use modulo on a fixed denominator.
+        seed_float = ((seed % 2_000_001) - 1_000_000) / 1_000_000.0
+        await db.execute(text("SELECT setseed(:s)"), {"s": seed_float})
+
+    # ORDER BY random() with LIMIT is the canonical PostgreSQL random sample.
+    # For very large chains this is O(N log N) but acceptable at count <= 100.
+    result = await db.execute(text("""
+        SELECT cb.bundle_id, cb.bundle_hash, cb.prev_hash, cb.chain_position,
+               cb.chain_hash, cb.agent_signature, cb.check_type, cb.check_result,
+               cb.checked_at,
+               cb.agent_signature IS NOT NULL as signed,
+               COALESCE(op.status, cb.ots_status, 'none') as ots_status,
+               op.bitcoin_block, op.anchored_at
+        FROM compliance_bundles cb
+        LEFT JOIN ots_proofs op ON op.bundle_id = cb.bundle_id
+        WHERE cb.site_id = :site_id
+        ORDER BY random()
+        LIMIT :count
+    """), {"site_id": site_id, "count": count})
+
+    bundles = result.fetchall()
+
+    return {
+        "site_id": site_id,
+        "count_requested": count,
+        "count_returned": len(bundles),
+        "seed": seed,
+        "reproducible": seed is not None,
+        "bundles": [dict(b._mapping) for b in bundles],
+        "verifier_note": (
+            "Each bundle includes its full Ed25519 signature and chain_hash. "
+            "Verify the sample with the auditor kit's verify.sh or with the "
+            "browser FullChainVerifyPanel. Pass the same `seed` value to "
+            "reproduce this sample exactly on a future request."
+        ),
+    }
+
+
 @router.get("/sites/{site_id}/blockchain-status")
 async def get_blockchain_status(
     site_id: str,

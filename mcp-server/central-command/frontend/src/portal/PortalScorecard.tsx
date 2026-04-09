@@ -426,6 +426,67 @@ const AuditorDeepDive: React.FC<{
                 <p className="text-xs text-slate-500 mt-1">Evidence Period</p>
               </div>
             </div>
+
+            {/* Tier 2.3 — Genesis Block panel: makes the chain anchor visible.
+                The auditor sees the date the chain began and the first
+                bundle's identity. Combined with the chain length, this
+                proves the chain's depth back to a specific point in time. */}
+            {chain.first_timestamp && (
+              <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-slate-100 rounded-lg p-4 mb-4 font-mono text-xs">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-emerald-300 uppercase tracking-wider text-[10px] font-semibold not-italic">
+                    Chain Genesis Block
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">Chain origin</p>
+                    <p className="text-slate-100">
+                      {new Date(chain.first_timestamp).toLocaleString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        timeZoneName: 'short',
+                      })}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">Chain depth</p>
+                    <p className="text-slate-100">
+                      {chain.chain_length.toLocaleString()} bundles ·{' '}
+                      {chain.signatures_total > 0
+                        ? `${Math.round((chain.signatures_valid / chain.signatures_total) * 100)}% signed`
+                        : '0% signed'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">Genesis prev_hash</p>
+                    <p className="text-slate-100 break-all">
+                      0000000000000000000000000000000000000000000000000000000000000000
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">Hash algorithm</p>
+                    <p className="text-slate-100">
+                      SHA-256 (link) · Ed25519 (signature) · OpenTimestamps (anchor)
+                    </p>
+                  </div>
+                </div>
+                <p className="text-slate-400 text-[10px] mt-3 leading-relaxed">
+                  Every bundle in this chain links back to this origin via{' '}
+                  <code className="text-emerald-300">prev_hash</code> ={' '}
+                  <code className="text-emerald-300">SHA-256(prev_bundle)</code>. The first
+                  bundle&apos;s <code className="text-emerald-300">prev_hash</code> is the
+                  64-zero genesis sentinel. Tampering with any bundle breaks every link
+                  after it. Verify locally with the auditor kit&apos;s{' '}
+                  <code className="text-emerald-300">verify.sh</code>.
+                </p>
+              </div>
+            )}
+
             <p className="text-sm text-slate-600">
               Each compliance scan produces a cryptographically signed evidence bundle. Bundles are hash-chained
               (SHA-256) so any tampering breaks the chain. Signatures use Ed25519 keys unique to each appliance.
