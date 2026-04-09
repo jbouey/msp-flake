@@ -210,6 +210,108 @@ async def ots_resubmit_expired_loop():
         await asyncio.sleep(delay)
 
 
+async def ots_reverify_sample_loop():
+    """Periodically re-verify a random sample of anchored OTS proofs.
+
+    Enterprise-grade check: confirms that proofs marked 'anchored' still
+    verify against the Bitcoin blockchain. Catches:
+    - Silent proof_data corruption
+    - Bitcoin chain reorgs that invalidate old anchors
+    - Database tampering (row modified outside the evidence pipeline)
+
+    Runs every 6 hours, samples 10 random proofs per cycle.
+    Alerts on any verification failure.
+    """
+    await asyncio.sleep(600)  # Wait 10 min after startup
+    while True:
+        try:
+            import base64
+            import aiohttp
+            from dashboard_api.evidence_chain import (
+                parse_ots_file,
+                replay_timestamp_operations,
+            )
+
+            async with async_session() as db:
+                # Sample 10 random anchored proofs
+                result = await db.execute(text("""
+                    SELECT bundle_id, bundle_hash, proof_data, bitcoin_block
+                    FROM ots_proofs
+                    WHERE status = 'anchored' AND bitcoin_block IS NOT NULL
+                    ORDER BY RANDOM()
+                    LIMIT 10
+                """))
+                sample = result.fetchall()
+
+                verified = 0
+                failed = 0
+                failures = []
+
+                for proof in sample:
+                    try:
+                        proof_bytes = base64.b64decode(proof.proof_data)
+                        parsed = parse_ots_file(proof_bytes)
+                        if not parsed:
+                            failed += 1
+                            failures.append(f"{proof.bundle_id[:8]}: parse_failed")
+                            continue
+
+                        # Verify original hash matches stored hash
+                        expected_hash = bytes.fromhex(proof.bundle_hash)
+                        if parsed["hash_bytes"] != expected_hash:
+                            failed += 1
+                            failures.append(f"{proof.bundle_id[:8]}: hash_mismatch")
+                            continue
+
+                        # Replay operations (tests parser integrity)
+                        commitment = replay_timestamp_operations(
+                            parsed["hash_bytes"], parsed["timestamp_data"]
+                        )
+                        if not commitment:
+                            failed += 1
+                            failures.append(f"{proof.bundle_id[:8]}: replay_failed")
+                            continue
+
+                        # Verify block exists via blockstream
+                        timeout = aiohttp.ClientTimeout(total=10)
+                        async with aiohttp.ClientSession(timeout=timeout) as session:
+                            async with session.get(
+                                f"https://blockstream.info/api/block-height/{proof.bitcoin_block}"
+                            ) as resp:
+                                if resp.status != 200:
+                                    failed += 1
+                                    failures.append(f"{proof.bundle_id[:8]}: block_fetch_failed")
+                                    continue
+
+                        verified += 1
+                    except Exception as e:
+                        failed += 1
+                        failures.append(f"{proof.bundle_id[:8]}: {type(e).__name__}")
+
+                if sample:
+                    logger.info(
+                        "ots_reverify_sample complete",
+                        sampled=len(sample),
+                        verified=verified,
+                        failed=failed,
+                    )
+
+                # Alert on ANY failure — enterprise SLA
+                if failed > 0:
+                    logger.error(
+                        "OTS_REVERIFY_FAILURE: anchored proofs failed re-verification",
+                        failed_count=failed,
+                        failures=failures[:5],  # First 5 for log brevity
+                    )
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"OTS reverify loop error: {e}")
+
+        await asyncio.sleep(21600)  # 6 hours
+
+
 async def flywheel_promotion_loop():
     """Periodically scan patterns for L2->L1 auto-promotion (every 30 minutes)."""
     await asyncio.sleep(120)

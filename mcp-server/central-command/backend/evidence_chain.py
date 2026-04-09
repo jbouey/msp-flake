@@ -3236,3 +3236,154 @@ async def verify_merkle_proof_endpoint(
             "batch_ots_status": bundle["batch_ots_status"],
             "batch_bitcoin_block": bundle["batch_bitcoin_block"],
         }
+
+
+@router.get("/sites/{site_id}/chain-of-custody")
+async def export_chain_of_custody(
+    site_id: str,
+    start_date: str,
+    end_date: str,
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export a formal chain-of-custody bundle for court/auditor use.
+
+    Returns a self-contained JSON document with:
+    - Every evidence bundle in the date range with its SHA256 hash
+    - The hash chain linkage (prev_bundle_hash → bundle_hash)
+    - Merkle batch root (if batched) with the leaf's proof path
+    - OTS proof data (base64) and Bitcoin block height (if anchored)
+    - Independent verification steps a third party can execute
+    - Canonical verification commands using standard OTS tools
+
+    This is the auditor-defensible evidence bundle. No platform dependency —
+    every hash can be independently verified with sha256sum + ots verify.
+    """
+    from datetime import date as _date
+    try:
+        sd = _date.fromisoformat(start_date)
+        ed = _date.fromisoformat(end_date)
+    except ValueError:
+        raise HTTPException(400, "Dates must be YYYY-MM-DD")
+
+    if ed < sd:
+        raise HTTPException(400, "end_date must be >= start_date")
+    if (ed - sd).days > 366:
+        raise HTTPException(400, "Date range cannot exceed 366 days")
+
+    # Site info
+    site_row = await db.execute(
+        text("SELECT site_id, clinic_name FROM sites WHERE site_id = :sid"),
+        {"sid": site_id},
+    )
+    site = site_row.fetchone()
+    if not site:
+        raise HTTPException(404, "Site not found")
+
+    # Fetch all bundles in range with their OTS proofs and batch info
+    result = await db.execute(text("""
+        SELECT
+            cb.bundle_id,
+            cb.bundle_hash,
+            cb.prev_bundle_hash,
+            cb.chain_position,
+            cb.check_type,
+            cb.created_at,
+            cb.signature,
+            cb.ots_status,
+            cb.merkle_batch_id,
+            cb.merkle_proof,
+            cb.merkle_leaf_index,
+            op.proof_data,
+            op.bitcoin_block,
+            op.calendar_url,
+            op.anchored_at,
+            mb.merkle_root as batch_merkle_root,
+            mb.bitcoin_block as batch_bitcoin_block,
+            mb.bundle_count as batch_size
+        FROM compliance_bundles cb
+        LEFT JOIN ots_proofs op ON op.bundle_id = COALESCE(cb.merkle_batch_id, cb.bundle_id)
+        LEFT JOIN ots_merkle_batches mb ON mb.batch_id = cb.merkle_batch_id
+        WHERE cb.site_id = :sid
+          AND cb.created_at >= :sd::date
+          AND cb.created_at < (:ed::date + interval '1 day')
+        ORDER BY cb.chain_position ASC, cb.created_at ASC
+    """), {"sid": site_id, "sd": start_date, "ed": end_date})
+
+    rows = result.fetchall()
+
+    bundles = []
+    for r in rows:
+        entry = {
+            "bundle_id": r.bundle_id,
+            "sha256": r.bundle_hash,
+            "prev_sha256": r.prev_bundle_hash,
+            "chain_position": r.chain_position,
+            "check_type": r.check_type,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "ed25519_signature": r.signature,
+            "ots_status": r.ots_status,
+        }
+        if r.merkle_batch_id:
+            entry["merkle_batch"] = {
+                "batch_id": r.merkle_batch_id,
+                "merkle_root": r.batch_merkle_root,
+                "leaf_index": r.merkle_leaf_index,
+                "proof_path": r.merkle_proof,
+                "bundle_count": r.batch_size,
+                "bitcoin_block": r.batch_bitcoin_block,
+            }
+        if r.proof_data:
+            entry["ots_proof"] = {
+                "proof_base64": r.proof_data,
+                "calendar_url": r.calendar_url,
+                "bitcoin_block": r.bitcoin_block,
+                "anchored_at": r.anchored_at.isoformat() if r.anchored_at else None,
+            }
+        bundles.append(entry)
+
+    return {
+        "chain_of_custody": {
+            "version": "1.0",
+            "issued_at": datetime.now(timezone.utc).isoformat(),
+            "site": {
+                "site_id": site.site_id,
+                "clinic_name": site.clinic_name,
+            },
+            "period": {
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+            "bundle_count": len(bundles),
+            "bundles": bundles,
+            "verification": {
+                "hash_chain": "Each bundle's prev_sha256 must equal the previous bundle's sha256. Any mismatch indicates tampering.",
+                "ed25519_signatures": "Verify each signature against the appliance's public key stored at site_appliances.agent_public_key",
+                "ots_verification": (
+                    "For each bundle with ots_proof.proof_base64:\n"
+                    "1. base64 decode proof_base64 → save as bundle.ots\n"
+                    "2. Run: ots verify bundle.ots\n"
+                    "3. Or: ots info bundle.ots (to see embedded hash + calendar)\n"
+                    "4. Standard OTS tool: https://github.com/opentimestamps/opentimestamps-client"
+                ),
+                "merkle_verification": (
+                    "For batched bundles:\n"
+                    "1. Start with sha256 (the leaf)\n"
+                    "2. For each step in proof_path: concat with sibling and sha256 again\n"
+                    "3. Final result must equal merkle_batch.merkle_root\n"
+                    "4. The merkle_root is anchored to Bitcoin via ots_proof"
+                ),
+                "bitcoin_verification": (
+                    "For each bundle with ots_proof.bitcoin_block:\n"
+                    "1. Fetch block: curl https://blockstream.info/api/block-height/{bitcoin_block}\n"
+                    "2. Verify block_hash matches block data\n"
+                    "3. The OTS proof contains a path from your hash to the block's merkle_root"
+                ),
+            },
+            "integrity_note": (
+                "This document is self-contained. The OsirisCare platform is NOT required "
+                "to verify these proofs. Any auditor with standard tools (sha256sum, "
+                "ots verify, Bitcoin block explorer) can independently verify every claim."
+            ),
+        }
+    }

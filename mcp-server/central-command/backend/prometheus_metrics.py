@@ -325,6 +325,74 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: CVE watch query failed")
 
+            # --- OTS proof pipeline health (gauge) ---
+            try:
+                row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE status = 'anchored') as anchored,
+                        COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                        COUNT(*) FILTER (WHERE status = 'expired') as expired,
+                        COUNT(*) FILTER (WHERE status = 'verified') as verified,
+                        EXTRACT(EPOCH FROM (NOW() - MIN(submitted_at))) FILTER (
+                            WHERE status = 'pending'
+                        ) as oldest_pending_age_seconds,
+                        EXTRACT(EPOCH FROM (NOW() - MAX(anchored_at))) FILTER (
+                            WHERE status = 'anchored'
+                        ) as latest_anchor_age_seconds
+                    FROM ots_proofs
+                """)
+                sections.append(_gauge(
+                    "osiriscare_ots_proofs",
+                    "OTS proofs by status",
+                    [
+                        ({"status": "anchored"}, float(row["anchored"] or 0)),
+                        ({"status": "pending"}, float(row["pending"] or 0)),
+                        ({"status": "expired"}, float(row["expired"] or 0)),
+                        ({"status": "verified"}, float(row["verified"] or 0)),
+                    ],
+                ))
+                # SLA metric: age of oldest pending proof (alert if > 24h)
+                sections.append(_gauge(
+                    "osiriscare_ots_oldest_pending_seconds",
+                    "Age in seconds of the oldest pending OTS proof (alert if >86400)",
+                    [({}, float(row["oldest_pending_age_seconds"] or 0))],
+                ))
+                # SLA metric: time since last successful anchor (alert if > 6h)
+                sections.append(_gauge(
+                    "osiriscare_ots_latest_anchor_age_seconds",
+                    "Age in seconds since the most recent OTS anchor (alert if >21600)",
+                    [({}, float(row["latest_anchor_age_seconds"] or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: OTS proofs query failed")
+
+            # --- OTS calendar health (gauge) ---
+            try:
+                # Per-calendar anchor counts in last 24h
+                rows = await conn.fetch("""
+                    SELECT
+                        calendar_url,
+                        COUNT(*) FILTER (WHERE status = 'anchored') as anchored,
+                        COUNT(*) as total
+                    FROM ots_proofs
+                    WHERE submitted_at > NOW() - INTERVAL '24 hours'
+                      AND calendar_url IS NOT NULL
+                    GROUP BY calendar_url
+                """)
+                if rows:
+                    sections.append(_gauge(
+                        "osiriscare_ots_calendar_success_24h",
+                        "Per-calendar anchor success count in last 24h",
+                        [({"calendar": r["calendar_url"][:60]}, float(r["anchored"])) for r in rows],
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_ots_calendar_total_24h",
+                        "Per-calendar total proof count in last 24h",
+                        [({"calendar": r["calendar_url"][:60]}, float(r["total"])) for r in rows],
+                    ))
+            except Exception:
+                logger.exception("metrics: OTS calendar query failed")
+
             # --- Pattern sync health (gauge) ---
             try:
                 row = await conn.fetchrow("""
