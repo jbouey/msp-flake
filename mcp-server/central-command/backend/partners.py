@@ -271,6 +271,33 @@ def require_partner_role(*allowed_roles):
 
 
 # =============================================================================
+# AUDIT LOGGING (Session 203 H3)
+# =============================================================================
+#
+# Partner mutations flow through the existing `log_partner_activity()`
+# infrastructure in partner_activity_logger.py, which writes to the
+# `partner_activity_log` table. New event types were added to
+# PartnerEventType for Session 203 (DRIFT_CONFIG_UPDATED,
+# MAINTENANCE_WINDOW_SET, etc.). Do NOT create a parallel audit helper
+# here — DRY: single source of truth for partner audit events.
+#
+# Usage pattern in mutating endpoints:
+#
+#   from .partner_activity_logger import log_partner_activity, PartnerEventType
+#   await log_partner_activity(
+#       partner_id=str(partner["id"]),
+#       event_type=PartnerEventType.DRIFT_CONFIG_UPDATED,
+#       target_type="site",
+#       target_id=site_id,
+#       event_data={"check_count": len(checks)},
+#       ip_address=request.client.host if request.client else None,
+#       user_agent=request.headers.get("user-agent", "")[:500],
+#       request_path=str(request.url.path),
+#       request_method=request.method,
+#   )
+
+
+# =============================================================================
 # PUBLIC ENDPOINTS (no auth required)
 # =============================================================================
 
@@ -2408,6 +2435,7 @@ async def get_partner_drift_config(site_id: str, partner=Depends(require_partner
 async def update_partner_drift_config(
     site_id: str,
     body: dict,
+    request: Request,
     partner: dict = require_partner_role("admin", "tech"),
 ):
     """Update drift scan configuration for a partner-managed site.
@@ -2438,6 +2466,24 @@ async def update_partner_drift_config(
                     ON CONFLICT (site_id, check_type)
                     DO UPDATE SET enabled = $3, modified_by = $4, modified_at = NOW()
                 """, site_id, item["check_type"], item["enabled"], f"partner:{partner.get('org_name', partner['id'])}")
+
+    await log_partner_activity(
+        partner_id=str(partner["id"]),
+        event_type=PartnerEventType.DRIFT_CONFIG_UPDATED,
+        target_type="site",
+        target_id=site_id,
+        event_data={
+            "check_count": len(checks),
+            "checks": [
+                {"check_type": c["check_type"], "enabled": c["enabled"]}
+                for c in checks
+            ],
+        },
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
     return {"status": "ok", "site_id": site_id, "updated": len(checks)}
 
 
@@ -2454,6 +2500,7 @@ class PartnerMaintenanceRequest(BaseModel):
 async def set_partner_maintenance(
     site_id: str,
     body: PartnerMaintenanceRequest,
+    request: Request,
     partner=Depends(require_partner),
 ):
     """Set a maintenance window for a partner-managed site."""
@@ -2478,6 +2525,21 @@ async def set_partner_maintenance(
             WHERE site_id = $4
         """, str(body.duration_hours), body.reason.strip(), set_by, site_id)
 
+    await log_partner_activity(
+        partner_id=str(partner["id"]),
+        event_type=PartnerEventType.MAINTENANCE_WINDOW_SET,
+        target_type="site",
+        target_id=site_id,
+        event_data={
+            "duration_hours": body.duration_hours,
+            "reason": body.reason.strip(),
+        },
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
     logger.info("Partner maintenance window set",
                 site_id=site_id,
                 duration_hours=body.duration_hours,
@@ -2489,6 +2551,7 @@ async def set_partner_maintenance(
 @router.delete("/me/sites/{site_id}/maintenance")
 async def cancel_partner_maintenance(
     site_id: str,
+    request: Request,
     partner=Depends(require_partner),
 ):
     """Cancel an active maintenance window for a partner-managed site."""
@@ -2506,6 +2569,17 @@ async def cancel_partner_maintenance(
                 maintenance_set_by = NULL
             WHERE site_id = $1
         """, site_id)
+
+    await log_partner_activity(
+        partner_id=str(partner["id"]),
+        event_type=PartnerEventType.MAINTENANCE_WINDOW_CANCELLED,
+        target_type="site",
+        target_id=site_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
 
     logger.info("Partner maintenance window cancelled",
                 site_id=site_id,
@@ -2805,6 +2879,13 @@ async def trigger_discovery(
 
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
+
+        # Audit note: the `log_partner_activity` call for the discovery
+        # event already exists further down — once we know whether an
+        # appliance was queued or the scan was left pending. That call
+        # captures scan_id + order_id + status, which is richer than a
+        # bare "discovery triggered" here. So no additional audit call
+        # at this early point.
 
         # Get active appliance for this site
         appliance = await conn.fetchrow("""

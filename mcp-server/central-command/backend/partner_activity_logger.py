@@ -77,6 +77,13 @@ class PartnerEventType(str, Enum):
     PATTERN_REJECTED = "pattern_rejected"
     RULE_STATUS_CHANGED = "rule_status_changed"
 
+    # Site management (Session 203 H3 — wire mutating endpoints)
+    DRIFT_CONFIG_UPDATED = "drift_config_updated"
+    MAINTENANCE_WINDOW_SET = "maintenance_window_set"
+    MAINTENANCE_WINDOW_CANCELLED = "maintenance_window_cancelled"
+    ALERT_CONFIG_UPDATED = "alert_config_updated"
+    SITE_TRANSFERRED = "site_transferred"
+
 
 class PartnerEventCategory(str, Enum):
     AUTH = "auth"
@@ -123,6 +130,12 @@ EVENT_CATEGORIES: Dict[PartnerEventType, PartnerEventCategory] = {
     PartnerEventType.PATTERN_APPROVED: PartnerEventCategory.LEARNING,
     PartnerEventType.PATTERN_REJECTED: PartnerEventCategory.LEARNING,
     PartnerEventType.RULE_STATUS_CHANGED: PartnerEventCategory.LEARNING,
+    # Site management (Session 203)
+    PartnerEventType.DRIFT_CONFIG_UPDATED: PartnerEventCategory.SITE,
+    PartnerEventType.MAINTENANCE_WINDOW_SET: PartnerEventCategory.SITE,
+    PartnerEventType.MAINTENANCE_WINDOW_CANCELLED: PartnerEventCategory.SITE,
+    PartnerEventType.ALERT_CONFIG_UPDATED: PartnerEventCategory.SITE,
+    PartnerEventType.SITE_TRANSFERRED: PartnerEventCategory.SITE,
 }
 
 

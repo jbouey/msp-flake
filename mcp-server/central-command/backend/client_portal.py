@@ -277,6 +277,61 @@ async def require_client_owner(user: dict = Depends(require_client_user)):
 
 
 # =============================================================================
+# AUDIT LOGGING (Session 203 H1)
+# =============================================================================
+#
+# Every mutating client portal endpoint writes to client_audit_log so the
+# HIPAA §164.308(a)(1)(ii)(D) audit trail + §164.528 disclosure accounting
+# can recover who did what. The helper is non-raising — audit failures
+# never block the caller's mutation.
+
+async def _audit_client_action(
+    conn,
+    user: dict,
+    action: str,
+    target: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+    request: Optional[Request] = None,
+) -> None:
+    """Append a client-portal mutation event to client_audit_log.
+
+    Accepts an asyncpg connection (caller is expected to already be
+    inside a transaction). `user` comes from `require_client_user` and
+    has `user_id`, `org_id`, `email`, `role`. `action` is MACHINE_CASE
+    short string; `details` is free-form JSONB.
+    """
+    try:
+        import json as _json
+        ip = None
+        if request is not None:
+            ip = (
+                request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                or (request.client.host if request.client else None)
+            )
+        await conn.execute(
+            """
+            INSERT INTO client_audit_log (
+                org_id, actor_user_id, actor_email,
+                action, target, details, ip_address
+            )
+            VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7)
+            """,
+            str(user["org_id"]) if user.get("org_id") else None,
+            str(user["user_id"]) if user.get("user_id") else None,
+            user.get("email") or "unknown",
+            action,
+            target,
+            _json.dumps(details) if details else None,
+            ip,
+        )
+    except Exception as e:
+        logger.error(
+            "client_audit_log write failed: action=%s target=%s err=%s",
+            action, target, e, exc_info=True,
+        )
+
+
+# =============================================================================
 # AUTH ENDPOINTS (Public)
 # =============================================================================
 
@@ -1865,7 +1920,11 @@ This invitation expires in 7 days.
 
 
 @auth_router.delete("/users/{target_user_id}")
-async def remove_user(target_user_id: str, user: dict = Depends(require_client_admin)):
+async def remove_user(
+    target_user_id: str,
+    request: Request,
+    user: dict = Depends(require_client_admin),
+):
     """Remove a user from the org."""
     pool = await get_pool()
     org_id = user["org_id"]
@@ -1902,6 +1961,14 @@ async def remove_user(target_user_id: str, user: dict = Depends(require_client_a
             DELETE FROM client_sessions WHERE user_id = $1
         """, _uid(target_user_id))
 
+        await _audit_client_action(
+            conn, user,
+            action="USER_REMOVED",
+            target=target_user_id,
+            details={"removed_role": target["role"]},
+            request=request,
+        )
+
     return {"status": "removed"}
 
 
@@ -1909,6 +1976,7 @@ async def remove_user(target_user_id: str, user: dict = Depends(require_client_a
 async def update_user_role(
     target_user_id: str,
     body: UserRoleUpdate,
+    request: Request,
     user: dict = Depends(require_client_owner)
 ):
     """Update user role (owner only)."""
@@ -1928,6 +1996,14 @@ async def update_user_role(
         if result == "UPDATE 0":
             raise HTTPException(status_code=404, detail="User not found or is owner")
 
+        await _audit_client_action(
+            conn, user,
+            action="USER_ROLE_CHANGED",
+            target=target_user_id,
+            details={"new_role": body.role},
+            request=request,
+        )
+
     return {"status": "updated", "role": body.role}
 
 
@@ -1936,7 +2012,11 @@ async def update_user_role(
 # =============================================================================
 
 @auth_router.put("/password")
-async def set_password(body: PasswordSet, user: dict = Depends(require_client_user)):
+async def set_password(
+    body: PasswordSet,
+    request: Request,
+    user: dict = Depends(require_client_user),
+):
     """Set or update user password."""
     from .auth import validate_password_complexity, hash_password
 
@@ -1953,6 +2033,13 @@ async def set_password(body: PasswordSet, user: dict = Depends(require_client_us
             UPDATE client_users SET password_hash = $1, updated_at = NOW()
             WHERE id = $2
         """, password_hash, user["user_id"])
+
+        await _audit_client_action(
+            conn, user,
+            action="PASSWORD_CHANGED",
+            target=str(user["user_id"]),
+            request=request,
+        )
 
     return {"status": "password_set"}
 
