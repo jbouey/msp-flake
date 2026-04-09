@@ -623,14 +623,23 @@ async def report_incident(
             "timestamp": now.isoformat()
         }
 
-    # Create incident record
+    # Create incident record. Migration 142 added a partial unique index on
+    # dedup_key WHERE status NOT IN ('resolved','closed') to prevent a race
+    # where two appliances reporting the same issue simultaneously could both
+    # pass the check-then-act SELECT above and both try to INSERT. The ON
+    # CONFLICT clause now closes that race: if the unique index fires, we
+    # fall back to the existing row instead of 500-ing.
     incident_id = str(uuid.uuid4())
-    await db.execute(
+    insert_result = await db.execute(
         text("""
             INSERT INTO incidents (id, appliance_id, incident_type, severity, check_type,
                 details, pre_state, hipaa_controls, reported_at, dedup_key)
             VALUES (:id, :appliance_id, :incident_type, :severity, :check_type,
                 :details, :pre_state, :hipaa_controls, :reported_at, :dedup_key)
+            ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL
+                AND status NOT IN ('resolved', 'closed')
+                DO NOTHING
+            RETURNING id
         """),
         {
             "id": incident_id,
@@ -645,6 +654,35 @@ async def report_incident(
             "dedup_key": dedup_key,
         }
     )
+    inserted_row = insert_result.fetchone()
+    if inserted_row is None and dedup_key is not None:
+        # Race: a concurrent appliance INSERT won. Look up the existing open
+        # row and short-circuit — this is the exact "deduplicated" branch we
+        # would have taken if the first SELECT had seen the row.
+        concurrent_row = (await db.execute(
+            text("""
+                SELECT id FROM incidents
+                WHERE dedup_key = :dedup_key
+                  AND status NOT IN ('resolved', 'closed')
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {"dedup_key": dedup_key},
+        )).fetchone()
+        if concurrent_row:
+            await db.commit()
+            return {
+                "status": "deduplicated",
+                "incident_id": str(concurrent_row[0]),
+                "resolution_tier": None,
+                "order_id": None,
+                "runbook_id": None,
+                "timestamp": now.isoformat(),
+            }
+        # Extremely unlikely: ON CONFLICT fired but the existing row was
+        # already resolved/closed between the conflict and our lookup. Fall
+        # through and let the insert attempt without ON CONFLICT raise — the
+        # caller will get a 500 which is correct behaviour for this edge case.
 
     # Monitoring-only checks: record the incident for dashboards but skip the entire
     # L1 → L2 → L3 remediation cascade.  These check types detect drift that cannot
