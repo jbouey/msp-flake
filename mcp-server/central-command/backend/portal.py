@@ -301,7 +301,24 @@ class PortalData(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    """Portal token generation response."""
+    """Portal token generation response.
+
+    Legacy fields (``portal_url``, ``token``, ``expires``) are preserved for
+    backwards compatibility with older clients. The ``url`` /
+    ``expires_at`` / ``expires_in_seconds`` / ``created_at`` fields are the
+    canonical shape the Site Detail page consumes.
+
+    When the token has no TTL (in-memory session manager fallback), both
+    ``expires_at`` and ``expires_in_seconds`` are ``None`` — the link is
+    effectively permanent. Redis-backed deployments use ``PORTAL_TOKEN_TTL``
+    (1 year) and surface the real expiry.
+    """
+    # Canonical fields (Task 3 contract)
+    url: str
+    expires_at: Optional[str] = None
+    expires_in_seconds: Optional[int] = None
+    created_at: Optional[str] = None
+    # Legacy fields — keep to avoid breaking existing dashboard/admin callers
     portal_url: str
     token: str
     expires: str = "never"
@@ -612,9 +629,21 @@ class LegacyTokenValidateRequest(BaseModel):
 
 @router.post("/sites/{site_id}/generate-token", response_model=TokenResponse)
 async def generate_portal_token(site_id: str, user: dict = Depends(require_admin)):
-    """Generate magic link token for client portal access (admin use).
+    """Generate a signed portal access link for client portal access.
 
     Requires admin authentication.
+
+    Expiry surfacing:
+      - Redis-backed session manager: token has a TTL of ``PortalSessionManager.PORTAL_TOKEN_TTL``
+        (1 year). We compute ``expires_at`` from ``created_at + TTL`` and
+        populate ``expires_in_seconds``.
+      - In-memory fallback (``redis_client is None``): the token is stored
+        without TTL — it is effectively permanent. We return
+        ``expires_at: None`` and ``expires_in_seconds: None`` to honour the
+        actual backend behaviour, rather than fabricating a TTL that isn't
+        enforced. DO NOT silently add an expiry here without also adding
+        enforcement in ``get_portal_token`` — that would be a behavior
+        change.
     """
     # Generate 64-char token
     token = secrets.token_urlsafe(48)
@@ -623,10 +652,33 @@ async def generate_portal_token(site_id: str, user: dict = Depends(require_admin
     session_mgr = await get_session_manager()
     await session_mgr.set_portal_token(site_id, token)
 
+    created_at = datetime.now(timezone.utc)
+    url = f"{PORTAL_BASE_URL}/portal/site/{site_id}?token={token}"
+
+    # Determine real expiry from the underlying storage backend.
+    # Only Redis-backed managers actually enforce a TTL; the in-memory
+    # fallback stores tokens forever. Be honest about this.
+    has_real_ttl = getattr(session_mgr, "redis", None) is not None
+    if has_real_ttl:
+        ttl_seconds = int(session_mgr.PORTAL_TOKEN_TTL)
+        expires_at_dt = created_at + timedelta(seconds=ttl_seconds)
+        expires_at_iso: Optional[str] = expires_at_dt.isoformat()
+        expires_in_seconds: Optional[int] = ttl_seconds
+        expires_label = expires_at_iso
+    else:
+        expires_at_iso = None
+        expires_in_seconds = None
+        expires_label = "never"  # legacy field preserves historical value
+
     return TokenResponse(
-        portal_url=f"{PORTAL_BASE_URL}/portal/site/{site_id}?token={token}",
+        url=url,
+        expires_at=expires_at_iso,
+        expires_in_seconds=expires_in_seconds,
+        created_at=created_at.isoformat(),
+        # Legacy fields (do not remove — existing callers may read these)
+        portal_url=url,
         token=token,
-        expires="never"
+        expires=expires_label,
     )
 
 

@@ -9,3 +9,7 @@ export { StatusLight } from './StatusLight';
 export { AuditReadiness } from './AuditReadiness';
 export { SiteComplianceHero } from './SiteComplianceHero';
 export { SiteActivityTimeline } from './SiteActivityTimeline';
+export { SiteSLAIndicator } from './SiteSLAIndicator';
+export { SiteSearchBar } from './SiteSearchBar';
+export { FloatingActionButton } from './FloatingActionButton';
+export type { FloatingAction } from './FloatingActionButton';

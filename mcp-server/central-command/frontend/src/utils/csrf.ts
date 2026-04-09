@@ -15,6 +15,16 @@ export function getCsrfToken(): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+/**
+ * Read the CSRF token from the csrf_token cookie, returning an empty string
+ * when the cookie is absent. Used by call sites that embed the token directly
+ * into a header map (where `string | null` would be an invalid value).
+ */
+export function getCsrfTokenOrEmpty(): string {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 /** Return headers object containing X-CSRF-Token if available. */
 export function csrfHeaders(): Record<string, string> {
   const token = getCsrfToken();

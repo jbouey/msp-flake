@@ -680,6 +680,53 @@ export const sitesApi = {
       method: 'PUT',
       body: JSON.stringify({ healing_tier: healingTier }),
     }),
+
+  // Activity timeline for a site — unions admin_audit_log + fleet_orders + incidents.
+  // Backed by GET /api/sites/{site_id}/activity. Used by SiteActivityTimeline.
+  getActivity: (siteId: string, limit = 50) =>
+    fetchSitesApi<{
+      site_id: string;
+      events: Array<{
+        kind: 'admin_action' | 'fleet_order' | 'incident';
+        event_id: string;
+        at: string | null;
+        actor: string | null;
+        action: string;
+        details?: Record<string, unknown> | null;
+      }>;
+      count: number;
+      limit: number;
+    }>(`/sites/${siteId}/activity?limit=${limit}`),
+
+  // Healing SLA state for a site. Backed by GET /api/sites/{site_id}/sla.
+  // Used by SiteSLAIndicator.
+  getSLA: (siteId: string) =>
+    fetchSitesApi<{
+      site_id: string;
+      sla_target: number;
+      current_rate: number | null;
+      sla_met: boolean | null;
+      periods_last_7d: number;
+      periods_met_last_7d: number;
+      met_pct_7d: number | null;
+      trend: Array<{ period_start: string; healing_rate: number; sla_met: boolean }>;
+      source: 'site_healing_sla' | 'execution_telemetry' | 'none';
+    }>(`/sites/${siteId}/sla`),
+
+  // In-site search across incidents, devices, credentials, workstations.
+  // Backed by GET /api/sites/{site_id}/search. Used by SiteSearchBar.
+  searchSite: (siteId: string, query: string, limit = 25) =>
+    fetchSitesApi<{
+      site_id: string;
+      query: string;
+      results: {
+        incidents: Array<Record<string, unknown>>;
+        devices: Array<Record<string, unknown>>;
+        credentials: Array<Record<string, unknown>>;
+        workstations: Array<Record<string, unknown>>;
+      };
+      total: number;
+    }>(`/sites/${siteId}/search?q=${encodeURIComponent(query)}&limit=${limit}`),
 };
 
 // =============================================================================

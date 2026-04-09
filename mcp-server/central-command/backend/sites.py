@@ -5049,3 +5049,360 @@ async def update_credential_host(
         logger.info(f"Credential {credential_id} host updated: {old_host} → {new_host} by {user.get('username')}")
 
     return {"status": "updated", "old_host": old_host, "new_host": new_host}
+
+
+# =============================================================================
+# SITE POLISH ENDPOINTS (Session 203 round-table recommendations)
+# SLA indicator, in-site search, portal link expiry
+# =============================================================================
+
+
+@router.get("/{site_id}/sla")
+async def get_site_sla(
+    site_id: str,
+    user: dict = Depends(require_auth),
+):
+    """Return the site's current healing SLA state.
+
+    Primary source: `site_healing_sla` table (hourly rollups). When empty
+    for this site, falls back to computing from execution_telemetry over
+    the last 24h so the UI still gets a meaningful number.
+
+    Response includes:
+      - sla_target (static 90.0 unless overridden in the rollup table)
+      - current_rate (most recent period's healing_rate)
+      - sla_met (most recent period's boolean)
+      - periods_last_7d / periods_met_last_7d / met_pct_7d
+      - trend (up to 168 most recent hourly entries)
+      - source: "site_healing_sla" | "execution_telemetry" | "none"
+    """
+    pool = await get_pool()
+
+    # Primary query: pull latest SLA period + 7-day trend from the rollup table.
+    # Try tenant_connection first so RLS is enforced; fall back to admin_connection
+    # if the tenant context fails (e.g. transient RLS misconfig).
+    sla_rows: List[Any] = []
+    latest_row: Optional[Any] = None
+    summary_row: Optional[Any] = None
+
+    async def _fetch_sla(conn):
+        latest = await conn.fetchrow(
+            """
+            SELECT site_id, period_start, period_end, total_attempts,
+                   successful_heals, healing_rate, sla_target, sla_met, created_at
+            FROM site_healing_sla
+            WHERE site_id = $1
+            ORDER BY period_start DESC
+            LIMIT 1
+            """,
+            site_id,
+        )
+        trend = await conn.fetch(
+            """
+            SELECT period_start, healing_rate, sla_met
+            FROM site_healing_sla
+            WHERE site_id = $1
+              AND period_start > NOW() - INTERVAL '7 days'
+            ORDER BY period_start DESC
+            LIMIT 168
+            """,
+            site_id,
+        )
+        summary = await conn.fetchrow(
+            """
+            SELECT COUNT(*)::int AS periods,
+                   COUNT(*) FILTER (WHERE sla_met IS TRUE)::int AS met
+            FROM site_healing_sla
+            WHERE site_id = $1
+              AND period_start > NOW() - INTERVAL '7 days'
+            """,
+            site_id,
+        )
+        return latest, trend, summary
+
+    try:
+        async with tenant_connection(pool, site_id=site_id) as conn:
+            latest_row, sla_rows, summary_row = await _fetch_sla(conn)
+    except Exception as e:
+        logger.warning(f"site_sla: tenant_connection failed for {site_id}: {e} — retrying as admin")
+        try:
+            async with admin_connection(pool) as conn:
+                latest_row, sla_rows, summary_row = await _fetch_sla(conn)
+        except Exception as e2:
+            logger.error(f"site_sla: admin fallback also failed for {site_id}: {e2}")
+            latest_row = None
+            sla_rows = []
+            summary_row = None
+
+    # If the primary table has data, use it.
+    if latest_row is not None:
+        trend = [
+            {
+                "period_start": r["period_start"].isoformat() if r["period_start"] else None,
+                "healing_rate": float(r["healing_rate"]) if r["healing_rate"] is not None else None,
+                "sla_met": bool(r["sla_met"]) if r["sla_met"] is not None else None,
+            }
+            for r in sla_rows
+        ]
+        periods_7d = int(summary_row["periods"]) if summary_row else 0
+        met_7d = int(summary_row["met"]) if summary_row else 0
+        met_pct = round((met_7d / periods_7d) * 100.0, 2) if periods_7d > 0 else None
+
+        return {
+            "site_id": site_id,
+            "sla_target": float(latest_row["sla_target"]) if latest_row["sla_target"] is not None else 90.0,
+            "current_rate": float(latest_row["healing_rate"]) if latest_row["healing_rate"] is not None else None,
+            "sla_met": bool(latest_row["sla_met"]) if latest_row["sla_met"] is not None else None,
+            "total_attempts": int(latest_row["total_attempts"]) if latest_row["total_attempts"] is not None else 0,
+            "successful_heals": int(latest_row["successful_heals"]) if latest_row["successful_heals"] is not None else 0,
+            "period_start": latest_row["period_start"].isoformat() if latest_row["period_start"] else None,
+            "period_end": latest_row["period_end"].isoformat() if latest_row["period_end"] else None,
+            "periods_last_7d": periods_7d,
+            "periods_met_last_7d": met_7d,
+            "met_pct_7d": met_pct,
+            "trend": trend,
+            "source": "site_healing_sla",
+        }
+
+    # Fallback: compute from execution_telemetry over the last 24h
+    telemetry_row: Optional[Any] = None
+    try:
+        async with tenant_connection(pool, site_id=site_id) as conn:
+            telemetry_row = await conn.fetchrow(
+                """
+                SELECT
+                  COUNT(*)::int AS total_attempts,
+                  COUNT(*) FILTER (WHERE status='success')::int AS successful_heals
+                FROM execution_telemetry
+                WHERE site_id = $1
+                  AND created_at > NOW() - INTERVAL '24 hours'
+                """,
+                site_id,
+            )
+    except Exception as e:
+        logger.warning(f"site_sla fallback: tenant_connection failed for {site_id}: {e} — retrying as admin")
+        try:
+            async with admin_connection(pool) as conn:
+                telemetry_row = await conn.fetchrow(
+                    """
+                    SELECT
+                      COUNT(*)::int AS total_attempts,
+                      COUNT(*) FILTER (WHERE status='success')::int AS successful_heals
+                    FROM execution_telemetry
+                    WHERE site_id = $1
+                      AND created_at > NOW() - INTERVAL '24 hours'
+                    """,
+                    site_id,
+                )
+        except Exception as e2:
+            logger.error(f"site_sla fallback: admin fallback failed for {site_id}: {e2}")
+            telemetry_row = None
+
+    sla_target_default = 90.0
+    if telemetry_row and (telemetry_row["total_attempts"] or 0) > 0:
+        total = int(telemetry_row["total_attempts"])
+        success = int(telemetry_row["successful_heals"])
+        rate = round((success / total) * 100.0, 2)
+        return {
+            "site_id": site_id,
+            "sla_target": sla_target_default,
+            "current_rate": rate,
+            "sla_met": rate >= sla_target_default,
+            "total_attempts": total,
+            "successful_heals": success,
+            "period_start": None,
+            "period_end": None,
+            "periods_last_7d": 0,
+            "periods_met_last_7d": 0,
+            "met_pct_7d": None,
+            "trend": [],
+            "source": "execution_telemetry",
+        }
+
+    # Nothing found anywhere — explicit null state so frontend can render "no data"
+    return {
+        "site_id": site_id,
+        "sla_target": sla_target_default,
+        "current_rate": None,
+        "sla_met": None,
+        "total_attempts": 0,
+        "successful_heals": 0,
+        "period_start": None,
+        "period_end": None,
+        "periods_last_7d": 0,
+        "periods_met_last_7d": 0,
+        "met_pct_7d": None,
+        "trend": [],
+        "source": "none",
+    }
+
+
+@router.get("/{site_id}/search")
+async def search_site(
+    site_id: str,
+    q: str = Query("", description="Search term, min 2 chars"),
+    limit: int = Query(25, ge=1, le=100),
+    user: dict = Depends(require_auth),
+):
+    """Search across incidents, devices, credentials, and workstations for a site.
+
+    Used by the Site Detail page search bar. Each category is capped at
+    ``limit`` rows (default 25, max 100). Search is case-insensitive via
+    ILIKE on the relevant columns.
+
+    Returns 400 for queries shorter than 2 characters to prevent
+    accidentally dumping the entire site's data.
+    """
+    term = (q or "").strip()
+    if len(term) < 2:
+        raise HTTPException(status_code=400, detail="query must be at least 2 characters")
+
+    # Parameterized ILIKE pattern — never f-string the user input
+    pattern = f"%{term}%"
+
+    pool = await get_pool()
+    results: Dict[str, List[Dict[str, Any]]] = {
+        "incidents": [],
+        "devices": [],
+        "credentials": [],
+        "workstations": [],
+    }
+
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        # 1) Incidents — title, incident_type, details::text
+        try:
+            incident_rows = await conn.fetch(
+                """
+                SELECT id::text AS id, incident_type, COALESCE(details->>'title','') AS title,
+                       severity, status, created_at
+                FROM incidents
+                WHERE site_id = $1
+                  AND (
+                    COALESCE(details->>'title','') ILIKE $2
+                    OR incident_type ILIKE $2
+                    OR details::text ILIKE $2
+                  )
+                ORDER BY created_at DESC
+                LIMIT $3
+                """,
+                site_id,
+                pattern,
+                limit,
+            )
+            for r in incident_rows:
+                results["incidents"].append({
+                    "id": r["id"],
+                    "incident_type": r["incident_type"],
+                    "title": r["title"] or r["incident_type"],
+                    "severity": r["severity"],
+                    "status": r["status"],
+                    "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                })
+        except Exception as e:
+            logger.warning(f"search_site: incidents query failed for {site_id}: {e}")
+
+        # 2) Discovered devices — hostname, ip_address, mac_address
+        # NOTE: incidents.title lives in details JSONB — there's no title column.
+        try:
+            device_rows = await conn.fetch(
+                """
+                SELECT id::text AS id, hostname, ip_address, mac_address, device_type
+                FROM discovered_devices
+                WHERE site_id = $1
+                  AND (
+                    COALESCE(hostname,'') ILIKE $2
+                    OR COALESCE(ip_address,'') ILIKE $2
+                    OR COALESCE(mac_address,'') ILIKE $2
+                  )
+                ORDER BY last_seen_at DESC NULLS LAST
+                LIMIT $3
+                """,
+                site_id,
+                pattern,
+                limit,
+            )
+            for r in device_rows:
+                results["devices"].append({
+                    "id": r["id"],
+                    "hostname": r["hostname"],
+                    "ip_address": r["ip_address"],
+                    "mac_address": r["mac_address"],
+                    "device_type": r["device_type"],
+                })
+        except Exception as e:
+            logger.warning(f"search_site: devices query failed for {site_id}: {e}")
+
+        # 3) Site credentials — credential_name, credential_type
+        # Never return encrypted_data — only metadata.
+        try:
+            cred_rows = await conn.fetch(
+                """
+                SELECT id::text AS id, credential_type, credential_name
+                FROM site_credentials
+                WHERE site_id = $1
+                  AND (
+                    credential_name ILIKE $2
+                    OR credential_type ILIKE $2
+                  )
+                ORDER BY updated_at DESC
+                LIMIT $3
+                """,
+                site_id,
+                pattern,
+                limit,
+            )
+            for r in cred_rows:
+                results["credentials"].append({
+                    "id": r["id"],
+                    "credential_type": r["credential_type"],
+                    "credential_name": r["credential_name"],
+                })
+        except Exception as e:
+            logger.warning(f"search_site: credentials query failed for {site_id}: {e}")
+
+        # 4) Workstations — hostname, os_name, compliance_status
+        # Table has os_name (not "os"); we expose it under "os" in the response
+        # to match the documented shape. Skip gracefully if table is missing.
+        try:
+            ws_rows = await conn.fetch(
+                """
+                SELECT id::text AS id, hostname,
+                       COALESCE(os_name,'') AS os_name,
+                       COALESCE(os_version,'') AS os_version,
+                       compliance_status
+                FROM workstations
+                WHERE site_id = $1
+                  AND (
+                    hostname ILIKE $2
+                    OR COALESCE(os_name,'') ILIKE $2
+                    OR COALESCE(compliance_status,'') ILIKE $2
+                  )
+                ORDER BY last_seen DESC NULLS LAST
+                LIMIT $3
+                """,
+                site_id,
+                pattern,
+                limit,
+            )
+            for r in ws_rows:
+                os_label = r["os_name"]
+                if r["os_version"]:
+                    os_label = f"{os_label} {r['os_version']}".strip()
+                results["workstations"].append({
+                    "id": r["id"],
+                    "hostname": r["hostname"],
+                    "os": os_label or None,
+                    "compliance_status": r["compliance_status"],
+                })
+        except Exception as e:
+            # workstations table may not exist in all deployments — skip category
+            logger.warning(f"search_site: workstations query skipped for {site_id}: {e}")
+
+    total = sum(len(v) for v in results.values())
+    return {
+        "site_id": site_id,
+        "query": term,
+        "limit": limit,
+        "results": results,
+        "total": total,
+    }
