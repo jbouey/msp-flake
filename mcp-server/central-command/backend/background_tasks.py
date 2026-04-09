@@ -312,6 +312,142 @@ async def ots_reverify_sample_loop():
         await asyncio.sleep(21600)  # 6 hours
 
 
+async def flywheel_reconciliation_loop():
+    """Detect and auto-repair flywheel data integrity drift.
+
+    Every 30 minutes, checks:
+    1. Approved candidates with no promoted_rules row (stuck)
+    2. promoted_rules with no l1_rules row (incomplete promotion)
+    3. l1_rules promoted=true but no runbooks entry (missing UI entry)
+    4. learning_promotion_candidates marked approved but pattern still eligible
+
+    Auto-repairs known drift cases. Alerts on unknown divergence.
+    """
+    await asyncio.sleep(400)  # Wait 6.6 min after startup
+    while True:
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+            from dashboard_api.flywheel_promote import promote_candidate
+
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Check 1: Stuck approved candidates
+                stuck = await conn.fetch("""
+                    SELECT lpc.id, lpc.site_id, lpc.pattern_signature,
+                           lpc.custom_rule_name, lpc.approved_at,
+                           aps.success_rate, aps.total_occurrences,
+                           aps.l2_resolutions, aps.recommended_action
+                    FROM learning_promotion_candidates lpc
+                    LEFT JOIN promoted_rules pr
+                        ON pr.pattern_signature = lpc.pattern_signature
+                        AND pr.site_id = lpc.site_id
+                    LEFT JOIN aggregated_pattern_stats aps
+                        ON aps.site_id = lpc.site_id
+                        AND aps.pattern_signature = lpc.pattern_signature
+                    WHERE lpc.approval_status = 'approved'
+                      AND pr.rule_id IS NULL
+                """)
+
+                stuck_fixed = 0
+                for c in stuck:
+                    try:
+                        async with conn.transaction():
+                            candidate = dict(c)
+                            await promote_candidate(
+                                conn=conn,
+                                candidate=candidate,
+                                actor="reconciliation",
+                                actor_type="system",
+                                notes="auto-repaired by reconciliation loop",
+                            )
+                        stuck_fixed += 1
+                    except Exception as e:
+                        logger.warning(
+                            f"Reconciliation could not repair candidate {c['id']}: {e}"
+                        )
+
+                if stuck_fixed > 0:
+                    logger.warning(
+                        "FLYWHEEL_RECONCILIATION_REPAIR",
+                        stuck_fixed=stuck_fixed,
+                        stuck_total=len(stuck),
+                    )
+
+                # Check 2: promoted_rules with no l1_rules row
+                orphan_pr = await conn.fetchval("""
+                    SELECT COUNT(*) FROM promoted_rules pr
+                    LEFT JOIN l1_rules lr ON lr.rule_id = pr.rule_id
+                    WHERE pr.status = 'active' AND lr.rule_id IS NULL
+                """)
+                if orphan_pr > 0:
+                    logger.error(
+                        "FLYWHEEL_ORPHAN_PROMOTED_RULES",
+                        count=orphan_pr,
+                        hint="promoted_rules rows exist without matching l1_rules entry",
+                    )
+
+                # Check 3: l1_rules promoted with no runbooks entry
+                orphan_rb = await conn.fetchval("""
+                    SELECT COUNT(*) FROM l1_rules lr
+                    LEFT JOIN runbooks rb ON rb.runbook_id = lr.rule_id
+                    WHERE lr.promoted_from_l2 = true
+                      AND lr.source = 'promoted'
+                      AND rb.runbook_id IS NULL
+                """)
+                if orphan_rb > 0:
+                    logger.warning(
+                        "FLYWHEEL_ORPHAN_RUNBOOKS",
+                        count=orphan_rb,
+                        hint="promoted l1_rules without runbook library entry",
+                    )
+
+                # Check 4: approved candidates with pattern still flagged eligible
+                still_eligible = await conn.fetchval("""
+                    SELECT COUNT(*)
+                    FROM learning_promotion_candidates lpc
+                    JOIN aggregated_pattern_stats aps
+                        ON aps.site_id = lpc.site_id
+                        AND aps.pattern_signature = lpc.pattern_signature
+                    WHERE lpc.approval_status = 'approved'
+                      AND aps.promotion_eligible = true
+                """)
+                if still_eligible > 0:
+                    # Fix: mark them ineligible
+                    await conn.execute("""
+                        UPDATE aggregated_pattern_stats aps
+                        SET promotion_eligible = false
+                        FROM learning_promotion_candidates lpc
+                        WHERE aps.site_id = lpc.site_id
+                          AND aps.pattern_signature = lpc.pattern_signature
+                          AND lpc.approval_status = 'approved'
+                          AND aps.promotion_eligible = true
+                    """)
+                    logger.info(
+                        "Flywheel reconciliation fixed eligibility",
+                        fixed=still_eligible,
+                    )
+
+                total_issues = stuck_fixed + orphan_pr + orphan_rb + still_eligible
+                if total_issues == 0:
+                    logger.debug("flywheel_reconciliation clean")
+                else:
+                    logger.info(
+                        "flywheel_reconciliation complete",
+                        stuck_fixed=stuck_fixed,
+                        orphan_pr=orphan_pr,
+                        orphan_rb=orphan_rb,
+                        still_eligible=still_eligible,
+                    )
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"Flywheel reconciliation error: {e}")
+
+        await asyncio.sleep(1800)  # 30 minutes
+
+
 async def mesh_consistency_check_loop():
     """Periodically validate mesh ring state and target assignment coverage.
 
@@ -741,6 +877,85 @@ async def flywheel_promotion_loop():
                 except Exception as e:
                     logger.debug(f"Post-promotion monitoring: {e}")
                     await db.rollback()
+
+                # Step 6: Auto-promote site-level eligible patterns
+                # These are patterns that meet eligibility (5+ occurrences, 90%+ success,
+                # 3+ L2 resolutions) but are stuck waiting for manual approval.
+                # At enterprise scale, we can't require a human click for every pattern.
+                try:
+                    from dashboard_api.fleet import get_pool as _get_pool
+                    from dashboard_api.tenant_middleware import admin_connection as _admin_conn
+                    from dashboard_api.flywheel_promote import promote_candidate
+
+                    site_pool = await _get_pool()
+                    site_promoted = 0
+                    async with _admin_conn(site_pool) as conn:
+                        async with conn.transaction():
+                            eligible = await conn.fetch("""
+                                SELECT aps.id, aps.site_id, aps.pattern_signature,
+                                       aps.success_rate, aps.total_occurrences,
+                                       aps.l2_resolutions, aps.recommended_action
+                                FROM aggregated_pattern_stats aps
+                                WHERE aps.promotion_eligible = true
+                                  AND aps.l2_resolutions >= 3
+                                  AND aps.success_rate >= 0.90
+                                  AND aps.total_occurrences >= 5
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM promoted_rules pr
+                                      WHERE pr.pattern_signature = aps.pattern_signature
+                                        AND pr.site_id = aps.site_id
+                                  )
+                                ORDER BY aps.success_rate DESC, aps.total_occurrences DESC
+                                LIMIT 10
+                            """)
+
+                            for p in eligible:
+                                try:
+                                    # Upsert candidate, then promote via shared module
+                                    cand_row = await conn.fetchrow("""
+                                        INSERT INTO learning_promotion_candidates
+                                            (site_id, pattern_signature, approval_status)
+                                        VALUES ($1, $2, 'pending')
+                                        ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                                            approval_status = learning_promotion_candidates.approval_status
+                                        RETURNING id, site_id, pattern_signature
+                                    """, p["site_id"], p["pattern_signature"])
+
+                                    candidate = dict(cand_row)
+                                    candidate.update({
+                                        "success_rate": p["success_rate"],
+                                        "total_occurrences": p["total_occurrences"],
+                                        "l2_resolutions": p["l2_resolutions"],
+                                        "recommended_action": p["recommended_action"],
+                                    })
+
+                                    await promote_candidate(
+                                        conn=conn,
+                                        candidate=candidate,
+                                        actor="flywheel_auto",
+                                        actor_type="system",
+                                    )
+
+                                    # Mark source pattern ineligible
+                                    await conn.execute("""
+                                        UPDATE aggregated_pattern_stats
+                                        SET promotion_eligible = false
+                                        WHERE id = $1
+                                    """, p["id"])
+
+                                    site_promoted += 1
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Site-level auto-promotion skipped for "
+                                        f"{p['pattern_signature']}: {e}"
+                                    )
+
+                    if site_promoted > 0:
+                        logger.info(
+                            f"Site-level auto-promotion: {site_promoted} patterns promoted"
+                        )
+                except Exception as e:
+                    logger.warning(f"Site-level auto-promotion loop error: {e}")
 
         except asyncio.CancelledError:
             break

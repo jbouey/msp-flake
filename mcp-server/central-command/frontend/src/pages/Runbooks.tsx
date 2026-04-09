@@ -5,10 +5,12 @@ import { useRunbooks, useRunbook, useRunbookExecutions } from '../hooks';
 import type { ResolutionLevel } from '../types';
 
 type FilterLevel = ResolutionLevel | 'all';
+type FilterSource = 'all' | 'builtin' | 'learned';
 
 export const Runbooks: React.FC = () => {
   const [selectedRunbookId, setSelectedRunbookId] = useState<string | null>(null);
   const [filterLevel, setFilterLevel] = useState<FilterLevel>('all');
+  const [filterSource, setFilterSource] = useState<FilterSource>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Fetch data
@@ -19,16 +21,31 @@ export const Runbooks: React.FC = () => {
     10
   );
 
+  // Identify learned/promoted runbooks by ID prefix or name pattern
+  const isLearnedRunbook = (rb: { id: string; name?: string }) =>
+    rb.id.startsWith('L1-AUTO-') ||
+    rb.id.startsWith('L1-CUSTOM-') ||
+    rb.id.startsWith('L1-PLATFORM-') ||
+    rb.id.startsWith('SYNC-L1-AUTO-') ||
+    (rb.name?.startsWith('Auto-Promoted:') ?? false);
+
   // Filter runbooks
   const filteredRunbooks = runbooks.filter((rb) => {
     const matchesLevel = filterLevel === 'all' || rb.level === filterLevel;
+    const matchesSource =
+      filterSource === 'all' ||
+      (filterSource === 'learned' && isLearnedRunbook(rb)) ||
+      (filterSource === 'builtin' && !isLearnedRunbook(rb));
     const matchesSearch =
       searchQuery === '' ||
       rb.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       rb.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       rb.hipaa_controls.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesLevel && matchesSearch;
+    return matchesLevel && matchesSource && matchesSearch;
   });
+
+  const learnedCount = runbooks.filter(isLearnedRunbook).length;
+  const builtinCount = runbooks.length - learnedCount;
 
   // Stats — only average runbooks that have actually executed (exclude 0-execution runbooks
   // whose 0% success rate would drag the average down)
@@ -54,10 +71,16 @@ export const Runbooks: React.FC = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <GlassCard padding="md">
           <p className="text-xs text-label-tertiary uppercase tracking-wide">Total Runbooks</p>
           <p className="text-2xl font-semibold mt-1">{runbooks.length}</p>
+          <p className="text-xs text-label-tertiary mt-1">{builtinCount} built-in + {learnedCount} learned</p>
+        </GlassCard>
+        <GlassCard padding="md">
+          <p className="text-xs text-label-tertiary uppercase tracking-wide">Learned (L2→L1)</p>
+          <p className="text-2xl font-semibold text-purple-400 mt-1">{learnedCount}</p>
+          <p className="text-xs text-label-tertiary mt-1">auto-promoted from L2</p>
         </GlassCard>
         <GlassCard padding="md">
           <p className="text-xs text-label-tertiary uppercase tracking-wide">Total Executions</p>
@@ -99,6 +122,27 @@ export const Runbooks: React.FC = () => {
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent"
           />
+        </div>
+
+        {/* Source filter (built-in vs learned) */}
+        <div className="flex items-center gap-1 bg-separator-light rounded-ios-md p-1">
+          {([
+            { key: 'all', label: `All (${runbooks.length})` },
+            { key: 'builtin', label: `Built-in (${builtinCount})` },
+            { key: 'learned', label: `Learned (${learnedCount})` },
+          ] as const).map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => setFilterSource(opt.key as FilterSource)}
+              className={`px-3 py-1.5 text-sm rounded-ios-sm transition-colors ${
+                filterSource === opt.key
+                  ? 'bg-background-secondary shadow-sm text-label-primary font-medium'
+                  : 'text-label-secondary hover:text-label-primary'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
 
         {/* Level filter */}

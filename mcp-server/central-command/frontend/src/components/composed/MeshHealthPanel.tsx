@@ -60,7 +60,7 @@ const healthBadge: Record<string, string> = {
 export const MeshHealthPanel: React.FC<Props> = ({ siteId }) => {
   const { data, isLoading, error } = useQuery<MeshState>({
     queryKey: ['mesh', siteId],
-    queryFn: () => sitesApi.getMeshState(siteId) as Promise<MeshState>,
+    queryFn: () => sitesApi.getMeshState(siteId) as unknown as Promise<MeshState>,
     refetchInterval: 30_000,
   });
 

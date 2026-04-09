@@ -325,6 +325,112 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: CVE watch query failed")
 
+            # --- Flywheel promotion pipeline health (gauge) ---
+            try:
+                # Candidate pipeline stages
+                cand = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE approval_status = 'pending') as pending,
+                        COUNT(*) FILTER (WHERE approval_status = 'approved') as approved,
+                        COUNT(*) FILTER (WHERE approval_status = 'rejected') as rejected
+                    FROM learning_promotion_candidates
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_candidates",
+                    "Learning promotion candidates by status",
+                    [
+                        ({"status": "pending"}, float(cand["pending"] or 0)),
+                        ({"status": "approved"}, float(cand["approved"] or 0)),
+                        ({"status": "rejected"}, float(cand["rejected"] or 0)),
+                    ],
+                ))
+
+                # Promoted rules by source
+                pr_source = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE status = 'active') as active,
+                        COUNT(*) FILTER (WHERE status = 'disabled') as disabled
+                    FROM promoted_rules
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_promoted_rules",
+                    "Promoted rules by status",
+                    [
+                        ({"status": "active"}, float(pr_source["active"] or 0)),
+                        ({"status": "disabled"}, float(pr_source["disabled"] or 0)),
+                    ],
+                ))
+
+                # L1 rules by source
+                l1_src = await conn.fetch("""
+                    SELECT source, COUNT(*) as cnt
+                    FROM l1_rules WHERE enabled = true
+                    GROUP BY source
+                """)
+                if l1_src:
+                    sections.append(_gauge(
+                        "osiriscare_flywheel_l1_rules_by_source",
+                        "Enabled L1 rules by source (built-in vs promoted vs synced)",
+                        [({"source": r["source"] or "unknown"}, float(r["cnt"])) for r in l1_src],
+                    ))
+
+                # Stuck candidates (approved but no promoted_rules row) — ALERT metric
+                stuck_count = await conn.fetchval("""
+                    SELECT COUNT(*) FROM learning_promotion_candidates lpc
+                    LEFT JOIN promoted_rules pr
+                        ON pr.pattern_signature = lpc.pattern_signature
+                        AND pr.site_id = lpc.site_id
+                    WHERE lpc.approval_status = 'approved' AND pr.rule_id IS NULL
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_stuck_candidates",
+                    "Approved candidates with no promoted_rules row (alert if >0)",
+                    [({}, float(stuck_count or 0))],
+                ))
+
+                # Eligibility pipeline: how many patterns awaiting manual approval
+                eligible_waiting = await conn.fetchval("""
+                    SELECT COUNT(*) FROM aggregated_pattern_stats
+                    WHERE promotion_eligible = true
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_eligible_waiting",
+                    "Patterns eligible for promotion but not yet promoted",
+                    [({}, float(eligible_waiting or 0))],
+                ))
+
+                # Promotion rate (promotions per day last 7d)
+                promo_rate = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE promoted_at > NOW() - INTERVAL '24 hours') as last_24h,
+                        COUNT(*) FILTER (WHERE promoted_at > NOW() - INTERVAL '7 days') as last_7d
+                    FROM promoted_rules
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_promotion_rate_24h",
+                    "New promotions in the last 24 hours",
+                    [({}, float(promo_rate["last_24h"] or 0))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_flywheel_promotion_rate_7d",
+                    "New promotions in the last 7 days",
+                    [({}, float(promo_rate["last_7d"] or 0))],
+                ))
+
+                # Pipeline stall detector — time since last promotion
+                stall = await conn.fetchval("""
+                    SELECT EXTRACT(EPOCH FROM (NOW() - MAX(promoted_at)))
+                    FROM promoted_rules
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_last_promotion_age_seconds",
+                    "Seconds since the most recent promotion (alert if >604800 = 7d)",
+                    [({}, float(stall or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: flywheel query failed")
+
             # --- Mesh health (gauge) ---
             try:
                 # Per-site mesh state: ring size, peers, assignment coverage

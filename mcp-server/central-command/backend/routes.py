@@ -897,6 +897,152 @@ async def get_runbook_executions(
 # LEARNING LOOP ENDPOINTS
 # =============================================================================
 
+@router.get("/admin/flywheel/health")
+async def get_flywheel_health(
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Comprehensive flywheel pipeline health for admin dashboard panel.
+
+    Returns:
+    - Pipeline stages (pending/approved/promoted/stuck counts)
+    - Recent promotions (last 10)
+    - Stuck candidates list (approved but no promoted_rules)
+    - Eligible but unapproved patterns
+    - Auto-disabled rules (bad promotions)
+    - Pipeline health score
+    """
+    from .fleet import get_pool
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # Candidate stages
+        cand_stats = await conn.fetchrow("""
+            SELECT
+                COUNT(*) FILTER (WHERE approval_status = 'pending') as pending,
+                COUNT(*) FILTER (WHERE approval_status = 'approved') as approved,
+                COUNT(*) FILTER (WHERE approval_status = 'rejected') as rejected
+            FROM learning_promotion_candidates
+        """)
+
+        # Promoted rules
+        pr_stats = await conn.fetchrow("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'active') as active,
+                COUNT(*) FILTER (WHERE status = 'disabled') as disabled,
+                COUNT(*) FILTER (WHERE promoted_at > NOW() - INTERVAL '24 hours') as last_24h,
+                COUNT(*) FILTER (WHERE promoted_at > NOW() - INTERVAL '7 days') as last_7d
+            FROM promoted_rules
+        """)
+
+        # Stuck candidates (CRITICAL metric)
+        stuck_count = await conn.fetchval("""
+            SELECT COUNT(*) FROM learning_promotion_candidates lpc
+            LEFT JOIN promoted_rules pr
+                ON pr.pattern_signature = lpc.pattern_signature
+                AND pr.site_id = lpc.site_id
+            WHERE lpc.approval_status = 'approved' AND pr.rule_id IS NULL
+        """)
+
+        # Eligible waiting (for manual approval or auto-promotion)
+        eligible_count = await conn.fetchval("""
+            SELECT COUNT(*) FROM aggregated_pattern_stats
+            WHERE promotion_eligible = true
+        """)
+
+        # Recent promotions
+        recent = await conn.fetch("""
+            SELECT pr.rule_id, pr.pattern_signature, pr.site_id,
+                   pr.status, pr.promoted_at,
+                   s.clinic_name
+            FROM promoted_rules pr
+            LEFT JOIN sites s ON s.site_id = pr.site_id
+            ORDER BY pr.promoted_at DESC
+            LIMIT 10
+        """)
+
+        # Auto-disabled rules (rolled back due to poor performance)
+        disabled = await conn.fetch("""
+            SELECT rule_id, created_at
+            FROM l1_rules
+            WHERE source = 'promoted' AND enabled = false
+              AND created_at > NOW() - INTERVAL '30 days'
+            ORDER BY created_at DESC
+            LIMIT 10
+        """)
+
+        # Stuck candidates detail
+        stuck_list = await conn.fetch("""
+            SELECT lpc.id, lpc.site_id, lpc.pattern_signature, lpc.approved_at
+            FROM learning_promotion_candidates lpc
+            LEFT JOIN promoted_rules pr
+                ON pr.pattern_signature = lpc.pattern_signature
+                AND pr.site_id = lpc.site_id
+            WHERE lpc.approval_status = 'approved' AND pr.rule_id IS NULL
+            ORDER BY lpc.approved_at DESC
+            LIMIT 20
+        """)
+
+        # Pipeline health score
+        health_issues = []
+        if stuck_count > 0:
+            health_issues.append(f"{stuck_count} approved candidates not promoted")
+        if pr_stats["last_7d"] == 0 and eligible_count > 0:
+            health_issues.append(f"{eligible_count} eligible patterns but no promotions in 7 days")
+        if pr_stats["disabled"] > 5:
+            health_issues.append(f"{pr_stats['disabled']} rules auto-disabled (high failure rate)")
+
+        health_status = "healthy"
+        if stuck_count > 0 or (pr_stats["last_7d"] == 0 and eligible_count > 5):
+            health_status = "degraded"
+        if stuck_count > 10 or len(health_issues) >= 3:
+            health_status = "critical"
+
+        return {
+            "health_status": health_status,
+            "health_issues": health_issues,
+            "pipeline": {
+                "pending_candidates": cand_stats["pending"] or 0,
+                "approved_candidates": cand_stats["approved"] or 0,
+                "rejected_candidates": cand_stats["rejected"] or 0,
+                "promoted_rules_total": pr_stats["total"] or 0,
+                "promoted_rules_active": pr_stats["active"] or 0,
+                "promoted_rules_disabled": pr_stats["disabled"] or 0,
+                "promotions_24h": pr_stats["last_24h"] or 0,
+                "promotions_7d": pr_stats["last_7d"] or 0,
+                "stuck_candidates": stuck_count or 0,
+                "eligible_waiting": eligible_count or 0,
+            },
+            "recent_promotions": [
+                {
+                    "rule_id": r["rule_id"],
+                    "pattern_signature": r["pattern_signature"],
+                    "site_id": r["site_id"],
+                    "clinic_name": r["clinic_name"],
+                    "status": r["status"],
+                    "promoted_at": r["promoted_at"].isoformat() if r["promoted_at"] else None,
+                }
+                for r in recent
+            ],
+            "auto_disabled": [
+                {
+                    "rule_id": d["rule_id"],
+                    "disabled_at": d["created_at"].isoformat() if d["created_at"] else None,
+                }
+                for d in disabled
+            ],
+            "stuck_candidates_list": [
+                {
+                    "id": str(s["id"]),
+                    "site_id": s["site_id"],
+                    "pattern_signature": s["pattern_signature"],
+                    "approved_at": s["approved_at"].isoformat() if s["approved_at"] else None,
+                }
+                for s in stuck_list
+            ],
+        }
+
+
 @router.get("/learning/status", response_model=LearningStatus)
 async def get_learning_status(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get current state of the L2->L1 learning loop.
@@ -1020,63 +1166,53 @@ async def promote_pattern(
     # IDOR check: ensure org-scoped user can access this pattern's site
     await check_site_access_sa(db, user, aps_row.site_id)
 
-    # Parse check_type from pattern_signature (format: "check_type:runbook_id")
-    parts = aps_row.pattern_signature.split(":")
-    incident_type = parts[0] if parts else aps_row.pattern_signature
-    runbook_id = parts[1] if len(parts) > 1 else aps_row.recommended_action or ""
+    # Admin promote uses the same shared promotion logic as partner path.
+    # We must first create or upsert the candidate, then call promote_candidate.
+    # Use an asyncpg connection since flywheel_promote expects asyncpg.
+    from .fleet import get_pool
+    from .tenant_middleware import admin_connection
+    from .flywheel_promote import promote_candidate
 
-    rule_id = f"L1-AUTO-{incident_type.upper().replace('_', '-')[:20]}"
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            # Upsert candidate from aggregated_pattern_stats
+            candidate_row = await conn.fetchrow("""
+                INSERT INTO learning_promotion_candidates (
+                    site_id, pattern_signature, approval_status
+                ) VALUES ($1, $2, 'pending')
+                ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                    approval_status = learning_promotion_candidates.approval_status
+                RETURNING id, site_id, pattern_signature
+            """, aps_row.site_id, aps_row.pattern_signature)
 
-    try:
-        # Create L1 rule
-        await execute_with_retry(db,text("""
-            INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled)
-            VALUES (:rule_id, :pattern, :runbook_id, 0.95, true, true)
-            ON CONFLICT (rule_id) DO NOTHING
-        """), {
-            "rule_id": rule_id,
-            "pattern": json.dumps({"incident_type": incident_type}),
-            "runbook_id": runbook_id,
-        })
+            # Fetch full candidate with metrics from aggregated_pattern_stats
+            full = await conn.fetchrow("""
+                SELECT lpc.id, lpc.site_id, lpc.pattern_signature,
+                       aps.success_rate, aps.total_occurrences, aps.l2_resolutions,
+                       aps.recommended_action
+                FROM learning_promotion_candidates lpc
+                JOIN aggregated_pattern_stats aps
+                    ON aps.site_id = lpc.site_id
+                    AND aps.pattern_signature = lpc.pattern_signature
+                WHERE lpc.id = $1
+            """, candidate_row["id"])
 
-        # Cross-site learning: create a synced version available to all appliances
-        synced_rule_id = f"SYNC-{rule_id}"
-        await execute_with_retry(db,text("""
-            INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id, confidence, promoted_from_l2, enabled, source)
-            VALUES (:rule_id, :pattern, :runbook_id, 0.95, true, true, 'synced')
-            ON CONFLICT (rule_id) DO NOTHING
-        """), {
-            "rule_id": synced_rule_id,
-            "pattern": json.dumps({"incident_type": incident_type}),
-            "runbook_id": runbook_id,
-        })
+            result = await promote_candidate(
+                conn=conn,
+                candidate=dict(full) if full else dict(candidate_row),
+                actor=user.get("username", "admin"),
+                actor_type="admin",
+            )
 
-        # Mark as no longer eligible
-        await execute_with_retry(db,text("""
-            UPDATE aggregated_pattern_stats SET promotion_eligible = false WHERE id = :pid
-        """), {"pid": int(pattern_id)})
+            # Mark as no longer eligible in aggregated_pattern_stats
+            await conn.execute("""
+                UPDATE aggregated_pattern_stats
+                SET promotion_eligible = false
+                WHERE id = $1
+            """, int(pattern_id))
 
-        # Record in learning_promotion_candidates
-        await execute_with_retry(db,text("""
-            INSERT INTO learning_promotion_candidates (
-                site_id, pattern_signature, approval_status,
-                approved_at, custom_rule_name
-            ) VALUES (:site_id, :sig, 'approved', NOW(), :rule_id)
-            ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
-                approval_status = 'approved', approved_at = NOW(),
-                custom_rule_name = :rule_id
-        """), {
-            "site_id": aps_row.site_id,
-            "sig": aps_row.pattern_signature,
-            "rule_id": rule_id,
-        })
-
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        raise
-
-    return {"status": "promoted", "pattern_id": pattern_id, "new_rule_id": rule_id}
+    return {"status": "promoted", "pattern_id": pattern_id, **result}
 
 
 @router.post("/learning/reject/{pattern_id}")

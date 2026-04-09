@@ -512,126 +512,30 @@ async def approve_candidate(
                 await transaction.rollback()
                 raise HTTPException(status_code=400, detail="Invalid pattern signature format")
 
-            # Generate rule
+            # Generate rule for YAML format (partner path includes deployment commands)
             rule = generate_rule_from_pattern(dict(candidate), request.custom_name)
             rule_yaml = rule_to_yaml(rule)
 
-            # Insert promoted rule
-            await conn.execute("""
-                INSERT INTO promoted_rules (
-                    rule_id, pattern_signature, site_id, partner_id,
-                    rule_yaml, rule_json, notes, promoted_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-                ON CONFLICT (rule_id) DO UPDATE SET
-                    status = 'active',
-                    notes = EXCLUDED.notes,
-                    promoted_at = NOW()
-            """,
-                rule['id'],
-                candidate['pattern_signature'],
-                candidate['site_id'],
-                partner_id,
-                rule_yaml,
-                json.dumps(rule),
-                request.notes
+            # Use the shared flywheel promotion module — single source of truth
+            # for all side effects: l1_rules, promoted_rules, runbooks, mapping, audit log
+            from .flywheel_promote import promote_candidate
+            cand_dict = dict(candidate)
+            cand_dict["partner_id"] = partner_id
+            promote_result = await promote_candidate(
+                conn=conn,
+                candidate=cand_dict,
+                actor=redact_partner_id(partner_id),
+                actor_type="partner",
+                custom_name=request.custom_name,
+                notes=request.notes,
+                rule_yaml=rule_yaml,
+                rule_json=rule,
             )
 
-            # Auto-create runbook entry for the promoted pattern
-            # This ensures the Runbook Library stays in sync with L1 rules
-            check_type = candidate.get('check_type') or rule['action_params'].get('runbook_id', 'general')
-            promoted_name = request.custom_name or f"Auto-Promoted: {candidate.get('recommended_action', check_type)}"
-            promoted_desc = f"L2→L1 promoted pattern ({candidate.get('success_rate', 0) * 100:.0f}% success over {candidate.get('total_occurrences', 0)} occurrences)"
-            await conn.execute("""
-                INSERT INTO runbooks (runbook_id, name, description, category, check_type, severity, is_disruptive, hipaa_controls, steps)
-                VALUES ($1, $2, $3, $4, $5, 'medium', false, ARRAY[]::text[], '[]'::jsonb)
-                ON CONFLICT (runbook_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    description = EXCLUDED.description,
-                    updated_at = NOW()
-            """,
-                rule['id'],
-                promoted_name,
-                promoted_desc,
-                rule.get('action_params', {}).get('runbook_id', 'general'),
-                check_type
-            )
-
-            # Map promoted rule_id to canonical runbook for telemetry correlation
-            await conn.execute("""
-                INSERT INTO runbook_id_mapping (l1_rule_id, runbook_id)
-                VALUES ($1, $2)
-                ON CONFLICT (l1_rule_id) DO NOTHING
-            """, rule['id'], rule['id'])
-
-            # Update candidate status
-            await conn.execute("""
-                INSERT INTO learning_promotion_candidates (
-                    id, site_id, pattern_signature, approval_status,
-                    approved_at, custom_rule_name, approval_notes
-                ) VALUES ($1, $2, $3, 'approved', NOW(), $4, $5)
-                ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
-                    approval_status = 'approved',
-                    approved_at = NOW(),
-                    custom_rule_name = EXCLUDED.custom_rule_name,
-                    approval_notes = EXCLUDED.approval_notes
-            """,
-                str(uuid.uuid4()),
-                candidate['site_id'],
-                candidate['pattern_signature'],
-                request.custom_name,
-                request.notes
-            )
-
-            # Cross-site learning: create a synced version available to all appliances
-            # The daemon already syncs 'synced' rules during checkin, so this makes
-            # every partner-approved promotion automatically available fleet-wide.
-            synced_rule_id = f"SYNC-{rule['id']}"
-            try:
-                await conn.execute("""
-                    INSERT INTO l1_rules (
-                        rule_id, incident_pattern, runbook_id,
-                        confidence, promoted_from_l2, enabled, source
-                    ) VALUES ($1, $2, $3, $4, true, true, 'synced')
-                    ON CONFLICT (rule_id) DO NOTHING
-                """,
-                    synced_rule_id,
-                    json.dumps(rule.get('conditions', [{"field": "drift_detected", "operator": "eq", "value": True}])),
-                    rule['action_params']['runbook_id'],
-                    float(candidate.get('success_rate') or 0.9)
-                )
-            except Exception as e:
-                logger.warning(f"Cross-site sync rule creation failed for {synced_rule_id}: {e}")
-
-            # Archive promotion telemetry to append-only audit log (WORM-style)
-            try:
-                await conn.execute("""
-                    INSERT INTO promotion_audit_log (
-                        event_type, rule_id, pattern_signature, check_type,
-                        site_id, confidence_score, success_rate,
-                        l2_resolutions, total_occurrences, source, actor, metadata
-                    ) VALUES (
-                        'approved', $1, $2, $3, $4, $5, $6, $7, $8,
-                        'partner', $9, $10
-                    )
-                """,
-                    rule['id'],
-                    candidate['pattern_signature'],
-                    candidate.get('check_type') or '',
-                    candidate['site_id'],
-                    float(candidate.get('success_rate') or 0),
-                    float(candidate.get('success_rate') or 0),
-                    int(candidate.get('l2_resolutions') or 0),
-                    int(candidate.get('total_occurrences') or 0),
-                    redact_partner_id(partner_id),
-                    json.dumps({
-                        "synced_rule_id": synced_rule_id,
-                        "custom_name": request.custom_name,
-                        "deploy_immediately": request.deploy_immediately,
-                        "promoted_at": datetime.now(timezone.utc).isoformat(),
-                    })
-                )
-            except Exception as e:
-                logger.warning(f"Promotion audit log write failed: {e}")
+            # Override rule_id with the partner-generated one (has deployment-ready structure)
+            # promote_candidate returns its own rule_id, but we want the rule.id for
+            # backward compat with deployment commands that encode rule_yaml.
+            rule['id'] = promote_result["rule_id"]
 
             deployed_count = 0
             failed_appliances = []

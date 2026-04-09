@@ -1398,13 +1398,18 @@ async def lifespan(app: FastAPI):
                 logger.error("Audit log retention loop error", error=str(e))
             await asyncio.sleep(86400)  # 24 hours
 
-    from dashboard_api.background_tasks import ots_reverify_sample_loop, mesh_consistency_check_loop
+    from dashboard_api.background_tasks import (
+        ots_reverify_sample_loop,
+        mesh_consistency_check_loop,
+        flywheel_reconciliation_loop,
+    )
 
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
         ("ots_resubmit", _ots_resubmit_expired_loop),
         ("ots_reverify", ots_reverify_sample_loop),
         ("mesh_consistency", mesh_consistency_check_loop),
+        ("flywheel_reconciliation", flywheel_reconciliation_loop),
         ("cve_watch", cve_sync_loop),
         ("cve_remediation", cve_remediation_loop),
         ("framework_sync", framework_sync_loop),
