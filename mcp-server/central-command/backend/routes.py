@@ -5982,7 +5982,7 @@ async def generate_admin_report(
             SELECT COUNT(*) as total_bundles,
                    COUNT(CASE WHEN signature IS NOT NULL THEN 1 END) as signed_bundles,
                    COUNT(CASE WHEN ots_status = 'anchored' THEN 1 END) as anchored_bundles,
-                   AVG(check_count) as avg_checks
+                   AVG(jsonb_array_length(checks)) as avg_checks
             FROM compliance_bundles
             WHERE site_id = $1 AND created_at >= $2::date
               AND created_at < ($2::date + interval '1 month')
