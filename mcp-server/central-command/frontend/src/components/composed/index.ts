@@ -7,3 +7,4 @@ export { ResponsiveTable } from './ResponsiveTable';
 export type { ResponsiveColumn } from './ResponsiveTable';
 export { StatusLight } from './StatusLight';
 export { AuditReadiness } from './AuditReadiness';
+export { SiteComplianceHero } from './SiteComplianceHero';

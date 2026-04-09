@@ -1,13 +1,21 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { GlassCard, Spinner, Badge, ActionDropdown, EmptyState, OnboardingChecklist } from '../components/shared';
+import { GlassCard, Spinner, Badge, ActionDropdown, EmptyState, OnboardingChecklist, Tooltip } from '../components/shared';
 import type { ActionItem } from '../components/shared';
-import { StatusBadge } from '../components/composed';
+import { StatusBadge, SiteComplianceHero } from '../components/composed';
 import { MeshHealthPanel } from '../components/composed/MeshHealthPanel';
 import { DeploymentProgress } from '../components/deployment';
 import { useSite, useAddCredential, useCreateApplianceOrder, useBroadcastOrder, useDeleteAppliance, useClearStaleAppliances, useUpdateHealingTier, useUpdateL2Mode } from '../hooks';
-import type { SiteDetail as SiteDetailType, SiteAppliance, OrderType } from '../utils/api';
+import type {
+  SiteDetail as SiteDetailType,
+  SiteAppliance,
+  OrderType,
+  SiteDeviceSummary,
+  SiteWorkstationsResponse,
+  SiteGoAgentsResponse,
+  ProtectionProfileSummary,
+} from '../utils/api';
 import { fleetUpdatesApi, decommissionApi, applianceApi, type FleetStats } from '../utils/api';
 import { ComplianceHealthInfographic } from '../client/ComplianceHealthInfographic';
 import { DevicesAtRisk } from '../client/DevicesAtRisk';
@@ -963,7 +971,13 @@ const DecommissionModal: React.FC<{
     }
   };
 
-  const canDecommission = confirmText === site.site_id;
+  // Accept either the stable slug (site_id) or the human-readable clinic_name.
+  // This matches the user's expectation of "typing the site name" while still
+  // working for admins who reference the slug out of habit.
+  const confirmTarget = confirmText.trim();
+  const canDecommission =
+    confirmTarget.length > 0 &&
+    (confirmTarget === site.site_id || confirmTarget.toLowerCase() === (site.clinic_name || '').toLowerCase());
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
@@ -1054,14 +1068,16 @@ const DecommissionModal: React.FC<{
           {/* Confirmation input */}
           <div className="mb-4">
             <label className="block text-sm text-label-secondary mb-1.5">
-              Type <code className="bg-fill-secondary px-1.5 py-0.5 rounded text-xs font-mono">{site.site_id}</code> to confirm:
+              Type the site name <code className="bg-fill-secondary px-1.5 py-0.5 rounded text-xs font-mono">{site.clinic_name}</code>
+              {' '}or slug <code className="bg-fill-secondary px-1.5 py-0.5 rounded text-xs font-mono">{site.site_id}</code> to confirm:
             </label>
             <input
               type="text"
               value={confirmText}
               onChange={e => setConfirmText(e.target.value)}
-              placeholder={site.site_id}
-              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-health-critical focus:outline-none text-sm font-mono"
+              placeholder={site.clinic_name}
+              className="w-full px-3 py-2 rounded-ios bg-fill-secondary text-label-primary border border-separator-light focus:border-health-critical focus:outline-none text-sm"
+              autoFocus
             />
           </div>
 
@@ -1134,6 +1150,87 @@ export const SiteDetail: React.FC = () => {
     staleTime: 60_000,
     retry: false,
   });
+
+  // Tab badge counts — lightweight summary queries. Each is isolated from the
+  // main site fetch so a 404/error on one endpoint never hides the whole page.
+  const { data: deviceSummary } = useQuery<SiteDeviceSummary | null>({
+    queryKey: ['site-device-summary', siteId],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`/api/dashboard/devices/sites/${siteId}/summary`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) return null;
+        return res.json();
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!siteId,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const { data: workstationSummary } = useQuery<SiteWorkstationsResponse | null>({
+    queryKey: ['site-workstation-summary', siteId],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`/api/dashboard/sites/${siteId}/workstations`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) return null;
+        return res.json();
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!siteId,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const { data: agentSummary } = useQuery<SiteGoAgentsResponse | null>({
+    queryKey: ['site-agent-summary', siteId],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`/api/dashboard/sites/${siteId}/agents`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) return null;
+        return res.json();
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!siteId,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const { data: protectionProfiles } = useQuery<ProtectionProfileSummary[] | null>({
+    queryKey: ['site-protection-profiles', siteId],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`/api/dashboard/protection-profiles?site_id=${siteId}`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) return null;
+        return res.json();
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!siteId,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  // Derived tab counts — null means "don't render a badge".
+  const deviceTabCount: number | null = deviceSummary?.total_devices ?? null;
+  const workstationTabCount: number | null = workstationSummary?.summary?.total_workstations ?? null;
+  const agentTabCount: number | null = agentSummary?.summary?.total_agents ?? null;
+  const protectionTabCount: number | null = Array.isArray(protectionProfiles) ? protectionProfiles.length : null;
+
   const latestVersion = fleetStats?.releases.latest_version ?? null;
 
   // WireGuard VPN connection status — connected if handshake within last 5 minutes
@@ -1331,68 +1428,75 @@ export const SiteDetail: React.FC = () => {
             </svg>
           </button>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-semibold text-label-primary truncate">{site.clinic_name}</h1>
               <Badge variant={site.live_status === 'online' ? 'success' : site.live_status === 'offline' ? 'error' : 'default'}>
                 {site.live_status === 'online' ? 'Online' : site.live_status === 'offline' ? 'Offline' : site.live_status?.replace(/\b\w/g, c => c.toUpperCase()) || 'Unknown'}
               </Badge>
               {site.wg_ip && (
-                <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
-                  isWgConnected ? 'bg-health-healthy/10 text-health-healthy' : 'bg-fill-secondary text-label-tertiary'
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${isWgConnected ? 'bg-health-healthy' : 'bg-label-tertiary'}`} />
-                  VPN {site.wg_ip}
-                </span>
+                <Tooltip text={`WireGuard tunnel · ${site.wg_ip}${isWgConnected ? ' · Handshake < 5m' : ' · Stale'}`}>
+                  <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full cursor-help ${
+                    isWgConnected ? 'bg-health-healthy/10 text-health-healthy' : 'bg-fill-secondary text-label-tertiary'
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${isWgConnected ? 'bg-health-healthy' : 'bg-label-tertiary'}`} />
+                    {isWgConnected ? 'VPN Connected' : 'VPN Stale'}
+                  </span>
+                </Tooltip>
               )}
             </div>
             {/* site_id hidden from main view — visible in Edit modal */}
           </div>
           <div className="flex items-center gap-2">
+            {/* Primary: Edit Site */}
             <button
               onClick={() => setShowEditSiteModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-label-secondary hover:bg-fill-secondary rounded-ios-sm transition-colors whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-label-primary bg-fill-secondary hover:bg-fill-tertiary rounded-ios-sm transition-colors whitespace-nowrap font-medium"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
               Edit Site
             </button>
-            <button
-              onClick={handleGeneratePortalLink}
-              disabled={isGeneratingLink}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-accent-primary hover:bg-accent-tint rounded-ios-sm transition-colors disabled:opacity-50 whitespace-nowrap"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-              </svg>
-              {isGeneratingLink ? 'Generating...' : 'Portal Link'}
-            </button>
-            {site.status !== 'inactive' && site.appliances.length > 0 && (
-              <button
-                onClick={() => setShowTransferModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-label-secondary hover:bg-fill-secondary rounded-ios-sm transition-colors whitespace-nowrap"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                </svg>
-                Transfer Appliance
-              </button>
-            )}
-            {site.status !== 'inactive' && (
-              <button
-                onClick={() => setShowDecommissionModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-health-critical hover:bg-health-critical/10 rounded-ios-sm transition-colors whitespace-nowrap"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                </svg>
-                Decommission
-              </button>
-            )}
+
+            {/* Secondary actions collapsed into a More menu */}
+            <ActionDropdown
+              label="More"
+              actions={[
+                {
+                  label: isGeneratingLink ? 'Generating…' : 'Portal Link',
+                  icon: (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                  ),
+                  disabled: isGeneratingLink,
+                  onClick: handleGeneratePortalLink,
+                },
+                ...(site.status !== 'inactive' && site.appliances.length > 0 ? [{
+                  label: 'Transfer Appliance',
+                  icon: (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                    </svg>
+                  ),
+                  onClick: () => setShowTransferModal(true),
+                }] : []),
+                ...(site.status !== 'inactive' ? [{
+                  label: 'Decommission Site',
+                  icon: (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                  ),
+                  danger: true,
+                  onClick: () => setShowDecommissionModal(true),
+                }] : []),
+              ]}
+            />
           </div>
         </div>
 
-        {/* Row 2: Navigation pills */}
+        {/* Row 2: Navigation pills with count badges */}
         <div className="overflow-x-auto -mx-4 px-4 mt-4 pt-3 border-t border-separator-light">
         <nav className="flex items-center gap-1.5 min-w-max">
           <Link
@@ -1403,6 +1507,11 @@ export const SiteDetail: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
             </svg>
             Devices
+            {deviceTabCount !== null && (
+              <span className="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 min-w-[20px] text-[10px] font-semibold rounded-full bg-fill-tertiary text-label-secondary">
+                {deviceTabCount}
+              </span>
+            )}
           </Link>
           <Link
             to={`/sites/${siteId}/workstations`}
@@ -1412,6 +1521,11 @@ export const SiteDetail: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
             </svg>
             Workstations
+            {workstationTabCount !== null && (
+              <span className="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 min-w-[20px] text-[10px] font-semibold rounded-full bg-fill-tertiary text-label-secondary">
+                {workstationTabCount}
+              </span>
+            )}
           </Link>
           <Link
             to={`/sites/${siteId}/agents`}
@@ -1421,6 +1535,11 @@ export const SiteDetail: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
             </svg>
             Go Agents
+            {agentTabCount !== null && (
+              <span className="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 min-w-[20px] text-[10px] font-semibold rounded-full bg-fill-tertiary text-label-secondary">
+                {agentTabCount}
+              </span>
+            )}
           </Link>
           <Link
             to={`/sites/${siteId}/protection`}
@@ -1430,6 +1549,11 @@ export const SiteDetail: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
             </svg>
             App Protection
+            {protectionTabCount !== null && (
+              <span className="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 min-w-[20px] text-[10px] font-semibold rounded-full bg-fill-tertiary text-label-secondary">
+                {protectionTabCount}
+              </span>
+            )}
           </Link>
           <Link
             to={`/sites/${siteId}/drift-config`}
@@ -1464,11 +1588,14 @@ export const SiteDetail: React.FC = () => {
         </div>
       </div>
 
+      {/* Site Compliance Hero — pinned headline summary */}
+      {site && <SiteComplianceHero site={site} />}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main content */}
         <div className="lg:col-span-2 space-y-6">
           {/* Deployment Progress (Zero-Friction Pipeline) */}
-          {siteId && <DeploymentProgress siteId={siteId} />}
+          {siteId && <DeploymentProgress siteId={siteId} site={site} />}
 
           {/* Compliance Health Infographic */}
           {siteId && site && (

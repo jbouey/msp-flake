@@ -1,14 +1,24 @@
 import React from 'react';
 import { GlassCard, Spinner, Badge } from '../shared';
 import { useDeploymentStatus } from '../../hooks/useDeployment';
+import { formatTimeAgo } from '../../constants';
+import type { SiteDetail } from '../../utils/api';
 
 interface DeploymentProgressProps {
   siteId: string;
+  /**
+   * Optional site record used to detect mature deployments.
+   * When the site already has scan/baseline/active timestamps we collapse the
+   * progress card to a compact "Deployment Complete" summary instead of
+   * re-showing the 6-phase timeline (which was getting stuck at ~17% for
+   * fully onboarded sites whose backend status hadn't been refreshed).
+   */
+  site?: Pick<SiteDetail, 'timestamps' | 'onboarding_stage' | 'last_checkin'> | null;
 }
 
 /**
  * Deployment progress component for zero-friction deployment pipeline.
- * 
+ *
  * Shows real-time progress through:
  * 1. Discovering domain
  * 2. Awaiting credentials
@@ -16,9 +26,24 @@ interface DeploymentProgressProps {
  * 4. Deploying agents
  * 5. First scan
  * 6. Complete
+ *
+ * For sites that have already completed deployment we render a compact
+ * "Deployment Complete" state (see `isMatureSite`).
  */
-export const DeploymentProgress: React.FC<DeploymentProgressProps> = ({ siteId }) => {
+export const DeploymentProgress: React.FC<DeploymentProgressProps> = ({ siteId, site }) => {
   const { data: status, isLoading, error } = useDeploymentStatus(siteId);
+
+  // A site is "mature" when any of the post-scan milestones are set, when it's
+  // sitting in the `active` onboarding stage, or when the backend has already
+  // reported the deployment phase as `complete`. This prevents the 6-step
+  // timeline from rendering at 17% for sites that have been online for weeks.
+  const ts = site?.timestamps;
+  const isMatureSite = Boolean(
+    (status && status.phase === 'complete') ||
+    status?.details?.first_scan_complete ||
+    (ts && (ts.scanning_at || ts.baseline_at || ts.active_at)) ||
+    site?.onboarding_stage === 'active'
+  );
 
   if (isLoading) {
     return (
@@ -36,6 +61,57 @@ export const DeploymentProgress: React.FC<DeploymentProgressProps> = ({ siteId }
       <GlassCard className="p-6">
         <div className="text-health-critical">
           Failed to load deployment status: {error instanceof Error ? error.message : 'Unknown error'}
+        </div>
+      </GlassCard>
+    );
+  }
+
+  // Compact "complete" state for mature sites. We show this even when the
+  // status endpoint returns no data, because the site.timestamps alone are
+  // enough evidence that onboarding is long done.
+  if (isMatureSite) {
+    const completedAt = ts?.baseline_at || ts?.active_at || ts?.scanning_at || site?.last_checkin || null;
+    return (
+      <GlassCard className="p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-full bg-health-healthy/15 text-health-healthy flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-label-primary">Deployment Complete</h3>
+                <Badge variant="success" className="text-[10px]">Onboarded</Badge>
+              </div>
+              <p className="text-xs text-label-tertiary truncate">
+                Zero-friction pipeline finished {completedAt ? formatTimeAgo(completedAt) : 'recently'}
+              </p>
+            </div>
+          </div>
+          {status?.details && (
+            <div className="hidden sm:flex items-center gap-4 text-xs text-label-secondary flex-shrink-0">
+              {typeof status.details.servers_found === 'number' && (
+                <div className="text-right">
+                  <div className="font-semibold text-label-primary">{status.details.servers_found}</div>
+                  <div className="text-label-tertiary">Servers</div>
+                </div>
+              )}
+              {typeof status.details.workstations_found === 'number' && (
+                <div className="text-right">
+                  <div className="font-semibold text-label-primary">{status.details.workstations_found}</div>
+                  <div className="text-label-tertiary">Workstations</div>
+                </div>
+              )}
+              {typeof status.details.agents_deployed === 'number' && (
+                <div className="text-right">
+                  <div className="font-semibold text-label-primary">{status.details.agents_deployed}</div>
+                  <div className="text-label-tertiary">Agents</div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </GlassCard>
     );
