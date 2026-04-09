@@ -6167,13 +6167,14 @@ async def get_agent_health(
         rows = await conn.fetch("""
             SELECT g.agent_id, g.hostname, g.ip_address,
                    COALESCE(NULLIF(g.os_version, ''), g.os_name) AS os_version,
-                   g.agent_version, g.status, g.last_heartbeat,
+                   g.agent_version, g.status,
+                   GREATEST(g.last_heartbeat, g.updated_at) AS last_heartbeat,
                    g.checks_passed, g.checks_total,
                    g.compliance_percentage, g.site_id,
                    s.clinic_name
             FROM go_agents g
             LEFT JOIN sites s ON s.site_id = g.site_id
-            ORDER BY g.last_heartbeat DESC NULLS LAST
+            ORDER BY GREATEST(g.last_heartbeat, g.updated_at) DESC NULLS LAST
         """)
 
     now = datetime.now(timezone.utc)
