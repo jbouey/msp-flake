@@ -27,6 +27,7 @@ const deviceTypeConfig: Record<string, { icon: string; label: string; color: str
  */
 const complianceColors: Record<string, string> = {
   compliant: 'bg-health-healthy text-white',
+  warning: 'bg-amber-500 text-white',
   drifted: 'bg-orange-500 text-white',
   unknown: 'bg-slate-500 text-white',
   excluded: 'bg-slate-600 text-white',
@@ -34,6 +35,7 @@ const complianceColors: Record<string, string> = {
 
 const complianceLabels: Record<string, string> = {
   compliant: 'Passing',
+  warning: 'Warning',
   drifted: 'Failing',
   unknown: 'No Data',
   excluded: 'Excluded',

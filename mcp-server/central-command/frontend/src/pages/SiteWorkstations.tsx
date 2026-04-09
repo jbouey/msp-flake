@@ -59,6 +59,7 @@ function getSortWeight(ws: Workstation): number {
  */
 const statusColors: Record<WorkstationComplianceStatus, string> = {
   compliant: 'bg-health-healthy text-white',
+  warning: 'bg-amber-500 text-white',
   drifted: 'bg-health-warning text-white',
   error: 'bg-health-critical text-white',
   unknown: 'bg-slate-400 text-white',
@@ -67,6 +68,7 @@ const statusColors: Record<WorkstationComplianceStatus, string> = {
 
 const statusLabels: Record<WorkstationComplianceStatus, string> = {
   compliant: 'Passing',
+  warning: 'Warning',
   drifted: 'Failing',
   error: 'Error',
   unknown: 'No Data',

@@ -6001,20 +6001,28 @@ async def generate_admin_report(
               AND created_at < ($2::date + interval '1 month')
         """, site_id, start)
 
-        # Compliance score
-        score_row = await conn.fetchrow(
-            "SELECT compliance_score FROM site_appliances WHERE site_id = $1", site_id
-        )
+        # Compliance score — computed from bundle checks
+        score_row = await conn.fetchrow("""
+            SELECT
+                ROUND(
+                    COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant'))::numeric /
+                    NULLIF(COUNT(*) FILTER (WHERE c->>'status' IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning'))::numeric, 0) * 100, 1
+                ) as compliance_score
+            FROM compliance_bundles cb,
+                 jsonb_array_elements(cb.checks) as c
+            WHERE cb.site_id = $1 AND cb.created_at >= $2::date
+              AND cb.created_at < ($2::date + interval '1 month')
+        """, site_id, start)
 
         # Category breakdown from recent bundles
         categories = await conn.fetch("""
             SELECT x.check_type,
                    COUNT(*) as checks,
-                   SUM(CASE WHEN x.result = 'pass' THEN 1 ELSE 0 END) as passed,
-                   SUM(CASE WHEN x.result = 'fail' THEN 1 ELSE 0 END) as failed
+                   SUM(CASE WHEN x.status IN ('pass', 'compliant') THEN 1 ELSE 0 END) as passed,
+                   SUM(CASE WHEN x.status IN ('fail', 'non_compliant') THEN 1 ELSE 0 END) as failed
             FROM compliance_bundles cb,
                  jsonb_array_elements(cb.checks) AS c,
-                 jsonb_to_record(c) AS x(check_type text, result text)
+                 jsonb_to_record(c) AS x(check_type text, status text)
             WHERE cb.site_id = $1 AND cb.created_at >= $2::date
               AND cb.created_at < ($2::date + interval '1 month')
             GROUP BY x.check_type

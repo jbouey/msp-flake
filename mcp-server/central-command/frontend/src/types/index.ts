@@ -485,7 +485,7 @@ export const FRAMEWORK_COLORS: Record<ComplianceFramework, string> = {
 // WORKSTATION MODELS
 // =============================================================================
 
-export type WorkstationComplianceStatus = 'compliant' | 'drifted' | 'error' | 'unknown' | 'offline';
+export type WorkstationComplianceStatus = 'compliant' | 'warning' | 'drifted' | 'error' | 'unknown' | 'offline';
 
 export interface WorkstationCheckResult {
   check_type: 'bitlocker' | 'defender' | 'patches' | 'firewall' | 'screen_lock';

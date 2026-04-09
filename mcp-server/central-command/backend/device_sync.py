@@ -1197,10 +1197,14 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
         total = row['total_count'] or 1
         resolved = row['resolved_count'] or 0
         pct = round(resolved / total * 100, 1) if total > 0 else 0.0
-        if row['open_count'] > 0:
-            compliance_map[h] = ('drifted', row['last_incident_at'], pct)
-        elif row['resolved_count'] > 0:
-            compliance_map[h] = ('compliant', row['last_incident_at'], pct)
+        # Threshold-based status: >90% resolved = compliant, 70-90% = warning, <70% = drifted
+        if row['open_count'] == 0 or pct >= 90:
+            status = 'compliant'
+        elif pct >= 70:
+            status = 'warning'
+        else:
+            status = 'drifted'
+        compliance_map[h] = (status, row['last_incident_at'], pct)
 
     # Site-level fallback: derive compliance per platform from incidents without
     # per-host hostname (pre-backfill data). This gives a reasonable status
@@ -1223,10 +1227,13 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
         total = (row['open_count'] + row['resolved_count']) or 1
         resolved = row['resolved_count'] or 0
         pct = round(resolved / total * 100, 1) if total > 0 else 0.0
-        if row['open_count'] > 0:
-            platform_map[p] = ('drifted', row['last_incident_at'], pct)
-        elif row['resolved_count'] > 0:
-            platform_map[p] = ('compliant', row['last_incident_at'], pct)
+        if row['open_count'] == 0 or pct >= 90:
+            status = 'compliant'
+        elif pct >= 70:
+            status = 'warning'
+        else:
+            status = 'drifted'
+        platform_map[p] = (status, row['last_incident_at'], pct)
 
     upserted = 0
     for dev in devices:
