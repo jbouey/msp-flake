@@ -2135,6 +2135,68 @@ async def list_evidence_bundles(
     }
 
 
+@router.get("/sites/{site_id}/bundles/{bundle_id}/ots")
+async def download_bundle_ots_file(
+    site_id: str,
+    bundle_id: str,
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
+):
+    """Download the raw OpenTimestamps proof file for a single bundle.
+
+    SESSION 203 Tier 3 H3 — the auditor kit ZIP already includes every
+    `.ots` file under `ots/{bundle_id}.ots`, but auditors investigating a
+    specific bundle want a one-click download button next to that bundle
+    in the portal UI rather than downloading the whole kit.
+
+    Returns the raw OTS file bytes (binary) so it can be passed directly
+    to `ots verify` or any other OpenTimestamps client. The file format
+    is the standard OTS proof file (starts with the OTS magic header).
+
+    Errors:
+      404 if the bundle doesn't exist for the site, or if no OTS proof
+          has been recorded for the bundle (legacy/pending bundles).
+    """
+    result = await db.execute(text("""
+        SELECT cb.bundle_id, cb.bundle_hash, cb.site_id,
+               op.proof_data, op.status, op.calendar_url
+        FROM compliance_bundles cb
+        LEFT JOIN ots_proofs op ON op.bundle_id = cb.bundle_id
+        WHERE cb.bundle_id = :bundle_id
+          AND cb.site_id = :site_id
+    """), {"bundle_id": bundle_id, "site_id": site_id})
+    row = result.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Bundle not found for this site")
+
+    if not row.proof_data:
+        raise HTTPException(
+            status_code=404,
+            detail="No OpenTimestamps proof recorded for this bundle (legacy or pending)",
+        )
+
+    try:
+        ots_bytes = base64.b64decode(row.proof_data)
+    except Exception as exc:
+        logger.error(f"Failed to decode proof_data for bundle {bundle_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Stored OTS proof is corrupted")
+
+    from fastapi.responses import Response  # local import — same pattern as download_auditor_kit
+
+    safe_bundle = "".join(c if c.isalnum() or c in "-_" else "-" for c in bundle_id)
+    return Response(
+        content=ots_bytes,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_bundle}.ots"',
+            "X-Bundle-Hash": row.bundle_hash or "",
+            "X-OTS-Status": row.status or "unknown",
+            "X-Calendar-URL": row.calendar_url or "",
+        },
+    )
+
+
 @router.get("/sites/{site_id}/random-sample")
 async def get_random_bundle_sample(
     site_id: str,

@@ -3,6 +3,7 @@ import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { BRANDING } from '../constants';
 import { BrowserVerifiedBadge } from './BrowserVerifiedBadge';
 import { FullChainVerifyPanel } from './FullChainVerifyPanel';
+import { PublicKeysPanel } from './PublicKeysPanel';
 
 interface VerificationResult {
   status: 'valid' | 'invalid' | 'empty' | 'error' | 'verified' | 'broken' | 'signature_invalid';
@@ -152,13 +153,22 @@ const HashDisplay: React.FC<{ label: string; hash: string; isGenesis?: boolean }
   </div>
 );
 
-const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
+const BundleTimeline: React.FC<{ bundles: BundleInfo[]; siteId?: string }> = ({ bundles, siteId }) => {
   if (bundles.length === 0) return null;
 
   return (
     <div className="space-y-4">
       {bundles.map((bundle, index) => {
         const isGenesis = bundle.prev_hash === '0'.repeat(64);
+        // Tier 3 H3 — per-bundle .ots download button. Only show when the
+        // bundle has been anchored (proof_data exists). Legacy bundles
+        // and pending bundles don't have a downloadable .ots file.
+        const hasOtsFile =
+          siteId &&
+          (bundle.ots_status === 'anchored' || bundle.ots_status === 'verified');
+        const otsDownloadUrl = hasOtsFile
+          ? `/api/evidence/sites/${siteId}/bundles/${bundle.bundle_id}/ots`
+          : null;
         return (
           <div key={bundle.bundle_id} className="relative pl-8">
             {/* Timeline connector */}
@@ -213,6 +223,25 @@ const BundleTimeline: React.FC<{ bundles: BundleInfo[] }> = ({ bundles }) => {
                 <div className="mt-3 flex items-center gap-2 text-xs text-slate-400">
                   <span className="font-mono">{bundle.prev_hash?.substring(0, 8)}...</span>
                   <span>links to previous bundle</span>
+                </div>
+              )}
+
+              {/* Tier 3 H3 — per-bundle .ots download button */}
+              {otsDownloadUrl && (
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <a
+                    href={otsDownloadUrl}
+                    download={`${bundle.bundle_id}.ots`}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 hover:text-blue-900 hover:underline"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                    Download .ots proof file
+                  </a>
+                  <span className="ml-2 text-[10px] text-slate-500">
+                    Run <code className="px-1 bg-slate-100 rounded">ots verify {bundle.bundle_id.slice(0, 12)}.ots</code> to verify against Bitcoin
+                  </span>
                 </div>
               )}
             </div>
@@ -272,6 +301,7 @@ const BlockchainSection: React.FC<{ data: BlockchainStatus; siteId?: string }> =
         <div className="mb-6 space-y-4">
           <BrowserVerifiedBadge siteId={siteId} />
           <FullChainVerifyPanel siteId={siteId} />
+          <PublicKeysPanel siteId={siteId} />
         </div>
       )}
 
@@ -617,7 +647,7 @@ export const PortalVerify: React.FC = () => {
               forming an immutable chain. The genesis bundle (G) starts the chain with an all-zeros previous hash.
               Bundles with a Bitcoin anchor have their timestamp independently verifiable on the blockchain.
             </p>
-            <BundleTimeline bundles={bundles} />
+            <BundleTimeline bundles={bundles} siteId={siteId} />
           </section>
         )}
 
