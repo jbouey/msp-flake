@@ -536,7 +536,7 @@ const DeviceTable: React.FC<{
           <select
             value={filter.type || ''}
             onChange={(e) => { setDevPage(0); onFilterChange({ ...filter, type: e.target.value || undefined }); }}
-            className="px-2 py-1 rounded bg-glass-bg border border-glass-border text-sm text-label-primary"
+            className="px-2 py-1 rounded bg-background-secondary border border-glass-border text-sm text-label-primary [color-scheme:dark]"
           >
             <option value="">All Types</option>
             <option value="workstation">Workstation</option>
@@ -552,7 +552,7 @@ const DeviceTable: React.FC<{
           <select
             value={filter.status || ''}
             onChange={(e) => { setDevPage(0); onFilterChange({ ...filter, status: e.target.value || undefined }); }}
-            className="px-2 py-1 rounded bg-glass-bg border border-glass-border text-sm text-label-primary"
+            className="px-2 py-1 rounded bg-background-secondary border border-glass-border text-sm text-label-primary [color-scheme:dark]"
           >
             <option value="">All Status</option>
             <option value="compliant">Passing</option>

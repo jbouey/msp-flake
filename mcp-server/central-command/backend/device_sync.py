@@ -650,9 +650,16 @@ async def get_site_devices(
         SELECT
             d.*,
             a.host_id as appliance_hostname,
-            a.site_id
+            a.site_id,
+            w.os_name as ws_os_name,
+            w.os_version as ws_os_version,
+            w.compliance_status as ws_compliance_status,
+            w.compliance_percentage as ws_compliance_pct,
+            w.last_compliance_check as ws_last_check
         FROM discovered_devices d
         JOIN appliances a ON d.appliance_id = a.id
+        LEFT JOIN workstations w ON w.site_id = a.site_id
+            AND (w.ip_address = d.ip_address OR UPPER(w.hostname) = UPPER(d.hostname))
         WHERE a.site_id = $1
     """
     params = [site_id]
@@ -723,6 +730,24 @@ async def get_site_devices(
             d = dict(row)
             mac = d.get("mac_address")
             d["manufacturer_hint"] = get_manufacturer_hint(mac) if mac else {"manufacturer": None, "device_class": None, "confidence": None}
+
+            # Enrich with workstation data when discovered_devices has no info
+            if d.get("ws_os_name"):
+                if not d.get("os_name") or d["os_name"] == "None":
+                    d["os_name"] = d["ws_os_name"]
+                if not d.get("os_version"):
+                    d["os_version"] = d.get("ws_os_version")
+            if d.get("ws_compliance_status") and d.get("compliance_status") in (None, "unknown"):
+                d["compliance_status"] = d["ws_compliance_status"]
+            if d.get("ws_compliance_pct") is not None:
+                d["compliance_percentage"] = float(d["ws_compliance_pct"])
+            if d.get("device_type") in (None, "unknown") and d.get("ws_os_name"):
+                # Infer type from OS
+                ws_os = (d["ws_os_name"] or "").lower()
+                if "server" in ws_os:
+                    d["device_type"] = "server"
+                elif "windows" in ws_os or "linux" in ws_os or "darwin" in ws_os:
+                    d["device_type"] = "workstation"
 
             # Tag devices as managed/unmanaged based on subnet
             ip = str(d.get("ip_address") or "")
