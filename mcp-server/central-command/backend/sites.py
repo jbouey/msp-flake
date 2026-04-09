@@ -2669,10 +2669,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                                 except (ValueError, AttributeError):
                                     return datetime.utcnow()
                             connected_at_dt = _parse_ts(agent.connected_at)
-                            last_heartbeat_dt = _parse_ts(agent.last_heartbeat)
-                            # Go zero time (0001-01-01) means "never heartbeated" — treat as None
-                            if last_heartbeat_dt and last_heartbeat_dt.year < 2000:
-                                last_heartbeat_dt = None
+                            # Agent is in the checkin payload = actively connected NOW.
+                            # Use server time, not the daemon's relayed timestamp which
+                            # may be stale or zero-time.
+                            last_heartbeat_dt = datetime.utcnow()
                             if connected_at_dt and connected_at_dt.year < 2000:
                                 connected_at_dt = None
                             # Delete any existing row with same (site_id, hostname) but different agent_id

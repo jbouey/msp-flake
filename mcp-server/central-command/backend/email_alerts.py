@@ -410,7 +410,8 @@ async def create_notification_with_email(
     import json
 
     # Insert notification
-    result = await db.execute(text("""
+    from .shared import execute_with_retry
+    result = await execute_with_retry(db, text("""
         INSERT INTO notifications (site_id, appliance_id, severity, category, title, message, metadata)
         VALUES (:site_id, :appliance_id, :severity, :category, :title, :message, :metadata)
         RETURNING id

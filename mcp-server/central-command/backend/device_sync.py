@@ -23,10 +23,28 @@ logger = logging.getLogger(__name__)
 
 # Subnets to exclude from workstation creation — residential/home networks
 # that get discovered by appliances on non-clinical subnets.
-EXCLUDED_WORKSTATION_SUBNETS = [
+DEFAULT_EXCLUDED_SUBNETS = [
     "192.168.0.",   # Common residential default
     "192.168.1.",   # Common residential default
 ]
+
+
+async def _get_excluded_subnets(conn, site_id: str) -> list:
+    """Get excluded subnets for a site. Falls back to defaults.
+
+    Per-site config in site_drift_config with check_type='_excluded_subnets'.
+    Value is a comma-separated list of subnet prefixes (e.g. '192.168.0.,10.0.0.').
+    """
+    try:
+        row = await conn.fetchrow(
+            "SELECT notes FROM site_drift_config WHERE site_id = $1 AND check_type = '_excluded_subnets'",
+            site_id,
+        )
+        if row and row['notes']:
+            return [s.strip() for s in row['notes'].split(',') if s.strip()]
+    except Exception:
+        pass
+    return DEFAULT_EXCLUDED_SUBNETS
 
 
 # =============================================================================
@@ -1139,6 +1157,8 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
     upsert them into the workstations table so the Workstations tab shows data.
     Compliance status is derived from recent incidents targeting each device.
     """
+    excluded_subnets = await _get_excluded_subnets(conn, site_id)
+
     devices = await conn.fetch("""
         SELECT d.id, d.hostname, d.ip_address, d.mac_address,
                d.os_name, d.os_version, d.compliance_status,
@@ -1214,10 +1234,9 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
         if not hostname:
             continue
 
-        # Skip devices on residential/home subnets — a hostname doesn't make
-        # a home device clinical; IP subnet is the authoritative signal.
+        # Skip devices on excluded subnets (per-site or default residential)
         ip = dev['ip_address']
-        if ip and any(ip.startswith(prefix) for prefix in EXCLUDED_WORKSTATION_SUBNETS):
+        if ip and any(ip.startswith(prefix) for prefix in excluded_subnets):
             continue
 
         # Check incident-derived status: per-host first, then platform fallback
@@ -1280,18 +1299,19 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
         )
         upserted += 1
 
-    # Cleanup: remove workstations from excluded subnets (residential/home network)
-    # and entries not seen in >14 days (decommissioned devices)
-    cleaned = await conn.execute("""
-        DELETE FROM workstations
-        WHERE site_id = $1 AND (
-            ip_address LIKE '192.168.0.%'
-            OR ip_address LIKE '192.168.1.%'
-            OR (last_seen < NOW() - INTERVAL '14 days' AND online = false)
+    # Cleanup: remove workstations from excluded subnets and stale entries
+    cleaned_count = 0
+    for prefix in excluded_subnets:
+        result = await conn.execute(
+            "DELETE FROM workstations WHERE site_id = $1 AND ip_address LIKE $2",
+            site_id, prefix + '%',
         )
-    """, site_id)
-    cleaned_count = int(cleaned.split()[-1]) if cleaned else 0
-
+        cleaned_count += int(result.split()[-1]) if result else 0
+    result = await conn.execute(
+        "DELETE FROM workstations WHERE site_id = $1 AND last_seen < NOW() - INTERVAL '14 days' AND online = false",
+        site_id,
+    )
+    cleaned_count += int(result.split()[-1]) if result else 0
     if upserted > 0 or cleaned_count > 0:
         await _update_workstation_summary(conn, site_id)
 
