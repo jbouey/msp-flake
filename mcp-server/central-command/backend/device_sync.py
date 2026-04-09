@@ -1158,7 +1158,7 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
     # depending on check type).
     incident_status = await conn.fetch("""
         SELECT
-            COALESCE(hostname, details->>'hostname') as host,
+            details->>'hostname' as host,
             COUNT(*) FILTER (WHERE status IN ('open', 'resolving')) as open_count,
             COUNT(*) FILTER (WHERE status = 'resolved') as resolved_count,
             COUNT(*) as total_count,
@@ -1166,8 +1166,8 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
         FROM incidents
         WHERE site_id = $1
         AND created_at > NOW() - INTERVAL '7 days'
-        AND COALESCE(hostname, details->>'hostname') IS NOT NULL
-        GROUP BY COALESCE(hostname, details->>'hostname')
+        AND details->>'hostname' IS NOT NULL
+        GROUP BY details->>'hostname'
     """, site_id)
 
     # Build lookup: hostname/IP → (compliance_status, last_check, percentage)
