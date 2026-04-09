@@ -1115,11 +1115,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not create delegation tables: {e}")
 
-    # Verify credential encryption key is available
+    # Verify credential encryption key is available (warms the MultiFernet
+    # keyring cache so startup fails loudly rather than at first request)
     try:
-        from dashboard_api.credential_crypto import _get_fernet
-        _get_fernet()
-        logger.info("Credential encryption key loaded")
+        from dashboard_api.credential_crypto import get_key_fingerprints
+        fps = get_key_fingerprints()
+        logger.info(f"Credential encryption keyring loaded: {len(fps)} key(s), primary={fps[0] if fps else 'none'}")
     except Exception as e:
         logger.error(f"CRITICAL: Credential encryption unavailable: {e}. "
                      "Credentials cannot be decrypted for appliance delivery.")
