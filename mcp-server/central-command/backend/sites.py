@@ -4188,52 +4188,13 @@ async def get_site_go_agents(site_id: str, user: dict = Depends(require_auth)):
     pool = await get_pool()
 
     async with tenant_connection(pool, site_id=site_id) as conn:
-        # Get summary (if exists)
-        summary_row = await conn.fetchrow("""
-            SELECT site_id, total_agents, active_agents, offline_agents,
-                   error_agents, pending_agents, overall_compliance_rate,
-                   agents_by_tier, agents_by_version, rmm_detected_count,
-                   last_event
-            FROM site_go_agent_summaries
-            WHERE site_id = $1
-        """, site_id)
-
-        summary = None
-        if summary_row:
-            agents_by_tier = summary_row['agents_by_tier']
-            if isinstance(agents_by_tier, str):
-                try:
-                    agents_by_tier = json.loads(agents_by_tier)
-                except (json.JSONDecodeError, TypeError):
-                    agents_by_tier = {}
-
-            agents_by_version = summary_row['agents_by_version']
-            if isinstance(agents_by_version, str):
-                try:
-                    agents_by_version = json.loads(agents_by_version)
-                except (json.JSONDecodeError, TypeError):
-                    agents_by_version = {}
-
-            summary = {
-                'site_id': summary_row['site_id'],
-                'total_agents': summary_row['total_agents'] or 0,
-                'active_agents': summary_row['active_agents'] or 0,
-                'offline_agents': summary_row['offline_agents'] or 0,
-                'error_agents': summary_row['error_agents'] or 0,
-                'pending_agents': summary_row['pending_agents'] or 0,
-                'overall_compliance_rate': float(summary_row['overall_compliance_rate'] or 0),
-                'agents_by_tier': agents_by_tier,
-                'agents_by_version': agents_by_version,
-                'rmm_detected_count': summary_row['rmm_detected_count'] or 0,
-                'last_event': summary_row['last_event'].isoformat() if summary_row['last_event'] else None,
-            }
-
-        # Get agents with their latest checks
+        # Get agents with their latest checks (live query, no stale summary)
         agent_rows = await conn.fetch("""
             SELECT agent_id, hostname, ip_address, agent_version,
                    capability_tier, status, checks_passed, checks_total,
                    compliance_percentage, rmm_detected, rmm_disabled,
-                   offline_queue_size, connected_at, last_heartbeat
+                   offline_queue_size, connected_at, last_heartbeat,
+                   GREATEST(last_heartbeat, updated_at) as effective_heartbeat
             FROM go_agents
             WHERE site_id = $1
             ORDER BY hostname
@@ -4288,6 +4249,37 @@ async def get_site_go_agents(site_id: str, user: dict = Depends(require_auth)):
                 'last_heartbeat': row['last_heartbeat'].isoformat() if row['last_heartbeat'] else None,
                 'checks': checks,
             })
+
+        # Compute summary live from agents (no stale summary table)
+        tier_counts = {}
+        version_counts = {}
+        total_comp = 0.0
+        active = offline = error = 0
+        for a in agents:
+            tier_counts[a['capability_tier']] = tier_counts.get(a['capability_tier'], 0) + 1
+            if a['agent_version']:
+                version_counts[a['agent_version']] = version_counts.get(a['agent_version'], 0) + 1
+            total_comp += a['compliance_percentage']
+            if a['status'] == 'connected':
+                active += 1
+            elif a['status'] == 'error':
+                error += 1
+            else:
+                offline += 1
+
+        summary = {
+            'site_id': site_id,
+            'total_agents': len(agents),
+            'active_agents': active,
+            'offline_agents': offline,
+            'error_agents': error,
+            'pending_agents': 0,
+            'overall_compliance_rate': round(total_comp / len(agents), 1) if agents else 0,
+            'agents_by_tier': tier_counts,
+            'agents_by_version': version_counts,
+            'rmm_detected_count': sum(1 for a in agents if a.get('rmm_detected')),
+            'last_event': max((a['last_heartbeat'] for a in agents if a['last_heartbeat']), default=None),
+        }
 
         return {
             'summary': summary,
