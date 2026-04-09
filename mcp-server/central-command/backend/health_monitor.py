@@ -927,7 +927,7 @@ async def _check_mesh_isolation():
                 for app in isolated:
                     existing = await conn.fetchval(f"""
                         SELECT 1 FROM notifications
-                        WHERE site_id = $1
+                        WHERE site_id = $1::text
                           AND category IN ('mesh_isolation', 'mesh_topology_limitation')
                           AND message LIKE '%' || $2::text || '%'
                           AND created_at > NOW() - INTERVAL '{dedup_interval}'
