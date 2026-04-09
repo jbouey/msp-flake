@@ -1153,30 +1153,34 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
     if not devices:
         return
 
-    # Derive compliance status from incidents: query recent incidents that have
-    # hostname in their details JSON (set by Go daemon's incident reporter).
-    # Also check incidents keyed by appliance_id for the local NixOS appliance.
+    # Derive compliance status from incidents. Check both details->>'hostname'
+    # and the top-level hostname column (Go daemon stores it in both places
+    # depending on check type).
     incident_status = await conn.fetch("""
         SELECT
-            details->>'hostname' as hostname,
+            COALESCE(hostname, details->>'hostname') as host,
             COUNT(*) FILTER (WHERE status IN ('open', 'resolving')) as open_count,
             COUNT(*) FILTER (WHERE status = 'resolved') as resolved_count,
+            COUNT(*) as total_count,
             MAX(created_at) as last_incident_at
         FROM incidents
         WHERE site_id = $1
         AND created_at > NOW() - INTERVAL '7 days'
-        AND details->>'hostname' IS NOT NULL
-        GROUP BY details->>'hostname'
+        AND COALESCE(hostname, details->>'hostname') IS NOT NULL
+        GROUP BY COALESCE(hostname, details->>'hostname')
     """, site_id)
 
-    # Build lookup: hostname/IP → compliance status + last check time
+    # Build lookup: hostname/IP → (compliance_status, last_check, percentage)
     compliance_map = {}
     for row in incident_status:
-        h = row['hostname']
+        h = row['host']
+        total = row['total_count'] or 1
+        resolved = row['resolved_count'] or 0
+        pct = round(resolved / total * 100, 1) if total > 0 else 0.0
         if row['open_count'] > 0:
-            compliance_map[h] = ('drifted', row['last_incident_at'])
+            compliance_map[h] = ('drifted', row['last_incident_at'], pct)
         elif row['resolved_count'] > 0:
-            compliance_map[h] = ('compliant', row['last_incident_at'])
+            compliance_map[h] = ('compliant', row['last_incident_at'], pct)
 
     # Site-level fallback: derive compliance per platform from incidents without
     # per-host hostname (pre-backfill data). This gives a reasonable status
@@ -1196,10 +1200,13 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
     platform_map = {}
     for row in platform_status:
         p = row['platform']
+        total = (row['open_count'] + row['resolved_count']) or 1
+        resolved = row['resolved_count'] or 0
+        pct = round(resolved / total * 100, 1) if total > 0 else 0.0
         if row['open_count'] > 0:
-            platform_map[p] = ('drifted', row['last_incident_at'])
+            platform_map[p] = ('drifted', row['last_incident_at'], pct)
         elif row['resolved_count'] > 0:
-            platform_map[p] = ('compliant', row['last_incident_at'])
+            platform_map[p] = ('compliant', row['last_incident_at'], pct)
 
     upserted = 0
     for dev in devices:
@@ -1226,10 +1233,11 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
                 incident_data = platform_map.get('linux')  # macOS scanned as linux targets
 
         if incident_data:
-            status, last_check = incident_data
+            status, last_check, comp_pct = incident_data
         else:
             status = dev['compliance_status'] or 'unknown'
             last_check = None
+            comp_pct = 0.0
 
         # last_seen within 30 min = online
         online = False
@@ -1244,8 +1252,8 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
             INSERT INTO workstations (
                 site_id, hostname, ip_address, mac_address,
                 os_name, os_version, online, last_seen,
-                compliance_status, last_compliance_check, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+                compliance_status, compliance_percentage, last_compliance_check, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
             ON CONFLICT (site_id, hostname) DO UPDATE SET
                 ip_address = COALESCE(EXCLUDED.ip_address, workstations.ip_address),
                 mac_address = COALESCE(EXCLUDED.mac_address, workstations.mac_address),
@@ -1254,6 +1262,7 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
                 online = EXCLUDED.online,
                 last_seen = COALESCE(EXCLUDED.last_seen, workstations.last_seen),
                 compliance_status = EXCLUDED.compliance_status,
+                compliance_percentage = EXCLUDED.compliance_percentage,
                 last_compliance_check = COALESCE(EXCLUDED.last_compliance_check, workstations.last_compliance_check),
                 updated_at = NOW()
         """,
@@ -1266,14 +1275,28 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
             online,
             dev['last_seen_at'],
             status,
+            comp_pct,
             last_check,
         )
         upserted += 1
 
-    if upserted > 0:
+    # Cleanup: remove workstations from excluded subnets (residential/home network)
+    # and entries not seen in >14 days (decommissioned devices)
+    cleaned = await conn.execute("""
+        DELETE FROM workstations
+        WHERE site_id = $1 AND (
+            ip_address LIKE '192.168.0.%'
+            OR ip_address LIKE '192.168.1.%'
+            OR (last_seen < NOW() - INTERVAL '14 days' AND online = false)
+        )
+    """, site_id)
+    cleaned_count = int(cleaned.split()[-1]) if cleaned else 0
+
+    if upserted > 0 or cleaned_count > 0:
         await _update_workstation_summary(conn, site_id)
 
-    logger.info(f"Linked {upserted} discovered devices → workstations for site {site_id}")
+    logger.info(f"Linked {upserted} discovered devices → workstations for site {site_id}" +
+                (f" (cleaned {cleaned_count} stale/residential)" if cleaned_count else ""))
 
 
 async def _update_workstation_summary(conn: asyncpg.Connection, site_id: str):
