@@ -205,10 +205,10 @@ Primary state: `.agent/claude-progress.json`
 - **MONITORING_ONLY_CHECKS must be synced** between `main.py` AND `agent_api.py`. Only genuinely un-automatable checks belong there. Both files have their own copy.
 - **agent_api.py router is NOT registered in main.py** (too many overlapping endpoints). Individual endpoints like `/api/agent/l2/plan` are wired manually via `app.post()(handler)`.
 - **L1 rule `incident_pattern` must have `incident_type` key.** The L1 query matches on `incident_pattern->>'incident_type'`. Synced/promoted rules with only `check_type` are dead weight.
-- **CI/CD deploys code but does NOT restart the container.** After git push, manually restart: `cd /opt/mcp-server && docker compose up -d --build mcp-server`.
+- **CI/CD deploys code AND restarts automatically.** The deploy workflow rsyncs to `dashboard_api_mount`, restarts mcp-server+frontend, runs health check, and auto-rollbacks on failure. No manual restart needed.
 - **iMac SSH on port 2222** (Session 191). Port 22 blocked by MikroTik HW offload (Ethernet↔WiFi). Use `ssh -p 2222 jrelly@192.168.88.50`. LaunchDaemon plist at `/Library/LaunchDaemons/com.local.sshd2222.plist`.
 - **Credential encryption key required.** Fernet key at `/app/secrets/credential_encryption.key`. Missing key = RuntimeError on startup. Key also in `.env` as `CREDENTIAL_ENCRYPTION_KEY`.
-- **`dashboard_api_mount` overrides `./app/dashboard_api`** in docker-compose. Copy backend files to BOTH paths when deploying manually.
+- **`dashboard_api_mount` is the ONLY backend mount (Session 202).** The conflicting `./app/dashboard_api` build-context mount was removed. Deploy backend to `/opt/mcp-server/dashboard_api_mount/` only. Never rsync to `app/dashboard_api`.
 - **Go build ldflags**: Version is `internal/daemon.Version`, NOT `main.Version`. Use `make build-linux VERSION=x` or `-X github.com/osiriscare/appliance/internal/daemon.Version=x`.
 - **Fleet orders: complete old before creating new.** Active orders block delivery of newer orders. `UPDATE fleet_orders SET status='completed' WHERE status='active'` before creating.
 - **Backend-authoritative mesh (Session 196, hardened 199).** Target assignment computed SERVER-SIDE in checkin (STEP 3.8c in sites.py). `hash_ring.py` uses round-robin when targets < 2x nodes (guarantees distribution), hash ring otherwise. Go daemon uses server assignments via `ApplyTargetAssignment()`, local ring is 15-min fallback only. 20 tests in `test_target_assignment.py`.
@@ -240,3 +240,11 @@ Primary state: `.agent/claude-progress.json`
 - **CSRF exempt paths for machine-to-machine endpoints.** `/api/witness/submit`, `/api/provision/`, `/api/appliances/checkin`, `/api/devices/sync` must be in `csrf.py EXEMPT_PATHS`. Missing = 403/500 from daemon.
 - **Ops center endpoints**: `/api/ops/health` (admin), `/api/ops/health/{org_id}` (partner), `/api/ops/audit-readiness/{org_id}`, `PUT /api/ops/audit-config/{org_id}`. Registered in main.py via ops_health_router + audit_report_router.
 - **requirements.txt MUST use exact pins (`==`).** Loose pins (`>=`) caused pydantic v2 breakage in CI. Include `pydantic-core` and `pydantic-settings` explicitly — they're transitive deps that pip resolves differently across Python versions.
+- **agent_api.py `_enforce_site_id()` required on ALL appliance endpoints (Session 202).** Every endpoint with `Depends(require_appliance_bearer)` must call `_enforce_site_id(auth_site_id, request_site_id, endpoint_name)`. Prevents cross-site spoofing. 13 endpoints hardened.
+- **`execute_with_retry()` required for ALL SQLAlchemy queries through PgBouncer (Session 202).** auth.py (7 queries), routes.py (104 queries), oauth_login.py (25 queries), users.py (33 queries) all migrated. New code must use `execute_with_retry(db, text(...), params)` not `db.execute()`.
+- **Go daemon uses `slog` structured logging (Session 202).** 15 files migrated from `log.Printf` to `slog.Info/Warn/Error` with `"component"` key. New Go code must use slog, not log.Printf.
+- **`go_agents.site_id` has FK constraint to `sites(site_id)` ON DELETE CASCADE (Migration 144).** Prevents orphaned agents under wrong sites.
+- **Go agent summary computed live on read (Session 202).** `get_site_go_agents()` in sites.py computes summary from raw `go_agents` rows, not from stale `site_go_agent_summaries` table.
+- **`COMPLIANCE_CATEGORIES` in `client_portal.py` is the single source of truth** for check-type → category mapping. Never inline category dicts in functions.
+- **`_send_smtp_with_retry()` in `email_alerts.py`** is the single SMTP send function. All email functions delegate to it. Never write inline SMTP retry loops.
+- **asyncpg `$1` parameters need `::text` cast** when the same connection runs multiple queries with `$1` against different column types. PgBouncer statement caching causes `AmbiguousParameterError` otherwise. See `health_monitor.py` mesh isolation queries.
