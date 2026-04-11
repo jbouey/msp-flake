@@ -670,7 +670,7 @@ async def _resolve_stale_incidents():
             UPDATE incidents SET
                 status = 'resolved',
                 resolved_at = NOW(),
-                resolution_tier = 'superseded'
+                resolution_tier = 'monitoring'
             WHERE id IN (
                 SELECT old.id FROM incidents old
                 WHERE old.status IN ('open', 'resolving', 'escalated')
