@@ -25,6 +25,47 @@ MAX_DAILY_L2_CALLS = int(os.getenv("MAX_DAILY_L2_CALLS", "500"))
 _daily_l2_calls = 0
 _daily_l2_reset = datetime.now(timezone.utc).date()
 
+# --- API error circuit breaker ---
+# After CIRCUIT_BREAKER_THRESHOLD consecutive failures, stop calling the API
+# for CIRCUIT_BREAKER_COOLDOWN_MINUTES. This prevents burning compute on a
+# dead API (e.g., credit exhaustion, outage). Resets after cooldown or on success.
+CIRCUIT_BREAKER_THRESHOLD = 5
+CIRCUIT_BREAKER_COOLDOWN_MINUTES = 15
+_consecutive_api_failures = 0
+_circuit_open_until: Optional[datetime] = None
+
+
+def _check_circuit_breaker() -> Optional[str]:
+    """Returns error message if circuit is open, None if OK to proceed."""
+    global _circuit_open_until
+    if _circuit_open_until:
+        if datetime.now(timezone.utc) < _circuit_open_until:
+            remaining = (_circuit_open_until - datetime.now(timezone.utc)).seconds // 60
+            return f"L2 circuit breaker open — {_consecutive_api_failures} consecutive failures. Retrying in {remaining}m."
+        # Cooldown expired — close circuit
+        _circuit_open_until = None
+    return None
+
+
+def _record_api_success():
+    """Reset circuit breaker on successful API call."""
+    global _consecutive_api_failures, _circuit_open_until
+    _consecutive_api_failures = 0
+    _circuit_open_until = None
+
+
+def _record_api_failure():
+    """Track consecutive failures and open circuit if threshold exceeded."""
+    global _consecutive_api_failures, _circuit_open_until
+    _consecutive_api_failures += 1
+    if _consecutive_api_failures >= CIRCUIT_BREAKER_THRESHOLD:
+        _circuit_open_until = datetime.now(timezone.utc) + timedelta(minutes=CIRCUIT_BREAKER_COOLDOWN_MINUTES)
+        logger.error(
+            "L2 circuit breaker OPENED — API failures exceeded threshold",
+            consecutive_failures=_consecutive_api_failures,
+            cooldown_minutes=CIRCUIT_BREAKER_COOLDOWN_MINUTES,
+        )
+
 
 async def _get_and_increment_daily_l2_calls() -> int:
     """Get current daily L2 call count and increment it atomically.
@@ -516,6 +557,22 @@ async def analyze_incident(
     details = details or {}
     pre_state = pre_state or {}
 
+    # --- API error circuit breaker (consecutive failure protection) ---
+    circuit_error = _check_circuit_breaker()
+    if circuit_error:
+        logger.warning("L2 circuit breaker active — skipping LLM call", reason=circuit_error)
+        return L2Decision(
+            runbook_id=None,
+            reasoning=circuit_error,
+            confidence=0.0,
+            alternative_runbooks=[],
+            requires_human_review=True,
+            pattern_signature="",
+            llm_model="none",
+            llm_latency_ms=0,
+            error="circuit_breaker_open",
+        )
+
     # --- Daily cost circuit breaker (Redis-backed, multi-worker safe) ---
     current_count = await _get_daily_l2_call_count()
     if current_count >= MAX_DAILY_L2_CALLS:
@@ -563,12 +620,17 @@ async def analyze_incident(
         else:
             raise ValueError("No LLM API key configured (AZURE_OPENAI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY)")
 
+        # API call succeeded — reset circuit breaker
+        _record_api_success()
+
     except httpx.TimeoutException:
         error = "LLM request timed out"
         logger.error("L2 LLM timeout", timeout=LLM_TIMEOUT)
+        _record_api_failure()
     except httpx.HTTPStatusError as e:
         error = f"LLM API error: {e.response.status_code}"
         logger.error("L2 LLM API error", status=e.response.status_code, detail=e.response.text[:200])
+        _record_api_failure()
     except Exception as e:
         error = f"LLM error: {str(e)}"
         logger.error("L2 LLM error", error=str(e))
