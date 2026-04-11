@@ -852,6 +852,11 @@ var allowedDiagnostics = map[string][]string{
 	"firewall":        {"nft", "list", "ruleset"},
 	"evidence_queue":  {"ls", "-la", "/var/lib/msp/evidence/"},
 	"rebuild_status":  {"cat", "/var/lib/msp/.rebuild-in-progress"},
+	"nic_list":        {"ip", "link", "show"},
+	"boot_source":     {"cat", "/proc/cmdline"},
+	"mount_root":      {"findmnt", "-n", "-o", "SOURCE,FSTYPE,TARGET", "/"},
+	"wireguard":       {"wg", "show"},
+	"order_nonces":    {"cat", "/var/lib/msp/used_nonces.json"},
 }
 
 func (p *Processor) handleDiagnostic(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
