@@ -7,26 +7,40 @@
 -- Session 204: was applied manually on VPS. This migration formalizes it.
 
 -- 1. Create the trigger function
+-- IMPORTANT: incident_id from daemon may be a drift report ID (not UUID).
+-- Only sync when incident_id is a valid UUID that exists in incidents table.
 CREATE OR REPLACE FUNCTION sync_telemetry_to_remediation_steps()
 RETURNS TRIGGER AS $$
+DECLARE
+    v_uuid UUID;
 BEGIN
-    -- Only sync if we have an incident_id to link to
+    -- Only sync if we have an incident_id that is a valid UUID
     IF NEW.incident_id IS NOT NULL THEN
-        INSERT INTO incident_remediation_steps (
-            incident_id, tier, runbook_id, result, confidence, created_at
-        ) VALUES (
-            NEW.incident_id,
-            COALESCE(NEW.resolution_level, 'L1'),
-            NEW.runbook_id,
-            CASE
-                WHEN NEW.success = true THEN 'executed_success'
-                WHEN NEW.success = false THEN 'executed_failure'
-                ELSE 'executed_unknown'
-            END,
-            NEW.confidence,
-            COALESCE(NEW.completed_at, NOW())
-        )
-        ON CONFLICT DO NOTHING;
+        BEGIN
+            v_uuid := NEW.incident_id::UUID;
+        EXCEPTION WHEN invalid_text_representation THEN
+            -- Not a UUID (e.g. "drift-192.168.88.251-windows_update-...")
+            RETURN NEW;
+        END;
+
+        -- Only insert if the incident actually exists
+        IF EXISTS (SELECT 1 FROM incidents WHERE id = v_uuid) THEN
+            INSERT INTO incident_remediation_steps (
+                incident_id, tier, runbook_id, result, confidence, created_at
+            ) VALUES (
+                v_uuid,
+                COALESCE(NEW.resolution_level, 'L1'),
+                NEW.runbook_id,
+                CASE
+                    WHEN NEW.success = true THEN 'executed_success'
+                    WHEN NEW.success = false THEN 'executed_failure'
+                    ELSE 'executed_unknown'
+                END,
+                NEW.confidence,
+                COALESCE(NEW.completed_at, NOW())
+            )
+            ON CONFLICT DO NOTHING;
+        END IF;
     END IF;
     RETURN NEW;
 END;
