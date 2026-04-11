@@ -211,6 +211,7 @@ type CheckinRequest struct {
 	NixOSVersion        string           `json:"nixos_version"`
 	HasLocalCredentials bool             `json:"has_local_credentials"`
 	AgentPublicKey      string           `json:"agent_public_key,omitempty"`
+	BootSource          string           `json:"boot_source,omitempty"`
 	WgPubKey            string           `json:"wg_pubkey,omitempty"`
 	WgConnected         bool             `json:"wg_connected,omitempty"`
 	WgIP                string           `json:"wg_ip,omitempty"`
@@ -616,6 +617,7 @@ func SystemInfo(cfg *Config, version string) CheckinRequest {
 		Hostname:        hostname,
 		MACAddress:      mac,
 		AllMACAddresses: getAllPhysicalMACs(),
+		BootSource:      detectBootSource(),
 		IPAddresses:     ips,
 		UptimeSeconds:   uptime,
 		AgentVersion:    version,
@@ -637,6 +639,47 @@ func getHostname() string {
 		return "unknown"
 	}
 	return h
+}
+
+// detectBootSource determines if the system is running from a live USB installer
+// or from an installed disk. This prevents the ghost-registration bug where an
+// appliance registers from the live USB environment but the install never completes.
+//
+// Detection: NixOS live ISOs mount root as tmpfs with a squashfs nix store.
+// Installed systems have a real disk partition (ext4/btrfs) at /.
+func detectBootSource() string {
+	// Check /proc/cmdline for live ISO indicators
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err == nil {
+		cmd := string(cmdline)
+		if strings.Contains(cmd, "boot.shell_on_fail") ||
+			strings.Contains(cmd, "copytoram") ||
+			strings.Contains(cmd, "squashfs") {
+			return "live_usb"
+		}
+	}
+
+	// Check if root filesystem is tmpfs (live ISO) vs real disk
+	mounts, err := os.ReadFile("/proc/mounts")
+	if err == nil {
+		for _, line := range strings.Split(string(mounts), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 && fields[1] == "/" {
+				fstype := fields[2]
+				if fstype == "tmpfs" || fstype == "ramfs" || fstype == "squashfs" {
+					return "live_usb"
+				}
+				return "installed_disk"
+			}
+		}
+	}
+
+	// Check for the MSP-DATA partition label (created by installer)
+	if _, err := os.Stat("/dev/disk/by-label/MSP-DATA"); err == nil {
+		return "installed_disk"
+	}
+
+	return "unknown"
 }
 
 // getAllPhysicalMACs returns all non-loopback, non-virtual MAC addresses

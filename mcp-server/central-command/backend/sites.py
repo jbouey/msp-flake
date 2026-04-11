@@ -2431,6 +2431,7 @@ class ApplianceCheckin(BaseModel):
     hostname: str
     mac_address: str
     all_mac_addresses: Optional[List[str]] = None  # All physical NIC MACs (ghost detection)
+    boot_source: Optional[str] = None  # "live_usb", "installed_disk", or "unknown"
     ip_addresses: list = Field(default=[], max_length=100)
     uptime_seconds: Optional[int] = None
     agent_version: Optional[str] = None
@@ -3032,6 +3033,24 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 canonical_id
             )
 
+        # === STEP 2.9: Live USB detection ===
+        # If the appliance reports boot_source="live_usb", it's running from the
+        # installer ISO — NOT from an installed system. Flag it prominently.
+        # This prevents the bug where an admin accepts a MAC, pulls the USB early,
+        # and thinks the appliance is deployed when the disk was never written.
+        _boot_source = getattr(checkin, 'boot_source', None) or 'unknown'
+        if _boot_source == 'live_usb':
+            logger.warning(
+                f"INSTALL INCOMPLETE: appliance {canonical_id} is running from LIVE USB, "
+                f"not installed disk. Installation may not have completed. "
+                f"hostname={checkin.hostname} mac={mac_normalized}"
+            )
+
+        # Merge boot_source into daemon_health for storage (no schema change needed)
+        _health = dict(checkin.daemon_health) if checkin.daemon_health else {}
+        _health['boot_source'] = _boot_source
+        _health_json = json.dumps(_health)
+
         # === STEP 3: Upsert the canonical appliance entry (skip for ghosts) ===
         if not _ghost_detected:
             await conn.execute("""
@@ -3063,7 +3082,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 checkin.uptime_seconds,
                 earliest_first_checkin,
                 now,
-                json.dumps(checkin.daemon_health) if checkin.daemon_health else None,
+                _health_json,
             )
 
         # === STEP 3.5: Also update appliances table for Fleet Updates ===
