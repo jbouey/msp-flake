@@ -61,7 +61,7 @@ class TestPartnerMFARedis:
         src = _load(PARTNER_AUTH)
         body = _get_func(src, "_store_partner_mfa_pending")
         assert "_partner_mfa_pending[token] = data" in body
-        assert "Redis partner MFA store failed" in body
+        assert "Redis partner MFA store FAILED" in body
 
     def test_pop_helper_uses_redis_get_delete(self):
         src = _load(PARTNER_AUTH)
