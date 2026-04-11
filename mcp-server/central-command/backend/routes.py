@@ -5918,6 +5918,7 @@ async def decommission_site(
 
 class ProvisionRequest(BaseModel):
     mac_address: Optional[str] = None  # If provided, pre-register this MAC for this site
+    client_email: Optional[str] = None  # Client contact email for alerts + onboarding
 
 
 @router.post("/sites/{site_id}/provision")
@@ -5945,6 +5946,12 @@ async def create_site_provision(
     site_row = site.fetchone()
     if not site_row:
         raise HTTPException(status_code=404, detail="Site not found")
+
+    # Store client email on site if provided
+    if body.client_email:
+        await execute_with_retry(db, text(
+            "UPDATE sites SET client_contact_email = :email WHERE site_id = :sid"
+        ), {"email": body.client_email.strip(), "sid": site_id})
 
     # Generate API key for the new appliance
     raw_key = secrets.token_urlsafe(32)

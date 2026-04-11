@@ -49,6 +49,10 @@ export const SiteDetail: React.FC = () => {
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [showEditSiteModal, setShowEditSiteModal] = useState(false);
   const [showMoveApplianceModal, setShowMoveApplianceModal] = useState<string | null>(null);
+  const [showProvisionModal, setShowProvisionModal] = useState(false);
+  const [provisionMac, setProvisionMac] = useState('');
+  const [provisionEmail, setProvisionEmail] = useState('');
+  const [provisionLoading, setProvisionLoading] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showDecommissionModal, setShowDecommissionModal] = useState(false);
   const queryClient = useQueryClient();
@@ -472,20 +476,7 @@ export const SiteDetail: React.FC = () => {
                 Appliances ({site.appliances.length})
               </h2>
               <button
-                onClick={() => {
-                  const mac = prompt('Enter the appliance MAC address (e.g., 84:3A:5B:1F:FF:E4).\n\nFound on the device label or BIOS POST screen.');
-                  if (!mac) return;
-                  fetch(`/api/dashboard/sites/${siteId}/provision`, {
-                    method: 'POST', credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '' },
-                    body: JSON.stringify({ mac_address: mac.trim() }),
-                  })
-                    .then(r => r.json())
-                    .then(data => {
-                      setToast({ message: data.message || 'Provision created', type: 'success' });
-                    })
-                    .catch(() => setToast({ message: 'Failed to create provision', type: 'error' }));
-                }}
+                onClick={() => setShowProvisionModal(true)}
                 className="text-sm font-medium px-3 py-1.5 rounded-lg text-white transition-all"
                 style={{ background: 'linear-gradient(135deg, #14A89E 0%, #0d9488 100%)' }}
               >
@@ -716,6 +707,60 @@ export const SiteDetail: React.FC = () => {
           }}
           showToast={showToast}
         />
+      )}
+
+      {/* Provision Appliance Modal */}
+      {showProvisionModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-lg font-semibold mb-4">Provision New Appliance</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">MAC Address</label>
+                <input
+                  type="text" placeholder="84:3A:5B:1F:FF:E4"
+                  value={provisionMac} onChange={e => setProvisionMac(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+                <p className="text-xs text-slate-400 mt-1">Found on the device label or BIOS POST screen. Leave blank to use self-registration.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Client Contact Email</label>
+                <input
+                  type="email" placeholder="office@northvalley.com"
+                  value={provisionEmail} onChange={e => setProvisionEmail(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+                <p className="text-xs text-slate-400 mt-1">Receives alerts, compliance summaries, and onboarding instructions.</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => { setShowProvisionModal(false); setProvisionMac(''); setProvisionEmail(''); }}
+                className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900"
+              >Cancel</button>
+              <button
+                disabled={provisionLoading}
+                onClick={async () => {
+                  setProvisionLoading(true);
+                  try {
+                    const res = await fetch(`/api/dashboard/sites/${siteId}/provision`, {
+                      method: 'POST', credentials: 'same-origin',
+                      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '' },
+                      body: JSON.stringify({ mac_address: provisionMac.trim() || undefined, client_email: provisionEmail.trim() || undefined }),
+                    });
+                    const data = await res.json();
+                    setToast({ message: data.message || 'Provision created', type: 'success' });
+                    setShowProvisionModal(false); setProvisionMac(''); setProvisionEmail('');
+                  } catch { setToast({ message: 'Failed to create provision', type: 'error' }); }
+                  setProvisionLoading(false);
+                }}
+                className="px-4 py-2 text-sm font-medium rounded-lg text-white"
+                style={{ background: 'linear-gradient(135deg, #14A89E 0%, #0d9488 100%)' }}
+              >{provisionLoading ? 'Provisioning...' : 'Provision'}</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Toast Notification */}
