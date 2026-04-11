@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1282,11 +1284,32 @@ func (ad *autoDeployer) loadAgentBinary() (string, error) {
 	return ad.agentB64, nil
 }
 
+// agentBinarySHA256 computes the SHA256 hash of the agent binary on the appliance.
+// This hash is sent to the target for post-transfer verification — the target MUST
+// verify the hash matches before installing the binary as a service.
+func (ad *autoDeployer) agentBinarySHA256() (string, error) {
+	binaryPath := filepath.Join(ad.daemon.config.StateDir, "agent", agentBinaryName)
+	data, err := os.ReadFile(binaryPath)
+	if err != nil {
+		return "", fmt.Errorf("read agent binary for hash: %w", err)
+	}
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:]), nil
+}
+
 // deployAgentDirect deploys the agent via direct WinRM to the workstation.
 // Uses HTTP download from appliance file server instead of chunked WinRM transfer.
 func (ad *autoDeployer) deployAgentDirect(ctx context.Context, target *winrm.Target, ws *discovery.ADComputer) error {
 	grpcAddr := ad.daemon.config.GRPCListenAddr()
 	hostname := ws.Hostname
+
+	// Compute expected SHA256 BEFORE deployment for target-side verification
+	expectedHash, hashErr := ad.agentBinarySHA256()
+	if hashErr != nil {
+		slog.Warn("could not compute agent binary hash — deploying without verification",
+			"component", "autodeploy", "error", hashErr)
+		expectedHash = "" // Deploy without verification (log warning)
+	}
 
 	// Determine appliance IP for download URL (from gRPC listen address)
 	applianceIP := ad.daemon.config.GRPCListenAddr()
@@ -1328,6 +1351,32 @@ try {
 	}
 	stdout := maputil.String(dlResult.Output, "std_out")
 	slog.Info("direct: download result", "component", "autodeploy", "hostname", hostname, "output", strings.TrimSpace(stdout))
+
+	// Step 2.5: SHA256 verification on target — SECURITY: verify the binary
+	// wasn't tampered with during HTTP transfer (MITM protection).
+	if expectedHash != "" && !strings.Contains(stdout, `"Success":false`) {
+		verifyScript := fmt.Sprintf(`
+$path = "%s\%s"
+$hash = (Get-FileHash -Path $path -Algorithm SHA256).Hash
+if ($hash -eq "%s") {
+    @{ Verified = $true; Hash = $hash } | ConvertTo-Json -Compress
+} else {
+    @{ Verified = $false; Expected = "%s"; Actual = $hash } | ConvertTo-Json -Compress
+}`, agentInstallDir, agentBinaryName, strings.ToUpper(expectedHash), strings.ToUpper(expectedHash))
+		verifyResult := ad.daemon.winrmExec.Execute(target,
+			verifyScript, "AGENT-DEPLOY-VERIFY", "autodeploy", 30, 0, 10.0, nil)
+		verifyOut := maputil.String(verifyResult.Output, "std_out")
+		if strings.Contains(verifyOut, `"Verified":false`) || strings.Contains(verifyOut, `"Verified": false`) {
+			slog.Error("SECURITY: agent binary SHA256 mismatch on target — possible tampering",
+				"component", "autodeploy", "hostname", hostname, "output", verifyOut)
+			// Delete the tampered binary
+			ad.daemon.winrmExec.Execute(target,
+				fmt.Sprintf(`Remove-Item -Force "%s\%s"`, agentInstallDir, agentBinaryName),
+				"AGENT-DEPLOY-CLEANUP", "autodeploy", 10, 0, 5.0, nil)
+			return fmt.Errorf("SECURITY: binary hash mismatch on %s — deployment aborted", hostname)
+		}
+		slog.Info("direct: SHA256 verified on target", "component", "autodeploy", "hostname", hostname)
+	}
 
 	// Check if the PowerShell download script reported failure — try NETLOGON UNC fallback
 	if strings.Contains(stdout, `"Success":false`) || strings.Contains(stdout, `"Success": false`) {
@@ -1386,7 +1435,7 @@ try {
 winrmB64Transfer:
 	{
 		// Last resort: push binary via WinRM base64 chunks
-		slog.Info("Direct: WinRM base64 transfer (slow but reliable)", "component", "autodeploy", "detail", hostname)
+		slog.Info("direct: WinRM base64 transfer (slow but reliable)", "component", "autodeploy", "hostname", hostname)
 		b64Data, err := ad.loadAgentBinary()
 		if err != nil {
 			return fmt.Errorf("load agent binary for b64 transfer: %w", err)
@@ -1433,7 +1482,7 @@ winrmB64Transfer:
 downloadDone:
 
 	// Step 3: Write config + install service
-	slog.Info("Direct: Step 3/4 Writing config + installing service", "component", "autodeploy", "detail", hostname)
+	slog.Info("direct: step 3/4 writing config + installing service", "component", "autodeploy", "hostname", hostname)
 	if err := ad.writeConfigToTarget(target, grpcAddr); err != nil {
 		return err
 	}
@@ -1442,7 +1491,7 @@ downloadDone:
 	}
 
 	// Step 4: Verify
-	slog.Info("Direct: Step 4/4 Verifying", "component", "autodeploy", "detail", hostname)
+	slog.Info("direct: step 4/4 verifying", "component", "autodeploy", "hostname", hostname)
 	installed, running := ad.checkAgentStatus(ctx, target)
 	if !installed || !running {
 		return fmt.Errorf("verification failed: installed=%v running=%v", installed, running)
@@ -1512,7 +1561,7 @@ func (ad *autoDeployer) stageAgentToNETLOGON(ctx context.Context) error {
 
 	downloadURL := fmt.Sprintf("http://%s:8090/agent/%s", applianceIP, agentBinaryName)
 
-	slog.Info("Staging agent binary to NETLOGON via HTTP download from", "component", "autodeploy", "detail", downloadURL)
+	slog.Info("staging agent binary to NETLOGON via HTTP download", "component", "autodeploy", "url", downloadURL)
 
 	// Single WinRM command: download from appliance HTTP server → save to NETLOGON
 	stageScript := fmt.Sprintf(`
@@ -1540,7 +1589,7 @@ try {
 	}
 
 	stdout := maputil.String(result.Output, "std_out")
-	slog.Info("Agent staged to NETLOGON", "component", "autodeploy", "detail", stdout)
+	slog.Info("agent staged to NETLOGON", "component", "autodeploy", "output", stdout)
 
 	// Check if the script reported success
 	if strings.Contains(stdout, `"Success":false`) {
@@ -1565,9 +1614,9 @@ try {
 	configResult := ad.daemon.winrmExec.Execute(dcTarget, configScript, "NETLOGON-CONFIG", "autodeploy", 30, 1, 15.0, nil)
 	if configResult.Success {
 		configStdout := maputil.String(configResult.Output, "std_out")
-		slog.Info("Config staged to NETLOGON", "component", "autodeploy", "detail", configStdout)
+		slog.Info("config staged to NETLOGON", "component", "autodeploy", "output", configStdout)
 	} else {
-		slog.Info("Config staging failed (non-fatal)", "component", "autodeploy", "detail", configResult.Error)
+		slog.Warn("config staging failed (non-fatal)", "component", "autodeploy", "error", configResult.Error)
 	}
 
 	netlogonStaged.Store(dc, currentHash)
@@ -1593,7 +1642,7 @@ func (ad *autoDeployer) deployAgentViaDC(ctx context.Context, ws *discovery.ADCo
 		return fmt.Errorf("stage to NETLOGON: %w", err)
 	}
 
-	slog.Info("DC proxy: Deploying via NETLOGON + Invoke-Command", "component", "autodeploy", "detail", hostname)
+	slog.Info("DC proxy: deploying via NETLOGON + Invoke-Command", "component", "autodeploy", "hostname", hostname)
 
 	configJSON := fmt.Sprintf(`{"appliance_addr":"%s","check_interval":300}`, grpcAddr)
 
@@ -1810,7 +1859,7 @@ $Result | ConvertTo-Json -Compress
 	deployResult := ad.daemon.winrmExec.Execute(dcTarget, deployScript, "AGENT-DEPLOY-PROXY", "autodeploy", 300, 1, 60.0, nil)
 
 	stdout := maputil.String(deployResult.Output, "std_out")
-	slog.Info("DC proxy result", "component", "autodeploy", "detail", hostname, "arg1", stdout)
+	slog.Info("DC proxy result", "component", "autodeploy", "hostname", hostname, "output", stdout)
 
 	if !deployResult.Success {
 		return fmt.Errorf("DC proxy deploy failed: %s", deployResult.Error)
