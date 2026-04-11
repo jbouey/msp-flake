@@ -707,7 +707,7 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
     else:
         result_scores["score"] = None
 
-    result_scores["has_data"] = categories_with_data > 0
+    result_scores["has_data"] = weight_sum > 0
 
     return result_scores
 
