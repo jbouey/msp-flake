@@ -5966,6 +5966,16 @@ async def create_site_provision(
             "key": raw_key,
             "notes": f"Admin-provisioned by {user.get('username', 'unknown')}",
         })
+        # Audit log
+        await execute_with_retry(db, text("""
+            INSERT INTO admin_audit_log (username, action, target, details, created_at)
+            VALUES (:user, 'APPLIANCE_PROVISIONED', :mac, :details::jsonb, NOW())
+        """), {
+            "user": user.get("username", "admin"),
+            "mac": mac,
+            "details": json.dumps({"site_id": site_id, "clinic_name": site_row.clinic_name}),
+        })
+
         await db.commit()
 
         return {
@@ -6010,6 +6020,190 @@ async def list_site_provisions(
             for r in rows
         ],
         "count": len(rows),
+    }
+
+
+@router.get("/provisions/unclaimed")
+async def list_unclaimed_appliances(
+    user: dict = Depends(auth_module.require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all unclaimed appliances that have called home but aren't assigned to a site.
+
+    Self-registration flow: appliances boot, call /api/provision/{MAC},
+    get auto-registered as unclaimed. Admin sees them here and claims.
+    """
+    result = await execute_with_retry(db, text("""
+        SELECT mac_address, registered_at, notes
+        FROM appliance_provisioning
+        WHERE site_id IS NULL
+        ORDER BY registered_at DESC
+    """))
+    rows = result.fetchall()
+
+    return {
+        "unclaimed": [
+            {
+                "mac_address": r.mac_address,
+                "registered_at": r.registered_at.isoformat() if r.registered_at else None,
+                "notes": r.notes,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
+class ClaimApplianceRequest(BaseModel):
+    mac_address: str
+    site_id: str
+
+
+@router.post("/provisions/claim")
+async def claim_unclaimed_appliance(
+    body: ClaimApplianceRequest,
+    user: dict = Depends(auth_module.require_operator),
+    db: AsyncSession = Depends(get_db),
+):
+    """Claim an unclaimed appliance and assign it to a site.
+
+    The appliance already called home and is polling for config.
+    Once claimed, the next poll returns the full config and the
+    appliance auto-provisions.
+    """
+    import hashlib
+
+    mac = body.mac_address.upper().strip()
+
+    # Verify the MAC exists and is unclaimed
+    existing = await execute_with_retry(db, text(
+        "SELECT id, site_id FROM appliance_provisioning WHERE UPPER(mac_address) = :mac"
+    ), {"mac": mac})
+    row = existing.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="MAC not found in unclaimed list")
+    if row.site_id:
+        raise HTTPException(status_code=400, detail=f"MAC already claimed by site {row.site_id}")
+
+    # Verify site exists
+    site = await execute_with_retry(db, text(
+        "SELECT site_id, clinic_name FROM sites WHERE site_id = :sid"
+    ), {"sid": body.site_id})
+    site_row = site.fetchone()
+    if not site_row:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    # Generate API key and claim
+    raw_key = secrets.token_urlsafe(32)
+    await execute_with_retry(db, text("""
+        UPDATE appliance_provisioning
+        SET site_id = :sid, api_key = :key,
+            notes = COALESCE(notes, '') || ' | Claimed by ' || :user || ' at ' || NOW()::text
+        WHERE UPPER(mac_address) = :mac
+    """), {"sid": body.site_id, "key": raw_key, "mac": mac, "user": user.get("username", "admin")})
+
+    # Audit log
+    await execute_with_retry(db, text("""
+        INSERT INTO admin_audit_log (username, action, target, details, created_at)
+        VALUES (:user, 'APPLIANCE_CLAIMED', :mac, :details::jsonb, NOW())
+    """), {
+        "user": user.get("username", "admin"),
+        "mac": mac,
+        "details": json.dumps({"site_id": body.site_id, "clinic_name": site_row.clinic_name}),
+    })
+
+    await db.commit()
+
+    return {
+        "status": "claimed",
+        "mac_address": mac,
+        "site_id": body.site_id,
+        "clinic_name": site_row.clinic_name,
+        "message": f"Appliance {mac} assigned to {site_row.clinic_name}. It will auto-configure on next poll.",
+    }
+
+
+@router.post("/sites/{site_id}/deployment-pack")
+async def generate_deployment_pack(
+    site_id: str,
+    user: dict = Depends(auth_module.require_operator),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a config.yaml for offline USB provisioning.
+
+    Download this file, put it on the installer USB at /osiriscare/config.yaml.
+    The appliance reads it during install — no internet needed for provisioning.
+    Includes site_id, API key, and admin SSH key.
+    """
+    import hashlib
+    import yaml
+
+    # Verify site exists
+    site = await execute_with_retry(db, text(
+        "SELECT site_id, clinic_name, partner_id FROM sites WHERE site_id = :sid"
+    ), {"sid": site_id})
+    site_row = site.fetchone()
+    if not site_row:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    # Generate API key
+    raw_key = secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+
+    await execute_with_retry(db, text("""
+        INSERT INTO api_keys (key_hash, site_id, active, created_at, description)
+        VALUES (:hash, :sid, true, NOW(), 'Deployment pack key')
+        ON CONFLICT (key_hash) DO NOTHING
+    """), {"hash": key_hash, "sid": site_id})
+
+    # Get admin SSH keys for the site
+    ssh_keys = []
+    try:
+        ssh_result = await execute_with_retry(db, text(
+            "SELECT ssh_authorized_keys FROM sites WHERE site_id = :sid"
+        ), {"sid": site_id})
+        ssh_row = ssh_result.fetchone()
+        if ssh_row and ssh_row.ssh_authorized_keys:
+            ssh_keys = list(ssh_row.ssh_authorized_keys)
+    except Exception:
+        pass
+
+    config = {
+        "site_id": site_row.site_id,
+        "api_key": raw_key,
+        "api_endpoint": "https://api.osiriscare.net",
+        "ssh_authorized_keys": ssh_keys,
+    }
+
+    # Audit log
+    await execute_with_retry(db, text("""
+        INSERT INTO admin_audit_log (username, action, target, details, created_at)
+        VALUES (:user, 'DEPLOYMENT_PACK_GENERATED', :sid, :details::jsonb, NOW())
+    """), {
+        "user": user.get("username", "admin"),
+        "sid": site_id,
+        "details": json.dumps({"clinic_name": site_row.clinic_name}),
+    })
+
+    await db.commit()
+
+    # Return as YAML (the appliance reads config.yaml)
+    try:
+        import yaml
+        config_yaml = yaml.dump(config, default_flow_style=False)
+    except ImportError:
+        config_yaml = json.dumps(config, indent=2)
+
+    return {
+        "config_yaml": config_yaml,
+        "config": config,
+        "instructions": (
+            "Save as 'config.yaml' on the installer USB at one of these paths:\n"
+            "  /config.yaml\n"
+            "  /msp/config.yaml\n"
+            "  /osiriscare/config.yaml\n\n"
+            "The appliance reads this during boot — no internet needed for provisioning."
+        ),
     }
 
 
