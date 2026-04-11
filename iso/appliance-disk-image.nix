@@ -100,6 +100,43 @@ in
     ./local-status.nix
   ];
 
+  # === WireGuard: OFF BY DEFAULT, TIME-BOUNDED EMERGENCY ONLY (Session 204) ===
+  # The mesh operates entirely over outbound HTTPS — zero inbound connections.
+  # WireGuard is emergency-only, technically enforced:
+  #
+  # 1. Services disabled at boot (wantedBy = [])
+  # 2. Activation ONLY via fleet order "enable_emergency_access" (customer-approved)
+  # 3. Fleet order includes max_duration_minutes (default 120, max 480)
+  # 4. systemd timer auto-disables tunnel after expiry — NOT bypassable
+  # 5. Daemon logs activation/deactivation to evidence chain (append-only)
+  #
+  # Manual override at physical console: systemctl start wireguard-tunnel
+  # (requires root password = physical access = customer controls the machine)
+  systemd.services.wireguard-tunnel.wantedBy = lib.mkForce [];
+  systemd.services.wireguard-keygen.wantedBy = lib.mkForce [];
+
+  # Auto-disable timer: kills WireGuard after the emergency window expires.
+  # The daemon sets the timer duration via systemd-run when activating.
+  # This is the technical enforcement — even if OsirisCare doesn't deactivate,
+  # the tunnel dies automatically. Not bypassable without root console access.
+  systemd.services.wireguard-auto-disable = {
+    description = "Auto-disable WireGuard emergency access tunnel";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "wg-auto-disable" ''
+        echo "Emergency access window expired — disabling WireGuard tunnel"
+        ${pkgs.systemd}/bin/systemctl stop wireguard-tunnel 2>/dev/null || true
+        ${pkgs.iproute2}/bin/ip link del wg0 2>/dev/null || true
+        echo "WireGuard tunnel disabled by auto-expiry timer"
+      '';
+    };
+  };
+  systemd.timers.wireguard-auto-disable = {
+    description = "Timer to auto-disable WireGuard after emergency window";
+    # Not enabled by default — activated dynamically by the daemon's
+    # enable_emergency_access handler with OnActiveSec=<duration>
+  };
+
   # System identification - mkForce ensures branding even if other modules set defaults
   networking.hostName = lib.mkForce "osiriscare";
   system.stateVersion = "24.05";

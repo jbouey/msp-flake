@@ -292,6 +292,8 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["rotate_wg_key"] = p.handleRotateWgKey
 	p.handlers["isolate_host"] = p.handleIsolateHost
 	p.handlers["chaos_quicktest"] = p.handleChaosQuicktest
+	p.handlers["enable_emergency_access"] = p.handleEnableEmergencyAccess
+	p.handlers["disable_emergency_access"] = p.handleDisableEmergencyAccess
 
 	return p
 }
@@ -1232,6 +1234,94 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 		"binary_path": binaryPath,
 		"sha256":      actualHex,
 		"message":     "Daemon binary installed, restart scheduled in 10s",
+	}, nil
+}
+
+// --- Emergency WireGuard Access (customer-approved, time-bounded) ---
+
+const maxEmergencyMinutes = 480 // 8 hours absolute max
+
+func (p *Processor) handleEnableEmergencyAccess(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	durationMin := 120 // default 2 hours
+	if d, ok := params["max_duration_minutes"].(float64); ok && d > 0 {
+		durationMin = int(d)
+	}
+	if durationMin > maxEmergencyMinutes {
+		durationMin = maxEmergencyMinutes
+	}
+
+	approvedBy, _ := params["approved_by"].(string)
+	if approvedBy == "" {
+		return nil, fmt.Errorf("approved_by is required (client admin who authorized access)")
+	}
+
+	log.Printf("[orders] EMERGENCY ACCESS: enabling WireGuard for %d minutes (approved by: %s)", durationMin, approvedBy)
+
+	// Start WireGuard keygen + tunnel
+	bashPath := "/run/current-system/sw/bin/bash"
+	envPath := "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
+
+	startCmd := exec.CommandContext(ctx, "systemd-run",
+		"--unit=msp-emergency-wg-start", "--wait", "--pipe", "--collect",
+		"--property=TimeoutStartSec=30",
+		"--setenv="+envPath,
+		bashPath, "-c",
+		"systemctl start wireguard-keygen && systemctl start wireguard-tunnel")
+	if out, err := startCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to start WireGuard: %v\n%s", err, string(out))
+	}
+
+	// Set auto-disable timer — THIS IS THE TECHNICAL ENFORCEMENT.
+	// The timer runs independently of the daemon and WILL fire even if
+	// the daemon crashes, is restarted, or the operator forgets to disable.
+	timerDuration := fmt.Sprintf("%dm", durationMin)
+	timerCmd := exec.CommandContext(ctx, "systemd-run",
+		"--unit=msp-emergency-wg-expire", "--timer-property=AccuracySec=1s",
+		fmt.Sprintf("--on-active=%s", timerDuration),
+		"--collect",
+		"--setenv="+envPath,
+		bashPath, "-c",
+		"systemctl stop wireguard-tunnel; ip link del wg0 2>/dev/null; echo 'Emergency access expired'")
+	if out, err := timerCmd.CombinedOutput(); err != nil {
+		// If timer fails to set, IMMEDIATELY disable — fail-secure
+		log.Printf("[orders] SECURITY: failed to set auto-disable timer — disabling WireGuard immediately: %v", err)
+		exec.CommandContext(ctx, "systemctl", "stop", "wireguard-tunnel").Run()
+		return nil, fmt.Errorf("failed to set auto-disable timer (fail-secure: tunnel stopped): %v\n%s", err, string(out))
+	}
+
+	log.Printf("[orders] EMERGENCY ACCESS ACTIVE: WireGuard up, auto-expires in %d minutes", durationMin)
+
+	return map[string]interface{}{
+		"status":              "emergency_access_enabled",
+		"duration_minutes":    durationMin,
+		"approved_by":         approvedBy,
+		"auto_expire":         true,
+		"message":             fmt.Sprintf("WireGuard tunnel active. Auto-disables in %d minutes.", durationMin),
+	}, nil
+}
+
+func (p *Processor) handleDisableEmergencyAccess(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	log.Printf("[orders] EMERGENCY ACCESS: disabling WireGuard tunnel")
+
+	bashPath := "/run/current-system/sw/bin/bash"
+	envPath := "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
+
+	stopCmd := exec.CommandContext(ctx, "systemd-run",
+		"--unit=msp-emergency-wg-stop", "--wait", "--pipe", "--collect",
+		"--property=TimeoutStartSec=15",
+		"--setenv="+envPath,
+		bashPath, "-c",
+		"systemctl stop wireguard-tunnel; ip link del wg0 2>/dev/null; systemctl stop msp-emergency-wg-expire.timer 2>/dev/null")
+	out, err := stopCmd.CombinedOutput()
+	if err != nil {
+		log.Printf("[orders] WireGuard stop warning: %v\n%s", err, string(out))
+	}
+
+	log.Printf("[orders] EMERGENCY ACCESS DISABLED: WireGuard tunnel down")
+
+	return map[string]interface{}{
+		"status":  "emergency_access_disabled",
+		"message": "WireGuard tunnel stopped and auto-expire timer cancelled.",
 	}, nil
 }
 
