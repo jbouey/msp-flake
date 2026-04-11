@@ -51,6 +51,7 @@ VALID_ORDER_TYPES = {
     "configure_workstation_agent", "validate_credential",
     "remove_agent", "rotate_wg_key", "isolate_host",
     "chaos_quicktest",
+    "enable_emergency_access", "disable_emergency_access",
 }
 
 DEFAULT_PARAMS = {
