@@ -222,7 +222,24 @@ async def require_partner(
         partner = await get_partner_from_api_key(x_api_key)
         if partner:
             result = dict(partner)
-            result["user_role"] = "admin"
+            # Derive role from the API key creator if tracked, otherwise default to admin.
+            # API keys created via the dashboard have created_by_user_id (Migration 152).
+            # Legacy keys without a creator default to admin for backwards compatibility.
+            api_key_role = "admin"
+            try:
+                async with admin_connection(pool) as conn:
+                    import hashlib as _hl
+                    key_hash = _hl.sha256(x_api_key.encode()).hexdigest()
+                    creator = await conn.fetchval("""
+                        SELECT pu.role FROM api_keys ak
+                        JOIN partner_users pu ON pu.id = ak.created_by_user_id
+                        WHERE ak.key_hash = $1 AND ak.active = true
+                    """, key_hash)
+                    if creator:
+                        api_key_role = creator
+            except Exception:
+                pass  # Fall back to admin on any error
+            result["user_role"] = api_key_role
             return result
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
 
