@@ -406,6 +406,31 @@ def build_incident_prompt(
             + "\n\nValidate the most likely hypothesis and recommend action."
         )
 
+    # Recurrence-aware escalation: when L1 keeps fixing the same thing and it
+    # keeps coming back, the LLM needs to know this isn't a first-time incident.
+    recurrence_section = ""
+    recurrence = details.get("recurrence") if details else None
+    if recurrence:
+        recurrence_section = f"""
+
+RECURRENCE ALERT: This incident type has been resolved {recurrence.get('recurrence_count_4h', 0)} times
+in the last 4 hours ({recurrence.get('recurrence_count_7d', 0)} times in 7 days) by L1 automated
+remediation, but it keeps recurring. The L1 runbook removes the symptom but the
+underlying cause persists and recreates the condition.
+
+YOUR TASK IS DIFFERENT FROM A NORMAL ANALYSIS: Do NOT recommend the same runbook
+that L1 has been using. Instead, analyze what PERSISTENCE MECHANISM or ROOT CAUSE
+is making this issue recur, and recommend a runbook that addresses that root cause.
+
+Examples of root causes for recurring issues:
+- Scheduled tasks that recreate the condition on a timer
+- Group Policy Objects that re-apply the setting
+- Registry run keys or WMI subscriptions that re-inject
+- Services that restart and re-apply configurations
+- Startup scripts or logon scripts
+
+Recommend a runbook that removes the persistence mechanism, not just the symptom."""
+
     return f"""Analyze this incident and recommend a runbook:
 
 INCIDENT TYPE: {safe_incident_type}
@@ -417,7 +442,7 @@ INCIDENT DETAILS:
 {json.dumps(safe_details, indent=2)}
 
 SYSTEM STATE BEFORE INCIDENT:
-{json.dumps(safe_pre_state, indent=2)}{hypotheses_section}
+{json.dumps(safe_pre_state, indent=2)}{hypotheses_section}{recurrence_section}
 
 Select the most appropriate runbook from the available options."""
 

@@ -715,7 +715,26 @@ async def report_incident(
     runbook_id = None
     resolution_tier = None
 
-    # Chronic drift detection
+    # Recurrence detection: if L1 keeps fixing the same thing and it keeps
+    # coming back, the fix isn't sticking. Escalate to L2 for root-cause
+    # analysis instead of repeating the same failing L1 runbook.
+    #
+    # Thresholds:
+    #   3+ resolved in 4h  → bypass L1, send to L2 with recurrence context
+    #   10+ resolved in 7d → L3 human review (L2 isn't solving it either)
+    recurrence_context = None
+    recent_recurrence = await db.execute(
+        text("""
+            SELECT COUNT(*) FROM incidents
+            WHERE appliance_id = :appliance_id
+            AND incident_type = :incident_type
+            AND status = 'resolved'
+            AND resolved_at > NOW() - INTERVAL '4 hours'
+        """),
+        {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+    )
+    recent_recurrence_count = recent_recurrence.scalar() or 0
+
     chronic_check = await db.execute(
         text("""
             SELECT COUNT(*) FROM incidents
@@ -727,15 +746,38 @@ async def report_incident(
         {"appliance_id": appliance_id, "incident_type": incident.incident_type}
     )
     chronic_count = chronic_check.scalar() or 0
-    if chronic_count >= 5:
+
+    if chronic_count >= 10:
         resolution_tier = "L3"
-        logger.warning("Chronic drift detected — escalating to L3",
+        logger.warning("Chronic drift detected — L1+L2 insufficient, escalating to L3",
                        site_id=incident.site_id,
                        incident_type=incident.incident_type,
-                       resolved_count_7d=chronic_count)
+                       recent_4h=recent_recurrence_count,
+                       resolved_7d=chronic_count)
+    elif recent_recurrence_count >= 3:
+        # L1 keeps fixing this and it keeps coming back.
+        # Skip L1, go straight to L2 with recurrence context so the LLM
+        # can analyze the root cause and recommend a deeper fix.
+        recurrence_context = {
+            "recurrence_count_4h": recent_recurrence_count,
+            "recurrence_count_7d": chronic_count,
+            "message": (
+                f"This incident type ({incident.incident_type}) has been resolved "
+                f"{recent_recurrence_count} times in the last 4 hours by L1, but it "
+                f"keeps recurring. The L1 runbook removes the symptom but not the "
+                f"root cause. Analyze what persistence mechanism is causing the "
+                f"issue to return and recommend a remediation that addresses the "
+                f"root cause, not just the symptom."
+            ),
+        }
+        logger.info("Recurrence detected — bypassing L1, sending to L2 for root-cause analysis",
+                     site_id=incident.site_id,
+                     incident_type=incident.incident_type,
+                     recent_4h=recent_recurrence_count,
+                     resolved_7d=chronic_count)
 
-    # Step 1: Query l1_rules table
-    if resolution_tier != "L3":
+    # Step 1: Query l1_rules table (skip if recurrence detected — L1 isn't solving it)
+    if resolution_tier != "L3" and recurrence_context is None:
         l1_match = await db.execute(
             text("""
                 SELECT runbook_id FROM l1_rules
@@ -887,21 +929,30 @@ async def report_incident(
                      site_id=incident.site_id,
                      incident_type=incident.incident_type)
     else:
-        # No L1 match — try L2 LLM planner
+        # No L1 match (or L1 bypassed due to recurrence) — try L2 LLM planner
         from dashboard_api.l2_planner import analyze_incident as l2_analyze, record_l2_decision, is_l2_available
 
         l2_succeeded = False
         if is_l2_available():
             try:
-                logger.info("No L1 match, trying L2 planner",
-                            site_id=incident.site_id,
-                            incident_type=incident.incident_type)
+                # Enrich details with recurrence context when L1 keeps failing
+                l2_details = dict(incident.details or {})
+                if recurrence_context:
+                    l2_details["recurrence"] = recurrence_context
+                    logger.info("L2 escalation with recurrence context",
+                                site_id=incident.site_id,
+                                incident_type=incident.incident_type,
+                                recurrence_4h=recurrence_context["recurrence_count_4h"])
+                else:
+                    logger.info("No L1 match, trying L2 planner",
+                                site_id=incident.site_id,
+                                incident_type=incident.incident_type)
 
                 decision = await l2_analyze(
                     incident_type=incident.incident_type,
                     severity=incident.severity,
                     check_type=incident.check_type or incident.incident_type,
-                    details=incident.details,
+                    details=l2_details,
                     pre_state=incident.pre_state,
                     hipaa_controls=incident.hipaa_controls,
                 )
