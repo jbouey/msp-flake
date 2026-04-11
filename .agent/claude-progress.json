@@ -1,6 +1,6 @@
 {
-  "session": 203,
-  "updated": "2026-04-09T20:59:45.794884Z",
+  "session": 204,
+  "updated": "2026-04-11T01:10:24.398131Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -18,9 +18,9 @@
     "compliance_packets": "session201_persisted_to_db_hipaa_6yr_retention_compliance_packets_table",
     "ots_proofs": "session201_131678_anchored_100972_legacy_mark_proof_anchored_dry_audit_logged",
     "evidence_verify": "session201_evidence_chain_fixed_delete_insert_upsert_partitioned_table",
-    "fleet_updates": "v0.3.84_deployed_security_hardened_auth_pending_orders_dangerous_order_blocking",
+    "fleet_updates": "v0.3.85_deployed_2of3_h5_bundle_hash_health_check_rollback_bug_found_installer_stuck_v0.3.82",
     "mesh_discovery": "backend_authoritative_target_assignment_discovery_filter_fixed_normalize_mac_clarified_ui_renamed",
-    "landing_page": "pricing_499_legal_pages_ecg_animation_calendly_fixed_claims_qualified",
+    "landing_page": "session204_always_audit_ready_proof_not_paperwork_fear_language_no_ai_hints_deploy_3hrs",
     "l2_pipeline": "hypothesis_driven_triage_validation_gate_confidence_tagging_audit_trail",
     "check_catalog": "58_checks_public_api_multi_framework_9_frameworks_yaml_crosswalk",
     "multi_framework": "9_frameworks_hipaa_soc2_pci_nist_glba_sox_gdpr_cmmc_iso27001_per_org_config",
@@ -47,7 +47,7 @@
     "recovery_platform_tier3": "session203_h1_chain_legacy_badge_h6_h8_multi_framework_h7_partner_audit_log_h2_pubkey_panel_h3_ots_per_bundle",
     "audit_punch_list": "ALL_H_FINDINGS_CLOSED_h4_operational_filter_explicit_set_scoring_excluded_h5_client_bundle_hash_sha256_server_fallback_warning_12_tests"
   },
-  "current_blocker": "iMac SSH port 2222 still broken. osiriscare-installer (84:3A:5B:1F:FF:E4) stuck on v0.3.82 — fleet orders ignored by pre-Session-201 daemon, not reachable via WireGuard.",
+  "current_blocker": "iMac SSH port 2222 still broken. osiriscare-installer (84:3A:5B:1F:FF:E4) stuck on v0.3.82 \u2014 fleet orders ignored by pre-Session-201 daemon, not reachable via WireGuard.",
   "session_202_work": {
     "summary": "Round-table audit: 67 files, 5 swarms, 360 test cases identified. Critical security fixes + DRY consolidation.",
     "security_fixes": [
