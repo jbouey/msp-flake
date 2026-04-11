@@ -1093,6 +1093,16 @@ async def lifespan(app: FastAPI):
         result = await conn.execute(text("SELECT 1"))
         logger.info("Database connected")
 
+    # Load check type registry (single source of truth for check names → categories)
+    try:
+        from dashboard_api.db_queries import load_check_registry
+        from dashboard_api.agent_api import load_monitoring_only_from_registry
+        async with async_session() as db:
+            await load_check_registry(db)
+            await load_monitoring_only_from_registry(db)
+    except Exception as e:
+        logger.warning(f"Check registry load failed (using hardcoded fallback): {e}")
+
     # Create exceptions tables if needed
     try:
         from dashboard_api.exceptions_api import create_exceptions_tables

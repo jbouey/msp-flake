@@ -72,28 +72,37 @@ def _enforce_site_id(auth_site_id: str, request_site_id: str, endpoint: str = ""
         )
 
 # Check types that are monitoring-only — detect drift but don't attempt auto-remediation.
+# HARDCODED FALLBACK — overridden by check_type_registry DB table at startup.
+# The registry (migration 157) is the single source of truth.
 # Only checks that genuinely cannot be auto-fixed belong here.
-# NOTE: bitlocker, screen_lock, backup_status REMOVED — L1 runbooks exist and work.
 MONITORING_ONLY_CHECKS = {
-    # Network monitoring — host offline is not a remediable drift
     "net_host_reachability",
     "net_unexpected_ports",
     "net_expected_service",
     "net_dns_resolution",
-    # Backup verification — requires manual restore test, not auto-fixable
     "backup_verification",
-    # Credential staleness — requires human to provide new credentials
     "credential_stale",
-    # Device reachability — host offline, nothing to remediate
     "device_unreachable",
-    # Agent deploy exhausted — max retries hit, needs human investigation
     "AGENT-REDEPLOY-EXHAUSTED",
     "WIN-DEPLOY-UNREACHABLE",
-    # Linux encryption — LUKS on running system is dangerous to automate
     "linux_encryption",
-    # REMOVED from monitoring-only (Session 204 flywheel audit):
-    # "backup_not_configured" — backup CAN be configured via runbook (enable restic/schedule)
 }
+
+
+async def load_monitoring_only_from_registry(db) -> None:
+    """Override MONITORING_ONLY_CHECKS from check_type_registry DB table.
+    Called at startup. Falls back to hardcoded set if table doesn't exist."""
+    global MONITORING_ONLY_CHECKS
+    try:
+        result = await db.execute(
+            text("SELECT check_name FROM check_type_registry WHERE is_monitoring_only = true")
+        )
+        rows = result.fetchall()
+        if rows:
+            MONITORING_ONLY_CHECKS = {r.check_name for r in rows}
+            logger.info(f"MONITORING_ONLY_CHECKS loaded from registry: {len(MONITORING_ONLY_CHECKS)} checks")
+    except Exception:
+        pass  # Table doesn't exist yet, use hardcoded fallback
 
 
 # ============================================================================

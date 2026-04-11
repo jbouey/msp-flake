@@ -948,10 +948,55 @@ CATEGORY_CHECKS = {
 }
 
 # Pre-computed reverse lookup: check_type -> category (O(1) instead of O(categories))
-_CHECK_TYPE_TO_CATEGORY = {}
-for _cat, _types in CATEGORY_CHECKS.items():
-    for _ct in _types:
-        _CHECK_TYPE_TO_CATEGORY[_ct] = _cat
+# Initialized from hardcoded CATEGORY_CHECKS, then overridden by check_type_registry DB table.
+_CHECK_TYPE_TO_CATEGORY: Dict[str, str] = {}
+_MONITORING_ONLY_FROM_REGISTRY: set = set()
+_REGISTRY_LOADED = False
+
+def _rebuild_category_lookup():
+    """Rebuild from hardcoded CATEGORY_CHECKS (fallback)."""
+    _CHECK_TYPE_TO_CATEGORY.clear()
+    for _cat, _types in CATEGORY_CHECKS.items():
+        for _ct in _types:
+            _CHECK_TYPE_TO_CATEGORY[_ct] = _cat
+
+_rebuild_category_lookup()  # Initialize from hardcoded values
+
+
+async def load_check_registry(db) -> None:
+    """Load check_type_registry from DB and override the hardcoded mappings.
+
+    Called once at startup and can be called to refresh. Falls back to
+    hardcoded CATEGORY_CHECKS if the table doesn't exist yet.
+
+    This is the single source of truth fix: the Go daemon defines check
+    names, this table maps them to categories, and the scoring engine
+    reads from here. No more naming mismatches.
+    """
+    global _REGISTRY_LOADED
+    try:
+        result = await db.execute(text(
+            "SELECT check_name, category, is_monitoring_only FROM check_type_registry WHERE is_scored = true"
+        ))
+        rows = result.fetchall()
+        if rows:
+            _CHECK_TYPE_TO_CATEGORY.clear()
+            _MONITORING_ONLY_FROM_REGISTRY.clear()
+            for row in rows:
+                if row.category:
+                    _CHECK_TYPE_TO_CATEGORY[row.check_name] = row.category
+            # Also load monitoring-only checks
+            mon_result = await db.execute(text(
+                "SELECT check_name FROM check_type_registry WHERE is_monitoring_only = true"
+            ))
+            for row in mon_result.fetchall():
+                _MONITORING_ONLY_FROM_REGISTRY.add(row.check_name)
+            _REGISTRY_LOADED = True
+            logger.info(f"Check registry loaded: {len(_CHECK_TYPE_TO_CATEGORY)} scored checks, "
+                        f"{len(_MONITORING_ONLY_FROM_REGISTRY)} monitoring-only")
+    except Exception:
+        # Table doesn't exist yet — use hardcoded fallback
+        _rebuild_category_lookup()
 
 
 async def get_site_info(db: AsyncSession, site_id: str) -> Optional[Dict[str, Any]]:

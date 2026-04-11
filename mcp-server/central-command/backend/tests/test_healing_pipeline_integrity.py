@@ -184,3 +184,108 @@ class TestCircuitBreakerExists:
             f"Cooldown is {val}min — should be 5-60. "
             "Too short = hammers a down API, too long = healing stalls."
         )
+
+
+# ---------------------------------------------------------------------------
+# 5. Check type registry covers all daemon check names
+# ---------------------------------------------------------------------------
+class TestCheckTypeRegistryCompleteness:
+    """Every check name the Go daemon reports must exist in the check_type_registry
+    migration. If a check is missing, it becomes invisible to scoring."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        migration = BACKEND / "migrations" / "157_check_type_registry.sql"
+        assert migration.exists(), "Migration 157 (check_type_registry) not found"
+        self.migration_sql = migration.read_text()
+
+    def _extract_registry_names(self) -> set:
+        """Pull all check_name values from INSERT statements in the migration."""
+        # Match: ('check_name', ...
+        names = set(re.findall(r"\('([a-zA-Z_\-]+)',\s*'(?:windows|linux|macos|network|system)'", self.migration_sql))
+        return names
+
+    def test_registry_has_minimum_checks(self):
+        names = self._extract_registry_names()
+        assert len(names) >= 50, (
+            f"Only {len(names)} checks in registry — expected 50+. "
+            "Was the migration truncated?"
+        )
+
+    def test_critical_windows_checks_present(self):
+        """Core Windows compliance checks must be in the registry."""
+        names = self._extract_registry_names()
+        required = {
+            "firewall_status", "windows_defender", "defender_exclusions",
+            "bitlocker_status", "windows_update", "screen_lock_policy",
+            "password_policy", "rogue_admin_users", "audit_logging",
+            "smb_signing", "rdp_nla", "guest_account",
+            "rogue_scheduled_tasks", "agent_status",
+        }
+        missing = required - names
+        assert not missing, f"Critical Windows checks missing from registry: {missing}"
+
+    def test_critical_linux_checks_present(self):
+        """Core Linux compliance checks must be in the registry."""
+        names = self._extract_registry_names()
+        required = {
+            "linux_firewall", "linux_ssh_config", "linux_user_accounts",
+            "linux_audit_logging", "linux_disk_space", "linux_ntp_sync",
+            "linux_kernel_params", "linux_unattended_upgrades",
+        }
+        missing = required - names
+        assert not missing, f"Critical Linux checks missing from registry: {missing}"
+
+    def test_monitoring_only_checks_flagged(self):
+        """Known monitoring-only checks must have is_monitoring_only = true."""
+        monitoring_checks = {
+            "net_host_reachability", "device_unreachable",
+            "AGENT-REDEPLOY-EXHAUSTED", "WIN-DEPLOY-UNREACHABLE",
+            "linux_encryption", "backup_verification",
+        }
+        for check in monitoring_checks:
+            assert check in self.migration_sql, f"{check} missing from registry"
+            # Find the INSERT line for this check and verify is_monitoring_only
+            pattern = rf"'{re.escape(check)}'.*?true\)"
+            assert re.search(pattern, self.migration_sql, re.DOTALL), (
+                f"{check} should have is_monitoring_only = true in registry"
+            )
+
+    def test_scoring_category_lookup_matches_registry(self):
+        """The hardcoded CATEGORY_CHECKS in db_queries.py should be a SUBSET
+        of what's in the registry. If a check is in the hardcoded dict but
+        not in the registry, the registry is incomplete."""
+        db_queries_src = (BACKEND / "db_queries.py").read_text()
+        # Extract check names from CATEGORY_CHECKS list values (not dict keys).
+        # Each category maps to a list of check names inside square brackets.
+        hardcoded_checks = set()
+        for m in re.finditer(r'\[([^\]]+)\]', db_queries_src[
+            db_queries_src.index("CATEGORY_CHECKS"):db_queries_src.index("_CHECK_TYPE_TO_CATEGORY")
+        ]):
+            hardcoded_checks.update(re.findall(r'"([a-z][a-z0-9_]+)"', m.group(1)))
+
+        registry_names = self._extract_registry_names()
+        missing = hardcoded_checks - registry_names
+        # Legacy aliases: old Python agent check names kept for backward compat.
+        # These don't need to be in the registry — the daemon doesn't use them.
+        legacy_aliases = {
+            "bitlocker", "windows_bitlocker_status", "linux_crypto",
+            "windows_smb_signing", "windows_screen_lock_policy",
+            "windows_password_policy", "linux_accounts", "linux_permissions",
+            "windows_service_spooler", "windows_service_w32time",
+            "windows_service_wuauserv", "critical_services", "linux_services",
+            "network_posture_windows", "windows_network_profile", "windows_dns_config",
+            "linux_network", "ntp_sync", "linux_time_sync", "windows_smb1_protocol",
+            "windows_audit_policy", "linux_audit", "linux_logging",
+            "backup_status", "windows_backup_status", "windows_defender_exclusions",
+            "firewall", "windows_firewall_status", "nixos_generation", "linux_patching",
+            "disk_space", "linux_kernel", "linux_boot", "linux_integrity", "linux_mac",
+            "linux_cron", "linux_banner", "linux_incident_response",
+            "windows_registry_run_persistence", "windows_scheduled_task_persistence",
+            "windows_wmi_event_persistence",
+        }
+        real_missing = missing - legacy_aliases
+        assert not real_missing, (
+            f"Check names in CATEGORY_CHECKS but not in registry or legacy aliases: {real_missing}. "
+            "Add them to migration 157."
+        )
