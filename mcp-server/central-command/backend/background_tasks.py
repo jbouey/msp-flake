@@ -965,6 +965,92 @@ async def flywheel_promotion_loop():
         await asyncio.sleep(1800)
 
 
+async def l2_auto_candidate_loop():
+    """Scan successful L2 decisions and create promotion candidates automatically.
+
+    The Go daemon doesn't submit promotion reports (Python agent did).
+    This task bridges the gap: finds L2 decisions with result='order_created'
+    that aren't already candidates, and creates them.
+
+    Runs every 30 minutes. Requires 3+ successes for the same pattern
+    (check_type + runbook_id) before creating a candidate.
+    """
+    await asyncio.sleep(600)  # Wait for startup
+    while True:
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Find successful L2 patterns with 3+ occurrences
+                promotable = await conn.fetch("""
+                    SELECT i.incident_type, i.site_id, rs.runbook_id,
+                           COUNT(*) as success_count,
+                           MAX(rs.confidence) as max_confidence,
+                           MIN(rs.created_at) as first_seen,
+                           MAX(rs.created_at) as last_seen
+                    FROM incident_remediation_steps rs
+                    JOIN incidents i ON i.id = rs.incident_id
+                    WHERE rs.tier = 'L2'
+                      AND rs.result = 'order_created'
+                      AND rs.runbook_id IS NOT NULL
+                      AND rs.created_at > NOW() - INTERVAL '90 days'
+                    GROUP BY i.incident_type, i.site_id, rs.runbook_id
+                    HAVING COUNT(*) >= 3
+                """)
+
+                created = 0
+                for row in promotable:
+                    # Generate a stable pattern signature
+                    import hashlib
+                    sig = hashlib.sha256(
+                        f"{row['incident_type']}:{row['runbook_id']}".encode()
+                    ).hexdigest()[:16]
+
+                    # Check if candidate already exists
+                    exists = await conn.fetchval("""
+                        SELECT 1 FROM learning_promotion_candidates
+                        WHERE pattern_signature = $1 AND site_id = $2
+                    """, sig, row['site_id'])
+
+                    if not exists:
+                        import uuid
+                        await conn.execute("""
+                            INSERT INTO learning_promotion_candidates (
+                                id, site_id, pattern_signature, incident_type,
+                                recommended_action, check_type, success_count,
+                                confidence_avg, approval_status, created_at
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', NOW())
+                            ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                                success_count = EXCLUDED.success_count,
+                                confidence_avg = EXCLUDED.confidence_avg
+                        """,
+                            str(uuid.uuid4()), row['site_id'], sig,
+                            row['incident_type'], row['runbook_id'],
+                            row['incident_type'],
+                            row['success_count'], row['max_confidence'],
+                        )
+                        created += 1
+                        logger.info(
+                            "Flywheel auto-candidate created",
+                            incident_type=row['incident_type'],
+                            runbook_id=row['runbook_id'],
+                            success_count=row['success_count'],
+                            site_id=row['site_id'],
+                        )
+
+                if created > 0:
+                    logger.info(f"Flywheel auto-candidate scan: created {created} new candidates")
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"L2 auto-candidate scan failed: {e}")
+
+        await asyncio.sleep(1800)  # 30 minutes
+
+
 async def expire_fleet_orders_loop():
     """Background task to mark expired fleet orders."""
     while True:
