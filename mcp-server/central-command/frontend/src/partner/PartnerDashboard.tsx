@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { usePartner } from './PartnerContext';
@@ -63,6 +63,14 @@ export const PartnerDashboard: React.FC = () => {
   const [driftConfigSite, setDriftConfigSite] = useState<{ id: string; name: string } | null>(null);
   const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem('osiriscare_partner_onboarded'));
   const [revokeConfirmId, setRevokeConfirmId] = useState<string | null>(null);
+
+  // Memoize portfolio health computation (avoids re-filtering + reduce on every render)
+  const portfolioAvg = useMemo(() => {
+    const rated = sites.filter(s => typeof s.agent_compliance_rate === 'number');
+    return rated.length > 0
+      ? Math.round(rated.reduce((sum, s) => sum + (s.agent_compliance_rate ?? 0), 0) / rated.length)
+      : null;
+  }, [sites]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -310,10 +318,7 @@ export const PartnerDashboard: React.FC = () => {
               <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Portfolio Health<InfoTip text="Average compliance score across all active client sites." /></p>
             </div>
             {(() => {
-              const rated = sites.filter(s => typeof s.agent_compliance_rate === 'number');
-              const avg = rated.length > 0
-                ? Math.round(rated.reduce((sum, s) => sum + (s.agent_compliance_rate ?? 0), 0) / rated.length)
-                : null;
+              const avg = portfolioAvg;
               const color = avg === null ? 'text-slate-400' : avg >= 90 ? 'text-emerald-600' : avg >= 70 ? 'text-yellow-600' : 'text-red-600';
               return (
                 <p className={`text-3xl font-bold tabular-nums ${color}`}>
@@ -966,4 +971,34 @@ const PartnerInventory: React.FC<{ apiKey: string | null }> = ({ apiKey }) => {
   );
 };
 
-export default PartnerDashboard;
+// Error boundary to prevent dashboard crashes from propagating
+class DashboardErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-8 text-center">
+          <h2 className="text-lg font-semibold text-red-600 mb-2">Dashboard Error</h2>
+          <p className="text-sm text-slate-500 mb-4">{this.state.error.message}</p>
+          <button onClick={() => this.setState({ error: null })}
+            className="px-4 py-2 text-sm bg-teal-600 text-white rounded hover:bg-teal-700">
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const PartnerDashboardWithBoundary: React.FC = () => (
+  <DashboardErrorBoundary>
+    <PartnerDashboard />
+  </DashboardErrorBoundary>
+);
+
+export default PartnerDashboardWithBoundary;

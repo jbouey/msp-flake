@@ -1,13 +1,13 @@
 {
-  "session": 202,
-  "updated": "2026-04-09T00:04:13.123419Z",
+  "session": 203,
+  "updated": "2026-04-09T20:59:45.794884Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
   "system_health": {
     "vps_api": "healthy_10_production_features_deployed",
     "dashboard": "session200_db_scaling_clickable_badges_target_count_fix_openclaw_fixed",
-    "physical_appliance": "go_daemon_v0.3.84_rule_reload_security_hardened_nonce_2h",
+    "physical_appliance": "2x_v0.3.85_osiriscare_1x_v0.3.82_osiriscare_installer_unreachable_for_fleet_orders",
     "vm_appliance": "DEPRECATED_inactive_session_183",
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
@@ -36,9 +36,18 @@
     "portal_auth": "session201_enterprise_hardened_redis_mfa_bcrypt14_password_history_api_key_expiry",
     "macos_scanning": "agent_v0.4.5_mdns_discovery_link_local_fallback_reconnect_re_resolution",
     "oui_device_hints": "500_plus_entries_manufacturer_deviceclass_integrated_in_device_api",
-    "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall"
+    "auto_discovery": "phase1_3_complete_probing_autodeploy_takeover_rogue_lifecycle_selfheal_preflight_topology_coverage_uninstall",
+    "recovery_platform_tier1": "session203_auditor_kit_zip_endpoint_merkle_disclosure_recovery_landing_31_tests_passing",
+    "client_audit_log": "session203_disclosure_accounting_view_13_mutations_audited_18_tests_hipaa_164_528",
+    "partner_activity_log": "session203_extended_with_partner_event_types_signin_logout_settings_via_partner_activity_logger",
+    "audit_proof_display": "session203_full_chain_browser_verify_genesis_panel_pubkey_panel_ots_per_bundle_random_sample",
+    "merkle_collision_remediation": "session203_migration_148_1198_bundles_47_batches_reclassified_legacy_random_suffix_batch_id_advisory_published",
+    "compliance_packet_cron": "session203_redis_lock_atomic_setnx_30min_ttl_idempotent_filename_signed_sha256_admin_audit_log_entry",
+    "recovery_platform_tier2": "session203_full_chain_web_worker_packet_determinism_genesis_panel_random_sample_changelog",
+    "recovery_platform_tier3": "session203_h1_chain_legacy_badge_h6_h8_multi_framework_h7_partner_audit_log_h2_pubkey_panel_h3_ots_per_bundle",
+    "audit_punch_list": "ALL_H_FINDINGS_CLOSED_h4_operational_filter_explicit_set_scoring_excluded_h5_client_bundle_hash_sha256_server_fallback_warning_12_tests"
   },
-  "current_blocker": "iMac SSH port 2222 still broken. Session 202 round-table audit in progress \u2014 batch 1+2 of fixes applied.",
+  "current_blocker": "iMac SSH port 2222 still broken. osiriscare-installer (84:3A:5B:1F:FF:E4) stuck on v0.3.82 — fleet orders ignored by pre-Session-201 daemon, not reachable via WireGuard.",
   "session_202_work": {
     "summary": "Round-table audit: 67 files, 5 swarms, 360 test cases identified. Critical security fixes + DRY consolidation.",
     "security_fixes": [

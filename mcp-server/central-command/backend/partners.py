@@ -40,7 +40,7 @@ from .partner_activity_logger import (
     get_partner_activity_stats,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("dashboard_api.partners")
 
 # API endpoint from environment variable
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.osiriscare.net")

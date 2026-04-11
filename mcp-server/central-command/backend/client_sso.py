@@ -265,10 +265,11 @@ async def sso_callback(
             if domain not in allowed:
                 raise HTTPException(403, f"Email domain '{domain}' is not allowed for this organization")
 
-        # Find or create client user
+        # Find or create client user — MUST scope to this org to prevent
+        # cross-org login (user in OrgA must not authenticate into OrgB).
         user = await conn.fetchrow(
-            "SELECT id, mfa_enabled, mfa_secret FROM client_users WHERE email = $1",
-            email,
+            "SELECT id, mfa_enabled, mfa_secret FROM client_users WHERE email = $1 AND client_org_id = $2",
+            email, org_id,
         )
         if user:
             await conn.execute(

@@ -843,6 +843,12 @@ async def submit_evidence(
     Security: Only appliances with a registered public key can submit evidence.
     The agent_signature must be valid for the bundle content.
     """
+    # SECURITY: Enforce Bearer token site matches URL path site_id.
+    # Without this, an appliance with token for site-A could submit evidence to site-B.
+    if site_id != auth_site_id:
+        logger.warning(f"SECURITY: site_id mismatch on evidence submit: token={auth_site_id} url={site_id}")
+        raise HTTPException(status_code=403, detail="Site ID mismatch: token does not authorize this site")
+
     # Verify site exists
     site_result = await db.execute(
         text("SELECT site_id, agent_public_key FROM sites WHERE site_id = :site_id"),
@@ -1030,8 +1036,10 @@ async def submit_evidence(
     if not bundle.bundle_id:
         bundle.bundle_id = f"CB-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{uuid.uuid4().hex[:8]}"
 
-    # Compute bundle_hash if not provided
+    # Compute bundle_hash if not provided (server-side fallback).
+    # Daemon v0.3.85+ sends client-computed hashes. Fallback indicates legacy appliance.
     if not bundle.bundle_hash:
+        logger.warning(f"Server-side hash fallback for site={site_id} — appliance should send bundle_hash (upgrade daemon)")
         hash_content = json.dumps({
             "site_id": site_id,
             "checked_at": bundle.checked_at.isoformat(),
@@ -1046,12 +1054,17 @@ async def submit_evidence(
     elif not bundle.check_type:
         bundle.check_type = "drift"
 
-    # Skip network monitoring bundles — these are operational monitoring (port scans,
-    # host reachability, DNS checks), NOT compliance attestation. Storing them as
-    # compliance_bundles produces 400+ "fail" entries/day that tank the score to 0%.
-    # Network findings still flow through the healing pipeline via reportNetDrift().
-    if bundle.check_type.startswith("net_"):
-        logger.info(f"Skipping network monitoring bundle ({bundle.check_type}) for site={site_id} — not compliance")
+    # Skip operational monitoring bundles — port scans, host reachability, DNS checks
+    # are NOT compliance attestation. Storing them as compliance_bundles produces 400+
+    # "fail" entries/day that tank the score to 0%. Network findings still flow through
+    # the healing pipeline via reportNetDrift().
+    # This set matches the daemon's networkCheckTypes in evidence/submitter.go.
+    OPERATIONAL_MONITORING_TYPES = {
+        "net_unexpected_ports", "net_expected_service",
+        "net_host_reachability", "net_dns_resolution",
+    }
+    if bundle.check_type in OPERATIONAL_MONITORING_TYPES:
+        logger.info(f"Skipping operational monitoring bundle ({bundle.check_type}) for site={site_id} — not compliance")
         return {
             "status": "accepted",
             "bundle_id": bundle.bundle_id,

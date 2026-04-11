@@ -913,13 +913,14 @@ CATEGORY_CHECKS = {
         "windows_service_wuauserv", "agent_status",
     ],
     "network": [
-        "network", "network_posture_windows",
+        "network_posture_windows",
         "windows_network_profile", "windows_dns_config",
         "linux_network", "ntp_sync", "linux_time_sync",
         "windows_smb1_protocol",
-        # Network scan results (monitoring, not compliance)
-        "net_unexpected_ports", "net_expected_service",
-        "net_host_reachability",
+        # Operational monitoring types EXCLUDED from compliance scoring:
+        # "network" — netscan aggregate findings (host reachability, not attestation)
+        # "net_unexpected_ports", "net_expected_service", "net_host_reachability"
+        # These flow through the healing pipeline but are NOT compliance evidence.
     ],
     "system_integrity": [
         "disk_space", "linux_kernel", "linux_boot",

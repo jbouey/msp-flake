@@ -608,7 +608,7 @@ func (ns *netScanner) syncDiscoveredDevices(ctx context.Context, devices []disco
 
 		entry := deviceSyncEntry{
 			DeviceID:         deviceID,
-			Hostname:         d.Hostname,
+			Hostname:         phiscrub.Scrub(d.Hostname),
 			IPAddress:        d.IPAddress,
 			MACAddress:       mac,
 			DeviceType:       classifyDeviceType(d),

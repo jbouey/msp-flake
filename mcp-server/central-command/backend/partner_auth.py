@@ -112,10 +112,10 @@ async def _store_partner_mfa_pending(token: str, data: dict) -> None:
                 )
                 return
             except Exception as e:
-                logger.warning("Redis partner MFA store failed, using in-memory: %s", e)
+                logger.error("Redis partner MFA store FAILED — falling back to in-memory (breaks multi-worker): %s", e)
     except ImportError:
-        pass
-    # Fallback to in-memory
+        logger.error("Redis import failed — partner MFA pending tokens are in-memory only (breaks multi-worker)")
+    # Fallback to in-memory — operational but not production-safe
     _partner_mfa_pending[token] = data
 
 

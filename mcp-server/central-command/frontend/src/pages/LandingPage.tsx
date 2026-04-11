@@ -115,14 +115,16 @@ export const LandingPage: React.FC = () => {
             </div>
 
             <h1 className="font-display text-4xl md:text-5xl lg:text-6xl text-slate-900 leading-[1.1] mb-6">
-              Compliance infrastructure{' '}
-              <span className="block" style={{ color: '#0d9488' }}>for healthcare</span>
+              Always audit-ready.{' '}
+              <span className="block" style={{ color: '#0d9488' }}>With proof — not paperwork.</span>
             </h1>
 
-            <p className="text-lg md:text-xl text-slate-500 leading-relaxed max-w-2xl mb-10 font-body font-light">
-              Enterprise-grade compliance monitoring, issue detection, and evidence
-              capture — designed for practices with 1–50 providers.
-              Observe your posture. Respond to issues. Attest with confidence.
+            <p className="text-lg md:text-xl text-slate-500 leading-relaxed max-w-2xl mb-4 font-body font-light">
+              Continuous HIPAA compliance monitoring, automated remediation, and
+              verifiable evidence — designed for practices with 1–50 providers.
+            </p>
+            <p className="text-lg md:text-xl text-slate-600 leading-relaxed max-w-2xl mb-10 font-body font-medium">
+              Stop discovering compliance issues during audits.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4">
@@ -219,12 +221,12 @@ export const LandingPage: React.FC = () => {
               {
                 num: '03',
                 title: 'Silent failures',
-                desc: 'Configuration changes, missed patches, and policy deviations accumulate undetected until the next assessment.',
+                desc: 'Configuration changes, missed patches, and policy deviations accumulate undetected — silent failures that become audit findings.',
               },
               {
                 num: '04',
                 title: 'Reactive posture',
-                desc: 'Most organizations discover compliance issues after they become findings — not before they become risks.',
+                desc: 'Issues are discovered after they become compliance violations. By then, the exposure window is already on the record.',
               },
             ].map((item) => (
               <div key={item.num} className="p-6 rounded-xl border border-slate-100 bg-slate-50/50">
@@ -291,7 +293,7 @@ export const LandingPage: React.FC = () => {
               <h3 className="text-xl font-semibold text-slate-900 mb-3 font-body">Respond</h3>
               <p className="text-sm text-slate-500 leading-relaxed font-body">
                 Three-tier response framework. Deterministic rules handle
-                routine issues automatically. Intelligent planning addresses
+                routine issues automatically. Advanced analysis addresses
                 complex scenarios. Critical decisions escalate to your team
                 for human-authorized action.
               </p>
@@ -309,10 +311,10 @@ export const LandingPage: React.FC = () => {
               </div>
               <h3 className="text-xl font-semibold text-slate-900 mb-3 font-body">Attest</h3>
               <p className="text-sm text-slate-500 leading-relaxed font-body">
-                Cryptographically signed evidence bundles with blockchain
-                timestamps. Compliance monitoring summaries generated from
-                continuous observation. Audit-supportive documentation available
-                on demand — not assembled under pressure before a review.
+                Proof of compliance generated automatically — not assembled
+                before an audit. Cryptographically signed evidence bundles
+                with blockchain timestamps. Every action recorded, every
+                state change documented, available on demand.
               </p>
             </div>
           </div>
@@ -333,9 +335,10 @@ export const LandingPage: React.FC = () => {
                 Your compliance posture,<br />always visible
               </h2>
               <p className="text-lg text-slate-500 leading-relaxed mb-8 font-body font-light">
-                Direct access to your compliance data through the OsirisCare portal.
-                No waiting for your MSP to send a report. No wondering whether
-                yesterday's issue was resolved.
+                Know your compliance status without waiting for reports or
+                chasing updates. Direct access to your compliance data through
+                the OsirisCare portal — see what's passing, what was fixed,
+                and what needs attention, right now.
               </p>
 
               <ul className="space-y-4 mb-10">
@@ -441,8 +444,9 @@ export const LandingPage: React.FC = () => {
             </h2>
             <p className="text-lg text-slate-500 leading-relaxed font-body font-light">
               White-label HIPAA compliance monitoring for your healthcare clients.
-              Reduce manual audit work. Serve an underserved market. Build recurring
-              revenue on infrastructure that improves over time.
+              Reduce manual audit preparation and repetitive remediation work.
+              Serve an underserved market. Build recurring revenue on infrastructure
+              that improves over time. Typical deployment: under 3 hours.
             </p>
           </div>
 
@@ -464,7 +468,7 @@ export const LandingPage: React.FC = () => {
                   </svg>
                 ),
                 title: 'Learning system',
-                desc: 'Response patterns that work get promoted from intelligent planning to deterministic rules. Your infrastructure gets smarter with each resolution.',
+                desc: 'Response patterns that work get promoted from advanced analysis to deterministic rules. Your infrastructure improves with each resolution.',
               },
               {
                 icon: (
@@ -591,8 +595,8 @@ export const LandingPage: React.FC = () => {
                 <span className="text-base font-semibold text-slate-900 font-body">OsirisCare</span>
               </div>
               <p className="text-sm text-slate-400 leading-relaxed max-w-sm font-body">
-                Compliance infrastructure for healthcare. Continuous monitoring,
-                evidence-grade observability, and operator-authorized remediation
+                Always audit-ready — with proof, not paperwork. Continuous monitoring,
+                verifiable evidence, and operator-authorized remediation
                 designed to support HIPAA compliance programs.
               </p>
             </div>

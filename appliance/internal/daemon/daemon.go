@@ -688,8 +688,14 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		req.EncryptionPublicKey = d.envelopeKP.PublicKeyHex()
 	}
 
-	// Include deploy results from previous cycle (cleared after send)
+	// Include deploy results from previous cycle (cleared after send).
+	// Scrub hostnames + error messages before egress — may contain PHI
+	// (e.g., patient-named workstations like "PATIENT-ROOM-201-PC").
 	if dr := d.state.DrainDeployResults(); len(dr) > 0 {
+		for i := range dr {
+			dr[i].Hostname = phiscrub.Scrub(dr[i].Hostname)
+			dr[i].Error = phiscrub.Scrub(dr[i].Error)
+		}
 		req.DeployResults = dr
 	}
 

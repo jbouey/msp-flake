@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -113,6 +115,7 @@ type bundlePayload struct {
 	CheckedAt      string                 `json:"checked_at"`
 	Checks         []map[string]any       `json:"checks"`
 	Summary        map[string]any         `json:"summary"`
+	BundleHash     string                 `json:"bundle_hash"`
 	AgentSignature string                 `json:"agent_signature"`
 	AgentPublicKey string                 `json:"agent_public_key"`
 	SignedData     string                 `json:"signed_data"`
@@ -217,11 +220,17 @@ func (s *Submitter) submitBundle(ctx context.Context, checks []map[string]any, c
 	// Sign
 	signature := Sign(s.signingKey, signedBytes)
 
+	// Client-side bundle hash — computed from signedBytes (canonical JSON).
+	// This commits the hash at the source, preventing server-side tampering.
+	bundleDigest := sha256.Sum256(signedBytes)
+	bundleHash := hex.EncodeToString(bundleDigest[:])
+
 	payload := bundlePayload{
 		SiteID:         s.siteID,
 		CheckedAt:      now.Format(time.RFC3339),
 		Checks:         checks,
 		Summary:        summary,
+		BundleHash:     bundleHash,
 		AgentSignature: signature,
 		AgentPublicKey: s.publicKeyHex,
 		SignedData:     signedData,

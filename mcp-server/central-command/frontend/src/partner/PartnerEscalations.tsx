@@ -445,7 +445,7 @@ export const PartnerEscalations: React.FC = () => {
                   {tickets.map(ticket => {
                     const sla = slaTimeRemaining(ticket);
                     return (
-                      <tr key={ticket.id} className="hover:bg-indigo-50/30 transition">
+                      <tr key={ticket.id} className={`transition ${ticket.escalated_to_l4 || ticket.status === 'escalated_to_l4' ? 'bg-purple-50/60 hover:bg-purple-50 border-l-2 border-purple-400' : 'hover:bg-indigo-50/30'}`}>
                         <td className="px-5 py-4">
                           <span className={`px-2 py-1 text-xs font-semibold rounded-full ${priorityColor(ticket.priority)}`}>
                             {ticket.priority}

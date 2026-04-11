@@ -472,6 +472,13 @@ async def validate_magic_link(request: Request, body: MagicLinkValidate):
 
         logger.info(f"Client login successful: {user['email']}")
 
+        # Audit: magic link login is a security-relevant event
+        await _audit_client_action(
+            conn, {"user_id": str(user["id"]), "org_id": str(user["client_org_id"]), "email": user["email"]},
+            "MAGIC_LINK_LOGIN", target=str(user["id"]),
+            details={"method": "magic_link"}, request=request,
+        )
+
     # Set session cookie
     response = Response(content='{"status": "authenticated"}', media_type="application/json")
     response.set_cookie(
@@ -1849,6 +1856,10 @@ async def mark_notification_read(notification_id: str, user: dict = Depends(requ
         if result == "UPDATE 0":
             raise HTTPException(status_code=404, detail="Notification not found or already read")
 
+        await _audit_client_action(
+            conn, user, "NOTIFICATION_READ", target=str(notification_id),
+        )
+
     return {"status": "read"}
 
 
@@ -1867,6 +1878,13 @@ async def mark_all_notifications_read(user: dict = Depends(require_client_user))
 
     # Parse count from "UPDATE N"
     count = int(result.split()[1]) if result.startswith("UPDATE") else 0
+
+    if count > 0:
+        async with org_connection(pool, org_id=org_id) as conn2:
+            await _audit_client_action(
+                conn2, user, "NOTIFICATIONS_READ_ALL",
+                details={"count": count},
+            )
 
     return {"status": "read_all", "count": count}
 

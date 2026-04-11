@@ -2,6 +2,8 @@ package evidence
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -146,5 +148,76 @@ func TestBuildAndSubmit_ServerError(t *testing.T) {
 	err := s.BuildAndSubmit(context.Background(), nil, []string{"dc01"})
 	if err == nil {
 		t.Fatal("expected error on 500 response")
+	}
+}
+
+func TestBuildAndSubmit_BundleHashPresent(t *testing.T) {
+	dir := t.TempDir()
+	priv, pubHex, err := LoadOrCreateSigningKey(dir + "/signing.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var receivedPayload bundlePayload
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedPayload)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"bundle_id":"CB-hash","bundle_hash":"abc","chain_position":1}`))
+	}))
+	defer ts.Close()
+
+	s := NewSubmitter("site-1", ts.URL, "test-key", priv, pubHex)
+	err = s.BuildAndSubmit(context.Background(), nil, []string{"dc01"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// H5: bundle_hash must be present and non-empty
+	if receivedPayload.BundleHash == "" {
+		t.Fatal("bundle_hash not sent in payload — H5 requires client-side hashing")
+	}
+
+	// Must be valid 64-char hex (SHA256)
+	if len(receivedPayload.BundleHash) != 64 {
+		t.Fatalf("bundle_hash length %d, want 64 hex chars", len(receivedPayload.BundleHash))
+	}
+	if _, err := hex.DecodeString(receivedPayload.BundleHash); err != nil {
+		t.Fatalf("bundle_hash is not valid hex: %v", err)
+	}
+}
+
+func TestBundleHash_DerivedFromSignedData(t *testing.T) {
+	dir := t.TempDir()
+	priv, pubHex, err := LoadOrCreateSigningKey(dir + "/signing.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var receivedPayload bundlePayload
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedPayload)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"bundle_id":"CB-hash2","bundle_hash":"abc","chain_position":1}`))
+	}))
+	defer ts.Close()
+
+	s := NewSubmitter("site-1", ts.URL, "test-key", priv, pubHex)
+	err = s.BuildAndSubmit(context.Background(), nil, []string{"dc01"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify bundle_hash == SHA256(signed_data)
+	signedDataBytes := []byte(receivedPayload.SignedData)
+	expectedDigest := sha256.Sum256(signedDataBytes)
+	expectedHash := hex.EncodeToString(expectedDigest[:])
+
+	if receivedPayload.BundleHash != expectedHash {
+		t.Fatalf("bundle_hash mismatch:\n  got:  %s\n  want: SHA256(signed_data) = %s",
+			receivedPayload.BundleHash, expectedHash)
 	}
 }

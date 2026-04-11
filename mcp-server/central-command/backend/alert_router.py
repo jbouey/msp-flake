@@ -475,15 +475,11 @@ async def digest_sender_loop() -> None:
                 await _flush_critical_alerts(conn)
                 await _send_all_org_digests(conn)
                 await _check_non_engagement(conn)
-                # Audit log retention cleanup (3-year / 1095-day policy)
-                result = await conn.execute(
-                    """DELETE FROM admin_audit_log
-                       WHERE created_at < NOW() - INTERVAL '1095 days'"""
-                )
-                if result:
-                    count = int(result.split()[-1]) if result and 'DELETE' in result else 0
-                    if count > 0:
-                        logger.info(f"Audit retention: purged {count} records older than 3 years")
+                # Audit log retention: HIPAA requires 7-year minimum (2555 days).
+                # DELETE triggers on admin_audit_log enforce immutability —
+                # retention cleanup requires manual DBA intervention with
+                # documented justification. The 3-year automated purge was
+                # removed as non-compliant with HIPAA 164.316(b)(2)(i).
         except asyncio.CancelledError:
             raise
         except Exception as e:
