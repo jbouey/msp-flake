@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -110,8 +111,13 @@ func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
 			script := `gpupdate /force; (Get-GPO -All | Where-Object { $_.ModificationTime -gt (Get-Date).AddDays(-1) }).DisplayName`
 			return d.executeInlineScript(script, hostID, "windows", params)
 		case "run_backup_job":
-			// Trigger restic backup on the Linux appliance
+			// Trigger restic backup on the Linux appliance.
+			// SECURITY: job_name is shell-escaped to prevent command injection.
+			// Only alphanumeric + hyphens + underscores allowed (systemd unit name charset).
 			jobName := maputil.StringDefault(params, "job_name", "restic-backup")
+			if !regexp.MustCompile(`^[a-zA-Z0-9._-]+$`).MatchString(jobName) {
+				return nil, fmt.Errorf("invalid job_name %q: must be alphanumeric with hyphens/underscores only", jobName)
+			}
 			script := fmt.Sprintf("systemctl start %s.service && systemctl is-active %s.service", jobName, jobName)
 			return d.executeInlineScript(script, hostID, "linux", params)
 		case "restart_logging_services":
@@ -547,6 +553,17 @@ func (d *Daemon) executeHealingOrder(ctx context.Context, params map[string]inte
 
 	hostname := maputil.String(params, "hostname")
 	checkType := maputil.String(params, "check_type")
+
+	// SECURITY: Respect disabled checks — if the client disabled this check type,
+	// the healing order must not execute. Fleet orders cannot override client authority.
+	if checkType != "" && d.state.IsDisabled(checkType) {
+		log.Printf("[healing] BLOCKED: check_type %s is disabled by site policy — healing order rejected", checkType)
+		return map[string]interface{}{
+			"status":     "blocked",
+			"check_type": checkType,
+			"reason":     "check_type disabled by site drift config — client authority overrides fleet orders",
+		}, nil
+	}
 
 	// Look up runbook to determine platform
 	rb, ok := runbookRegistry[runbookID]

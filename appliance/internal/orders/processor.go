@@ -438,6 +438,8 @@ var dangerousOrderTypes = map[string]bool{
 	"sync_promoted_rule":          true,
 	"configure_workstation_agent": true,
 	"update_agent":                true,
+	"enable_emergency_access":     true,
+	"disable_emergency_access":    true,
 }
 
 func (p *Processor) verifySignature(order *Order) error {
