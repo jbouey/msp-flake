@@ -278,7 +278,7 @@ in
       BOOT_DEV=$(findmnt -n -o SOURCE / | sed 's/\[.*$//' | head -1)
 
       INTERNAL_DEV=""
-      for dev in /dev/sda /dev/sdb /dev/vda /dev/nvme0n1; do
+      for dev in /dev/sda /dev/sdb /dev/vda /dev/nvme0n1 /dev/mmcblk0; do
         [ -b "$dev" ] || continue
         DEV_NAME=$(basename "$dev")
         echo "$BOOT_DEV" | grep -q "$DEV_NAME" && continue
@@ -360,7 +360,7 @@ in
       partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1
       sleep 2
 
-      if [[ "$INTERNAL_DEV" == *"nvme"* ]]; then
+      if [[ "$INTERNAL_DEV" == *"nvme"* ]] || [[ "$INTERNAL_DEV" == *"mmcblk"* ]]; then
         ESP_PART="''${INTERNAL_DEV}p1"
         DATA_PART="''${INTERNAL_DEV}p2"
         ROOT_PART="''${INTERNAL_DEV}p3"
