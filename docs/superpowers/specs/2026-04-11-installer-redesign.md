@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-11
 **Authors:** Round Table (Principal SWE, CCIE, DBA, PM)
-**Status:** Draft — pending user approval
+**Status:** Approved — round table reviewed, 6 additions incorporated
 
 ---
 
@@ -314,7 +314,131 @@ Re-provisioning on Central Command side:
 
 ---
 
-## 9. What's NOT in this spec (out of scope)
+## 9. Round Table Additions (post-review)
+
+### 9a. Raw Disk Image Build (Principal SWE)
+
+NixOS `system.build.diskImage` produces qcow2 (QEMU format) — not what we need.
+Instead, build a raw partitioned image via a custom Nix derivation:
+
+```nix
+# In flake.nix — new output
+packages.x86_64-linux.appliance-raw-image = pkgs.callPackage ./iso/raw-image.nix {
+  nixosConfig = self.nixosConfigurations.osiriscare-appliance-disk;
+};
+```
+
+The derivation:
+1. Evaluates `nixosConfig.config.system.build.toplevel` (the full system closure)
+2. Creates a raw image file with 3 partitions (ESP + MSP-DATA + root)
+3. Copies the Nix closure into the root partition
+4. Installs systemd-boot to the ESP
+5. Writes `/etc/fstab` with by-label mounts
+6. Compresses with `zstd -19` (max compression, ~1.5GB output)
+
+Output: `osiriscare-system.raw.zst`
+
+### 9b. Streaming Decompression (Principal SWE)
+
+The installer writes the image using streaming zstd decompression:
+
+```bash
+# Real progress via pv (pipe viewer)
+IMAGE_SIZE=$(stat -c %s "$IMAGE_PATH")  # compressed size
+zstdcat "$IMAGE_PATH" | pv -s "$DECOMPRESSED_SIZE" -n 2>"$PROGRESS_FIFO" | \
+  dd of="$INTERNAL_DEV" bs=4M conv=fsync status=none
+
+# Background reader updates the TUI progress bar from $PROGRESS_FIFO
+```
+
+`pv` provides byte-accurate progress. The TUI reads percentage from the FIFO
+and updates the visual progress bar in real time.
+
+### 9c. Partition Resize in Installer (Principal SWE)
+
+After `dd` writes the image, the root partition is the size of the pre-built
+image (~4GB). The installer resizes it to fill the drive:
+
+```bash
+# Grow partition 3 to fill remaining space
+growpart "$INTERNAL_DEV" 3
+
+# Determine partition path (NVMe/eMMC use p3, SATA uses 3)
+case "$INTERNAL_DEV" in
+  *nvme*|*mmcblk*) ROOT_PART="${INTERNAL_DEV}p3" ;;
+  *) ROOT_PART="${INTERNAL_DEV}3" ;;
+esac
+
+# Resize filesystem to match partition
+e2fsck -f -y "$ROOT_PART"
+resize2fs "$ROOT_PART"
+```
+
+This runs in the installer BEFORE halt. First boot has full disk space available.
+
+### 9d. API Key Single-Use Rotation (CCIE)
+
+The config.yaml API key is **single-use**. On first successful checkin:
+
+1. Daemon sends checkin with the USB-provisioned API key
+2. Server validates → responds with a **new** rotated API key
+3. Daemon writes the new key to config.yaml, discards the old one
+4. Old key is immediately invalidated in the `api_keys` table
+
+If the USB is lost before deployment:
+- Admin clicks "Revoke" in Central Command → old key invalidated
+- Finder of USB can't authenticate — key is dead
+
+Implementation:
+- Checkin response includes `rotated_api_key` field (only on first checkin)
+- Daemon detects new key → writes to config.yaml → uses for all subsequent checkins
+- Server marks old key as `active = false` after rotation
+
+### 9e. USB Speed Measurement + Time Estimate (PM)
+
+During the first 10MB of the `dd` write, the installer measures actual write speed:
+
+```bash
+# Write 10MB test block, measure speed
+dd if=/dev/zero of="$INTERNAL_DEV" bs=1M count=10 oflag=direct 2>&1 | \
+  grep -oP '\d+(\.\d+)? [MG]B/s' > /tmp/write-speed
+
+# Parse speed and estimate total time
+SPEED_MBS=$(cat /tmp/write-speed | awk '{print $1}')
+EST_SECONDS=$(echo "$DECOMPRESSED_SIZE / ($SPEED_MBS * 1048576)" | bc)
+```
+
+The splash screen shows:
+- "USB 3.0 detected" or "USB 2.0 detected" (based on USB controller sysfs)
+- "Estimated time: 2 minutes" (updated after speed test)
+- Progress bar with real percentage and "X MB/s" speed readout
+
+### 9f. LED Blink on Completion (PM)
+
+Best-effort LED control via sysfs. Many thin clients expose LEDs:
+
+```bash
+# Try common LED paths (HP T640/T740, generic)
+for led in /sys/class/leds/*/brightness; do
+  echo 1 > "$led" 2>/dev/null  # Turn on
+done
+
+# Blink pattern: 3 slow blinks = success
+for i in 1 2 3; do
+  for led in /sys/class/leds/*/brightness; do
+    echo 0 > "$led" 2>/dev/null; sleep 0.3
+    echo 1 > "$led" 2>/dev/null; sleep 0.7
+  done
+done
+```
+
+Not all hardware supports this. If no LEDs found, the visual "green checkmark"
+on screen is the only confirmation. No error if LEDs are unavailable.
+
+---
+
+## 10. What's NOT in this spec (out of scope)
+
 
 - QR code pairing (future enhancement)
 - Batch deployment tool (future — generate N config.yamls at once)
@@ -325,7 +449,7 @@ Re-provisioning on Central Command side:
 
 ---
 
-## 10. Success Criteria
+## 11. Success Criteria
 
 - [ ] Fresh install on SSD: under 2 minutes, zero interaction
 - [ ] Fresh install on eMMC: under 3 minutes, zero interaction
