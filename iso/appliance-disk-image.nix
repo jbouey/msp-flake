@@ -203,6 +203,7 @@ in
     initrd.availableKernelModules = [
       "ahci" "xhci_pci" "ehci_pci" "usbhid" "usb_storage" "sd_mod"
       "nvme" "sata_nv" "sata_via"
+      "mmc_block" "sdhci_pci" "sdhci_acpi"    # eMMC support (HP T740, thin clients)
       "virtio_pci" "virtio_blk" "virtio_net"  # For VM testing
       "ext4" "vfat"
     ];
