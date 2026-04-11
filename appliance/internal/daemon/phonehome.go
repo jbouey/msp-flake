@@ -255,7 +255,10 @@ type DaemonHealth struct {
 	// Mesh coordination stats
 	MeshPeerCount int      `json:"mesh_peer_count"`
 	MeshRingSize  int      `json:"mesh_ring_size"`  // total nodes including self
-	MeshPeerMACs  []string `json:"mesh_peer_macs,omitempty"`
+	MeshPeerMACs    []string `json:"mesh_peer_macs,omitempty"`
+	// WireGuard access state — auditable proof of tunnel status
+	WgAccessState   string   `json:"wg_access_state"`    // "off", "active", "bootstrap"
+	WgAccessExpires string   `json:"wg_access_expires,omitempty"` // ISO8601 if active
 }
 
 // ConnectedAgent represents a Go agent connected to this appliance via gRPC.
@@ -296,6 +299,19 @@ func collectDaemonHealth(startTime time.Time, mesh *Mesh) *DaemonHealth {
 		h.MeshPeerCount = stats.PeerCount
 		h.MeshRingSize = stats.RingSize
 		h.MeshPeerMACs = stats.PeerMACs
+	}
+	// WireGuard access state — determine by checking if wg0 interface exists
+	if wgIP := getWireGuardIP(); wgIP != "" {
+		h.WgAccessState = "active"
+		// Check if there's a systemd timer that will auto-expire it
+		if out, err := exec.Command("systemctl", "is-active", "msp-emergency-wg-expire.timer").Output(); err == nil && strings.TrimSpace(string(out)) == "active" {
+			// Timer is running — get the time left
+			if left, err := exec.Command("systemctl", "show", "-p", "NextElapseUSecRealtime", "--value", "msp-emergency-wg-expire.timer").Output(); err == nil {
+				h.WgAccessExpires = strings.TrimSpace(string(left))
+			}
+		}
+	} else {
+		h.WgAccessState = "off"
 	}
 	return h
 }

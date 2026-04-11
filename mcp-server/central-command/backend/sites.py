@@ -3046,6 +3046,32 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 f"hostname={checkin.hostname} mac={mac_normalized}"
             )
 
+        # Bootstrap → installed transition: auto-teardown WireGuard.
+        # When an appliance transitions from live_usb to installed_disk, the
+        # bootstrap phase is complete. WireGuard served its provisioning purpose —
+        # tear it down. This is the automatic enforcement of "no persistent access."
+        if _boot_source == 'installed_disk' and not _ghost_detected:
+            prev_health = await conn.fetchval(
+                "SELECT daemon_health->>'boot_source' FROM site_appliances WHERE appliance_id = $1",
+                canonical_id
+            )
+            if prev_health == 'live_usb':
+                logger.info(
+                    f"Bootstrap complete: {canonical_id} transitioned from live_usb to installed_disk. "
+                    f"Auto-disabling WireGuard tunnel."
+                )
+                try:
+                    from .fleet_updates import create_fleet_order_for_site
+                    await create_fleet_order_for_site(
+                        conn,
+                        site_id=checkin.site_id,
+                        order_type="disable_emergency_access",
+                        parameters={"disabled_by": "bootstrap_auto_teardown", "reason": "install complete"},
+                        expires_hours=1,
+                    )
+                except Exception as e:
+                    logger.warning(f"Bootstrap WG teardown order failed: {e}")
+
         # Merge boot_source into daemon_health for storage (no schema change needed)
         _health = dict(checkin.daemon_health) if checkin.daemon_health else {}
         _health['boot_source'] = _boot_source
