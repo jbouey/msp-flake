@@ -2199,6 +2199,9 @@ Review at: {BASE_URL}/admin/transfers/{request_id}
     except Exception as e:
         logger.error(f"Failed to send transfer notification: {e}")
 
+    async with org_connection(pool, org_id=org_id) as conn2:
+        await _audit_client_action(conn2, user, "TRANSFER_REQUESTED", target=str(request_id), request=request)
+
     return {
         "request_id": str(request_id),
         "status": "pending",
@@ -2460,6 +2463,9 @@ async def forward_promotion_candidate(
 
         logger.info(f"Client {user['email']} forwarded pattern {candidate['pattern_signature'][:8]} for site {candidate['site_id']}")
 
+        await _audit_client_action(conn, user, "PROMOTION_FORWARDED", target=pattern_id,
+            details={"site_id": candidate["site_id"], "pattern": candidate["pattern_signature"][:16]})
+
         return {
             "status": "forwarded",
             "pattern_id": pattern_id,
@@ -2601,6 +2607,9 @@ async def approve_promotion_candidate(
             f"as {rule['id']} for site {candidate['site_id']}"
         )
 
+        await _audit_client_action(conn, user, "PROMOTION_APPROVED", target=pattern_id,
+            details={"rule_id": rule["id"], "site_id": candidate["site_id"]})
+
         return {
             "status": "approved",
             "rule_id": rule["id"],
@@ -2647,6 +2656,9 @@ async def reject_promotion_candidate(
         )
 
         logger.info(f"Client {user['email']} rejected pattern {candidate['pattern_signature'][:8]} for site {candidate['site_id']}")
+
+        await _audit_client_action(conn, user, "PROMOTION_REJECTED", target=pattern_id,
+            details={"site_id": candidate["site_id"], "reason": body.reason})
 
         return {"status": "rejected", "pattern_id": pattern_id, "site_id": candidate["site_id"]}
 
@@ -2824,6 +2836,8 @@ async def create_checkout_session(
                 metadata={"org_id": str(org_id)},
             )
 
+            await _audit_client_action(conn, user, "BILLING_CHECKOUT_INITIATED",
+                details={"session_id": session.id})
             return {"checkout_url": session.url, "session_id": session.id}
 
         except stripe.error.StripeError as e:
@@ -2867,6 +2881,7 @@ async def create_billing_portal_session(
                 return_url=f"{BASE_URL}/client/settings",
             )
 
+            await _audit_client_action(conn, user, "BILLING_PORTAL_ACCESSED")
             return {"portal_url": session.url}
 
         except stripe.error.StripeError as e:
