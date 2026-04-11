@@ -1417,6 +1417,25 @@ try {
 			goto winrmB64Transfer
 		}
 
+		// SHA256 verification after NETLOGON copy (same check as HTTP download)
+		if expectedHash != "" {
+			verifyScript := fmt.Sprintf(`
+$hash = (Get-FileHash -Path "%s\%s" -Algorithm SHA256).Hash
+if ($hash -eq "%s") { "VERIFIED" } else { "MISMATCH:$hash" }
+`, agentInstallDir, agentBinaryName, strings.ToUpper(expectedHash))
+			vr := ad.daemon.winrmExec.Execute(target, verifyScript, "AGENT-VERIFY-UNC", "autodeploy", 30, 0, 10.0, nil)
+			vOut := maputil.String(vr.Output, "std_out")
+			if strings.Contains(vOut, "MISMATCH") {
+				slog.Error("SECURITY: NETLOGON binary SHA256 mismatch — possible NETLOGON poisoning",
+					"component", "autodeploy", "hostname", hostname, "output", vOut)
+				ad.daemon.winrmExec.Execute(target,
+					fmt.Sprintf(`Remove-Item -Force "%s\%s"`, agentInstallDir, agentBinaryName),
+					"AGENT-CLEANUP-UNC", "autodeploy", 10, 0, 5.0, nil)
+				return fmt.Errorf("SECURITY: NETLOGON binary hash mismatch on %s", hostname)
+			}
+			slog.Info("direct: NETLOGON SHA256 verified", "component", "autodeploy", "hostname", hostname)
+		}
+
 		// Verify size matches expected (SYSVOL can serve stale cached files)
 		agentData, loadErr := ad.loadAgentBinary()
 		if loadErr == nil {
