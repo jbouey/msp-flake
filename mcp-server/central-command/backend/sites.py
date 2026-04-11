@@ -1434,7 +1434,7 @@ async def get_site_activity(
         incident_rows = await conn.fetch(
             """
             SELECT id::text AS id, incident_type, severity, status,
-                   created_at, resolved_at, title
+                   created_at, resolved_at
             FROM incidents
             WHERE site_id = $1
               AND created_at > NOW() - INTERVAL '30 days'
@@ -1492,7 +1492,6 @@ async def get_site_activity(
                 "incident_id": r["id"],
                 "incident_type": r["incident_type"],
                 "severity": r["severity"],
-                "title": r["title"],
             },
         })
         if r["resolved_at"]:
