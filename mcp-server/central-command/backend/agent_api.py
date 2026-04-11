@@ -848,6 +848,21 @@ async def report_incident(
             }
         )
 
+        # Record remediation step for flywheel visibility.
+        # Without this, L1 resolutions are invisible to the auto-candidate
+        # scan and the promotion pipeline never sees successful patterns.
+        try:
+            await db.execute(
+                text("""
+                    INSERT INTO incident_remediation_steps
+                    (incident_id, tier, runbook_id, result, confidence, created_at)
+                    VALUES (:iid, :tier, :rid, 'order_created', 1.0, NOW())
+                """),
+                {"iid": incident_id, "tier": resolution_tier, "rid": runbook_id}
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record remediation step: {e}")
+
         logger.info("Created remediation order",
                     site_id=incident.site_id,
                     incident_id=incident_id,
