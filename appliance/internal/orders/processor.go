@@ -1199,14 +1199,23 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 	// Step 2: Schedule the health check as a SEPARATE transient timer (fires in 70s).
 	// This timer is managed by systemd, NOT by the daemon process.
 	// It survives the daemon restart and fires independently.
+	// Health check: verify the daemon is running AND reports the expected version.
+	// We check version output instead of /proc/PID/exe path because NixOS
+	// resolves symlinks through /nix/store, making path comparison unreliable.
 	healthScript := fmt.Sprintf(`
-		if systemctl is-active appliance-daemon && readlink -f /proc/$(systemctl show -p MainPID --value appliance-daemon)/exe | grep -q '%s'; then
-			echo "Health check passed — daemon running from %s"
+		if systemctl is-active appliance-daemon >/dev/null 2>&1; then
+			RUNNING_VER=$(%s --version 2>&1 | tail -1 | awk '{print $NF}')
+			if [ "$RUNNING_VER" = "%s" ]; then
+				echo "Health check passed — daemon running version %s"
+			else
+				echo "HEALTH CHECK FAILED — expected %s, got $RUNNING_VER — rolling back"
+				cp '%s' '%s' 2>/dev/null && systemctl restart appliance-daemon
+			fi
 		else
-			echo "HEALTH CHECK FAILED — rolling back to %s"
+			echo "HEALTH CHECK FAILED — daemon not active — rolling back"
 			cp '%s' '%s' 2>/dev/null && systemctl restart appliance-daemon
 		fi
-	`, binaryPath, binaryPath, backupPath, backupPath, binaryPath)
+	`, binaryPath, version, version, version, backupPath, binaryPath, backupPath, binaryPath)
 
 	healthCmd := exec.CommandContext(ctx, "systemd-run",
 		"--unit=msp-daemon-healthcheck-"+unitSuffix,
