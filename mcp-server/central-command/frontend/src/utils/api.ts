@@ -571,6 +571,7 @@ export interface SiteAppliance {
   mesh_ring_size: number;
   mesh_peer_macs: string[];
   assigned_target_count: number;
+  boot_source?: string | null;  // "live_usb", "installed_disk", or null
 }
 
 export interface SiteCredential {

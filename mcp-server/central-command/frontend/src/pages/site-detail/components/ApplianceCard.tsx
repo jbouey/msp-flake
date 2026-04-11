@@ -122,7 +122,7 @@ export const ApplianceCard: React.FC<ApplianceCardProps> = ({ appliance, latestV
           </h3>
         </div>
         <div className="flex items-center gap-2">
-          {(appliance as Record<string, unknown>).boot_source === 'live_usb' && (
+          {appliance.boot_source === 'live_usb' && (
             <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-amber-100 text-amber-700 animate-pulse">
               Installing
             </span>
