@@ -12,7 +12,7 @@
     "org_feature": "hardened_idor_fixed_n1_eliminated_pagination_health_consolidation_phi_boundary_partner_orgs",
     "redis_minio": "localhost_only",
     "minio_worm": "evidence-worm-v2_compliance_90d_object_lock",
-    "learning_flywheel": "session201_9_roundtable_fixes_rule_reload_audit_log_wired_28_tests_telemetry_retention",
+    "learning_flywheel": "session204_flywheel_audit_10_guardrail_tests_telemetry_trigger_migration155_circuit_breaker_l2_autocandidate",
     "incident_resolution": "pipeline_93pct_grace_period_fix_stale_cleanup_reopen_tracking",
     "evidence_pipeline": "end_to_end_live_heartbeats_site_appliances",
     "compliance_packets": "session201_persisted_to_db_hipaa_6yr_retention_compliance_packets_table",
