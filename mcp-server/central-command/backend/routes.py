@@ -304,7 +304,8 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), us
         text("""
             SELECT id, appliance_id, hostname, ip_addresses, agent_version,
                    status, last_checkin, first_checkin, display_name,
-                   COALESCE(jsonb_array_length(assigned_targets), 0) as assigned_target_count
+                   COALESCE(jsonb_array_length(assigned_targets), 0) as assigned_target_count,
+                   daemon_health->>'boot_source' as boot_source
             FROM site_appliances
             WHERE site_id = :site_id
         """),
@@ -315,6 +316,7 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), us
     appliances = []
     for i, a in enumerate(appliance_rows):
         is_online = a.status == 'online'
+        boot_source = getattr(a, 'boot_source', None) or 'unknown'
         checkin_freshness = 0
         if a.last_checkin:
             time_since = datetime.now(timezone.utc) - a.last_checkin
@@ -362,6 +364,7 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), us
             created_at=a.first_checkin or datetime.now(timezone.utc),
             display_name=a.display_name,
             assigned_target_count=getattr(a, 'assigned_target_count', 0) or 0,
+            boot_source=boot_source if boot_source != 'unknown' else None,
         ))
 
     # Calculate overall health

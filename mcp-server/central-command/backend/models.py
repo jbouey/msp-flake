@@ -131,6 +131,7 @@ class Appliance(BaseModel):
     created_at: datetime
     display_name: Optional[str] = None
     assigned_target_count: int = 0
+    boot_source: Optional[str] = None  # "live_usb", "installed_disk", or "unknown"
 
 
 class ClientOverview(BaseModel):

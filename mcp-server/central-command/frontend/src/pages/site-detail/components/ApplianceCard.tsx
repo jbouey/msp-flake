@@ -121,7 +121,14 @@ export const ApplianceCard: React.FC<ApplianceCardProps> = ({ appliance, latestV
             {appliance.display_name || appliance.hostname || appliance.appliance_id}
           </h3>
         </div>
-        <StatusBadge status={appliance.live_status} />
+        <div className="flex items-center gap-2">
+          {(appliance as any).boot_source === 'live_usb' && (
+            <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-amber-100 text-amber-700 animate-pulse">
+              Installing
+            </span>
+          )}
+          <StatusBadge status={appliance.live_status} />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 text-sm">
