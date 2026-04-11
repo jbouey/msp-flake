@@ -2941,7 +2941,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 import logging
                 logging.warning(f"Checkin {checkin.site_id}: failed to process deploy results: {e}")
 
-        # === STEP 0.9: Multi-NIC ghost detection ===
+        # Default canonical_id — may be overridden by ghost detection or Step 1
+        canonical_id = appliance_id
+
         # === STEP 0.9: Multi-NIC ghost detection ===
         # A physical machine with two NICs can register as two appliances if the
         # daemon alternates which NIC's MAC it sends. Two detection methods:
