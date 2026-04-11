@@ -3124,6 +3124,35 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 _health_json,
             )
 
+        # === STEP 3.3: Auto-generate display_name if missing ===
+        # When multiple appliances share hostname "osiriscare", the display_name
+        # differentiates them: first = hostname, subsequent = hostname-2, hostname-3.
+        # Also handles re-provisioning: if uptime < 300s and agent_version changed,
+        # this is a fresh install — reset the display_name.
+        if not _ghost_detected:
+            try:
+                current_display = await conn.fetchval(
+                    "SELECT display_name FROM site_appliances WHERE appliance_id = $1",
+                    canonical_id
+                )
+                if not current_display:
+                    # Count how many appliances at this site share the same hostname
+                    same_name_count = await conn.fetchval("""
+                        SELECT COUNT(*) FROM site_appliances
+                        WHERE site_id = $1 AND hostname = $2 AND deleted_at IS NULL
+                    """, checkin.site_id, checkin.hostname)
+                    if same_name_count <= 1:
+                        display = checkin.hostname
+                    else:
+                        display = f"{checkin.hostname}-{same_name_count}"
+                    await conn.execute(
+                        "UPDATE site_appliances SET display_name = $1 WHERE appliance_id = $2",
+                        display, canonical_id
+                    )
+                    logger.info(f"Auto-generated display_name '{display}' for {canonical_id}")
+            except Exception as e:
+                logger.debug(f"Display name generation skipped: {e}")
+
         # === STEP 3.4: Stale device cleanup on subnet change ===
         # When an appliance moves subnets (e.g., 192.168.88.x → 192.168.1.x),
         # devices discovered on the old subnet become unreachable phantoms.
