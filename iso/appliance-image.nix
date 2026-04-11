@@ -297,10 +297,15 @@ in
       if [ -z "$INTERNAL_DEV" ]; then
         S_DETECT=1
         show_progress 0 "ERROR: No suitable internal drive found (need >16GB)"
-        dialog --backtitle "OsirisCare MSP Compliance Platform" \
-          --title " Installation Failed " \
-          --msgbox "\nNo suitable internal drive found.\n\nAvailable drives:\n$(lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null)\n\nPlease attach an internal drive (>16GB) and reboot." \
-          18 65 2>/dev/null || true
+        echo ""
+        echo -e "  \033[1;31mERROR: No suitable internal drive found (need >16GB)\033[0m"
+        echo ""
+        lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null
+        echo ""
+        echo -e "  \033[2mAttach an internal drive and reboot.\033[0m"
+        log "ERROR: No internal drive found. Available: $(lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null | tr '\n' ' ')"
+        # Don't exit — keep showing the error so the user can see it
+        sleep 86400
         exit 0
       fi
 
@@ -318,19 +323,16 @@ in
             umount "$TMPDIR"
             rmdir "$TMPDIR"
             if [ ! -f /tmp/force-reinstall ]; then
-              dialog --backtitle "OsirisCare MSP Compliance Platform" \
-                --title " Existing Installation Detected " \
-                --yesno "\nAn OsirisCare appliance is already installed on $INTERNAL_DEV ($DEV_SIZE).\n\n  Choose an action:\n\n    Yes  =  Wipe and reinstall (ALL DATA ERASED)\n    No   =  Cancel (remove USB and reboot)\n\n  Debug console: Alt+F2 (root / osiris2024)" \
-                16 65 2>/dev/null
-              CHOICE=$?
-              if [ "$CHOICE" -ne 0 ]; then
-                dialog --backtitle "OsirisCare MSP Compliance Platform" \
-                  --title " Installation Cancelled " \
-                  --msgbox "\nRemove the USB installer and reboot to start\nthe existing appliance." \
-                  9 55 2>/dev/null || true
-                exit 0
-              fi
-              log "User chose to reinstall over existing installation"
+              echo ""
+              echo -e "  \033[1;33m⚠  Existing OsirisCare installation detected on $INTERNAL_DEV ($DEV_SIZE)\033[0m"
+              echo -e "  \033[1;37m  Reinstalling in 15 seconds... (Ctrl+C to cancel)\033[0m"
+              echo ""
+              for i in 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1; do
+                echo -ne "\r  \033[2mReinstall in \033[1;37m$i\033[0;2ms...  (Ctrl+C to cancel, Alt+F3 for debug console)\033[0m  "
+                sleep 1
+              done
+              echo ""
+              log "Auto-reinstall: existing installation detected, proceeding after 15s countdown"
             fi
             log "Force reinstall requested"
           fi
