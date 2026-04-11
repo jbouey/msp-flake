@@ -2932,81 +2932,118 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 import logging
                 logging.warning(f"Checkin {checkin.site_id}: failed to process deploy results: {e}")
 
-        # === STEP 1: Find existing appliances with same MAC ===
-        # MAC is the primary identity for physical appliances. Hostname matching
-        # was removed because multiple appliances per site often share the same
-        # hostname (e.g., NixOS defaults to "osiriscare"), causing false merges.
-        # Use FOR UPDATE to prevent concurrent check-ins from racing.
-        existing = await conn.fetch("""
-            SELECT appliance_id, hostname, mac_address, first_checkin
-            FROM site_appliances
-            WHERE site_id = $1
-            AND UPPER(REPLACE(REPLACE(mac_address, ':', ''), '-', '')) = $2
-            ORDER BY last_checkin DESC NULLS LAST
-            FOR UPDATE
-        """, checkin.site_id, mac_clean.upper())
+        # === STEP 0.9: Multi-NIC ghost detection ===
+        # A physical machine with two NICs can register as two appliances if the
+        # daemon alternates which NIC's MAC it sends. Detect this: if another
+        # appliance at this site shares an IP address AND checked in within the
+        # last 5 seconds, this is the same machine. Skip the registration for
+        # the secondary NIC to prevent ghost appliances.
+        if checkin.ip_addresses:
+            ip_overlap = await conn.fetchrow("""
+                SELECT appliance_id, mac_address, hostname
+                FROM site_appliances
+                WHERE site_id = $1
+                  AND appliance_id != $2
+                  AND last_checkin > NOW() - INTERVAL '5 seconds'
+                  AND ip_addresses::jsonb ?| $3::text[]
+            """, checkin.site_id, appliance_id, checkin.ip_addresses)
+            if ip_overlap:
+                logger.warning(
+                    f"Multi-NIC ghost detected: MAC {mac_normalized} shares IP with "
+                    f"{ip_overlap['appliance_id']} (MAC {ip_overlap['mac_address']}). "
+                    f"Skipping duplicate registration — same physical machine."
+                )
+                # Return a normal checkin response using the canonical appliance's data
+                # so the daemon doesn't error out. The secondary NIC checkin is silently absorbed.
+                canonical_id = ip_overlap['appliance_id']
+                _ghost_detected = True
+            else:
+                _ghost_detected = False
+        else:
+            _ghost_detected = False
 
-        merge_from_ids = []
-        canonical_id = appliance_id
-        earliest_first_checkin = now
+        if _ghost_detected:
+            # Skip Steps 1-3 — use the canonical appliance from the ghost check
+            last_checkin_time = await conn.fetchval(
+                "SELECT last_checkin FROM site_appliances WHERE appliance_id = $1",
+                canonical_id
+            )
+        else:
+            # === STEP 1: Find existing appliances with same MAC ===
+            # MAC is the primary identity for physical appliances. Hostname matching
+            # was removed because multiple appliances per site often share the same
+            # hostname (e.g., NixOS defaults to "osiriscare"), causing false merges.
+            # Use FOR UPDATE to prevent concurrent check-ins from racing.
+            existing = await conn.fetch("""
+                SELECT appliance_id, hostname, mac_address, first_checkin
+                FROM site_appliances
+                WHERE site_id = $1
+                AND UPPER(REPLACE(REPLACE(mac_address, ':', ''), '-', '')) = $2
+                ORDER BY last_checkin DESC NULLS LAST
+                FOR UPDATE
+            """, checkin.site_id, mac_clean.upper())
 
-        if existing:
-            # Find the "canonical" entry (oldest first_checkin) - this is the one we keep
-            for row in existing:
-                if row['first_checkin'] and row['first_checkin'] < earliest_first_checkin:
-                    earliest_first_checkin = row['first_checkin']
-                    canonical_id = row['appliance_id']
+            merge_from_ids = []
+            earliest_first_checkin = now
 
-            # All other entries are duplicates to merge
-            for row in existing:
-                if row['appliance_id'] != canonical_id:
-                    merge_from_ids.append(row['appliance_id'])
+            if existing:
+                # Find the "canonical" entry (oldest first_checkin) - this is the one we keep
+                for row in existing:
+                    if row['first_checkin'] and row['first_checkin'] < earliest_first_checkin:
+                        earliest_first_checkin = row['first_checkin']
+                        canonical_id = row['appliance_id']
 
-        # === STEP 2: Delete duplicates (if any) ===
-        if merge_from_ids:
+                # All other entries are duplicates to merge
+                for row in existing:
+                    if row['appliance_id'] != canonical_id:
+                        merge_from_ids.append(row['appliance_id'])
+
+            # === STEP 2: Delete duplicates (if any) ===
+            if merge_from_ids:
+                await conn.execute("""
+                    DELETE FROM site_appliances
+                    WHERE appliance_id = ANY($1)
+                """, merge_from_ids)
+
+            # Fetch previous last_checkin for credential freshness comparison
+            last_checkin_time = await conn.fetchval(
+                "SELECT last_checkin FROM site_appliances WHERE appliance_id = $1",
+                canonical_id
+            )
+
+        # === STEP 3: Upsert the canonical appliance entry (skip for ghosts) ===
+        if not _ghost_detected:
             await conn.execute("""
-                DELETE FROM site_appliances
-                WHERE appliance_id = ANY($1)
-            """, merge_from_ids)
-
-        # Fetch previous last_checkin for credential freshness comparison
-        last_checkin_time = await conn.fetchval(
-            "SELECT last_checkin FROM site_appliances WHERE appliance_id = $1",
-            canonical_id
-        )
-
-        # === STEP 3: Upsert the canonical appliance entry ===
-        await conn.execute("""
-            INSERT INTO site_appliances (
-                site_id, appliance_id, hostname, mac_address, ip_addresses,
-                agent_version, nixos_version, status, uptime_seconds,
-                first_checkin, last_checkin, daemon_health
-            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, 'online', $8, $9, $10, $11::jsonb)
-            ON CONFLICT (appliance_id) DO UPDATE SET
-                hostname = EXCLUDED.hostname,
-                mac_address = EXCLUDED.mac_address,
-                ip_addresses = EXCLUDED.ip_addresses,
-                agent_version = EXCLUDED.agent_version,
-                nixos_version = EXCLUDED.nixos_version,
-                status = 'online',
-                uptime_seconds = EXCLUDED.uptime_seconds,
-                last_checkin = EXCLUDED.last_checkin,
-                daemon_health = COALESCE(EXCLUDED.daemon_health, site_appliances.daemon_health),
-                offline_since = NULL,
-                offline_notified = false
-        """,
-            checkin.site_id,
-            canonical_id,
-            checkin.hostname,
-            mac_normalized,
-            json.dumps(checkin.ip_addresses),
-            checkin.agent_version,
-            checkin.nixos_version,
-            checkin.uptime_seconds,
-            earliest_first_checkin,
-            now,
-            json.dumps(checkin.daemon_health) if checkin.daemon_health else None,
-        )
+                INSERT INTO site_appliances (
+                    site_id, appliance_id, hostname, mac_address, ip_addresses,
+                    agent_version, nixos_version, status, uptime_seconds,
+                    first_checkin, last_checkin, daemon_health
+                ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, 'online', $8, $9, $10, $11::jsonb)
+                ON CONFLICT (appliance_id) DO UPDATE SET
+                    hostname = EXCLUDED.hostname,
+                    mac_address = EXCLUDED.mac_address,
+                    ip_addresses = EXCLUDED.ip_addresses,
+                    agent_version = EXCLUDED.agent_version,
+                    nixos_version = EXCLUDED.nixos_version,
+                    status = 'online',
+                    uptime_seconds = EXCLUDED.uptime_seconds,
+                    last_checkin = EXCLUDED.last_checkin,
+                    daemon_health = COALESCE(EXCLUDED.daemon_health, site_appliances.daemon_health),
+                    offline_since = NULL,
+                    offline_notified = false
+            """,
+                checkin.site_id,
+                canonical_id,
+                checkin.hostname,
+                mac_normalized,
+                json.dumps(checkin.ip_addresses),
+                checkin.agent_version,
+                checkin.nixos_version,
+                checkin.uptime_seconds,
+                earliest_first_checkin,
+                now,
+                json.dumps(checkin.daemon_health) if checkin.daemon_health else None,
+            )
 
         # === STEP 3.5: Also update appliances table for Fleet Updates ===
         try:
