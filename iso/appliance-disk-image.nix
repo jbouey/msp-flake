@@ -686,7 +686,10 @@ EOF
 
   # Central Command Ed25519 public key — used to verify provisioning config signatures
   # Replace with real hex-encoded public key before production deployment
-  environment.etc."msp/central-command.pub".text = "YOUR_HEX_PUBLIC_KEY_HERE";
+  # Central Command Ed25519 public key — verifies provisioning config signatures.
+  # This MUST match the signing key at /app/secrets/signing.key on the VPS.
+  # If the key rotates, new ISOs must be built with the updated public key.
+  environment.etc."msp/central-command.pub".text = "904b211dba3786764c3a3ab3723db8640295f390c196b8f3bc47ae0a47a0b0db";
 
   # ============================================================================
   # SSH for emergency access

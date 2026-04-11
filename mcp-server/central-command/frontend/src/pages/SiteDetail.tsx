@@ -467,9 +467,35 @@ export const SiteDetail: React.FC = () => {
 
           {/* Appliances */}
           <GlassCard>
-            <h2 className="text-lg font-semibold mb-4">
-              Appliances ({site.appliances.length})
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">
+                Appliances ({site.appliances.length})
+              </h2>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/dashboard/sites/${siteId}/provision`, {
+                      method: 'POST', credentials: 'same-origin',
+                      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '' },
+                    });
+                    const data = await res.json();
+                    if (data.mac_address) {
+                      setToast({ message: `Provision ready for MAC ${data.mac_address}. Boot the appliance — it will auto-configure.`, type: 'success' });
+                    } else if (data.provision_code) {
+                      setToast({ message: `Provision code: ${data.provision_code}`, type: 'success' });
+                    } else {
+                      setToast({ message: 'Provision created', type: 'success' });
+                    }
+                  } catch {
+                    setToast({ message: 'Failed to create provision', type: 'error' });
+                  }
+                }}
+                className="text-sm font-medium px-3 py-1.5 rounded-lg text-white transition-all"
+                style={{ background: 'linear-gradient(135deg, #14A89E 0%, #0d9488 100%)' }}
+              >
+                + Provision Appliance
+              </button>
+            </div>
 
             <SiteActionToolbar
               applianceCount={site.appliances.length}

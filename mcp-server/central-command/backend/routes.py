@@ -5911,6 +5911,54 @@ async def decommission_site(
 
 
 # =============================================================================
+# =============================================================================
+# SITE PROVISIONING (Admin)
+# =============================================================================
+
+
+@router.post("/sites/{site_id}/provision")
+async def create_site_provision(
+    site_id: str,
+    user: dict = Depends(auth_module.require_operator),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a provision entry so a new appliance can auto-register to this site.
+
+    Generates an API key and registers the site in the appliance_provisioning
+    table. The next appliance that boots and calls /api/provision/{MAC} will
+    receive this site's config and begin checking in.
+    """
+    import hashlib
+
+    # Verify site exists
+    site = await execute_with_retry(db, text(
+        "SELECT site_id, clinic_name, partner_id FROM sites WHERE site_id = :sid"
+    ), {"sid": site_id})
+    site_row = site.fetchone()
+    if not site_row:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    # Generate API key for the new appliance
+    raw_key = secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+
+    await execute_with_retry(db, text("""
+        INSERT INTO api_keys (key_hash, site_id, active, created_at, description)
+        VALUES (:hash, :sid, true, NOW(), 'Admin-provisioned appliance key')
+        ON CONFLICT (key_hash) DO NOTHING
+    """), {"hash": key_hash, "sid": site_id})
+
+    await db.commit()
+
+    return {
+        "status": "provisioned",
+        "site_id": site_id,
+        "api_key": raw_key,
+        "api_endpoint": "https://api.osiriscare.net",
+        "message": f"Boot the appliance on the same network. It will auto-register to {site_row.clinic_name or site_id}.",
+    }
+
+
 # VPN MANAGEMENT ENDPOINTS
 # =============================================================================
 
