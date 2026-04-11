@@ -1423,3 +1423,47 @@ async def record_fleet_order_completion(conn, fleet_order_id: str, appliance_id:
         """, UUID(fleet_order_id), appliance_id, status)
     except Exception as e:
         logger.warning(f"Failed to record fleet order completion: {e}")
+
+
+async def create_fleet_order_for_site(
+    conn,
+    site_id: str,
+    order_type: str,
+    parameters: dict,
+    expires_hours: int = 4,
+) -> Optional[str]:
+    """Create a signed fleet order from client portal (emergency access, etc).
+
+    Called by client_portal.py endpoints. Uses the existing signing infrastructure.
+    Returns the order UUID or None on failure.
+    """
+    from .order_signing import sign_fleet_order
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=expires_hours)
+
+    # Include site_id in parameters for v0.3.82 compatibility
+    params = {**parameters, "site_id": site_id}
+
+    nonce, signature, signed_payload = sign_fleet_order(
+        0, order_type, params, now, expires_at,
+    )
+
+    row = await conn.fetchrow("""
+        INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
+                                  nonce, signature, signed_payload)
+        VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+        RETURNING id
+    """,
+        order_type,
+        json.dumps(params),
+        expires_at,
+        f"client_portal:{parameters.get('approved_by', 'unknown')}",
+        nonce,
+        signature,
+        signed_payload,
+    )
+
+    if row:
+        logger.info(f"Fleet order created from client portal: {order_type} site={site_id} id={row['id']}")
+        return str(row["id"])
+    return None

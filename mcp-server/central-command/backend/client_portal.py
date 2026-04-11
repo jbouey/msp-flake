@@ -3848,6 +3848,120 @@ async def update_escalation_preferences(
     return {"status": "updated", "escalation_mode": body.escalation_mode}
 
 
+# =============================================================================
+# EMERGENCY ACCESS (Session 204 — customer-controlled WireGuard toggle)
+# =============================================================================
+
+class EmergencyAccessRequest(BaseModel):
+    """Client admin approves time-bounded WireGuard access."""
+    duration_minutes: int = Field(120, ge=15, le=480)  # 15 min to 8 hours
+    reason: str = Field(..., min_length=5, max_length=500)
+
+
+@auth_router.post("/emergency-access/enable")
+async def enable_emergency_access(
+    body: EmergencyAccessRequest,
+    request: Request,
+    user: dict = Depends(require_client_admin),
+):
+    """Client admin grants time-bounded emergency WireGuard access.
+
+    Creates a signed fleet order delivered to all site appliances.
+    The tunnel auto-disables after duration_minutes via systemd timer.
+    This is the customer's decision — OsirisCare cannot self-activate.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        # Get all sites for this org
+        sites = await conn.fetch(
+            "SELECT site_id FROM sites WHERE client_org_id = $1", org_id
+        )
+        if not sites:
+            raise HTTPException(status_code=404, detail="No sites found")
+
+        # Create fleet order for each site
+        from .fleet_updates import create_fleet_order_for_site
+        order_ids = []
+        for site in sites:
+            try:
+                order_id = await create_fleet_order_for_site(
+                    conn,
+                    site_id=site["site_id"],
+                    order_type="enable_emergency_access",
+                    parameters={
+                        "max_duration_minutes": body.duration_minutes,
+                        "approved_by": user.get("email", str(user["user_id"])),
+                        "reason": body.reason,
+                    },
+                    expires_hours=1,
+                )
+                if order_id:
+                    order_ids.append(str(order_id))
+            except Exception as e:
+                logger.warning(f"Emergency access order failed for {site['site_id']}: {e}")
+
+        await _audit_client_action(
+            conn, user,
+            action="EMERGENCY_ACCESS_ENABLED",
+            target=str(org_id),
+            details={
+                "duration_minutes": body.duration_minutes,
+                "reason": body.reason,
+                "site_count": len(sites),
+                "order_count": len(order_ids),
+            },
+            request=request,
+        )
+
+    return {
+        "status": "enabled",
+        "duration_minutes": body.duration_minutes,
+        "sites_affected": len(sites),
+        "orders_created": len(order_ids),
+        "message": f"Emergency access enabled for {body.duration_minutes} minutes. Auto-disables after expiry.",
+    }
+
+
+@auth_router.post("/emergency-access/disable")
+async def disable_emergency_access(
+    request: Request,
+    user: dict = Depends(require_client_admin),
+):
+    """Client admin revokes emergency access early."""
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        sites = await conn.fetch(
+            "SELECT site_id FROM sites WHERE client_org_id = $1", org_id
+        )
+
+        from .fleet_updates import create_fleet_order_for_site
+        for site in sites:
+            try:
+                await create_fleet_order_for_site(
+                    conn,
+                    site_id=site["site_id"],
+                    order_type="disable_emergency_access",
+                    parameters={"disabled_by": user.get("email", str(user["user_id"]))},
+                    expires_hours=1,
+                )
+            except Exception:
+                pass
+
+        await _audit_client_action(
+            conn, user,
+            action="EMERGENCY_ACCESS_DISABLED",
+            target=str(org_id),
+            details={"site_count": len(sites)},
+            request=request,
+        )
+
+    return {"status": "disabled", "message": "Emergency access revoked."}
+
+
 @auth_router.get("/escalations")
 async def list_client_escalations(
     status: Optional[str] = None,
