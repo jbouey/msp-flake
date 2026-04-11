@@ -207,7 +207,9 @@ in
       dialog  # Professional TUI installer (mixedgauge, gauge, msgbox)
       figlet  # ASCII art banner for splash/completion screens
       sbctl  # UEFI Secure Boot key generation
-      efibootmgr  # Set boot priority so disk boots before USB
+      # efibootmgr REMOVED — it hijacks the BIOS boot order and prevents
+      # the USB from booting on subsequent installs. The "install loop"
+      # problem is solved by poweroff instead of reboot.
     ];
 
     script = ''
@@ -530,14 +532,6 @@ in
       echo -e "  \033[1;36m  │\033[0m                                                 \033[1;36m│\033[0m"
       echo -e "  \033[1;36m  └─────────────────────────────────────────────────┘\033[0m"
       echo ""
-
-      # Set eMMC/disk as first boot device so USB is inert on next boot.
-      # This prevents the install loop even if the USB stays plugged in.
-      ${pkgs.efibootmgr}/bin/efibootmgr --create \
-        --disk "$INTERNAL_DEV" --part 1 \
-        --label "OsirisCare" \
-        --loader /EFI/systemd/systemd-bootx64.efi \
-        --verbose >> "$LOG_FILE" 2>&1 || log "WARNING: efibootmgr failed (non-fatal)"
 
       # Unmount USB filesystem to prevent I/O errors on removal.
       # The squashfs is still in RAM so this is safe.
