@@ -2430,6 +2430,7 @@ class ApplianceCheckin(BaseModel):
     site_id: str
     hostname: str
     mac_address: str
+    all_mac_addresses: Optional[List[str]] = None  # All physical NIC MACs (ghost detection)
     ip_addresses: list = Field(default=[], max_length=100)
     uptime_seconds: Optional[int] = None
     agent_version: Optional[str] = None
@@ -2933,12 +2934,38 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 logging.warning(f"Checkin {checkin.site_id}: failed to process deploy results: {e}")
 
         # === STEP 0.9: Multi-NIC ghost detection ===
+        # === STEP 0.9: Multi-NIC ghost detection ===
         # A physical machine with two NICs can register as two appliances if the
-        # daemon alternates which NIC's MAC it sends. Detect this: if another
-        # appliance at this site shares an IP address AND checked in within the
-        # last 5 seconds, this is the same machine. Skip the registration for
-        # the secondary NIC to prevent ghost appliances.
-        if checkin.ip_addresses:
+        # daemon alternates which NIC's MAC it sends. Two detection methods:
+        #
+        # Method 1 (v0.3.86+): Daemon sends all_mac_addresses — if any MAC in the
+        #   list matches an existing appliance at this site, it's the same machine.
+        # Method 2 (fallback): If another appliance at this site shares an IP and
+        #   checked in within the last 5 seconds, it's the same machine.
+        _ghost_detected = False
+
+        # Method 1: all_mac_addresses overlap (definitive, no timing dependency)
+        if not _ghost_detected and checkin.all_mac_addresses and len(checkin.all_mac_addresses) > 1:
+            for other_mac in checkin.all_mac_addresses:
+                other_mac_clean = other_mac.upper().replace(":", "").replace("-", "")
+                if other_mac_clean == mac_clean.upper():
+                    continue  # skip self
+                other_aid = f"{checkin.site_id}-{normalize_mac(other_mac)}"
+                mac_overlap = await conn.fetchrow(
+                    "SELECT appliance_id, mac_address FROM site_appliances WHERE appliance_id = $1",
+                    other_aid,
+                )
+                if mac_overlap:
+                    logger.warning(
+                        f"Multi-NIC ghost detected (MAC list): {mac_normalized} is secondary NIC on "
+                        f"same machine as {mac_overlap['appliance_id']}. Skipping registration."
+                    )
+                    canonical_id = mac_overlap['appliance_id']
+                    _ghost_detected = True
+                    break
+
+        # Method 2: IP + timing overlap (fallback for daemons that don't send all_mac_addresses)
+        if not _ghost_detected and checkin.ip_addresses:
             ip_overlap = await conn.fetchrow("""
                 SELECT appliance_id, mac_address, hostname
                 FROM site_appliances
@@ -2949,18 +2976,12 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             """, checkin.site_id, appliance_id, checkin.ip_addresses)
             if ip_overlap:
                 logger.warning(
-                    f"Multi-NIC ghost detected: MAC {mac_normalized} shares IP with "
+                    f"Multi-NIC ghost detected (IP overlap): MAC {mac_normalized} shares IP with "
                     f"{ip_overlap['appliance_id']} (MAC {ip_overlap['mac_address']}). "
                     f"Skipping duplicate registration — same physical machine."
                 )
-                # Return a normal checkin response using the canonical appliance's data
-                # so the daemon doesn't error out. The secondary NIC checkin is silently absorbed.
                 canonical_id = ip_overlap['appliance_id']
                 _ghost_detected = True
-            else:
-                _ghost_detected = False
-        else:
-            _ghost_detected = False
 
         if _ghost_detected:
             # Skip Steps 1-3 — use the canonical appliance from the ghost check

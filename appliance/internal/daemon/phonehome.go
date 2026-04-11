@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -203,6 +204,7 @@ type CheckinRequest struct {
 	SiteID              string           `json:"site_id"`
 	Hostname            string           `json:"hostname"`
 	MACAddress          string           `json:"mac_address"`
+	AllMACAddresses     []string         `json:"all_mac_addresses,omitempty"`
 	IPAddresses         []string         `json:"ip_addresses"`
 	UptimeSeconds       int              `json:"uptime_seconds"`
 	AgentVersion        string           `json:"agent_version"`
@@ -610,14 +612,15 @@ func SystemInfo(cfg *Config, version string) CheckinRequest {
 	wgPub := getWireGuardPubKey()
 
 	return CheckinRequest{
-		SiteID:        cfg.SiteID,
-		Hostname:      hostname,
-		MACAddress:    mac,
-		IPAddresses:   ips,
-		UptimeSeconds: uptime,
-		AgentVersion:  version,
-		NixOSVersion:  nixVer,
-		WgPubKey:      wgPub,
+		SiteID:          cfg.SiteID,
+		Hostname:        hostname,
+		MACAddress:      mac,
+		AllMACAddresses: getAllPhysicalMACs(),
+		IPAddresses:     ips,
+		UptimeSeconds:   uptime,
+		AgentVersion:    version,
+		NixOSVersion:    nixVer,
+		WgPubKey:        wgPub,
 	}
 }
 
@@ -636,20 +639,45 @@ func getHostname() string {
 	return h
 }
 
-func getMACAddress() string {
+// getAllPhysicalMACs returns all non-loopback, non-virtual MAC addresses
+// sorted alphabetically by interface name for deterministic ordering.
+// This prevents the ghost-appliance bug where non-deterministic interface
+// enumeration causes a multi-NIC machine to register as multiple appliances.
+func getAllPhysicalMACs() []string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return ""
+		return nil
 	}
+	// Sort by interface name for deterministic ordering across boots
+	sort.Slice(ifaces, func(i, j int) bool {
+		return ifaces[i].Name < ifaces[j].Name
+	})
+	var macs []string
 	for _, iface := range ifaces {
-		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+		if iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
-		mac := iface.HardwareAddr.String()
+		mac := strings.ToUpper(iface.HardwareAddr.String())
 		if mac == "" || strings.HasPrefix(mac, "00:00:00") {
 			continue
 		}
-		return mac
+		// Skip virtual/tunnel interfaces (WireGuard, docker, veth)
+		name := iface.Name
+		if strings.HasPrefix(name, "wg") || strings.HasPrefix(name, "docker") ||
+			strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "br-") {
+			continue
+		}
+		macs = append(macs, mac)
+	}
+	return macs
+}
+
+// getMACAddress returns the primary MAC — first physical NIC sorted by name.
+// Deterministic: always returns the same MAC regardless of interface bring-up order.
+func getMACAddress() string {
+	macs := getAllPhysicalMACs()
+	if len(macs) > 0 {
+		return macs[0]
 	}
 	return ""
 }
