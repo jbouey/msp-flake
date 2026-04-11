@@ -3,13 +3,13 @@
 #
 # ZERO FRICTION INSTALL (3 steps):
 # 1. Write ISO to USB
-# 2. Boot target hardware (must have internet access)
-# 3. Auto-installs from GitHub flake → reboots → done
+# 2. Boot target hardware
+# 3. Auto-installs from embedded disk image → halt → done
 #
-# REQUIRES NETWORK - nixos-install fetches the appliance flake from GitHub
-# Works on ANY x86_64 hardware - the flake is the golden image
+# OFFLINE INSTALL - raw disk image is embedded in the ISO.
+# No network required. dd + zstd writes the full appliance in ~30 seconds.
 
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, appliance-raw-image, ... }:
 
 let
   # Build the compliance-agent package
@@ -123,8 +123,18 @@ in
   networking.hostName = lib.mkForce "osiriscare-installer";
   system.stateVersion = "24.05";
 
+  # ============================================================================
+  # Embedded raw disk image — the full appliance, compressed
+  # The raw image + decompressed size are baked into the ISO at build time.
+  # appliance-raw-image is passed via specialArgs from flake.nix.
+  # ============================================================================
+  environment.etc."installer/osiriscare-system.raw.zst".source =
+    "${appliance-raw-image}/osiriscare-system.raw.zst";
+  environment.etc."installer/decompressed-size".source =
+    "${appliance-raw-image}/decompressed-size";
+
   # Boot with serial console for debugging
-  # nosoftlockup: prevent false watchdog alarms during heavy nixos-install I/O
+  # nosoftlockup: prevent false watchdog alarms during heavy dd I/O
   # audit=0: disable kernel audit on live ISO (configuration.nix enables auditd
   # with execve logging which causes kauditd hold queue overflow during boot)
   boot.kernelParams = [ "quiet" "loglevel=1" "systemd.show_status=false" "console=tty1" "console=ttyS0,115200" "nosoftlockup" "audit=0" ];
@@ -137,7 +147,7 @@ in
   console.font = lib.mkForce "${pkgs.terminus_font}/share/consolefonts/ter-v22n.psf.gz";
   console.packages = lib.mkForce [ pkgs.terminus_font ];
 
-  # Disable hardware watchdog on live ISO - nixos-install starves CPUs
+  # Disable hardware watchdog on live ISO — dd+zstd can saturate I/O
   # The installed system (appliance-disk-image.nix) has its own watchdog config
   systemd.watchdog.runtimeTime = lib.mkForce null;
   systemd.watchdog.device = lib.mkForce null;
@@ -179,13 +189,13 @@ in
 
   # ============================================================================
   # ZERO FRICTION AUTO-INSTALL SERVICE
-  # Detects internal drive, partitions, runs nixos-install from flake
+  # Detects internal drive, writes embedded raw image via dd+zstd
+  # No network required — full NixOS closure is on the ISO
   # ============================================================================
   systemd.services.msp-auto-install = {
     description = "MSP Appliance Zero-Friction Auto-Install";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" "systemd-vconsole-setup.service" ];
-    wants = [ "network-online.target" ];
+    after = [ "systemd-vconsole-setup.service" "local-fs.target" ];
     conflicts = [ "getty@tty1.service" ];
 
     serviceConfig = {
@@ -201,54 +211,103 @@ in
     };
 
     path = with pkgs; [
-      util-linux parted dosfstools e2fsprogs nixos-install-tools
-      git curl coreutils gnugrep gawk procps ncurses
-      nix  # Required - nixos-install calls nix and nix-build internally
-      dialog  # Professional TUI installer (mixedgauge, gauge, msgbox)
-      figlet  # ASCII art banner for splash/completion screens
-      sbctl  # UEFI Secure Boot key generation
-      # efibootmgr REMOVED — it hijacks the BIOS boot order and prevents
-      # the USB from booting on subsequent installs. The "install loop"
-      # problem is solved by poweroff instead of reboot.
+      util-linux      # lsblk, blockdev, findmnt, partprobe, mount, umount
+      parted          # partprobe (kernel re-read after dd)
+      dosfstools      # fsck.vfat (not used in dd flow but harmless)
+      e2fsprogs       # e2fsck, resize2fs (root partition resize)
+      coreutils gnugrep gawk procps
+      pv              # pipe viewer — progress bar for dd
+      zstd            # zstdcat for decompressing raw image
+      jq              # JSON parsing for sfdisk --json partition table
+      figlet          # ASCII art banner for splash/completion screens
+      # sbctl not needed — installed system generates Secure Boot keys on first boot
     ];
 
     script = ''
-      set -e
+      set -euo pipefail
       LOG_FILE="/tmp/msp-install.log"
-      export DIALOGRC=""
       export TERM=linux
       export LANG=en_US.UTF-8
+      INSTALLER_VERSION="v9"
+
+      IMAGE="/etc/installer/osiriscare-system.raw.zst"
+      DECOMPRESSED_SIZE_FILE="/etc/installer/decompressed-size"
 
       log() {
         echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" >> "$LOG_FILE"
       }
 
-      # ── dialog helper: update the mixedgauge step display ──────
-      # Status codes: 0=Succeeded 1=Failed 7=In Progress 8=(blank) -N=N%
-      S_DETECT=8; S_PARTITION=8; S_FORMAT=8; S_MOUNT=8
-      S_HWCONFIG=8; S_INSTALL=8; S_VERIFY=8; S_REBOOT=8
+      # ── ANSI display helpers (NO dialog) ──────────────────────
+      RED='\033[1;31m'
+      GREEN='\033[1;32m'
+      YELLOW='\033[1;33m'
+      CYAN='\033[1;36m'
+      WHITE='\033[1;37m'
+      DIM='\033[2m'
+      RESET='\033[0m'
 
-      show_progress() {
-        local overall_pct=$1
-        local msg="$2"
-        dialog --backtitle "OsirisCare MSP Compliance Platform  |  Appliance Installer v1.1" \
-          --title " Installing to ''${INTERNAL_DEV:-???} (''${DEV_SIZE:-detecting...}) " \
-          --mixedgauge "\n''${msg}" \
-          20 70 "$overall_pct" \
-          " Detect Hardware"            "$S_DETECT" \
-          " Partition Drive"            "$S_PARTITION" \
-          " Format Filesystems"         "$S_FORMAT" \
-          " Mount Partitions"           "$S_MOUNT" \
-          " Generate Hardware Config"   "$S_HWCONFIG" \
-          " Install NixOS Appliance"    "$S_INSTALL" \
-          " Verify Installation"        "$S_VERIFY" \
-          " Reboot"                     "$S_REBOOT" \
-          2>/dev/null || true
+      clear_screen() {
+        printf '\033c'
+        printf '\033[?25l'  # Hide cursor
+      }
+
+      # Draw the installer header + progress bar
+      # Usage: draw_progress PERCENT "Status line..." ["Detail line..."]
+      draw_progress() {
+        local pct=$1
+        local status="$2"
+        local detail="''${3:-}"
+
+        # Clamp percentage
+        [ "$pct" -lt 0 ] 2>/dev/null && pct=0
+        [ "$pct" -gt 100 ] 2>/dev/null && pct=100
+
+        # Build progress bar (20 chars wide)
+        local bar_width=20
+        local filled=$(( pct * bar_width / 100 ))
+        local empty=$(( bar_width - filled ))
+        local bar=""
+        for ((i=0; i<filled; i++)); do bar+="█"; done
+        for ((i=0; i<empty; i++)); do bar+="░"; done
+
+        # Move to top of screen and redraw (flicker-free)
+        printf '\033[H'    # cursor home
+        printf '\033[J'    # clear to end
+        echo ""
+        echo -e "  ''${CYAN}OsirisCare Installer ''${INSTALLER_VERSION}''${RESET}"
+        echo -e "  ''${DIM}Target: ''${DEV_DESC:-detecting...}''${RESET}"
+        echo ""
+        echo -e "  ''${CYAN}''${bar}''${RESET}  ''${WHITE}''${pct}%''${RESET}"
+        echo -e "  ''${status}"
+        if [ -n "$detail" ]; then
+          echo -e "  ''${DIM}''${detail}''${RESET}"
+        fi
+        echo ""
+      }
+
+      die() {
+        clear_screen
+        echo ""
+        echo ""
+        echo -e "  ''${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
+        echo ""
+        echo -e "  ''${RED}INSTALLATION FAILED''${RESET}"
+        echo ""
+        echo -e "  ''${WHITE}$1''${RESET}"
+        echo ""
+        echo -e "  ''${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
+        echo ""
+        echo -e "  ''${DIM}Debug: Alt+F2 → root / osiris2024''${RESET}"
+        echo -e "  ''${DIM}Log:   cat /tmp/msp-install.log''${RESET}"
+        echo ""
+        log "FATAL: $1"
+        # Halt — keep error visible, then exit
+        sleep 86400
+        exit 1
       }
 
       # ── Start installer ─────────────────────────────────────────
-      printf '\033c'
-      printf '\033[?25l'  # Hide cursor
+      clear_screen
 
       # Log block devices
       lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL >> "$LOG_FILE" 2>&1
@@ -259,36 +318,50 @@ in
         exit 0
       fi
 
+      # Verify raw image exists on the ISO
+      if [ ! -f "$IMAGE" ]; then
+        die "Raw image not found at $IMAGE. ISO may be corrupt."
+      fi
+      if [ ! -f "$DECOMPRESSED_SIZE_FILE" ]; then
+        die "Decompressed size file not found. ISO may be corrupt."
+      fi
+      DECOMPRESSED_BYTES=$(cat "$DECOMPRESSED_SIZE_FILE")
+      log "Raw image: $IMAGE (decompressed: $DECOMPRESSED_BYTES bytes)"
+
       # ── Splash screen ──────────────────────────────────────────
-      printf '\033c'
+      clear_screen
       echo ""
       echo ""
       figlet -f slant "OsirisCare" 2>/dev/null || echo "  OsirisCare"
       echo ""
-      echo -e "  \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-      echo -e "  \033[1;37m  MSP Compliance Platform — Appliance Installer\033[0m"
-      echo -e "  \033[2m  HIPAA compliance automation for healthcare SMBs\033[0m"
-      echo -e "  \033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+      echo -e "  ''${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
+      echo -e "  ''${WHITE}  MSP Compliance Platform — Appliance Installer ''${INSTALLER_VERSION}''${RESET}"
+      echo -e "  ''${DIM}  Offline install — no network required''${RESET}"
+      echo -e "  ''${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
       echo ""
-      echo -e "  \033[2mScanning hardware...\033[0m"
+      echo -e "  ''${DIM}Scanning hardware...''${RESET}"
       sleep 2
 
       # ── Step 1: Detect hardware ────────────────────────────────
-      S_DETECT=7
-      show_progress 5 "Scanning for internal drive..."
       log "Step 1: Detecting hardware"
 
       BOOT_DEV=$(findmnt -n -o SOURCE / | sed 's/\[.*$//' | head -1)
 
-      # Drive detection list — MUST match appliance-disk-image.nix msp-auto-install.
-      # If you add a device here, add it there too.
+      # Drive detection list — order matters, first match wins.
+      # Handles: SATA, virtio, NVMe, eMMC
       INTERNAL_DEV=""
-      for dev in /dev/sda /dev/sdb /dev/vda /dev/nvme0n1 /dev/mmcblk0; do
+      for dev in /dev/nvme0n1 /dev/sda /dev/sdb /dev/vda /dev/mmcblk0; do
         [ -b "$dev" ] || continue
         DEV_NAME=$(basename "$dev")
+
+        # Skip the USB we booted from
         echo "$BOOT_DEV" | grep -q "$DEV_NAME" && continue
+
+        # Skip removable drives (USB sticks)
         REMOVABLE=$(cat /sys/block/$DEV_NAME/removable 2>/dev/null || echo "1")
         [ "$REMOVABLE" = "1" ] && continue
+
+        # Require >16GB
         SIZE=$(blockdev --getsize64 "$dev" 2>/dev/null || echo "0")
         if [ "$SIZE" -gt 16000000000 ]; then
           INTERNAL_DEV="$dev"
@@ -297,283 +370,359 @@ in
       done
 
       if [ -z "$INTERNAL_DEV" ]; then
-        S_DETECT=1
-        show_progress 0 "ERROR: No suitable internal drive found (need >16GB)"
+        clear_screen
         echo ""
-        echo -e "  \033[1;31mERROR: No suitable internal drive found (need >16GB)\033[0m"
+        echo -e "  ''${RED}ERROR: No suitable internal drive found (need >16GB)''${RESET}"
         echo ""
-        lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null
+        lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null | while IFS= read -r line; do
+          echo "  $line"
+        done
         echo ""
-        echo -e "  \033[2mAttach an internal drive and reboot.\033[0m"
+        echo -e "  ''${DIM}Attach an internal drive and reboot.''${RESET}"
         log "ERROR: No internal drive found. Available: $(lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null | tr '\n' ' ')"
-        # Don't exit — keep showing the error so the user can see it
         sleep 86400
         exit 0
       fi
 
-      DEV_SIZE=$(numfmt --to=iec $(blockdev --getsize64 "$INTERNAL_DEV"))
+      DEV_SIZE_BYTES=$(blockdev --getsize64 "$INTERNAL_DEV")
+      DEV_SIZE=$(numfmt --to=iec "$DEV_SIZE_BYTES")
       DEV_MODEL=$(lsblk -dno MODEL "$INTERNAL_DEV" 2>/dev/null | xargs)
-      S_DETECT=0
+
+      # Build a human-friendly description for the progress display
+      # e.g. "MMC 32GB (/dev/mmcblk0)" or "Samsung SSD 128GB (/dev/sda)"
+      case "$INTERNAL_DEV" in
+        *nvme*)  DEV_TYPE="NVMe" ;;
+        *mmcblk*) DEV_TYPE="MMC" ;;
+        *vda*)   DEV_TYPE="VirtIO" ;;
+        *)       DEV_TYPE="SATA" ;;
+      esac
+      DEV_DESC="''${DEV_MODEL:-$DEV_TYPE} ''${DEV_SIZE} ($INTERNAL_DEV)"
       log "Found: $INTERNAL_DEV ($DEV_SIZE) $DEV_MODEL"
 
       # ── Check for existing installation ─────────────────────────
-      NIXOS_PART=$(lsblk -rno NAME,LABEL "$INTERNAL_DEV" | grep nixos | head -1 | awk '{print $1}')
+      NIXOS_PART=$(lsblk -rno NAME,LABEL "$INTERNAL_DEV" 2>/dev/null | grep nixos | head -1 | awk '{print $1}')
       if [ -n "$NIXOS_PART" ]; then
-        TMPDIR=$(mktemp -d)
-        if mount -o ro "/dev/$NIXOS_PART" "$TMPDIR" 2>/dev/null; then
-          if [ -d "$TMPDIR/nix/store" ]; then
-            umount "$TMPDIR"
-            rmdir "$TMPDIR"
-            if [ ! -f /tmp/force-reinstall ]; then
-              echo ""
-              echo -e "  \033[1;33m⚠  Existing OsirisCare installation detected on $INTERNAL_DEV ($DEV_SIZE)\033[0m"
-              echo -e "  \033[1;37m  Reinstalling in 15 seconds... (Ctrl+C to cancel)\033[0m"
-              echo ""
-              for i in 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1; do
-                echo -ne "\r  \033[2mReinstall in \033[1;37m$i\033[0;2ms...  (Ctrl+C to cancel, Alt+F3 for debug console)\033[0m  "
-                sleep 1
-              done
-              echo ""
-              log "Auto-reinstall: existing installation detected, proceeding after 15s countdown"
-            fi
-            log "Force reinstall requested"
-          fi
-          umount "$TMPDIR" 2>/dev/null || true
+        PROBE_MNT=$(mktemp -d)
+        EXISTING=false
+        if mount -o ro "/dev/$NIXOS_PART" "$PROBE_MNT" 2>/dev/null; then
+          [ -d "$PROBE_MNT/nix/store" ] && EXISTING=true
+          umount "$PROBE_MNT" 2>/dev/null || true
         fi
-        rmdir "$TMPDIR" 2>/dev/null || true
+        rmdir "$PROBE_MNT" 2>/dev/null || true
+
+        if [ "$EXISTING" = true ] && [ ! -f /tmp/force-reinstall ]; then
+          clear_screen
+          echo ""
+          echo -e "  ''${YELLOW}Existing OsirisCare installation detected on $INTERNAL_DEV ($DEV_SIZE)''${RESET}"
+          echo -e "  ''${WHITE}Auto-reinstall in 10 seconds...''${RESET}"
+          echo ""
+          for i in 10 9 8 7 6 5 4 3 2 1; do
+            echo -ne "\r  ''${DIM}Reinstall in ''${WHITE}$i''${RESET}''${DIM}s...  (Ctrl+C to cancel)''${RESET}  "
+            sleep 1
+          done
+          echo ""
+          log "Auto-reinstall: existing installation detected, proceeding after 10s countdown"
+        fi
       fi
 
-      show_progress 10 "Found: $INTERNAL_DEV ($DEV_SIZE) — $DEV_MODEL"
+      draw_progress 5 "''${WHITE}Found: ''${DEV_DESC}''${RESET}"
       sleep 1
 
-      # ── Countdown before destructive operation ──────────────────
-      for i in 10 9 8 7 6 5 4 3 2 1; do
-        show_progress 10 "⚠  ALL DATA ON $INTERNAL_DEV WILL BE ERASED\n\n   Starting installation in $i seconds...\n   (Press Ctrl+C to cancel)"
+      # ── Step 2: Write raw image ─────────────────────────────────
+      log "Step 2: Writing raw image to $INTERNAL_DEV"
+
+      # Calculate image size for progress reporting
+      IMAGE_SIZE_BYTES=$(stat -c%s "$IMAGE" 2>/dev/null || echo "0")
+      IMAGE_SIZE_MB=$(( IMAGE_SIZE_BYTES / 1048576 ))
+      DECOMPRESSED_MB=$(( DECOMPRESSED_BYTES / 1048576 ))
+
+      draw_progress 10 "''${WHITE}Writing system image...''${RESET}" \
+        "0 MB / $DECOMPRESSED_MB MB"
+
+      # dd the compressed raw image to the internal drive.
+      # pv reads from the pipe and displays progress based on the decompressed size.
+      # conv=fsync ensures data is flushed to disk before dd returns.
+      zstdcat "$IMAGE" \
+        | pv -f -s "$DECOMPRESSED_BYTES" -n 2>"$LOG_FILE.pv" \
+        | dd of="$INTERNAL_DEV" bs=4M conv=fsync iflag=fullblock 2>>"$LOG_FILE" &
+      DD_PID=$!
+
+      START_TIME=$(date +%s)
+
+      # Monitor pv's numeric output for real progress
+      while kill -0 $DD_PID 2>/dev/null; do
+        # pv -n writes percentage to stderr, one number per line
+        PV_PCT=$(tail -1 "$LOG_FILE.pv" 2>/dev/null || echo "0")
+        PV_PCT=''${PV_PCT:-0}
+
+        # Clamp to integer
+        PV_PCT=$(echo "$PV_PCT" | grep -o '^[0-9]*' || echo "0")
+        PV_PCT=''${PV_PCT:-0}
+
+        # Calculate written MB from percentage
+        WRITTEN_MB=$(( DECOMPRESSED_MB * PV_PCT / 100 ))
+
+        # Calculate speed and ETA
+        ELAPSED=$(( $(date +%s) - START_TIME ))
+        if [ "$ELAPSED" -gt 0 ] && [ "$WRITTEN_MB" -gt 0 ]; then
+          SPEED_MB=$(( WRITTEN_MB / ELAPSED ))
+          REMAINING_MB=$(( DECOMPRESSED_MB - WRITTEN_MB ))
+          if [ "$SPEED_MB" -gt 0 ]; then
+            ETA_SECS=$(( REMAINING_MB / SPEED_MB ))
+            SPEED_INFO="Speed: ''${SPEED_MB} MB/s — about ''${ETA_SECS} seconds remaining"
+          else
+            SPEED_INFO="Speed: calculating..."
+          fi
+        else
+          SPEED_INFO="Speed: calculating..."
+        fi
+
+        # Map dd progress (10%-80% of overall)
+        OVERALL=$(( 10 + PV_PCT * 70 / 100 ))
+
+        draw_progress "$OVERALL" \
+          "''${WHITE}Writing system image...''${RESET}  ''${WRITTEN_MB} MB / ''${DECOMPRESSED_MB} MB" \
+          "$SPEED_INFO"
+
         sleep 1
       done
 
-      # ── Step 2: Partition ──────────────────────────────────────
-      S_PARTITION=7
-      show_progress 15 "Partitioning $INTERNAL_DEV..."
-      log "Step 2: Partitioning $INTERNAL_DEV"
+      wait $DD_PID && DD_EXIT=0 || DD_EXIT=$?
 
-      wipefs -a "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1
-      parted -s "$INTERNAL_DEV" -- mklabel gpt >> "$LOG_FILE" 2>&1
-      parted -s "$INTERNAL_DEV" -- mkpart ESP fat32 1MiB 512MiB >> "$LOG_FILE" 2>&1
-      parted -s "$INTERNAL_DEV" -- set 1 esp on >> "$LOG_FILE" 2>&1
-      parted -s "$INTERNAL_DEV" -- mkpart MSP-DATA ext4 512MiB 2560MiB >> "$LOG_FILE" 2>&1
-      parted -s "$INTERNAL_DEV" -- mkpart primary 2560MiB 100% >> "$LOG_FILE" 2>&1
-      sleep 2
-      partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1
-      sleep 2
-
-      if [[ "$INTERNAL_DEV" == *"nvme"* ]] || [[ "$INTERNAL_DEV" == *"mmcblk"* ]]; then
-        ESP_PART="''${INTERNAL_DEV}p1"
-        DATA_PART="''${INTERNAL_DEV}p2"
-        ROOT_PART="''${INTERNAL_DEV}p3"
-      else
-        ESP_PART="''${INTERNAL_DEV}1"
-        DATA_PART="''${INTERNAL_DEV}2"
-        ROOT_PART="''${INTERNAL_DEV}3"
+      if [ $DD_EXIT -ne 0 ]; then
+        die "Image write failed (dd exit code $DD_EXIT). Drive may be defective."
       fi
 
-      S_PARTITION=0
-      log "Partitioned: ESP=$ESP_PART Data=$DATA_PART Root=$ROOT_PART"
+      log "Image write complete"
 
-      # ── Step 3: Format ─────────────────────────────────────────
-      S_FORMAT=7
-      show_progress 25 "Formatting ESP partition (FAT32)..."
-      log "Step 3: Formatting partitions"
-      mkfs.fat -F32 -n ESP "$ESP_PART" >> "$LOG_FILE" 2>&1
+      # Force kernel to re-read partition table after dd
+      sync
+      partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || true
+      sleep 2
+      # Second attempt — some controllers need a moment
+      partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || true
+      sleep 1
 
-      show_progress 28 "Formatting MSP-DATA partition (ext4, 2GB)..."
-      mkfs.ext4 -L MSP-DATA -F "$DATA_PART" >> "$LOG_FILE" 2>&1
+      draw_progress 82 "''${GREEN}Image written successfully''${RESET}"
 
-      show_progress 32 "Formatting root partition (ext4, ''${DEV_SIZE})..."
-      mkfs.ext4 -L nixos -F "$ROOT_PART" >> "$LOG_FILE" 2>&1
+      # ── Step 3: Resize root partition ───────────────────────────
+      # Raw image layout: 1=ESP, 2=root, 3=MSP-DATA(2GB)
+      # MSP-DATA sits right after root, blocking growpart. Strategy:
+      #   a) Delete partition 3 (MSP-DATA)
+      #   b) Grow partition 2 (root) to fill disk minus 2GB tail
+      #   c) Recreate partition 3 (MSP-DATA, 2GB) at the end
+      #   d) Format new partition 3
+      log "Step 3: Resizing root partition to fill disk"
+      draw_progress 83 "''${WHITE}Expanding root partition...''${RESET}"
 
-      S_FORMAT=0
-      log "Formatted all partitions"
+      # Determine partition device names (NVMe/eMMC use p-suffix)
+      case "$INTERNAL_DEV" in
+        *nvme*|*mmcblk*)
+          ROOT_PART="''${INTERNAL_DEV}p2"
+          DATA_PART="''${INTERNAL_DEV}p3"
+          ;;
+        *)
+          ROOT_PART="''${INTERNAL_DEV}2"
+          DATA_PART="''${INTERNAL_DEV}3"
+          ;;
+      esac
 
-      # ── Step 4: Mount ──────────────────────────────────────────
-      S_MOUNT=7
-      show_progress 38 "Mounting filesystems to /mnt..."
-      log "Step 4: Mounting filesystems"
+      # Total disk size in sectors (512-byte)
+      DISK_SECTORS=$(blockdev --getsz "$INTERNAL_DEV")
+      # Reserve 2GB for MSP-DATA at the end (2 * 1024 * 1024 * 1024 / 512 = 4194304 sectors)
+      DATA_SECTORS=4194304
+      # 34 sectors for GPT backup at end of disk
+      GPT_BACKUP=34
 
-      mount "$ROOT_PART" /mnt
-      mkdir -p /mnt/boot
-      mount "$ESP_PART" /mnt/boot
-      mkdir -p /mnt/var/lib/msp
-      mount "$DATA_PART" /mnt/var/lib/msp
+      # Where should root end? Disk end - GPT backup - MSP-DATA
+      ROOT_END_SECTOR=$(( DISK_SECTORS - GPT_BACKUP - DATA_SECTORS ))
+      DATA_START_SECTOR=$ROOT_END_SECTOR
 
-      S_MOUNT=0
-      log "Mounted root, boot, data"
+      # Read current root partition geometry (partition index 1 = second partition = root)
+      ROOT_START=$(sfdisk --json "$INTERNAL_DEV" 2>>"$LOG_FILE" \
+        | jq '.partitiontable.partitions[1].start') || ROOT_START=0
+      ROOT_CURRENT_SIZE=$(sfdisk --json "$INTERNAL_DEV" 2>>"$LOG_FILE" \
+        | jq '.partitiontable.partitions[1].size') || ROOT_CURRENT_SIZE=0
+      ROOT_CURRENT_END=$(( ROOT_START + ROOT_CURRENT_SIZE ))
 
-      # ── Step 5: Hardware config ────────────────────────────────
-      S_HWCONFIG=7
-      show_progress 42 "Generating NixOS hardware configuration..."
-      log "Step 5: Generating hardware config"
+      if [ "$ROOT_START" -gt 0 ] && [ "$ROOT_END_SECTOR" -gt "$ROOT_CURRENT_END" ] 2>/dev/null; then
+        ROOT_NEW_SIZE=$(( ROOT_END_SECTOR - ROOT_START ))
+        log "Disk has room: root sector $ROOT_START+$ROOT_CURRENT_SIZE → $ROOT_START+$ROOT_NEW_SIZE"
 
-      nixos-generate-config --root /mnt >> "$LOG_FILE" 2>&1
+        # (a) Delete partition 3 (MSP-DATA) — it blocks root growth
+        sfdisk --delete "$INTERNAL_DEV" 3 >> "$LOG_FILE" 2>&1 || true
+        partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || true
+        sleep 1
 
-      S_HWCONFIG=0
-      log "Hardware configuration generated"
+        # (b) Resize partition 2 (root) directly via sfdisk
+        #     Format: start=<sector>, size=<sectors> — explicit key=value to avoid positional ambiguity
+        log "Setting root: start=$ROOT_START size=$ROOT_NEW_SIZE sectors"
+        echo "start=$ROOT_START, size=$ROOT_NEW_SIZE" | sfdisk -N 2 --no-reread "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || {
+          log "WARNING: sfdisk resize of root partition failed"
+        }
 
-      # ── Step 6: nixos-install (the big one) ─────────────────────
-      S_INSTALL="-0"
-      FLAKE_URL="github:jbouey/msp-flake#osiriscare-appliance-disk"
-      show_progress 45 "Fetching OsirisCare appliance from GitHub...\n   This step takes 5-15 minutes."
-      log "Step 6: nixos-install --flake $FLAKE_URL"
+        # (c) Recreate partition 3 (MSP-DATA) at the end
+        echo "start=$DATA_START_SECTOR, size=$DATA_SECTORS, type=L" | sfdisk --append --no-reread "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || {
+          log "WARNING: sfdisk append of MSP-DATA failed"
+        }
 
-      nixos-install --flake "$FLAKE_URL" --no-root-passwd >> "$LOG_FILE" 2>&1 &
-      INSTALL_PID=$!
+        # Set GPT partition label (used by /dev/disk/by-partlabel/MSP-DATA)
+        sfdisk --part-label "$INTERNAL_DEV" 3 MSP-DATA >> "$LOG_FILE" 2>&1 || true
 
-      START_TIME=$(date +%s)
-      while kill -0 $INSTALL_PID 2>/dev/null; do
-        ELAPSED=$(( $(date +%s) - START_TIME ))
-        MINS=$((ELAPSED / 60))
-        SECS=$((ELAPSED % 60))
+        partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || true
+        sleep 1
 
-        # Estimate progress: 0-100% over ~10 minutes (600s)
-        INSTALL_PCT=$((ELAPSED * 100 / 600))
-        [ "$INSTALL_PCT" -gt 95 ] && INSTALL_PCT=95
+        # (d) Format new MSP-DATA partition (old data was destroyed by dd anyway)
+        draw_progress 85 "''${WHITE}Formatting MSP-DATA partition...''${RESET}"
+        mkfs.ext4 -F -L MSP-DATA "$DATA_PART" >> "$LOG_FILE" 2>&1 || {
+          log "WARNING: mkfs.ext4 on MSP-DATA failed"
+        }
+      else
+        log "Disk same size as image or smaller — skipping resize"
+      fi
 
-        OVERALL=$((45 + INSTALL_PCT * 45 / 100))
-        [ "$OVERALL" -gt 90 ] && OVERALL=90
+      draw_progress 86 "''${WHITE}Checking root filesystem...''${RESET}"
+      e2fsck -f -y "$ROOT_PART" >> "$LOG_FILE" 2>&1 || true
 
-        LAST_LINE=$(tail -1 "$LOG_FILE" 2>/dev/null | cut -c1-55)
-        S_INSTALL="-$INSTALL_PCT"
-        show_progress "$OVERALL" "Installing NixOS appliance...  (''${MINS}m ''${SECS}s elapsed)\n\n   ''${LAST_LINE}"
-        sleep 3
+      draw_progress 87 "''${WHITE}Resizing root filesystem...''${RESET}"
+      resize2fs "$ROOT_PART" >> "$LOG_FILE" 2>&1 || {
+        log "WARNING: resize2fs failed (non-fatal if partition was already full size)"
+      }
+
+      NEW_ROOT_SIZE=$(blockdev --getsize64 "$ROOT_PART" 2>/dev/null || echo "0")
+      NEW_ROOT_SIZE_GB=$(( NEW_ROOT_SIZE / 1073741824 ))
+      log "Root partition resized to ''${NEW_ROOT_SIZE_GB}GB"
+
+      draw_progress 88 "''${GREEN}Root partition: ''${NEW_ROOT_SIZE_GB}GB''${RESET}"
+
+      # ── Step 4: Post-write setup ─────────────────────────────────
+      # Mount root to copy config and verify.
+      # Secure Boot keys are generated on first boot by msp-secureboot-keygen.service
+      # in the installed system (appliance-disk-image.nix) — no need to do it here.
+      log "Step 4: Mounting installed system for post-write setup"
+      draw_progress 89 "''${WHITE}Configuring installed system...''${RESET}"
+
+      mkdir -p /mnt
+      mount "$ROOT_PART" /mnt >> "$LOG_FILE" 2>&1
+
+      # ── Step 5: Copy config from USB ────────────────────────────
+      log "Step 5: Checking for USB config"
+      draw_progress 91 "''${WHITE}Checking for deployment config...''${RESET}"
+
+      # Look for config.yaml on the USB boot media
+      CONFIG_SRC=""
+      for candidate in /config/config.yaml /config/osiriscare/config.yaml /config/msp/config.yaml; do
+        if [ -f "$candidate" ]; then
+          CONFIG_SRC="$candidate"
+          break
+        fi
       done
 
-      wait $INSTALL_PID
-      INSTALL_EXIT=$?
-
-      if [ $INSTALL_EXIT -ne 0 ]; then
-        S_INSTALL=1
-        show_progress 0 "Installation failed!"
-        dialog --backtitle "OsirisCare MSP Compliance Platform" \
-          --title " Installation Failed " \
-          --msgbox "\nnixos-install exited with code $INSTALL_EXIT.\n\nTo debug:\n  Alt+F2 → login as root (password: osiris2024)\n  cat /tmp/msp-install.log\n\nManual retry:\n  nixos-install --flake $FLAKE_URL --no-root-passwd" \
-          16 65 2>/dev/null || true
-        exit 1
-      fi
-
-      S_INSTALL=0
-      log "nixos-install completed successfully"
-
-      # ── Step 6b: Generate Secure Boot keys ──────────────────────
-      show_progress 90 "Generating UEFI Secure Boot keys..."
-      log "Step 6b: Generating Secure Boot keys"
-      if [ ! -f /mnt/etc/secureboot/keys/db/db.key ]; then
-        mkdir -p /mnt/etc/secureboot
-        # Generate keys in the installed system's /etc/secureboot
-        chroot /mnt ${pkgs.sbctl}/bin/sbctl create-keys 2>> "$LOG_FILE" || {
-          log "WARNING: Secure Boot key generation failed (non-fatal)"
-          log "Keys can be generated post-boot with: sbctl create-keys"
-        }
-        log "Secure Boot keys generated"
+      if [ -n "$CONFIG_SRC" ]; then
+        # MSP-DATA is partition 3 — mount it to copy config
+        case "$INTERNAL_DEV" in
+          *nvme*|*mmcblk*) DATA_PART="''${INTERNAL_DEV}p3" ;;
+          *)               DATA_PART="''${INTERNAL_DEV}3" ;;
+        esac
+        mkdir -p /mnt/var/lib/msp
+        mount "$DATA_PART" /mnt/var/lib/msp >> "$LOG_FILE" 2>&1
+        cp "$CONFIG_SRC" /mnt/var/lib/msp/config.yaml
+        chmod 600 /mnt/var/lib/msp/config.yaml
+        log "Copied config from $CONFIG_SRC to MSP-DATA partition"
+        draw_progress 92 "''${GREEN}Config copied from USB''${RESET}"
+        # Leave mounted — will be unmounted in cleanup
       else
-        log "Secure Boot keys already exist, skipping"
+        log "No USB config found (will provision via MAC on first boot)"
+        draw_progress 92 "''${DIM}No USB config — will provision via MAC''${RESET}"
       fi
 
-      # ── Step 7: Verify ─────────────────────────────────────────
-      S_VERIFY=7
-      show_progress 93 "Verifying installation..."
-      log "Step 7: Verifying installation"
+      # ── Step 6: Verify ─────────────────────────────────────────
+      log "Step 6: Verifying installation"
+      draw_progress 93 "''${WHITE}Verifying installation...''${RESET}"
 
       STORE_COUNT=$(ls /mnt/nix/store 2>/dev/null | wc -l)
       BOOT_OK="no"
+
+      # Mount ESP to check boot files
+      case "$INTERNAL_DEV" in
+        *nvme*|*mmcblk*) ESP_PART="''${INTERNAL_DEV}p1" ;;
+        *)               ESP_PART="''${INTERNAL_DEV}1" ;;
+      esac
+      mkdir -p /mnt/boot
+      mount "$ESP_PART" /mnt/boot >> "$LOG_FILE" 2>&1 || true
       [ -d /mnt/boot/EFI ] && BOOT_OK="yes"
-      log "Verified: $STORE_COUNT packages, boot=$BOOT_OK"
+      log "Verified: $STORE_COUNT store paths, boot=$BOOT_OK"
       ls -la /mnt/boot/ >> "$LOG_FILE" 2>/dev/null
 
       if [ "$BOOT_OK" != "yes" ]; then
-        S_VERIFY=1
-        show_progress 93 "Boot partition verification failed"
-        sleep 5
-      else
-        S_VERIFY=0
+        umount -R /mnt 2>/dev/null || true
+        die "Boot partition verification failed — no EFI directory found."
       fi
 
-      # ── Step 8: Cleanup & Reboot ───────────────────────────────
-      S_REBOOT=7
-      show_progress 97 "Unmounting filesystems..."
+      draw_progress 95 "''${GREEN}Verified: $STORE_COUNT store paths, EFI boot OK''${RESET}"
 
-      umount -R /mnt
+      # ── Step 7: Cleanup & Halt ─────────────────────────────────
+      log "Step 7: Cleanup"
+      draw_progress 97 "''${WHITE}Unmounting filesystems...''${RESET}"
+
+      umount -R /mnt 2>/dev/null || true
+      sync
       log "Unmounted all filesystems"
-
-      show_progress 100 "Installation complete!"
-      sleep 1
-
-      # ── Completion screen ───────────────────────────────────────
-      printf '\033c'
-      printf '\033[?25l'
-      echo ""
-      echo ""
-      echo -e "  \033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-      echo ""
-      figlet -f slant "  Complete!" 2>/dev/null || echo -e "  \033[1;32mINSTALLATION COMPLETE!\033[0m"
-      echo ""
-      echo -e "  \033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-      echo ""
-      echo -e "  \033[1;37m  OsirisCare Compliance Appliance\033[0m"
-      echo -e "  \033[2m  $STORE_COUNT packages installed to $INTERNAL_DEV ($DEV_SIZE)\033[0m"
-      echo ""
-      echo -e "  \033[1;36m  ┌─────────────────────────────────────────────────┐\033[0m"
-      echo -e "  \033[1;36m  │\033[0m                                                 \033[1;36m│\033[0m"
-      echo -e "  \033[1;36m  │\033[0m   \033[1;33m▸ Remove the USB drive now\033[0m                      \033[1;36m│\033[0m"
-      echo -e "  \033[1;36m  │\033[0m                                                 \033[1;36m│\033[0m"
-      echo -e "  \033[1;36m  │\033[0m   On next boot the appliance will:              \033[1;36m│\033[0m"
-      echo -e "  \033[1;36m  │\033[0m     • Connect to Central Command                \033[1;36m│\033[0m"
-      echo -e "  \033[1;36m  │\033[0m     • Auto-provision via MAC address             \033[1;36m│\033[0m"
-      echo -e "  \033[1;36m  │\033[0m     • Begin HIPAA compliance monitoring          \033[1;36m│\033[0m"
-      echo -e "  \033[1;36m  │\033[0m                                                 \033[1;36m│\033[0m"
-      echo -e "  \033[1;36m  └─────────────────────────────────────────────────┘\033[0m"
-      echo ""
 
       # Unmount USB filesystem to prevent I/O errors on removal.
       # The squashfs is still in RAM so this is safe.
       umount -l /iso 2>/dev/null || true
       sync
 
+      # ── Completion screen ───────────────────────────────────────
+      clear_screen
       echo ""
-      echo -e "  \033[1;32m  ✓ Installation complete. Safe to remove USB.\033[0m"
       echo ""
-      echo -e "  \033[1;37m  The system will power off in 30 seconds.\033[0m"
-      echo -e "  \033[2m  Remove USB, then power on to start the appliance.\033[0m"
-      echo -e "  \033[2m  (USB can stay in — boot priority has been set to internal drive)\033[0m"
+      echo -e "  ''${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
+      echo ""
+      figlet -f slant "  Complete!" 2>/dev/null || echo -e "  ''${GREEN}INSTALLATION COMPLETE!''${RESET}"
+      echo ""
+      echo -e "  ''${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
+      echo ""
+      echo -e "  ''${WHITE}  OsirisCare Compliance Appliance''${RESET}"
+      echo -e "  ''${DIM}  ''${STORE_COUNT} store paths — root ''${NEW_ROOT_SIZE_GB}GB — $INTERNAL_DEV ($DEV_SIZE)''${RESET}"
+      echo ""
+      echo -e "  ''${CYAN}  ┌─────────────────────────────────────────────────┐''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}                                                 ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}   ''${GREEN}✓ Installation Complete''${RESET}                       ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}                                                 ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}   ''${YELLOW}Remove the USB drive.''${RESET}                         ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}   ''${WHITE}Press the power button to start.''${RESET}               ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}                                                 ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}   ''${DIM}On first boot the appliance will:''${RESET}               ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}     ''${DIM}• Connect to Central Command''${RESET}                   ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}     ''${DIM}• Auto-provision via MAC address''${RESET}               ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}     ''${DIM}• Begin compliance monitoring''${RESET}                  ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  │''${RESET}                                                 ''${CYAN}│''${RESET}"
+      echo -e "  ''${CYAN}  └─────────────────────────────────────────────────┘''${RESET}"
+      echo ""
       echo ""
 
-      # Countdown to poweroff (not reboot — prevents install loop)
-      for i in 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1; do
-        BAR_FILLED=$((30 - i))
-        BAR_EMPTY=$i
-        BAR=""
-        for ((b=0; b<BAR_FILLED; b++)); do BAR+="█"; done
-        for ((b=0; b<BAR_EMPTY; b++)); do BAR+="░"; done
-        echo -ne "\r  \033[2mPowering off in \033[1;37m$i\033[0;2ms  \033[36m[''${BAR}]\033[0m  "
-        sleep 1
-      done
-      echo ""
+      log "Installation complete. Halting."
 
-      systemctl poweroff
+      # Halt — NOT reboot, NOT poweroff with countdown.
+      # User removes USB, then presses power button.
+      systemctl halt
     '';
   };
 
   # Post-login MOTD
   environment.etc."motd".text = ''
 
-    OsirisCare MSP - Appliance Installer
-    ─────────────────────────────────────
-    The auto-install service partitions, formats, and installs
-    the appliance via nixos-install from the GitHub flake.
+    OsirisCare MSP - Appliance Installer v9
+    ────────────────────────────────────────
+    Offline installer — writes embedded raw image via dd+zstd.
+    No network required.
 
     Useful commands:
       journalctl -u msp-auto-install -f    # Watch install progress
       systemctl status msp-auto-install     # Check install status
-      ip addr                               # Show IP addresses
+      cat /tmp/msp-install.log             # Full install log
 
   '';
 
@@ -891,7 +1040,7 @@ in
   # ============================================================================
   # Persistent storage for config, evidence, and A/B update state
   # NOTE: These mounts won't exist on the live ISO (nofail prevents boot failure)
-  # They apply after nixos-install when booted from the installed system
+  # They apply when booted from the installed system (dd-written image)
   # ============================================================================
 
   # Data partition (2GB) for compliance evidence, config, and state

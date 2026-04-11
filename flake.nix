@@ -180,10 +180,18 @@
         ];
       };
 
-      # OsirisCare Installer ISO (boots and auto-installs)
-      # Requires network - nixos-install fetches flake from GitHub
+      # Compressed raw disk image with full NixOS closure (dd-based installer)
+      # 3 partitions: ESP (512M) + root (auto) + MSP-DATA (2G)
+      # Produces osiriscare-system.raw.zst — zero network needed at install time
+      packages.x86_64-linux.appliance-raw-image =
+        import ./iso/raw-image.nix { inherit nixpkgs lanzaboote; };
+
+      # OsirisCare Installer ISO — offline, writes embedded raw image via dd+zstd
       nixosConfigurations.osiriscare-appliance = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
+        specialArgs = {
+          appliance-raw-image = self.packages.x86_64-linux.appliance-raw-image;
+        };
         modules = [
           "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
           ./iso/appliance-image.nix
@@ -193,12 +201,6 @@
       # Installer ISO for zero-friction deployment
       packages.x86_64-linux.appliance-iso =
         self.nixosConfigurations.osiriscare-appliance.config.system.build.isoImage;
-
-      # Compressed raw disk image with full NixOS closure (dd-based installer)
-      # 3 partitions: ESP (512M) + root (auto) + MSP-DATA (2G)
-      # Produces osiriscare-system.raw.zst — zero network needed at install time
-      packages.x86_64-linux.appliance-raw-image =
-        import ./iso/raw-image.nix { inherit nixpkgs lanzaboote; };
 
       # Raw disk image for writing to SSD/USB (20GB, GPT, EFI) - DEPRECATED
       # Use appliance-raw-image instead for dd-based offline install
