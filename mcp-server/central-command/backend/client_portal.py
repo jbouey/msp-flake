@@ -29,7 +29,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, Cookie, Query, Header
 from fastapi.responses import RedirectResponse, StreamingResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 import httpx
 
 # Stripe integration (optional - graceful fallback if not installed)
