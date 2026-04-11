@@ -194,8 +194,14 @@
       packages.x86_64-linux.appliance-iso =
         self.nixosConfigurations.osiriscare-appliance.config.system.build.isoImage;
 
+      # Compressed raw disk image with full NixOS closure (dd-based installer)
+      # 3 partitions: ESP (512M) + root (auto) + MSP-DATA (2G)
+      # Produces osiriscare-system.raw.zst — zero network needed at install time
+      packages.x86_64-linux.appliance-raw-image =
+        import ./iso/raw-image.nix { inherit nixpkgs lanzaboote; };
+
       # Raw disk image for writing to SSD/USB (20GB, GPT, EFI) - DEPRECATED
-      # Use appliance-iso instead for proper nixos-install on any hardware
+      # Use appliance-raw-image instead for dd-based offline install
       packages.x86_64-linux.appliance-disk-image =
         let
           pkgs = import nixpkgs { system = "x86_64-linux"; };
