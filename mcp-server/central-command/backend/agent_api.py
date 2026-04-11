@@ -80,18 +80,19 @@ MONITORING_ONLY_CHECKS = {
     "net_unexpected_ports",
     "net_expected_service",
     "net_dns_resolution",
-    # Backup destination — requires manual configuration (NOT backup_status)
-    "backup_not_configured",
+    # Backup verification — requires manual restore test, not auto-fixable
     "backup_verification",
-    # Credential staleness — informational, not auto-fixable
+    # Credential staleness — requires human to provide new credentials
     "credential_stale",
     # Device reachability — host offline, nothing to remediate
     "device_unreachable",
     # Agent deploy exhausted — max retries hit, needs human investigation
     "AGENT-REDEPLOY-EXHAUSTED",
     "WIN-DEPLOY-UNREACHABLE",
-    # Linux encryption — LUKS cannot be enabled remotely on a running system
+    # Linux encryption — LUKS on running system is dangerous to automate
     "linux_encryption",
+    # REMOVED from monitoring-only (Session 204 flywheel audit):
+    # "backup_not_configured" — backup CAN be configured via runbook (enable restic/schedule)
 }
 
 
