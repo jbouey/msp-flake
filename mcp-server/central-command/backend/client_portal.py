@@ -457,6 +457,32 @@ async def validate_magic_link(request: Request, body: MagicLinkValidate):
         if not org or org["status"] != "active":
             raise HTTPException(status_code=403, detail="Organization account is not active")
 
+        # SECURITY: Enforce MFA on magic link login (same as password login).
+        # Without this, magic link bypasses org-level MFA requirement entirely.
+        mfa_org_required = await conn.fetchval(
+            "SELECT mfa_required FROM client_orgs WHERE id = $1", user["client_org_id"]
+        )
+        mfa_user_enabled = user.get("mfa_enabled", False)
+        if mfa_org_required and not mfa_user_enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="Your organization requires MFA. Please enable two-factor authentication before logging in."
+            )
+        if mfa_user_enabled:
+            # User has MFA — require TOTP verification before creating session
+            mfa_token = secrets.token_urlsafe(32)
+            now = datetime.now(timezone.utc)
+            expired = [k for k, v in _client_mfa_pending.items() if v.get("expires", "") < now.isoformat()]
+            for k in expired:
+                _client_mfa_pending.pop(k, None)
+            _client_mfa_pending[mfa_token] = {
+                "user_id": str(user["id"]),
+                "org_id": str(user["client_org_id"]),
+                "email": user["email"],
+                "expires": (now + timedelta(minutes=5)).isoformat(),
+            }
+            return {"status": "mfa_required", "mfa_token": mfa_token}
+
         # Create session
         session_token = generate_token()
         token_hash = hash_token(session_token)
