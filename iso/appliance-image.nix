@@ -207,6 +207,7 @@ in
       dialog  # Professional TUI installer (mixedgauge, gauge, msgbox)
       figlet  # ASCII art banner for splash/completion screens
       sbctl  # UEFI Secure Boot key generation
+      efibootmgr  # Set boot priority so disk boots before USB
     ];
 
     script = ''
@@ -277,6 +278,8 @@ in
 
       BOOT_DEV=$(findmnt -n -o SOURCE / | sed 's/\[.*$//' | head -1)
 
+      # Drive detection list — MUST match appliance-disk-image.nix msp-auto-install.
+      # If you add a device here, add it there too.
       INTERNAL_DEV=""
       for dev in /dev/sda /dev/sdb /dev/vda /dev/nvme0n1 /dev/mmcblk0; do
         [ -b "$dev" ] || continue
@@ -526,20 +529,40 @@ in
       echo -e "  \033[1;36m  └─────────────────────────────────────────────────┘\033[0m"
       echo ""
 
-      # Countdown with visible timer
+      # Set eMMC/disk as first boot device so USB is inert on next boot.
+      # This prevents the install loop even if the USB stays plugged in.
+      ${pkgs.efibootmgr}/bin/efibootmgr --create \
+        --disk "$INTERNAL_DEV" --part 1 \
+        --label "OsirisCare" \
+        --loader /EFI/systemd/systemd-bootx64.efi \
+        --verbose >> "$LOG_FILE" 2>&1 || log "WARNING: efibootmgr failed (non-fatal)"
+
+      # Unmount USB filesystem to prevent I/O errors on removal.
+      # The squashfs is still in RAM so this is safe.
+      umount -l /iso 2>/dev/null || true
+      sync
+
+      echo ""
+      echo -e "  \033[1;32m  ✓ Installation complete. Safe to remove USB.\033[0m"
+      echo ""
+      echo -e "  \033[1;37m  The system will power off in 30 seconds.\033[0m"
+      echo -e "  \033[2m  Remove USB, then power on to start the appliance.\033[0m"
+      echo -e "  \033[2m  (USB can stay in — boot priority has been set to internal drive)\033[0m"
+      echo ""
+
+      # Countdown to poweroff (not reboot — prevents install loop)
       for i in 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1; do
-        # Build a visual countdown bar
         BAR_FILLED=$((30 - i))
         BAR_EMPTY=$i
         BAR=""
         for ((b=0; b<BAR_FILLED; b++)); do BAR+="█"; done
         for ((b=0; b<BAR_EMPTY; b++)); do BAR+="░"; done
-        echo -ne "\r  \033[2mRebooting in \033[1;37m$i\033[0;2ms  \033[36m[''${BAR}]\033[0m  "
+        echo -ne "\r  \033[2mPowering off in \033[1;37m$i\033[0;2ms  \033[36m[''${BAR}]\033[0m  "
         sleep 1
       done
       echo ""
 
-      systemctl reboot
+      systemctl poweroff
     '';
   };
 

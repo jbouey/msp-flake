@@ -541,11 +541,34 @@ async def get_provision_by_mac(mac_address: str):
                 list(provision['site_keys'] or [])
             ))
 
-            return {
+            config = {
                 "site_id": provision['site_id'],
                 "api_key": provision['api_key'],
                 "api_endpoint": API_BASE_URL,
                 "ssh_authorized_keys": ssh_keys
+            }
+
+            # Sign the config so the appliance can verify authenticity.
+            # The appliance script (appliance-disk-image.nix) expects:
+            #   response.config  = the config object
+            #   response.signature = Ed25519 hex signature of json.dumps(config, sort_keys=True)
+            # Without this signature, the appliance rejects the provisioning response.
+            signature = ""
+            try:
+                from main import sign_data
+                config_canonical = json.dumps(config, sort_keys=True)
+                signature = sign_data(config_canonical)
+            except Exception as e:
+                logger.warning(f"[provision] Failed to sign config for {mac}: {e}")
+
+            return {
+                "config": config,
+                "signature": signature,
+                # Top-level fields for backwards compat (appliance also reads these directly)
+                "site_id": config["site_id"],
+                "api_key": config["api_key"],
+                "api_endpoint": config["api_endpoint"],
+                "ssh_authorized_keys": ssh_keys,
             }
 
         if provision:
