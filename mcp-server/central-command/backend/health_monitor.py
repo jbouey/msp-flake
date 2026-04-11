@@ -662,6 +662,29 @@ async def _resolve_stale_incidents():
             RETURNING id, incident_type
         """)
 
+        # Stuck-resolving cleanup: incidents in 'resolving' for >3 days.
+        # L1/L2 created an order but it either failed or the resolve callback
+        # never fired. These block the dedup system from creating new incidents,
+        # preventing the healing pipeline from retrying with fresh context.
+        stuck_result = await conn.fetch("""
+            UPDATE incidents SET
+                status = 'resolved',
+                resolved_at = NOW(),
+                resolution_tier = 'monitoring'
+            WHERE id IN (
+                SELECT i.id FROM incidents i
+                WHERE i.status = 'resolving'
+                AND i.created_at < NOW() - INTERVAL '3 days'
+            )
+            RETURNING id, incident_type
+        """)
+        for row in stuck_result:
+            logger.info("Auto-resolved stuck-resolving incident (>3d)",
+                        incident_id=str(row["id"]),
+                        incident_type=row["incident_type"])
+        if stuck_result:
+            logger.info(f"Resolved {len(stuck_result)} stuck-resolving incidents (>3d)")
+
         # Zombie cleanup: resolve old incidents when a NEWER incident of the
         # same type+site has already been resolved. These are pre-dedup era
         # incidents that newer dedup-keyed incidents shadow — the healing
