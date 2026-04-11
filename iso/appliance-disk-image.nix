@@ -767,9 +767,16 @@ EOF
 
       # Find internal drive (prefer NVMe, then SATA)
       INTERNAL_DEV=""
-      for dev in /dev/nvme0n1 /dev/sda /dev/sdb /dev/vda; do
+      for dev in /dev/nvme0n1 /dev/sda /dev/sdb /dev/vda /dev/mmcblk0; do
         [ -b "$dev" ] || continue
-        DEV_NAME=$(basename "$dev" | sed 's/[0-9]*$//')
+        # Extract block device name for sysfs lookup.
+        # SATA/NVMe: /dev/sda → sda, /dev/nvme0n1 → nvme0n1
+        # eMMC: /dev/mmcblk0 → mmcblk0 (not mmcblk — keep the trailing 0)
+        DEV_NAME=$(basename "$dev")
+        case "$DEV_NAME" in
+          mmcblk*) ;; # eMMC: use full name (mmcblk0)
+          *) DEV_NAME=$(echo "$DEV_NAME" | sed 's/[0-9]*$//') ;; # strip partition number
+        esac
         [ "$DEV_NAME" = "$BOOT_DEV_NAME" ] && continue
 
         # Check it's not removable
