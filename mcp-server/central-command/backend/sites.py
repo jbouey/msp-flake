@@ -4172,6 +4172,33 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         except Exception as e:
             logger.warning(f"API key rotation failed for {canonical_id}: {e}")
 
+        # Send welcome email to client contact on first appliance checkin
+        try:
+            client_email = await conn.fetchval(
+                "SELECT client_contact_email FROM sites WHERE site_id = $1", checkin.site_id
+            )
+            clinic_name = await conn.fetchval(
+                "SELECT clinic_name FROM sites WHERE site_id = $1", checkin.site_id
+            )
+            if client_email:
+                from .email_alerts import _send_smtp_with_retry
+                subject = f"OsirisCare — Your compliance monitoring is active"
+                body = (
+                    f"Hi,\n\n"
+                    f"Your OsirisCare compliance appliance for {clinic_name or checkin.site_id} is now online "
+                    f"and monitoring your network.\n\n"
+                    f"What happens next:\n"
+                    f"  1. The appliance will discover devices on your network\n"
+                    f"  2. You'll receive a notification to register device credentials\n"
+                    f"  3. Compliance scanning begins automatically\n\n"
+                    f"You can view your compliance dashboard at any time through your client portal.\n\n"
+                    f"— OsirisCare\n"
+                )
+                await _send_smtp_with_retry(client_email, subject, body)
+                logger.info(f"Welcome email sent to {client_email} for site {checkin.site_id}")
+        except Exception as e:
+            logger.debug(f"Welcome email skipped: {e}")
+
     return {
         "status": "ok",
         "appliance_id": canonical_id,

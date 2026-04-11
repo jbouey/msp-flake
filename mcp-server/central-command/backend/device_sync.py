@@ -636,6 +636,51 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
     except Exception as e:
         logger.debug(f"Org credential IP auto-update skipped: {e}")
 
+    # Notify admin + client when new unregistered devices are discovered.
+    # This prompts action: "register credentials or mark as ignored."
+    # Only fires when NEW devices are found (not on every sync).
+    if devices_created > 0:
+        try:
+            # Count total unregistered devices for this site
+            unregistered_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM discovered_devices
+                WHERE appliance_id = $1
+                  AND device_status NOT IN ('managed', 'ignored', 'stale_subnet_move')
+                  AND compliance_status = 'unknown'
+            """, appliance_db_id)
+
+            if unregistered_count and unregistered_count > 0:
+                # Admin notification
+                await conn.execute("""
+                    INSERT INTO notifications (site_id, type, severity, title, message, created_at)
+                    VALUES ($1, 'device_discovery', 'info',
+                        $2, $3, NOW())
+                    ON CONFLICT DO NOTHING
+                """,
+                    report.site_id,
+                    f"{devices_created} new device(s) discovered",
+                    f"{unregistered_count} device(s) at this site need credentials to enable compliance scanning. "
+                    f"Register credentials or mark as ignored in the Devices tab.",
+                )
+
+                # Client notification (if client org exists)
+                org_id = await conn.fetchval(
+                    "SELECT client_org_id FROM sites WHERE site_id = $1", report.site_id
+                )
+                if org_id:
+                    await conn.execute("""
+                        INSERT INTO client_notifications (client_org_id, type, severity, title, message, created_at)
+                        VALUES ($1, 'device_discovery', 'info',
+                            $2, $3, NOW())
+                    """,
+                        org_id,
+                        f"{devices_created} new device(s) found on your network",
+                        f"{unregistered_count} device(s) were discovered but don't have monitoring credentials yet. "
+                        f"Go to Devices to register them or mark as not applicable.",
+                    )
+        except Exception as e:
+            logger.debug(f"Device discovery notification skipped: {e}")
+
     status = "success"
     message = f"Synced {devices_created} new, {devices_updated} updated"
     if errors:

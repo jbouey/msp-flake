@@ -49,16 +49,19 @@ let
 
   # Build the Go appliance daemon (replaces Python compliance-agent)
   # Feature-flagged: enabled by /var/lib/msp/.use-go-daemon or config.yaml use_go_daemon: true
+  # Single source of truth for daemon version. Update this ONE line to bump.
+  daemonVersion = "0.3.88";
+
   appliance-daemon-go = pkgs.buildGoModule {
     pname = "appliance-daemon";
-    version = "0.3.88";
+    version = daemonVersion;
     src = ../appliance;
 
     vendorHash = null;
 
     ldflags = [
       "-s" "-w"
-      "-X github.com/osiriscare/appliance/internal/daemon.Version=0.3.88"
+      "-X github.com/osiriscare/appliance/internal/daemon.Version=${daemonVersion}"
     ];
 
     subPackages = [
