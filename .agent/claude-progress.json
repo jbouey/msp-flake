@@ -1,6 +1,6 @@
 {
   "session": 204,
-  "updated": "2026-04-11T07:41:09.829630Z",
+  "updated": "2026-04-11T08:03:28.343170Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -49,9 +49,11 @@
     "trust_boundaries": "session204_5_units_hardened_identity_policy_execution_attestation_access_cackle_level",
     "wireguard_architecture": "session204_off_by_default_emergency_access_time_bounded_systemd_timer_fail_secure",
     "provisioning": "session204_boot_source_telemetry_multi_nic_ghost_detection_install_verification",
-    "attestation_hardening": "session204_delete_triggers_69_chain_gap_detection_timestamp_validation_l2_runbook_only"
+    "attestation_hardening": "session204_delete_triggers_69_chain_gap_detection_timestamp_validation_l2_runbook_only",
+    "mesh_resilience": "session204_subnet_move_recovery_stale_device_cleanup_soft_delete_deterministic_mac_nix",
+    "wg_lifecycle": "session204_bootstrap_auto_teardown_active_off_states_timer_enforced_fleet_teardown_sent"
   },
-  "current_blocker": "iMac SSH port 2222 still broken. Health check readlink /proc/PID/exe fails on one appliance (NixOS symlink resolution) — P2 investigate.",
+  "current_blocker": "iMac SSH port 2222 still broken. Health check readlink /proc/PID/exe fails on one appliance — P2.",
   "session_202_work": {
     "summary": "Round-table audit: 67 files, 5 swarms, 360 test cases identified. Critical security fixes + DRY consolidation.",
     "security_fixes": [
