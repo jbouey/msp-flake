@@ -765,18 +765,21 @@ async def report_incident(
         type_lower = incident.incident_type.lower()
         check_type = incident.check_type or ""
 
+        # Keyword → runbook fallback map. IDs MUST match the embedded
+        # registry in appliance/internal/daemon/runbooks.json.
+        # Using a non-existent ID causes 100% execution failure.
         runbook_map = {
-            "backup": "RB-BACKUP-001",
-            "certificate": "RB-CERT-001",
-            "cert": "RB-CERT-001",
-            "disk": "RB-DISK-001",
-            "storage": "RB-DISK-001",
-            "service": "RB-SERVICE-001",
+            "backup": "RB-WIN-BACKUP-001",
+            "certificate": "RB-WIN-CERT-001",
+            "cert": "LIN-CERT-001",
+            "disk": "LIN-DISK-001",
+            "storage": "RB-WIN-STG-001",
+            "service": "RB-WIN-SVC-001",
             "drift": "RB-DRIFT-001",
             "configuration": "RB-DRIFT-001",
-            "firewall": "RB-FIREWALL-001",
-            "patching": "RB-PATCH-001",
-            "update": "RB-PATCH-001"
+            "firewall": "RB-WIN-FIREWALL-001",
+            "patching": "RB-WIN-PATCH-001",
+            "update": "RB-WIN-PATCH-001",
         }
 
         for keyword, rb_id in runbook_map.items():
