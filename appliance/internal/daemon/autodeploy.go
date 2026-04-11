@@ -1500,6 +1500,30 @@ winrmB64Transfer:
 
 downloadDone:
 
+	// Final SHA256 verification gate — covers ALL transfer paths (HTTP, NETLOGON, base64).
+	// This is the last check before service install. If the hash doesn't match,
+	// the binary is deleted and deployment is aborted.
+	if expectedHash != "" {
+		finalVerify := fmt.Sprintf(`
+$path = "%s\%s"
+if (Test-Path $path) {
+    $hash = (Get-FileHash -Path $path -Algorithm SHA256).Hash
+    if ($hash -eq "%s") { "VERIFIED" } else { "MISMATCH:$hash" }
+} else { "MISSING" }
+`, agentInstallDir, agentBinaryName, strings.ToUpper(expectedHash))
+		fvr := ad.daemon.winrmExec.Execute(target, finalVerify, "AGENT-FINAL-VERIFY", "autodeploy", 30, 0, 10.0, nil)
+		fvOut := strings.TrimSpace(maputil.String(fvr.Output, "std_out"))
+		if fvOut != "VERIFIED" {
+			slog.Error("SECURITY: final SHA256 verification failed before service install",
+				"component", "autodeploy", "hostname", hostname, "result", fvOut)
+			ad.daemon.winrmExec.Execute(target,
+				fmt.Sprintf(`Remove-Item -Force "%s\%s" -EA SilentlyContinue`, agentInstallDir, agentBinaryName),
+				"AGENT-FINAL-CLEANUP", "autodeploy", 10, 0, 5.0, nil)
+			return fmt.Errorf("SECURITY: binary verification failed on %s: %s", hostname, fvOut)
+		}
+		slog.Info("direct: final SHA256 verified before service install", "component", "autodeploy", "hostname", hostname)
+	}
+
 	// Step 3: Write config + install service
 	slog.Info("direct: step 3/4 writing config + installing service", "component", "autodeploy", "hostname", hostname)
 	if err := ad.writeConfigToTarget(target, grpcAddr); err != nil {
