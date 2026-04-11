@@ -945,19 +945,37 @@ except Exception as e:
 
       log "No USB config found, attempting MAC-based provisioning..."
 
-      # Get primary MAC address
+      # Get primary MAC address — sorted by interface name for deterministic selection.
+      # Must match the Go daemon's getAllPhysicalMACs() which also sorts by name.
+      # This prevents the ghost-appliance bug where different NICs register separately.
       MAC_ADDR=""
-      for iface in /sys/class/net/eth* /sys/class/net/en* /sys/class/net/*; do
-        [ -e "$iface" ] || continue
-        IFACE_NAME=$(basename "$iface")
-        [ "$IFACE_NAME" = "lo" ] && continue
-        [ -f "$iface/address" ] || continue
-        CANDIDATE=$(cat "$iface/address")
+      ALL_MACS=""
+      for iface in $(ls -1 /sys/class/net/ | sort); do
+        [ "$iface" = "lo" ] && continue
+        echo "$iface" | grep -qE '^(wg|docker|veth|br-)' && continue
+        [ -f "/sys/class/net/$iface/address" ] || continue
+        CANDIDATE=$(cat "/sys/class/net/$iface/address")
         [ "$CANDIDATE" = "00:00:00:00:00:00" ] && continue
-        MAC_ADDR="$CANDIDATE"
-        log "Using interface $IFACE_NAME with MAC $MAC_ADDR"
-        break
+        if [ -z "$MAC_ADDR" ]; then
+          MAC_ADDR="$CANDIDATE"
+          log "Primary interface: $iface with MAC $MAC_ADDR"
+        fi
+        ALL_MACS="$ALL_MACS,$CANDIDATE"
       done
+      ALL_MACS=''${ALL_MACS#,}  # strip leading comma
+
+      # Detect boot source — live USB vs installed disk
+      BOOT_SOURCE="unknown"
+      if grep -q 'squashfs\|copytoram\|boot.shell_on_fail' /proc/cmdline 2>/dev/null; then
+        BOOT_SOURCE="live_usb"
+      elif findmnt -n -o FSTYPE / 2>/dev/null | grep -q 'tmpfs\|ramfs'; then
+        BOOT_SOURCE="live_usb"
+      elif [ -e /dev/disk/by-label/MSP-DATA ]; then
+        BOOT_SOURCE="installed_disk"
+      else
+        BOOT_SOURCE="installed_disk"
+      fi
+      log "Boot source: $BOOT_SOURCE"
 
       if [ -z "$MAC_ADDR" ]; then
         log "ERROR: Could not determine MAC address"

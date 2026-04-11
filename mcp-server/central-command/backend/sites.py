@@ -1711,12 +1711,18 @@ async def delete_appliance(site_id: str, appliance_id: str, user: dict = Depends
     pool = await get_pool()
 
     async with tenant_connection(pool, site_id=site_id) as conn:
+        # Soft-delete: set deleted_at instead of destroying the row.
+        # Preserves first_checkin, deployment history, and mesh audit trail.
+        # Re-registration on next checkin will clear deleted_at.
         result = await conn.execute("""
-            DELETE FROM site_appliances
-            WHERE appliance_id = $1 AND site_id = $2
-        """, appliance_id, site_id)
+            UPDATE site_appliances
+            SET deleted_at = NOW(),
+                deleted_by = $3,
+                status = 'deleted'
+            WHERE appliance_id = $1 AND site_id = $2 AND deleted_at IS NULL
+        """, appliance_id, site_id, user.get("username") or user.get("email", "unknown"))
 
-        if result == "DELETE 0":
+        if result == "UPDATE 0":
             raise HTTPException(
                 status_code=404,
                 detail=f"Appliance {appliance_id} not found in site {site_id}"
@@ -1725,7 +1731,8 @@ async def delete_appliance(site_id: str, appliance_id: str, user: dict = Depends
         return {
             'status': 'deleted',
             'appliance_id': appliance_id,
-            'site_id': site_id
+            'site_id': site_id,
+            'recoverable': True,
         }
 
 
@@ -3096,7 +3103,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     last_checkin = EXCLUDED.last_checkin,
                     daemon_health = COALESCE(EXCLUDED.daemon_health, site_appliances.daemon_health),
                     offline_since = NULL,
-                    offline_notified = false
+                    offline_notified = false,
+                    deleted_at = NULL,
+                    deleted_by = NULL
             """,
                 checkin.site_id,
                 canonical_id,
@@ -3110,6 +3119,39 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 now,
                 _health_json,
             )
+
+        # === STEP 3.4: Stale device cleanup on subnet change ===
+        # When an appliance moves subnets (e.g., 192.168.88.x → 192.168.1.x),
+        # devices discovered on the old subnet become unreachable phantoms.
+        # Detect subnet change by comparing IP prefixes and mark old devices stale.
+        if not _ghost_detected and last_checkin_time and checkin.ip_addresses:
+            try:
+                old_ips_row = await conn.fetchval(
+                    "SELECT ip_addresses FROM site_appliances WHERE appliance_id = $1",
+                    canonical_id
+                )
+                if old_ips_row:
+                    import json as _json
+                    old_ips = _json.loads(old_ips_row) if isinstance(old_ips_row, str) else old_ips_row
+                    old_subnets = {'.'.join(ip.split('.')[:3]) for ip in old_ips if ip and not ip.startswith('169.254') and not ip.startswith('10.100')}
+                    new_subnets = {'.'.join(ip.split('.')[:3]) for ip in checkin.ip_addresses if ip and not ip.startswith('169.254') and not ip.startswith('10.100')}
+                    lost_subnets = old_subnets - new_subnets
+                    if lost_subnets:
+                        logger.info(
+                            f"Subnet change detected for {canonical_id}: lost {lost_subnets}, "
+                            f"now on {new_subnets}. Marking old-subnet devices stale."
+                        )
+                        for subnet in lost_subnets:
+                            await conn.execute("""
+                                UPDATE discovered_devices
+                                SET device_status = 'stale_subnet_move',
+                                    sync_updated_at = NOW()
+                                WHERE site_id = $1
+                                  AND ip_address LIKE $2
+                                  AND device_status NOT IN ('ignored', 'stale_subnet_move')
+                            """, checkin.site_id, f"{subnet}.%")
+            except Exception as e:
+                logger.debug(f"Subnet change check skipped: {e}")
 
         # === STEP 3.5: Also update appliances table for Fleet Updates ===
         try:

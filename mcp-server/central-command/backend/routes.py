@@ -307,7 +307,7 @@ async def get_client_detail(site_id: str, db: AsyncSession = Depends(get_db), us
                    COALESCE(jsonb_array_length(assigned_targets), 0) as assigned_target_count,
                    daemon_health->>'boot_source' as boot_source
             FROM site_appliances
-            WHERE site_id = :site_id
+            WHERE site_id = :site_id AND deleted_at IS NULL
         """),
         {"site_id": site_id}
     )
