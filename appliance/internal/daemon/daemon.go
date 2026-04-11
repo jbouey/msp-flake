@@ -802,6 +802,19 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		}
 	}
 
+	// API key single-use rotation: server sends a new key on first checkin.
+	// The USB-provisioned key becomes useless after this point.
+	if resp.RotatedAPIKey != "" {
+		log.Printf("[daemon] API key rotated by server — updating config")
+		d.config.APIKey = resp.RotatedAPIKey
+		configPath := filepath.Join(d.config.StateDir, "config.yaml")
+		if err := UpdateAPIKey(configPath, resp.RotatedAPIKey); err != nil {
+			log.Printf("[daemon] Failed to save rotated API key: %v", err)
+		} else {
+			log.Printf("[daemon] Rotated API key saved to config.yaml")
+		}
+	}
+
 	// Decrypt envelope-encrypted credentials if present
 	if d.envelopeKP != nil && resp.EncryptedCredentials != nil {
 		encJSON, _ := json.Marshal(resp.EncryptedCredentials)

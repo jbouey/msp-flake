@@ -4145,10 +4145,38 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         import logging
         logging.warning(f"Checkin {checkin.site_id}: pending deploys lookup failed: {e}")
 
+    # API key single-use rotation: on first checkin, rotate the key so the
+    # USB-provisioned key becomes useless. If the USB is lost before deployment,
+    # the original key is dead.
+    rotated_api_key = None
+    if not last_checkin_time and not _ghost_detected:
+        try:
+            import hashlib as _hl
+            new_key = secrets.token_urlsafe(32)
+            new_hash = _hl.sha256(new_key.encode()).hexdigest()
+            # Deactivate old key
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                old_key = auth_header[7:]
+                old_hash = _hl.sha256(old_key.encode()).hexdigest()
+                await conn.execute(
+                    "UPDATE api_keys SET active = false WHERE key_hash = $1", old_hash
+                )
+            # Create new key
+            await conn.execute("""
+                INSERT INTO api_keys (key_hash, site_id, active, created_at, description)
+                VALUES ($1, $2, true, NOW(), 'Rotated on first checkin')
+            """, new_hash, checkin.site_id)
+            rotated_api_key = new_key
+            logger.info(f"API key rotated on first checkin for {canonical_id}")
+        except Exception as e:
+            logger.warning(f"API key rotation failed for {canonical_id}: {e}")
+
     return {
         "status": "ok",
         "appliance_id": canonical_id,
         "server_time": now.isoformat(),
+        "rotated_api_key": rotated_api_key,
         "server_public_key": server_public_key,
         "server_public_keys": server_public_keys,
         "merged_duplicates": len(merge_from_ids),

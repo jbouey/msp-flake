@@ -328,6 +328,7 @@ type CheckinResponse struct {
 	Status               string                   `json:"status"`
 	ApplianceID          string                   `json:"appliance_id"`
 	ServerTime           string                   `json:"server_time"`
+	RotatedAPIKey        string                   `json:"rotated_api_key,omitempty"`
 	ServerPublicKey      string                   `json:"server_public_key"`
 	ServerPublicKeys     []string                 `json:"server_public_keys,omitempty"`
 	MergedDuplicates     int                      `json:"merged_duplicates"`
