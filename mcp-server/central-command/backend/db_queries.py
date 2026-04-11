@@ -884,7 +884,7 @@ CATEGORY_CHECKS = {
     ],
     "antivirus": [
         "windows_defender",
-        "windows_defender_exclusions",
+        "windows_defender_exclusions", "defender_exclusions",
     ],
     "backup": [
         "backup_status", "windows_backup_status",
@@ -892,45 +892,58 @@ CATEGORY_CHECKS = {
     "logging": [
         "audit_logging", "windows_audit_policy",
         "linux_audit", "linux_logging",
+        "linux_audit_logging",
     ],
     "firewall": [
         "firewall", "windows_firewall_status", "firewall_status",
         "linux_firewall",
     ],
     "encryption": [
-        "bitlocker", "windows_bitlocker_status",
-        "linux_crypto", "windows_smb_signing",
+        "bitlocker", "windows_bitlocker_status", "bitlocker_status",
+        "linux_crypto", "windows_smb_signing", "smb_signing",
     ],
     "access_control": [
         "rogue_admin_users", "linux_accounts",
-        "windows_password_policy", "linux_permissions",
-        "linux_ssh_config", "windows_screen_lock_policy",
+        "windows_password_policy", "password_policy",
+        "linux_permissions",
+        "linux_ssh_config", "windows_screen_lock_policy", "screen_lock_policy",
+        "guest_account", "rdp_nla",
+        "linux_user_accounts", "linux_file_permissions",
     ],
     "services": [
         "critical_services", "linux_services",
-        "windows_service_dns", "windows_service_netlogon",
+        "windows_service_dns", "service_dns",
+        "windows_service_netlogon", "service_netlogon",
         "windows_service_spooler", "windows_service_w32time",
         "windows_service_wuauserv", "agent_status",
+        "linux_failed_services",
     ],
     "network": [
         "network_posture_windows",
-        "windows_network_profile", "windows_dns_config",
-        "linux_network", "ntp_sync", "linux_time_sync",
-        "windows_smb1_protocol",
+        "windows_network_profile", "network_profile",
+        "windows_dns_config", "dns_config",
+        "linux_network", "ntp_sync", "linux_time_sync", "linux_ntp_sync",
+        "windows_smb1_protocol", "smb1_protocol",
+        "linux_open_ports",
         # Operational monitoring types EXCLUDED from compliance scoring:
         # "network" — netscan aggregate findings (host reachability, not attestation)
         # "net_unexpected_ports", "net_expected_service", "net_host_reachability"
         # These flow through the healing pipeline but are NOT compliance evidence.
     ],
     "system_integrity": [
-        "disk_space", "linux_kernel", "linux_boot",
-        "linux_integrity", "linux_mac",
+        "disk_space", "linux_disk_space",
+        "linux_kernel", "linux_kernel_params",
+        "linux_boot", "linux_integrity", "linux_mac",
         "rogue_scheduled_tasks",
         "windows_registry_run_persistence",
         "windows_scheduled_task_persistence",
         "windows_wmi_event_persistence",
-        "linux_cron", "linux_banner",
+        "linux_cron", "linux_cron_review",
+        "linux_banner",
         "linux_incident_response",
+        "linux_log_forwarding",
+        "linux_cert_expiry",
+        "linux_unattended_upgrades",
     ],
 }
 
