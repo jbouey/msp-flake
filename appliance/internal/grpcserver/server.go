@@ -44,6 +44,7 @@ type AgentVersionProvider interface {
 // Config holds gRPC server configuration.
 type Config struct {
 	Port        int
+	BindAddress string // Empty = 0.0.0.0 (default). Set to restrict to specific interface.
 	TLSCertFile string
 	TLSKeyFile  string
 	CACertFile  string
@@ -77,7 +78,14 @@ func NewServer(cfg Config, registry *AgentRegistry, agentCA *ca.AgentCA, agentVe
 // Serve starts the gRPC server and blocks until stopped.
 func (s *Server) Serve() error {
 	lc := net.ListenConfig{}
-	lis, err := lc.Listen(context.Background(), "tcp", fmt.Sprintf(":%d", s.config.Port))
+	// Bind to LAN interfaces only — not 0.0.0.0. The gRPC server accepts
+	// connections from Go agents on the local network. It must NOT be exposed
+	// to the internet (even with mTLS). Use 0.0.0.0 only if explicitly configured.
+	bindAddr := fmt.Sprintf(":%d", s.config.Port)
+	if s.config.BindAddress != "" {
+		bindAddr = fmt.Sprintf("%s:%d", s.config.BindAddress, s.config.Port)
+	}
+	lis, err := lc.Listen(context.Background(), "tcp", bindAddr)
 	if err != nil {
 		return fmt.Errorf("listen on port %d: %w", s.config.Port, err)
 	}

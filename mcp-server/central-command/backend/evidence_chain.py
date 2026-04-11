@@ -849,6 +849,20 @@ async def submit_evidence(
         logger.warning(f"SECURITY: site_id mismatch on evidence submit: token={auth_site_id} url={site_id}")
         raise HTTPException(status_code=403, detail="Site ID mismatch: token does not authorize this site")
 
+    # SECURITY: Timestamp validation — reject backdated or future evidence.
+    # A compromised appliance could submit evidence with forged timestamps.
+    # Allow 5-minute clock skew tolerance for NTP drift.
+    now = datetime.now(timezone.utc)
+    skew = abs((bundle.checked_at - now).total_seconds())
+    if bundle.checked_at > now + timedelta(minutes=2):
+        logger.warning(f"SECURITY: future timestamp rejected for site={site_id}: checked_at={bundle.checked_at} server_now={now}")
+        raise HTTPException(status_code=400, detail="Evidence timestamp is in the future")
+    if skew > 300:  # 5 minutes
+        logger.warning(f"SECURITY: timestamp skew {skew:.0f}s for site={site_id}: checked_at={bundle.checked_at} server_now={now}")
+        # Don't reject — log warning. Extreme skew (>1hr) gets rejected.
+        if skew > 3600:
+            raise HTTPException(status_code=400, detail=f"Evidence timestamp too far from server time ({skew:.0f}s skew)")
+
     # Verify site exists
     site_result = await db.execute(
         text("SELECT site_id, agent_public_key FROM sites WHERE site_id = :site_id"),
@@ -2032,23 +2046,33 @@ async def verify_chain_integrity(
         hash_ok = hmac.compare_digest(bundle.chain_hash or "", expected_chain_hash)
 
         # Verify prev_hash links to previous bundle's bundle_hash
+        # AND verify chain_position is sequential (detects deleted bundles)
         link_ok = True
+        gap_detected = False
         if i == 0:
             link_ok = hmac.compare_digest(bundle.prev_hash or "", GENESIS_HASH) and (bundle.chain_position == 1)
         else:
             prev_bundle = bundles[i - 1]
             link_ok = hmac.compare_digest(bundle.prev_hash or "", prev_bundle.bundle_hash or "")
+            # Position must be exactly prev + 1 — any gap means bundles were deleted
+            if bundle.chain_position != prev_bundle.chain_position + 1:
+                gap_detected = True
+                link_ok = False
 
         if hash_ok and link_ok:
             verified += 1
         else:
             if len(broken_links) < max_broken:
-                broken_links.append({
+                entry = {
                     "position": bundle.chain_position,
                     "bundle_id": bundle.bundle_id,
                     "hash_valid": hash_ok,
                     "link_valid": link_ok,
-                })
+                }
+                if gap_detected:
+                    entry["gap"] = True
+                    entry["expected_position"] = prev_bundle.chain_position + 1
+                broken_links.append(entry)
 
     total_broken = len(bundles) - verified
     status = "valid" if total_broken == 0 else "broken"

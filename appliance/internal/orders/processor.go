@@ -1173,62 +1173,52 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 	}
 	log.Printf("[orders] Systemd override installed to %s via systemd-run", overrideDir)
 
-	// Schedule restart with health check + rollback.
-	// 1. Restart with new binary
-	// 2. Wait 30s for the new daemon to checkin
-	// 3. If no checkin (crash loop), rollback to last-known-good
-	log.Printf("[orders] Scheduling daemon restart in 10 seconds (version=%s) with health check", version)
-	go func() {
-		time.Sleep(10 * time.Second)
-		bashPath := "/run/current-system/sw/bin/bash"
-		envPath := "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
+	// Schedule restart + health check via systemd transient units.
+	// CRITICAL: The old approach used an in-process goroutine that died when
+	// `systemctl restart` killed the daemon. The health check never ran.
+	// Fix: use systemd-run timers that survive the process restart.
+	log.Printf("[orders] Scheduling daemon restart in 10 seconds (version=%s) with external health check", version)
 
-		// Restart with new binary
-		cmd := exec.CommandContext(context.Background(), "systemd-run",
-			"--unit=msp-daemon-restart-"+unitSuffix, "--collect",
-			"--property=TimeoutStartSec=30",
-			"--setenv="+envPath,
-			bashPath, "-c",
-			"systemctl restart appliance-daemon")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			log.Printf("[orders] Daemon restart failed: %v\n%s", err, string(out))
-			return
-		}
+	bashPath := "/run/current-system/sw/bin/bash"
+	envPath := "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
 
-		// Health check: wait 60s then verify the daemon is running the new version.
-		// If it crashed and fell back to the NixOS base binary, rollback to last-good.
-		time.Sleep(60 * time.Second)
-		checkCmd := exec.CommandContext(context.Background(), "systemd-run",
-			"--unit=msp-daemon-healthcheck-"+unitSuffix, "--wait", "--pipe", "--collect",
-			"--property=TimeoutStartSec=15",
-			"--setenv="+envPath,
-			bashPath, "-c",
-			fmt.Sprintf("systemctl is-active appliance-daemon && readlink -f /proc/$(systemctl show -p MainPID --value appliance-daemon)/exe | grep -q '%s'", binaryPath))
-		if hcOut, hcErr := checkCmd.CombinedOutput(); hcErr != nil {
-			log.Printf("[orders] HEALTH CHECK FAILED: new daemon not running from %s: %v\n%s", binaryPath, hcErr, string(hcOut))
+	// Step 1: Schedule the restart as a systemd transient timer (fires in 10s)
+	restartScript := "systemctl restart appliance-daemon"
+	restartCmd := exec.CommandContext(ctx, "systemd-run",
+		"--unit=msp-daemon-restart-"+unitSuffix,
+		"--timer-property=AccuracySec=1s",
+		"--on-active=10s",
+		"--collect",
+		"--setenv="+envPath,
+		bashPath, "-c", restartScript)
+	if out, err := restartCmd.CombinedOutput(); err != nil {
+		log.Printf("[orders] Failed to schedule restart timer: %v\n%s", err, string(out))
+		return nil, fmt.Errorf("failed to schedule restart: %v", err)
+	}
 
-			// Rollback to last-known-good
-			if _, statErr := os.Stat(backupPath); statErr == nil {
-				log.Printf("[orders] ROLLING BACK to %s", backupPath)
-				_ = copyFile(backupPath, binaryPath)
-				rollbackCmd := exec.CommandContext(context.Background(), "systemd-run",
-					"--unit=msp-daemon-rollback-"+unitSuffix, "--collect",
-					"--property=TimeoutStartSec=30",
-					"--setenv="+envPath,
-					bashPath, "-c",
-					"systemctl restart appliance-daemon")
-				if rbOut, rbErr := rollbackCmd.CombinedOutput(); rbErr != nil {
-					log.Printf("[orders] Rollback restart failed: %v\n%s", rbErr, string(rbOut))
-				} else {
-					log.Printf("[orders] Rollback complete — daemon restarted with last-known-good binary")
-				}
-			} else {
-				log.Printf("[orders] No last-known-good binary to rollback to")
-			}
-		} else {
-			log.Printf("[orders] Health check passed — daemon running version %s from %s", version, binaryPath)
-		}
-	}()
+	// Step 2: Schedule the health check as a SEPARATE transient timer (fires in 70s).
+	// This timer is managed by systemd, NOT by the daemon process.
+	// It survives the daemon restart and fires independently.
+	healthScript := fmt.Sprintf(`
+		if systemctl is-active appliance-daemon && readlink -f /proc/$(systemctl show -p MainPID --value appliance-daemon)/exe | grep -q '%s'; then
+			echo "Health check passed — daemon running from %s"
+		else
+			echo "HEALTH CHECK FAILED — rolling back to %s"
+			cp '%s' '%s' 2>/dev/null && systemctl restart appliance-daemon
+		fi
+	`, binaryPath, binaryPath, backupPath, backupPath, binaryPath)
+
+	healthCmd := exec.CommandContext(ctx, "systemd-run",
+		"--unit=msp-daemon-healthcheck-"+unitSuffix,
+		"--timer-property=AccuracySec=1s",
+		"--on-active=70s",
+		"--collect",
+		"--setenv="+envPath,
+		bashPath, "-c", healthScript)
+	if out, err := healthCmd.CombinedOutput(); err != nil {
+		log.Printf("[orders] Failed to schedule health check timer: %v\n%s", err, string(out))
+		// Don't fail the order — restart is already scheduled. Health check is best-effort.
+	}
 
 	return map[string]interface{}{
 		"status":      "update_installed",
