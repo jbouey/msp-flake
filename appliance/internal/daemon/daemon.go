@@ -1493,19 +1493,34 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 }
 
 // executeL2Action dispatches an L2 decision to the appropriate executor (WinRM or SSH).
+// SECURITY: L2 must return a RunbookID. Raw script execution is BLOCKED — the LLM
+// must not be able to generate arbitrary shell commands. If no RunbookID, escalate to L3.
 // Returns (success, errorMessage) for telemetry reporting.
 func (d *Daemon) executeL2Action(ctx context.Context, decision *l2bridge.LLMDecision, req *grpcserver.HealRequest, incidentID string) (bool, string) {
 	platform := req.Metadata["platform"]
 	if platform == "" {
-		platform = "windows" // default: gRPC drift events come from Windows agents
+		platform = "windows"
 	}
 
-	script := maputil.StringDefault(decision.ActionParams, "script", decision.RecommendedAction)
-
+	// SECURITY: Only execute via registered runbooks. Never execute raw scripts from L2.
+	// The LLM is not an execution authority — it selects from pre-approved runbooks.
 	runbookID := decision.RunbookID
 	if runbookID == "" {
-		runbookID = "L2-AUTO-" + incidentID
+		log.Printf("[daemon] SECURITY: L2 returned no RunbookID for %s/%s — refusing raw script execution, escalating to L3",
+			req.Hostname, req.CheckType)
+		d.escalateToL3(incidentID, req, "L2 returned no runbook ID — raw script execution blocked by policy")
+		return false, "L2 raw script execution blocked"
 	}
+
+	// Look up runbook from the embedded registry — must exist
+	rb, ok := runbookRegistry[runbookID]
+	if !ok {
+		log.Printf("[daemon] L2 returned unknown runbookID %s for %s/%s — escalating to L3",
+			runbookID, req.Hostname, req.CheckType)
+		d.escalateToL3(incidentID, req, fmt.Sprintf("Unknown runbook ID: %s", runbookID))
+		return false, "Unknown runbook ID: " + runbookID
+	}
+	script := rb.RemediateScript
 
 	hipaaControls := []string{}
 	if req.HIPAAControl != "" {
