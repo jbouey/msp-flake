@@ -11,6 +11,7 @@ This module provides endpoints that are called by appliances during
 initial setup, independent of the partner API.
 """
 
+import json
 import logging
 import os
 import secrets
@@ -59,6 +60,8 @@ class ProvisionClaimRequest(BaseModel):
     hardware_id: Optional[str] = None  # SMBIOS/DMI hardware UUID
     public_key: Optional[str] = None  # Appliance's public key for secure comms
     wg_pubkey: Optional[str] = None  # WireGuard public key (Curve25519)
+    boot_source: Optional[str] = None  # "live_usb" or "installed_disk"
+    all_mac_addresses: Optional[list] = None  # All physical NIC MACs
 
 
 class ProvisionClaimResponse(BaseModel):
@@ -252,21 +255,37 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
             )
             site_internal_id = site_row['id']
 
-        # Create or update appliance record
+        # Create or update appliance record.
+        # Track boot_source so the dashboard can distinguish installing vs installed.
+        boot_source = claim.boot_source or "unknown"
+        daemon_health_json = json.dumps({"boot_source": boot_source})
+
+        # If claiming from live USB, set onboarding_stage to 'installing' so the
+        # dashboard shows "Installation in Progress" instead of "Pending".
+        # This prevents the bug where an admin accepts a MAC from the live USB,
+        # pulls the USB early, and thinks the appliance is deployed.
+        if boot_source == "live_usb":
+            logger.warning(
+                f"Provisioning from LIVE USB: {appliance_id} — installation not yet complete. "
+                f"Appliance will transition to 'installed' after disk boot."
+            )
+
         client_ip = request.client.host if request.client else None
         await conn.execute("""
             INSERT INTO site_appliances (
                 site_id, appliance_id, mac_address, hostname,
-                agent_version, status, last_checkin
-            ) VALUES ($1, $2, $3, $4, 'provisioning', 'pending', NOW())
+                agent_version, status, last_checkin, daemon_health
+            ) VALUES ($1, $2, $3, $4, 'provisioning', 'pending', NOW(), $5::jsonb)
             ON CONFLICT (appliance_id) DO UPDATE SET
                 hostname = EXCLUDED.hostname,
-                last_checkin = NOW()
+                last_checkin = NOW(),
+                daemon_health = EXCLUDED.daemon_health
         """,
             site_id,
             appliance_id,
             claim.mac_address.upper(),
-            claim.hostname
+            claim.hostname,
+            daemon_health_json
         )
 
         # Generate API key for appliance authentication
