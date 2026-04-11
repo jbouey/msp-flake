@@ -662,6 +662,37 @@ async def _resolve_stale_incidents():
             RETURNING id, incident_type
         """)
 
+        # Zombie cleanup: resolve old incidents when a NEWER incident of the
+        # same type+site has already been resolved. These are pre-dedup era
+        # incidents that newer dedup-keyed incidents shadow — the healing
+        # pipeline heals the new one but the old zombie rots forever.
+        zombie_result = await conn.fetch("""
+            UPDATE incidents SET
+                status = 'resolved',
+                resolved_at = NOW(),
+                resolution_tier = 'superseded'
+            WHERE id IN (
+                SELECT old.id FROM incidents old
+                WHERE old.status IN ('open', 'resolving', 'escalated')
+                AND old.created_at < NOW() - INTERVAL '48 hours'
+                AND EXISTS (
+                    SELECT 1 FROM incidents newer
+                    WHERE newer.site_id = old.site_id
+                    AND newer.incident_type = old.incident_type
+                    AND newer.status = 'resolved'
+                    AND newer.resolved_at > old.created_at
+                    AND newer.created_at > old.created_at
+                )
+            )
+            RETURNING id, incident_type
+        """)
+        for row in zombie_result:
+            logger.info("Auto-resolved zombie incident (superseded by newer resolved)",
+                        incident_id=str(row["id"]),
+                        incident_type=row["incident_type"])
+        if zombie_result:
+            logger.info(f"Resolved {len(zombie_result)} zombie incidents (superseded)")
+
         # Escalated incidents already exhausted L1/L2/L3. If stuck >7 days,
         # they won't self-heal — resolve them regardless of recent telemetry.
         escalated_result = await conn.fetch("""
@@ -676,7 +707,7 @@ async def _resolve_stale_incidents():
             )
             RETURNING id, incident_type
         """)
-        result = list(result) + list(escalated_result)
+        result = list(result) + list(escalated_result) + list(zombie_result)
 
         if result:
             for row in result:

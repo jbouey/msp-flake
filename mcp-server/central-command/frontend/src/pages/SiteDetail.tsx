@@ -712,7 +712,7 @@ export const SiteDetail: React.FC = () => {
       {/* Provision Appliance Modal */}
       {showProvisionModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl text-slate-900">
             <h3 className="text-lg font-semibold mb-4">Provision New Appliance</h3>
             <div className="space-y-4">
               <div>
@@ -720,7 +720,7 @@ export const SiteDetail: React.FC = () => {
                 <input
                   type="text" placeholder="84:3A:5B:1F:FF:E4"
                   value={provisionMac} onChange={e => setProvisionMac(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
                 />
                 <p className="text-xs text-slate-400 mt-1">Found on the device label or BIOS POST screen. Leave blank to use self-registration.</p>
               </div>
@@ -729,7 +729,7 @@ export const SiteDetail: React.FC = () => {
                 <input
                   type="email" placeholder="office@northvalley.com"
                   value={provisionEmail} onChange={e => setProvisionEmail(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
                 />
                 <p className="text-xs text-slate-400 mt-1">Receives alerts, compliance summaries, and onboarding instructions.</p>
               </div>
