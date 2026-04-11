@@ -734,6 +734,7 @@ async def record_l2_decision(
     decision: L2Decision,
     incident_type: str = "unknown",
     hypotheses: Optional[List[Dict[str, Any]]] = None,
+    escalation_reason: Optional[str] = None,
 ) -> None:
     """Record L2 decision for data flywheel analysis.
 
@@ -741,6 +742,8 @@ async def record_l2_decision(
         incident_type: The actual incident type (e.g. 'backup_verification').
             Critical for flywheel pattern tracking — do NOT pass 'unknown'.
         hypotheses: Ranked root-cause hypotheses generated before the LLM call.
+        escalation_reason: Why this went to L2 — 'normal' (no L1 match),
+            'recurrence' (L1 keeps failing), 'keyword_fallback'.
     """
     from sqlalchemy import text
 
@@ -748,11 +751,11 @@ async def record_l2_decision(
         INSERT INTO l2_decisions (
             incident_id, runbook_id, reasoning, confidence,
             pattern_signature, llm_model, llm_latency_ms,
-            requires_human_review, hypotheses, created_at
+            requires_human_review, hypotheses, escalation_reason, created_at
         ) VALUES (
             :incident_id, :runbook_id, :reasoning, :confidence,
             :pattern_signature, :llm_model, :llm_latency_ms,
-            :requires_human_review, :hypotheses, :created_at
+            :requires_human_review, :hypotheses, :escalation_reason, :created_at
         )
     """), {
         "incident_id": incident_id,
@@ -764,6 +767,7 @@ async def record_l2_decision(
         "llm_latency_ms": decision.llm_latency_ms,
         "requires_human_review": decision.requires_human_review,
         "hypotheses": json.dumps(hypotheses) if hypotheses else None,
+        "escalation_reason": escalation_reason or "normal",
         "created_at": datetime.now(timezone.utc),
     })
 

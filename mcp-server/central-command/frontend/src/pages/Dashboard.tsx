@@ -13,7 +13,7 @@ import {
   DashboardSLAStrip,
 } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
-import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents } from '../hooks';
+import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFlywheelIntelligence } from '../hooks';
 import { METRIC_TOOLTIPS, getScoreStatus, formatTimeAgo } from '../constants';
 
 // Shape of the /api/dashboard/sla-strip response — shared between
@@ -58,6 +58,7 @@ export const Dashboard: React.FC = () => {
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useGlobalStats();
   const { data: deltas, refetch: refetchDeltas } = useStatsDeltas();
   const { data: learning, isLoading: learningLoading } = useLearningStatus();
+  const { data: flywheel, isLoading: flywheelLoading } = useFlywheelIntelligence();
   const {
     data: incidents,
     isLoading: incidentsLoading,
@@ -543,6 +544,68 @@ export const Dashboard: React.FC = () => {
                 <div className="pt-2 mt-2 border-t border-glass-border text-xs text-label-tertiary">
                   No promotions yet — flywheel will promote the first eligible pattern
                   automatically.
+                </div>
+              )}
+            </div>
+          </GlassCard>
+
+          {/* Flywheel Intelligence — recurrence awareness */}
+          <GlassCard>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-semibold text-label-primary">Flywheel Intelligence</h3>
+                {flywheelLoading && <Spinner size="sm" />}
+              </div>
+              {[
+                {
+                  label: 'Recurrence Rate',
+                  value: flywheelLoading ? null : `${flywheel?.recurrence_rate_pct ?? 0}%`,
+                  color: (flywheel?.recurrence_rate_pct ?? 0) > 20 ? 'text-health-warning' : 'text-health-healthy',
+                  tip: 'Percentage of resolved incidents that recur within 4 hours. Lower is better — means L1 fixes are sticking.',
+                },
+                {
+                  label: 'Chronic Patterns',
+                  value: flywheelLoading ? null : `${flywheel?.chronic_count ?? 0}`,
+                  color: (flywheel?.chronic_count ?? 0) > 0 ? 'text-health-warning' : 'text-health-healthy',
+                  tip: 'Incident types recurring 3+ times in 4 hours. These bypass L1 and go to L2 for root-cause analysis.',
+                },
+                {
+                  label: 'L2 Root-Cause Fixes',
+                  value: flywheelLoading ? null : `${flywheel?.l2_recurrence_decisions?.actionable ?? 0}`,
+                  color: 'text-ios-purple',
+                  tip: 'L2 decisions triggered by recurrence that produced actionable root-cause fixes.',
+                },
+                {
+                  label: 'Auto-Promotions',
+                  value: flywheelLoading ? null : `${flywheel?.auto_promotions?.length ?? 0}`,
+                  color: 'text-health-healthy',
+                  tip: 'L2 root-cause fixes that stopped recurrence for 24h+ and were auto-promoted to L1 rules.',
+                },
+                {
+                  label: 'Correlations Found',
+                  value: flywheelLoading ? null : `${flywheel?.correlations?.length ?? 0}`,
+                  color: 'text-ios-blue',
+                  tip: 'Cross-incident patterns: when fixing incident A consistently triggers incident B within 10 minutes.',
+                },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center justify-between py-0.5">
+                  <span className="text-sm text-label-secondary">{row.label}<InfoTip text={row.tip} /></span>
+                  {row.value !== null ? (
+                    <span className={`text-sm font-semibold tabular-nums ${row.color}`}>{row.value}</span>
+                  ) : (
+                    <span className="skeleton inline-block w-10 h-4" />
+                  )}
+                </div>
+              ))}
+              {!flywheelLoading && flywheel?.chronic_patterns && flywheel.chronic_patterns.length > 0 && (
+                <div className="pt-2 mt-2 border-t border-glass-border">
+                  <p className="text-[10px] text-label-tertiary mb-1">Active recurrence patterns:</p>
+                  {flywheel.chronic_patterns.slice(0, 3).map((p) => (
+                    <div key={`${p.site_id}-${p.incident_type}`} className="flex justify-between text-xs py-0.5">
+                      <span className="text-label-secondary">{p.incident_type}</span>
+                      <span className="text-health-warning tabular-nums">{p.velocity_per_hour.toFixed(1)}/hr</span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

@@ -2261,6 +2261,109 @@ async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)
     }
 
 
+@router.get("/flywheel-intelligence")
+async def get_flywheel_intelligence(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
+    """Flywheel intelligence dashboard: recurrence velocity, auto-promotions,
+    cross-incident correlations.
+
+    Round Table: "Show the flywheel learning — recurrence rate trending down,
+    promotions increasing, correlations discovered."
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Recurrence velocity — chronic patterns
+        try:
+            chronic = await conn.fetch("""
+                SELECT site_id, incident_type, resolved_4h, resolved_7d,
+                       velocity_per_hour, last_l1_runbook,
+                       recurrence_broken_at, recurrence_broken_by_runbook
+                FROM incident_recurrence_velocity
+                WHERE is_chronic = true
+                ORDER BY velocity_per_hour DESC
+                LIMIT 20
+            """)
+        except Exception:
+            chronic = []
+
+        # Global recurrence rate: % of incidents that recur within 4h
+        try:
+            recurrence_row = await conn.fetchrow("""
+                SELECT
+                    COUNT(*) FILTER (WHERE resolved_4h >= 3) as chronic_types,
+                    COUNT(*) as total_types,
+                    COALESCE(SUM(resolved_4h), 0) as total_recurrences_4h,
+                    COALESCE(SUM(resolved_7d), 0) as total_resolved_7d
+                FROM incident_recurrence_velocity
+            """)
+        except Exception:
+            recurrence_row = None
+
+        # Recent auto-promotions
+        try:
+            promotions = await conn.fetch("""
+                SELECT rule_id, incident_pattern->>'incident_type' as incident_type,
+                       runbook_id, confidence, description, created_at
+                FROM l1_rules
+                WHERE source = 'flywheel_recurrence'
+                ORDER BY created_at DESC
+                LIMIT 10
+            """)
+        except Exception:
+            promotions = []
+
+        # Cross-incident correlations
+        try:
+            correlations = await conn.fetch("""
+                SELECT site_id, incident_type_a, incident_type_b,
+                       co_occurrence_count, avg_gap_seconds, confidence
+                FROM incident_correlation_pairs
+                WHERE confidence >= 0.3
+                ORDER BY confidence DESC
+                LIMIT 20
+            """)
+        except Exception:
+            correlations = []
+
+        # L2 recurrence decisions
+        try:
+            l2_recurrence = await conn.fetchrow("""
+                SELECT
+                    COUNT(*) as total_recurrence_decisions,
+                    COUNT(*) FILTER (WHERE runbook_id IS NOT NULL AND confidence >= 0.6) as actionable
+                FROM l2_decisions
+                WHERE escalation_reason = 'recurrence'
+                  AND created_at > NOW() - INTERVAL '7 days'
+            """)
+        except Exception:
+            l2_recurrence = None
+
+    recurrence_rate = 0.0
+    if recurrence_row and recurrence_row["total_resolved_7d"] and recurrence_row["total_resolved_7d"] > 0:
+        recurrence_rate = round(
+            recurrence_row["total_recurrences_4h"] / recurrence_row["total_resolved_7d"] * 100, 1
+        )
+
+    return {
+        "recurrence_rate_pct": recurrence_rate,
+        "chronic_patterns": [dict(r) for r in chronic],
+        "chronic_count": recurrence_row["chronic_types"] if recurrence_row else 0,
+        "total_types_tracked": recurrence_row["total_types"] if recurrence_row else 0,
+        "auto_promotions": [
+            {**dict(r), "created_at": r["created_at"].isoformat() if r["created_at"] else None}
+            for r in promotions
+        ],
+        "correlations": [dict(r) for r in correlations],
+        "l2_recurrence_decisions": {
+            "total": l2_recurrence["total_recurrence_decisions"] if l2_recurrence else 0,
+            "actionable": l2_recurrence["actionable"] if l2_recurrence else 0,
+        },
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/stats", response_model=GlobalStats)
 async def get_global_stats(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get aggregate statistics across all clients."""

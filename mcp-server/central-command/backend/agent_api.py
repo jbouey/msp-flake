@@ -958,7 +958,11 @@ async def report_incident(
                 )
 
                 try:
-                    await record_l2_decision(db, incident_id, decision, incident_type=incident.incident_type)
+                    await record_l2_decision(
+                        db, incident_id, decision,
+                        incident_type=incident.incident_type,
+                        escalation_reason="recurrence" if recurrence_context else "normal",
+                    )
                 except Exception as e:
                     logger.error(f"Failed to record L2 decision: {e}")
 

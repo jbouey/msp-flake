@@ -3,7 +3,7 @@
  */
 
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi, evidenceApi, l1RulesApi } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, flywheelApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi, evidenceApi, l1RulesApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderStatus, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice, VPNStatus, EvidenceBundleListResponse, BundleVerifyResult, BatchVerifyResult, BlockchainStatus, L1Rule, IncidentTypeOption } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, StatsDeltas, LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, RunbookSummary, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, IncidentBreakdownResponse, AttentionRequiredResponse } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
@@ -178,6 +178,52 @@ export function useLearningStatus() {
   return useQuery<LearningStatus>({
     queryKey: ['learning', 'status'],
     queryFn: learningApi.getStatus,
+    ...defaults,
+  });
+}
+
+interface FlywheelIntelligence {
+  recurrence_rate_pct: number;
+  chronic_count: number;
+  total_types_tracked: number;
+  chronic_patterns: Array<{
+    site_id: string;
+    incident_type: string;
+    resolved_4h: number;
+    resolved_7d: number;
+    velocity_per_hour: number;
+    last_l1_runbook: string | null;
+    recurrence_broken_at: string | null;
+    recurrence_broken_by_runbook: string | null;
+  }>;
+  auto_promotions: Array<{
+    rule_id: string;
+    incident_type: string;
+    runbook_id: string;
+    confidence: number;
+    description: string;
+    created_at: string;
+  }>;
+  correlations: Array<{
+    site_id: string;
+    incident_type_a: string;
+    incident_type_b: string;
+    co_occurrence_count: number;
+    avg_gap_seconds: number;
+    confidence: number;
+  }>;
+  l2_recurrence_decisions: {
+    total: number;
+    actionable: number;
+  };
+  computed_at: string;
+}
+
+export function useFlywheelIntelligence() {
+  const defaults = useQueryDefaults();
+  return useQuery<FlywheelIntelligence>({
+    queryKey: ['flywheel', 'intelligence'],
+    queryFn: () => flywheelApi.getIntelligence() as unknown as Promise<FlywheelIntelligence>,
     ...defaults,
   });
 }

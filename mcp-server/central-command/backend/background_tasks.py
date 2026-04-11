@@ -1230,3 +1230,248 @@ async def reconciliation_loop():
         except Exception as e:
             logger.warning(f"Reconciliation loop error: {e}")
         await asyncio.sleep(300)
+
+
+# ============================================================================
+# Flywheel Intelligence: Recurrence Velocity + Auto-Promotion + Correlation
+# ============================================================================
+
+async def recurrence_velocity_loop():
+    """Pre-compute recurrence velocity per (site_id, incident_type).
+
+    Runs every 5 minutes. Replaces the per-incident COUNT(*) queries with
+    a single batch computation that populates incident_recurrence_velocity.
+    The incident handler reads this table instead of running ad-hoc queries.
+
+    Round Table: "At 100+ sites, per-incident COUNTs won't scale. Pre-compute."
+    """
+    await asyncio.sleep(300)  # Wait for startup
+    while True:
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Compute recurrence velocity for all active incident types
+                await conn.execute("""
+                    INSERT INTO incident_recurrence_velocity (
+                        site_id, incident_type,
+                        resolved_1h, resolved_4h, resolved_24h, resolved_7d,
+                        velocity_per_hour, is_chronic, last_l1_runbook, computed_at
+                    )
+                    SELECT
+                        i.site_id,
+                        i.incident_type,
+                        COUNT(*) FILTER (WHERE i.resolved_at > NOW() - INTERVAL '1 hour'),
+                        COUNT(*) FILTER (WHERE i.resolved_at > NOW() - INTERVAL '4 hours'),
+                        COUNT(*) FILTER (WHERE i.resolved_at > NOW() - INTERVAL '24 hours'),
+                        COUNT(*) FILTER (WHERE i.resolved_at > NOW() - INTERVAL '7 days'),
+                        COUNT(*) FILTER (WHERE i.resolved_at > NOW() - INTERVAL '4 hours') / 4.0,
+                        COUNT(*) FILTER (WHERE i.resolved_at > NOW() - INTERVAL '4 hours') >= 3,
+                        (SELECT rs.runbook_id FROM incident_remediation_steps rs
+                         WHERE rs.incident_id = (
+                             SELECT id FROM incidents i2
+                             WHERE i2.site_id = i.site_id AND i2.incident_type = i.incident_type
+                             AND i2.resolution_tier = 'L1'
+                             ORDER BY i2.created_at DESC LIMIT 1
+                         ) ORDER BY rs.created_at DESC LIMIT 1),
+                        NOW()
+                    FROM incidents i
+                    WHERE i.status = 'resolved'
+                      AND i.resolved_at > NOW() - INTERVAL '7 days'
+                    GROUP BY i.site_id, i.incident_type
+                    ON CONFLICT (site_id, incident_type) DO UPDATE SET
+                        resolved_1h = EXCLUDED.resolved_1h,
+                        resolved_4h = EXCLUDED.resolved_4h,
+                        resolved_24h = EXCLUDED.resolved_24h,
+                        resolved_7d = EXCLUDED.resolved_7d,
+                        velocity_per_hour = EXCLUDED.velocity_per_hour,
+                        is_chronic = EXCLUDED.is_chronic,
+                        last_l1_runbook = EXCLUDED.last_l1_runbook,
+                        computed_at = NOW()
+                """)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Recurrence velocity computation failed: {e}")
+
+        await asyncio.sleep(300)  # 5 minutes
+
+
+async def recurrence_auto_promotion_loop():
+    """Auto-promote L2 recurrence fixes that actually worked.
+
+    When a recurrence-driven L2 decision produces a runbook that stops the
+    issue from recurring for 24h, promote that runbook to L1 with higher
+    priority than the symptom-level rule.
+
+    Round Table: "When L2 breaks a recurrence cycle, the flywheel's 'I learned
+    something' moment — promote it so L1 tries the root-cause fix first."
+    """
+    await asyncio.sleep(900)  # Wait for startup + first velocity computation
+    while True:
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Find recurrence-L2 decisions where:
+                # 1. escalation_reason = 'recurrence'
+                # 2. The decision had a runbook_id and confidence >= 0.6
+                # 3. The incident type has NOT recurred in the last 24h
+                # 4. Not already promoted to L1
+                candidates = await conn.fetch("""
+                    SELECT DISTINCT ON (d.runbook_id, i.incident_type)
+                        d.id as decision_id, d.runbook_id, i.incident_type,
+                        d.confidence, d.reasoning, i.site_id
+                    FROM l2_decisions d
+                    JOIN incidents i ON i.id::text = d.incident_id
+                    WHERE d.escalation_reason = 'recurrence'
+                      AND d.runbook_id IS NOT NULL
+                      AND d.confidence >= 0.6
+                      AND d.created_at > NOW() - INTERVAL '7 days'
+                      AND d.created_at < NOW() - INTERVAL '24 hours'
+                      -- Issue hasn't recurred in 24h since the L2 decision
+                      AND NOT EXISTS (
+                          SELECT 1 FROM incidents newer
+                          WHERE newer.site_id = i.site_id
+                            AND newer.incident_type = i.incident_type
+                            AND newer.created_at > d.created_at
+                            AND newer.created_at > NOW() - INTERVAL '24 hours'
+                      )
+                      -- Not already promoted
+                      AND NOT EXISTS (
+                          SELECT 1 FROM l1_rules lr
+                          WHERE lr.incident_pattern->>'incident_type' = i.incident_type
+                            AND lr.runbook_id = d.runbook_id
+                      )
+                    ORDER BY d.runbook_id, i.incident_type, d.confidence DESC
+                """)
+
+                for row in candidates:
+                    import uuid as _uuid
+                    rule_id = f"FLYWHEEL-{row['incident_type'][:30]}-{str(_uuid.uuid4())[:8]}"
+                    await conn.execute("""
+                        INSERT INTO l1_rules (
+                            rule_id, incident_pattern, runbook_id,
+                            confidence, enabled, source, description,
+                            match_count, success_count, failure_count,
+                            created_at
+                        ) VALUES (
+                            $1, $2::jsonb, $3,
+                            $4, true, 'flywheel_recurrence', $5,
+                            0, 0, 0, NOW()
+                        )
+                        ON CONFLICT (rule_id) DO NOTHING
+                    """,
+                        rule_id,
+                        json.dumps({"incident_type": row["incident_type"]}),
+                        row["runbook_id"],
+                        row["confidence"],
+                        f"Auto-promoted: L2 root-cause fix broke recurrence cycle. {row['reasoning'][:200]}",
+                    )
+
+                    # Mark velocity table as recurrence broken
+                    await conn.execute("""
+                        UPDATE incident_recurrence_velocity
+                        SET recurrence_broken_at = NOW(),
+                            recurrence_broken_by_runbook = $1
+                        WHERE site_id = $2 AND incident_type = $3
+                    """, row["runbook_id"], row["site_id"], row["incident_type"])
+
+                    logger.info("Flywheel auto-promoted recurrence fix to L1",
+                                incident_type=row["incident_type"],
+                                runbook_id=row["runbook_id"],
+                                confidence=row["confidence"],
+                                rule_id=rule_id)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Recurrence auto-promotion failed: {e}")
+
+        await asyncio.sleep(3600)  # Hourly
+
+
+async def cross_incident_correlation_loop():
+    """Detect co-occurring incident types for predictive remediation.
+
+    When incident type A is resolved and incident type B consistently appears
+    within 10 minutes afterward, record the correlation. At sufficient
+    confidence, the system can pre-emptively remediate B when resolving A.
+
+    Round Table: "If defender_exclusions always precedes rogue_scheduled_tasks
+    by 10 minutes, run the persistence cleanup alongside the exclusion fix."
+    """
+    await asyncio.sleep(1200)  # Wait for startup
+    while True:
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Find A→B pairs: A resolved, B created within 10 min
+                pairs = await conn.fetch("""
+                    SELECT
+                        a.site_id,
+                        a.incident_type as type_a,
+                        b.incident_type as type_b,
+                        COUNT(*) as co_occurrences,
+                        AVG(EXTRACT(EPOCH FROM (b.created_at - a.resolved_at))) as avg_gap_sec
+                    FROM incidents a
+                    JOIN incidents b ON b.site_id = a.site_id
+                        AND b.incident_type != a.incident_type
+                        AND b.created_at > a.resolved_at
+                        AND b.created_at < a.resolved_at + INTERVAL '10 minutes'
+                    WHERE a.status = 'resolved'
+                      AND a.resolved_at > NOW() - INTERVAL '7 days'
+                    GROUP BY a.site_id, a.incident_type, b.incident_type
+                    HAVING COUNT(*) >= 3
+                """)
+
+                for pair in pairs:
+                    # Compute confidence: co_occurrences / total resolutions of type A
+                    total_a = await conn.fetchval("""
+                        SELECT COUNT(*) FROM incidents
+                        WHERE site_id = $1 AND incident_type = $2
+                          AND status = 'resolved'
+                          AND resolved_at > NOW() - INTERVAL '7 days'
+                    """, pair["site_id"], pair["type_a"])
+
+                    confidence = pair["co_occurrences"] / max(total_a, 1)
+
+                    await conn.execute("""
+                        INSERT INTO incident_correlation_pairs (
+                            site_id, incident_type_a, incident_type_b,
+                            co_occurrence_count, avg_gap_seconds, confidence,
+                            first_seen, last_seen
+                        ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+                        ON CONFLICT (site_id, incident_type_a, incident_type_b) DO UPDATE SET
+                            co_occurrence_count = EXCLUDED.co_occurrence_count,
+                            avg_gap_seconds = EXCLUDED.avg_gap_seconds,
+                            confidence = EXCLUDED.confidence,
+                            last_seen = NOW()
+                    """,
+                        pair["site_id"], pair["type_a"], pair["type_b"],
+                        pair["co_occurrences"], pair["avg_gap_sec"],
+                        confidence,
+                    )
+
+                    if confidence >= 0.5:
+                        logger.info("Cross-incident correlation detected",
+                                    site_id=pair["site_id"],
+                                    type_a=pair["type_a"],
+                                    type_b=pair["type_b"],
+                                    co_occurrences=pair["co_occurrences"],
+                                    confidence=round(confidence, 2))
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Cross-incident correlation scan failed: {e}")
+
+        await asyncio.sleep(3600)  # Hourly

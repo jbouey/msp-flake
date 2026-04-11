@@ -9,6 +9,7 @@ export {
   useGlobalStats,
   useStatsDeltas,
   useLearningStatus,
+  useFlywheelIntelligence,
   useRefreshFleet,
   useRunbooks,
   useRunbook,

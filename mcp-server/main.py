@@ -1472,6 +1472,9 @@ async def lifespan(app: FastAPI):
         mesh_consistency_check_loop,
         flywheel_reconciliation_loop,
         l2_auto_candidate_loop,
+        recurrence_velocity_loop,
+        recurrence_auto_promotion_loop,
+        cross_incident_correlation_loop,
     )
 
     task_defs = [
@@ -1485,6 +1488,9 @@ async def lifespan(app: FastAPI):
         ("framework_sync", framework_sync_loop),
         ("flywheel", _flywheel_promotion_loop),
         ("l2_auto_candidate", l2_auto_candidate_loop),
+        ("recurrence_velocity", recurrence_velocity_loop),
+        ("recurrence_auto_promotion", recurrence_auto_promotion_loop),
+        ("cross_incident_correlation", cross_incident_correlation_loop),
         ("companion_alerts", companion_alert_check_loop),
         ("fleet_order_expiry", expire_fleet_orders_loop),
         ("health_monitor", health_monitor_loop),
