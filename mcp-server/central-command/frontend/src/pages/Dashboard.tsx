@@ -283,7 +283,7 @@ export const Dashboard: React.FC = () => {
                 <p className={`text-3xl font-bold mt-3 tabular-nums ${scoreStatus.color}`}>
                   {complianceScore}%
                 </p>
-                <p className="text-xs text-label-tertiary mt-1">Fleet Compliance</p>
+                <p className="text-xs text-label-tertiary mt-1">Fleet Health</p>
                 {stats && (stats.total_appliances || 0) > 0 && (
                   <p className="text-[10px] text-label-tertiary mt-0.5">
                     across {stats.online_appliances}/{stats.total_appliances} appliances

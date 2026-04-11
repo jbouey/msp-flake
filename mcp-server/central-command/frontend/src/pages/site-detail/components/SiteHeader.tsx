@@ -96,12 +96,12 @@ export const SiteHeader: React.FC<SiteHeaderProps> = ({
                 {site.live_status === 'online' ? 'Online' : site.live_status === 'offline' ? 'Offline' : site.live_status?.replace(/\b\w/g, c => c.toUpperCase()) || 'Unknown'}
               </Badge>
               {site.wg_ip && (
-                <Tooltip text={`WireGuard tunnel · ${site.wg_ip}${isWgConnected ? ' · Handshake < 5m' : ' · Stale'}`}>
+                <Tooltip text={`WireGuard tunnel · ${site.wg_ip}${isWgConnected ? ' · Handshake < 5m' : ' · Off (by design)'}`}>
                   <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full cursor-help ${
                     isWgConnected ? 'bg-health-healthy/10 text-health-healthy' : 'bg-fill-secondary text-label-tertiary'
                   }`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${isWgConnected ? 'bg-health-healthy' : 'bg-label-tertiary'}`} />
-                    {isWgConnected ? 'VPN Connected' : 'VPN Stale'}
+                    {isWgConnected ? 'VPN Active' : 'VPN Off'}
                   </span>
                 </Tooltip>
               )}

@@ -945,16 +945,17 @@ async def get_fleet_update_stats(user: dict = Depends(require_admin)):
             "SELECT version FROM update_releases WHERE is_latest = true"
         )
 
-        # Auto-detect deployed version from appliance checkins
+        # Auto-detect deployed version from site_appliances (the authoritative table).
+        # Uses MAX version (highest semver) as the target, not most common.
         deployed = await conn.fetchrow(
             """SELECT agent_version, COUNT(*) as cnt
-               FROM appliances
-               WHERE last_checkin > NOW() - INTERVAL '7 days'
-               GROUP BY agent_version ORDER BY cnt DESC LIMIT 1"""
+               FROM site_appliances
+               WHERE deleted_at IS NULL AND last_checkin > NOW() - INTERVAL '7 days'
+               GROUP BY agent_version ORDER BY agent_version DESC LIMIT 1"""
         )
         deployed_version = deployed["agent_version"] if deployed else None
         total_appliances = await conn.fetchval(
-            "SELECT COUNT(*) FROM appliances WHERE last_checkin > NOW() - INTERVAL '7 days'"
+            "SELECT COUNT(*) FROM site_appliances WHERE deleted_at IS NULL AND last_checkin > NOW() - INTERVAL '7 days'"
         )
 
         rollouts = await conn.fetchrow(
