@@ -5916,17 +5916,25 @@ async def decommission_site(
 # =============================================================================
 
 
+class ProvisionRequest(BaseModel):
+    mac_address: Optional[str] = None  # If provided, pre-register this MAC for this site
+
+
 @router.post("/sites/{site_id}/provision")
 async def create_site_provision(
     site_id: str,
+    body: ProvisionRequest = ProvisionRequest(),
     user: dict = Depends(auth_module.require_operator),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a provision entry so a new appliance can auto-register to this site.
+    """Register a MAC address for auto-provisioning to this site.
 
-    Generates an API key and registers the site in the appliance_provisioning
-    table. The next appliance that boots and calls /api/provision/{MAC} will
-    receive this site's config and begin checking in.
+    When the appliance boots and calls /api/provision/{MAC}, the server
+    returns the site config + API key. The appliance auto-configures and
+    begins checking in. Zero manual config.yaml needed.
+
+    If mac_address is provided: pre-register that specific MAC.
+    If omitted: return info for manual registration.
     """
     import hashlib
 
@@ -5940,22 +5948,68 @@ async def create_site_provision(
 
     # Generate API key for the new appliance
     raw_key = secrets.token_urlsafe(32)
-    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
-    await execute_with_retry(db, text("""
-        INSERT INTO api_keys (key_hash, site_id, active, created_at, description)
-        VALUES (:hash, :sid, true, NOW(), 'Admin-provisioned appliance key')
-        ON CONFLICT (key_hash) DO NOTHING
-    """), {"hash": key_hash, "sid": site_id})
+    if body.mac_address:
+        mac = body.mac_address.upper().strip()
+        # Insert into appliance_provisioning — the MAC lookup endpoint reads this
+        await execute_with_retry(db, text("""
+            INSERT INTO appliance_provisioning (mac_address, site_id, api_key, notes, registered_at)
+            VALUES (:mac, :sid, :key, :notes, NOW())
+            ON CONFLICT (mac_address) DO UPDATE SET
+                site_id = EXCLUDED.site_id,
+                api_key = EXCLUDED.api_key,
+                notes = EXCLUDED.notes,
+                registered_at = NOW()
+        """), {
+            "mac": mac,
+            "sid": site_id,
+            "key": raw_key,
+            "notes": f"Admin-provisioned by {user.get('username', 'unknown')}",
+        })
+        await db.commit()
 
-    await db.commit()
+        return {
+            "status": "mac_registered",
+            "site_id": site_id,
+            "mac_address": mac,
+            "message": f"MAC {mac} registered for {site_row.clinic_name or site_id}. Boot the appliance — it will auto-configure.",
+        }
+
+    # No MAC provided — return instructions
+    return {
+        "status": "ready",
+        "site_id": site_id,
+        "message": "Enter the appliance MAC address to pre-register it for this site. The MAC is printed on the device label or shown on the BIOS POST screen.",
+    }
+
+
+@router.get("/sites/{site_id}/provisions")
+async def list_site_provisions(
+    site_id: str,
+    user: dict = Depends(auth_module.require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all provisioned/pending appliances for a site."""
+    result = await execute_with_retry(db, text("""
+        SELECT mac_address, site_id, registered_at, provisioned_at, notes
+        FROM appliance_provisioning
+        WHERE site_id = :sid
+        ORDER BY registered_at DESC
+    """), {"sid": site_id})
+    rows = result.fetchall()
 
     return {
-        "status": "provisioned",
-        "site_id": site_id,
-        "api_key": raw_key,
-        "api_endpoint": "https://api.osiriscare.net",
-        "message": f"Boot the appliance on the same network. It will auto-register to {site_row.clinic_name or site_id}.",
+        "provisions": [
+            {
+                "mac_address": r.mac_address,
+                "registered_at": r.registered_at.isoformat() if r.registered_at else None,
+                "provisioned_at": r.provisioned_at.isoformat() if r.provisioned_at else None,
+                "status": "provisioned" if r.provisioned_at else "waiting",
+                "notes": r.notes,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
     }
 
 
