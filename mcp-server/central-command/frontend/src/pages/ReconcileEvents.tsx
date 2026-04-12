@@ -52,7 +52,7 @@ function shortHex(h: string | null, n = 8): string {
   return h.length > n * 2 ? `${h.slice(0, n)}…${h.slice(-n)}` : h;
 }
 
-function signalBadge(signal: string): JSX.Element {
+function signalBadge(signal: string): React.ReactElement {
   return (
     <span
       key={signal}
@@ -138,7 +138,7 @@ const EventRow: React.FC<{ event: ReconcileEvent; expanded: boolean; onToggle: (
                 Reported uptime
               </div>
               <div className="font-mono text-label-secondary">
-                {event.reported_uptime_seconds != null
+                {event.reported_uptime_seconds !== null && event.reported_uptime_seconds !== undefined
                   ? `${event.reported_uptime_seconds}s`
                   : '—'}
               </div>
