@@ -64,13 +64,19 @@ class TestDetectionValidation:
         assert 60 <= skew <= 600, f"Clock skew limit {skew}s out of safe range [60, 600]"
 
     def test_validate_detection_called_before_plan(self):
-        """Detection must be validated BEFORE plan generation."""
-        # Find request_reconcile function body
+        """Detection must be validated BEFORE plan generation.
+
+        After Session 205 Phase 2, the plan-issuance body lives in the
+        reusable helper issue_reconcile_plan (called both from the
+        /reconcile endpoint and from the checkin handler). The ordering
+        invariant now applies to that helper.
+        """
+        # Find issue_reconcile_plan function body
         m = re.search(
-            r"async def request_reconcile\([^)]+\).*?(?=\n(?:async def |@router|class ))",
+            r"async def issue_reconcile_plan\([^)]+\).*?(?=\n(?:async def |def |@router|class ))",
             RECONCILE_SRC, re.DOTALL,
         )
-        assert m, "request_reconcile function not found"
+        assert m, "issue_reconcile_plan helper not found"
         body = m.group(0)
         validate_pos = body.find("_validate_detection")
         sign_pos = body.find("sign_data")

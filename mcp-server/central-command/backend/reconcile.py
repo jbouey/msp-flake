@@ -5,15 +5,26 @@ backup restore, power-loss journal rollback, hardware replacement), its
 local state is inconsistent with Central Command's view. This module
 handles the detection → plan → apply cycle.
 
-Phase 1 scope (this module):
+Phase 1 scope:
   - Detection signal aggregation
   - Ed25519-signed reconcile plan generation
   - Nonce epoch advancement
   - Append-only audit to reconcile_events
   - NTP sync precondition check (server-side time is assumed authoritative)
 
-Phase 2 adds the daemon-side detection + reporting.
-Phase 3 adds idempotent runbook application.
+Phase 2 shipped the daemon-side detection + reporting, and inline plan
+delivery in the checkin response (`sites.py` calls `issue_reconcile_plan`
+when the checkin payload's `reconcile_needed=true`).
+
+Phase 3 shipped the daemon-side apply handler (Ed25519 verify, nonce
+cache purge, generation_uuid advance, ack POST). Runbook re-execution
+is deferred to the normal drift-scan cycle — not a separate path —
+because detect-then-remediate is already self-idempotent. See
+`docs/runbook-idempotency-audit-2026-04-12.md` for scope.
+
+Phase 3.1 closed a narrow replay window: the daemon now extracts
+`issued_at` from the signed payload (not the envelope) for freshness
+checks, so a captured plan with a rewritten envelope cannot be replayed.
 """
 from __future__ import annotations
 
@@ -29,7 +40,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .auth import require_appliance_bearer
+from .auth import require_appliance_bearer, require_admin
 from .shared import execute_with_retry, get_db
 
 logger = logging.getLogger(__name__)
@@ -224,36 +235,37 @@ async def _fetch_baseline_runbooks(
     return [r.runbook_id for r in rows]
 
 
-# --- Endpoints -------------------------------------------------------------
+# --- Reusable plan issuance ------------------------------------------------
 
 
-@router.post("/reconcile", response_model=ReconcilePlan)
-async def request_reconcile(
-    req: ReconcileRequest,
-    db: AsyncSession = Depends(get_db),
-    auth_site_id: str = Depends(require_appliance_bearer),
-) -> ReconcilePlan:
-    """Agent reports time-travel — server returns a signed plan.
+class ReconcileRejected(Exception):
+    """Raised by issue_reconcile_plan when detection validation fails.
 
-    Flow:
-      1. Enforce auth_site_id matches req.site_id (same pattern as checkin)
-      2. Load last_known state for this appliance
-      3. Validate detection signals are consistent
-      4. Generate new nonce_epoch + generation_uuid
-      5. Sign the plan with the server's signing key (NOT the per-appliance key)
-      6. Append to reconcile_events audit
-      7. Return signed plan
-
-    The agent validates the signature using the server public key embedded
-    at build time (not a rotatable secret — this is the same key that
-    signs all fleet orders today).
+    The checkin handler catches this and continues normally (the agent
+    gets the rejection recorded in reconcile_events but isn't told why
+    inline, so it doesn't amplify a bad-signal loop). The standalone
+    /reconcile endpoint translates it to HTTP 400.
     """
-    if req.site_id != auth_site_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Site ID mismatch: token does not authorize this site",
-        )
 
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+async def issue_reconcile_plan(
+    db: AsyncSession,
+    req: ReconcileRequest,
+) -> ReconcilePlan:
+    """Validate detection, generate a signed plan, persist audit, return plan.
+
+    Callers (both /reconcile endpoint and the checkin handler) must have
+    already enforced auth_site_id == req.site_id. This helper does NOT
+    re-check auth — the caller owns that.
+
+    Raises ReconcileRejected when detection is invalid. Raises HTTPException
+    for appliance-not-registered or signing failures (so the /reconcile
+    endpoint gets sane HTTP codes).
+    """
     # 1. Fetch last-known state
     result = await execute_with_retry(db, text("""
         SELECT boot_counter, generation_uuid, nonce_epoch,
@@ -399,6 +411,38 @@ async def request_reconcile(
     )
 
 
+# --- HTTP endpoint: explicit /reconcile request ----------------------------
+
+
+@router.post("/reconcile", response_model=ReconcilePlan)
+async def request_reconcile(
+    req: ReconcileRequest,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+) -> ReconcilePlan:
+    """Agent reports time-travel — server returns a signed plan.
+
+    Preferred path is now inline delivery via the checkin response (see
+    sites.py). This endpoint is kept for agents that want to request a
+    plan outside the checkin cycle, e.g. after applying a plan and wanting
+    a fresh one immediately.
+
+    Flow:
+      1. Enforce auth_site_id matches req.site_id (same pattern as checkin)
+      2. Delegate to issue_reconcile_plan for validation + plan generation
+      3. Return signed plan
+
+    The agent validates the signature using the server public key embedded
+    at build time (the same key that signs all fleet orders today).
+    """
+    if req.site_id != auth_site_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Site ID mismatch: token does not authorize this site",
+        )
+    return await issue_reconcile_plan(db, req)
+
+
 class ReconcileAckRequest(BaseModel):
     event_id: str
     success: bool
@@ -443,3 +487,94 @@ async def ack_reconcile(
         },
     )
     return {"status": "recorded"}
+
+
+# --- Admin: forensic timeline --------------------------------------------
+
+
+admin_router = APIRouter(prefix="/api/admin", tags=["reconcile-admin"])
+
+
+@admin_router.get("/reconcile/events")
+async def list_reconcile_events(
+    site_id: Optional[str] = None,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    _admin: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    """List recent reconcile_events for admin forensic review.
+
+    Filterable by site_id. Caps at 500 rows. Returns detection signals,
+    plan status (pending/applied/failed/rejected), issued runbooks, and
+    apply/ack timestamps so operators can correlate snapshot-revert
+    recoveries with downstream effects.
+
+    Admin-only. Do NOT expose to partners or clients — reconcile_events
+    reveal fleet-wide crypto epoch rotations.
+    """
+    limit = max(1, min(limit, 500))
+    params: Dict[str, Any] = {"lim": limit}
+    where = ""
+    if site_id:
+        where = "WHERE site_id = :sid"
+        params["sid"] = site_id
+
+    result = await execute_with_retry(db, text(f"""
+        SELECT
+            id::text              AS event_id,
+            appliance_id,
+            site_id,
+            detected_at,
+            detection_signals,
+            reported_boot_counter,
+            last_known_boot_counter,
+            reported_generation_uuid::text AS reported_generation_uuid,
+            last_known_generation_uuid::text AS last_known_generation_uuid,
+            reported_uptime_seconds,
+            clock_skew_seconds,
+            plan_generated_at,
+            plan_runbook_ids,
+            plan_nonce_epoch_hex,
+            plan_status,
+            plan_applied_at,
+            post_boot_counter,
+            post_generation_uuid::text AS post_generation_uuid,
+            error_message
+        FROM reconcile_events
+        {where}
+        ORDER BY detected_at DESC
+        LIMIT :lim
+    """), params)
+    rows = result.fetchall()
+    return {
+        "rows": [
+            {
+                "event_id": r.event_id,
+                "appliance_id": r.appliance_id,
+                "site_id": r.site_id,
+                "detected_at": r.detected_at.isoformat() if r.detected_at else None,
+                "detection_signals": r.detection_signals,
+                "reported_boot_counter": r.reported_boot_counter,
+                "last_known_boot_counter": r.last_known_boot_counter,
+                "reported_generation_uuid": r.reported_generation_uuid,
+                "last_known_generation_uuid": r.last_known_generation_uuid,
+                "reported_uptime_seconds": r.reported_uptime_seconds,
+                "clock_skew_seconds": r.clock_skew_seconds,
+                "plan_generated_at": r.plan_generated_at.isoformat() if r.plan_generated_at else None,
+                "plan_runbook_ids": list(r.plan_runbook_ids) if r.plan_runbook_ids else [],
+                "plan_nonce_epoch_hex": r.plan_nonce_epoch_hex,
+                "plan_status": r.plan_status,
+                "plan_applied_at": r.plan_applied_at.isoformat() if r.plan_applied_at else None,
+                "post_boot_counter": r.post_boot_counter,
+                "post_generation_uuid": r.post_generation_uuid,
+                "error_message": r.error_message,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
+# admin_router is exported alongside `router`. main.py mounts both:
+#   app.include_router(reconcile.router)         # /api/appliances/reconcile*
+#   app.include_router(reconcile.admin_router)   # /api/admin/reconcile/events

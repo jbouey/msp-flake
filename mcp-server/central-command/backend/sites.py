@@ -17,7 +17,17 @@ from enum import Enum
 
 from .fleet import get_pool
 from .auth import require_auth, require_operator, require_admin
-from .shared import require_appliance_bearer
+from .shared import require_appliance_bearer, async_session as _reconcile_session
+# _reconcile_session: SQLAlchemy admin-pool sessionmaker. We use the admin
+# posture deliberately for inline reconcile issuance — it matches the
+# posture of the POST /api/appliances/reconcile endpoint (which uses
+# Depends(get_db) returning the same admin pool). Authorization is
+# enforced earlier: auth_site_id is bound to Bearer token at STEP 1 and
+# `checkin.site_id = auth_site_id` is assigned at handler entry (line
+# ~2902), so a reconcile for site A cannot be issued by site B's token.
+# Do NOT flip this to tenant_connection — reconcile_events writes would
+# then fail RLS because the inline path runs under the checkin's
+# tenant_connection context, which scopes differently.
 from .tenant_middleware import tenant_connection, admin_connection
 from .credential_crypto import encrypt_credential, decrypt_credential
 from .websocket_manager import broadcast_event
@@ -2453,6 +2463,14 @@ class ApplianceCheckin(BaseModel):
     daemon_health: Optional[Dict[str, Any]] = None  # Go runtime stats (goroutines, heap, GC)
     bundle_hashes: Optional[List[Dict[str, str]]] = None  # Recent evidence bundle hashes for peer witnessing
     witness_attestations: Optional[List[Dict[str, str]]] = None  # Counter-signatures of sibling bundle hashes
+    # Time-travel reconciliation state (Session 205). Agent reports these
+    # every cycle; CC compares against last-known values to detect VM
+    # snapshot revert / backup restore / disk clone scenarios. See
+    # backend/reconcile.py and appliance/internal/daemon/reconcile.go.
+    boot_counter: Optional[int] = None
+    generation_uuid: Optional[str] = None
+    reconcile_needed: bool = False
+    reconcile_signals: Optional[List[str]] = None
 
 
 def normalize_mac(mac: str) -> str:
@@ -3206,6 +3224,29 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 )
         except Exception as e:
             logger.warning(f"Failed to update appliances table: {e}")
+
+        # === STEP 3.5b: Persist time-travel state (Session 205 Phase 2) ===
+        # Store the daemon's reported boot_counter + generation_uuid. The
+        # `GREATEST()` for boot_counter tracks the highest-ever value so a
+        # future regression is detectable server-side. generation_uuid
+        # only updates when the daemon has written one (first checkin
+        # after a reconcile or initial baseline).
+        # Wrapped in savepoint — persistence failures must not poison the
+        # outer checkin transaction.
+        if checkin.boot_counter is not None or checkin.generation_uuid:
+            try:
+                async with conn.transaction():
+                    await conn.execute("""
+                        UPDATE site_appliances
+                        SET boot_counter = GREATEST(COALESCE(boot_counter, 0), COALESCE($1::BIGINT, 0)),
+                            generation_uuid = COALESCE(NULLIF($2, '')::uuid, generation_uuid)
+                        WHERE appliance_id = $3 AND site_id = $4
+                    """, checkin.boot_counter, checkin.generation_uuid,
+                        canonical_id, checkin.site_id)
+            except Exception as e:
+                logger.warning(
+                    f"Checkin {checkin.site_id}: time-travel state persist failed: {e}"
+                )
 
         # === STEP 3.6: Register/update agent signing key ===
         if checkin.agent_public_key and len(checkin.agent_public_key) == 64:
@@ -4198,6 +4239,76 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         except Exception as e:
             logger.debug(f"Welcome email skipped: {e}")
 
+    # === Time-travel reconciliation (Session 205 Phase 2) ===
+    # If the daemon reported ≥2 signals and requested reconcile, generate
+    # a signed plan inline so the agent gets it in the same round-trip.
+    # Failure here MUST NOT break the checkin — the daemon will retry
+    # next cycle (signals persist until a successful reconcile).
+    reconcile_plan_payload = None
+    if checkin.reconcile_needed and checkin.reconcile_signals and len(checkin.reconcile_signals) >= 2:
+        from .reconcile import (
+            ReconcileRequest as _RR,
+            issue_reconcile_plan as _issue_plan,
+        )
+        rr = _RR(
+            appliance_id=canonical_id,
+            site_id=checkin.site_id,
+            reported_boot_counter=checkin.boot_counter or 0,
+            reported_generation_uuid=checkin.generation_uuid,
+            reported_uptime_seconds=checkin.uptime_seconds or 0,
+            clock_skew_seconds=0,  # Server is authoritative; agent NTP-sync is prerequisite
+            detection_signals=checkin.reconcile_signals,
+        )
+        # Open a fresh SQLAlchemy session so a reconcile failure cannot
+        # poison the asyncpg `tenant_connection` transaction used for the
+        # rest of checkin. Belt-and-suspenders rollback in the except
+        # handler — issue_reconcile_plan does commit() on both success +
+        # rejection paths, but if sign_data or the INSERT raises between
+        # branches, we want explicit cleanup rather than relying on
+        # implicit __aexit__ rollback semantics.
+        _rsess = _reconcile_session()
+        try:
+            plan = await _issue_plan(_rsess, rr)
+            reconcile_plan_payload = {
+                "plan_id": plan.event_id,
+                "new_generation_uuid": plan.generation_uuid,
+                "nonce_epoch_hex": plan.nonce_epoch_hex,
+                "runbook_ids": plan.runbook_ids,
+                "issued_at": plan.issued_at,
+                "appliance_id": canonical_id,
+                "signature_hex": plan.plan_signature_hex,
+                # signed_payload: the EXACT canonical JSON string that was
+                # signed. Agent verifies signature_hex against this string
+                # byte-for-byte. Reconstructing client-side causes
+                # cross-language whitespace divergence (Python vs Go JSON).
+                "signed_payload": plan.signed_payload,
+            }
+            logger.warning(
+                f"Reconcile plan issued inline for {canonical_id}: "
+                f"signals={checkin.reconcile_signals} event_id={plan.event_id}"
+            )
+        except HTTPException as he:
+            # Rejection (400) or appliance-not-registered (404) — don't ship
+            # a plan this cycle. Audit row already written by issue_reconcile_plan.
+            try:
+                await _rsess.rollback()
+            except Exception:
+                pass
+            logger.info(
+                f"Reconcile skipped for {canonical_id}: {he.status_code} {he.detail}"
+            )
+        except Exception as e:
+            try:
+                await _rsess.rollback()
+            except Exception:
+                pass
+            logger.error(f"Reconcile plan issuance failed for {canonical_id}: {e}")
+        finally:
+            try:
+                await _rsess.close()
+            except Exception:
+                pass
+
     return {
         "status": "ok",
         "appliance_id": canonical_id,
@@ -4227,6 +4338,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         "target_assignments": target_assignments,
         "client_alert_mode": effective_alert_mode,
         "compliance_framework": compliance_framework,
+        # Time-travel reconciliation plan (Session 205 Phase 2). Null unless
+        # daemon reported ≥2 detection signals AND validation accepted them.
+        "reconcile_plan": reconcile_plan_payload,
     }
 
 

@@ -224,6 +224,13 @@ type CheckinRequest struct {
 	BundleHashes        []BundleHashEntry        `json:"bundle_hashes,omitempty"`
 	// Witness attestations: counter-signatures of sibling bundle hashes from previous cycle
 	WitnessAttestations []WitnessAttestation     `json:"witness_attestations,omitempty"`
+	// Time-travel state (Session 205 Phase 2). Agent reports each cycle so
+	// Central Command can detect snapshot reverts / backup restores and
+	// trigger a signed reconciliation. See internal/daemon/reconcile.go.
+	BootCounter         int64            `json:"boot_counter,omitempty"`
+	GenerationUUID      string           `json:"generation_uuid,omitempty"`
+	ReconcileNeeded     bool             `json:"reconcile_needed,omitempty"`
+	ReconcileSignals    []string         `json:"reconcile_signals,omitempty"`
 }
 
 // BundleHashEntry is a recent evidence bundle hash for peer witnessing.
@@ -361,6 +368,50 @@ type CheckinResponse struct {
 	MeshPeers            []MeshPeerInfo           `json:"mesh_peers,omitempty"`
 	// Server-authoritative target assignment (Hybrid C+)
 	TargetAssignments *TargetAssignment `json:"target_assignments,omitempty"`
+	// Time-travel reconciliation plan (Session 205). Delivered inline when
+	// the agent reported ≥2 detection signals and CC validated the request.
+	// Nil when no reconcile is needed. Agent MUST Ed25519-verify against
+	// ServerPublicKey(s) before executing.
+	ReconcilePlan *ReconcilePlan `json:"reconcile_plan,omitempty"`
+}
+
+// ReconcilePlan is the server-authoritative recovery plan for an agent
+// that reported time-travel signals. All fields are signed together; the
+// signature_hex is the Ed25519 signature over the canonical SignedPayload
+// string (sort_keys=True JSON of plan_id + new_generation_uuid +
+// nonce_epoch_hex + runbook_ids + issued_at + appliance_id) as produced
+// by the backend.
+//
+// The agent verifies against SignedPayload DIRECTLY (not a reconstruction)
+// to avoid cross-language JSON serialization ambiguity — Python's
+// json.dumps and Go's json.Marshal differ on separator whitespace. Using
+// the server-produced string makes the wire contract byte-exact.
+type ReconcilePlan struct {
+	// PlanID: server-generated UUID for this plan (correlation in audit).
+	PlanID string `json:"plan_id"`
+	// NewGenerationUUID: the agent MUST write this to disk after apply.
+	// Future checkins include this; CC rotates it to detect future reverts.
+	NewGenerationUUID string `json:"new_generation_uuid"`
+	// NonceEpochHex: 64-char hex (32 random bytes). Agent purges any cached
+	// orders/nonces below this epoch — invalidates captured-order replays
+	// that a reverted snapshot might re-accept.
+	NonceEpochHex string `json:"nonce_epoch_hex"`
+	// RunbookIDs: ordered list to execute idempotently. May be empty if
+	// CC decided no remediation is needed (rare — usually we re-run the
+	// last known-good checks).
+	RunbookIDs []string `json:"runbook_ids"`
+	// IssuedAt: RFC3339 timestamp CC signed at. Agent rejects plans older
+	// than 10 minutes to prevent replay of captured plans.
+	IssuedAt string `json:"issued_at"`
+	// ApplianceID: must match this appliance — rejects cross-site plans.
+	ApplianceID string `json:"appliance_id"`
+	// SignatureHex: Ed25519 signature, 128-char lowercase hex.
+	SignatureHex string `json:"signature_hex"`
+	// SignedPayload: the EXACT canonical JSON string that was signed.
+	// Agent verifies SignatureHex against this string directly. Must NOT
+	// be reconstructed client-side — the server is the source of truth
+	// for the byte sequence that produced the signature.
+	SignedPayload string `json:"signed_payload"`
 }
 
 // MeshPeerInfo is a sibling appliance's identity delivered by Central Command
@@ -618,6 +669,38 @@ func (c *PhoneHomeClient) RequestRekey(ctx context.Context) (*rekeyResponse, err
 		return nil, fmt.Errorf("parse rekey response: %w", err)
 	}
 	return &result, nil
+}
+
+// PostReconcileAck POSTs a reconcile ACK to Central Command after the
+// daemon applies (or fails to apply) a signed reconcile plan. The body
+// is the JSON-serialized reconcileAckRequest.
+//
+// Uses the same Bearer auth as checkin. Non-200 responses are surfaced
+// as errors so the caller can log — retries are NOT attempted here
+// (reconcile_apply.go treats ACK as best-effort).
+func (c *PhoneHomeClient) PostReconcileAck(ctx context.Context, body []byte) error {
+	url := strings.TrimRight(c.config.APIEndpoint, "/") + "/api/appliances/reconcile/ack"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create reconcile ack request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	httpReq.Header.Set("User-Agent", "OsirisCare-Appliance/Go")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("reconcile ack request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Drain body even on success — keeps TLS connection reusable.
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("reconcile ack returned %d: %s",
+			resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 // getHardwareID reads the SMBIOS/DMI product UUID.

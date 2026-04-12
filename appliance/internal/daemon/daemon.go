@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -137,6 +138,11 @@ type Daemon struct {
 	// Mesh: consistent hash ring for multi-appliance scan target distribution
 	mesh *Mesh
 
+	// reconcileDetector: Session 205 Phase 2. Detects agent time-travel
+	// (snapshot revert, backup restore, disk clone) and reports signals
+	// in each checkin. Phase 3 adds plan application.
+	reconcileDetector *ReconcileDetector
+
 	// startTime tracks daemon boot for uptime reporting
 	startTime time.Time
 
@@ -209,6 +215,8 @@ func New(cfg *Config) *Daemon {
 		state:         NewStateManager(),
 		healTracker:   newHealingRateTracker(),
 		serverBreaker: NewCircuitBreaker(5, 5*time.Minute),
+		// reconcileDetector bumps boot_counter on construction — call once here.
+		reconcileDetector: NewReconcileDetector(cfg.StateDir),
 		startTime:     time.Now(),
 	}
 
@@ -746,6 +754,23 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	req.BundleHashes = d.state.DrainBundleHashes()
 	req.WitnessAttestations = d.state.DrainWitnessAttestations()
 
+	// Phase 2 time-travel detection (Session 205). Pure function of on-disk
+	// state + /proc/uptime — no network calls, no mutations. Signals get
+	// shipped to CC; if ≥2 present, CC returns a signed reconcile plan.
+	if d.reconcileDetector != nil {
+		detection := d.reconcileDetector.Detect()
+		req.BootCounter = detection.BootCounter
+		req.GenerationUUID = detection.GenerationUUID
+		req.ReconcileNeeded = detection.ReconcileNeeded
+		req.ReconcileSignals = detection.Signals
+		if detection.ReconcileNeeded {
+			slog.Warn("time-travel signals detected — requesting reconcile",
+				"component", "reconcile",
+				"signals", detection.Signals,
+				"boot_counter", detection.BootCounter)
+		}
+	}
+
 	resp, err := d.phoneCli.Checkin(ctx, &req)
 	if err != nil {
 		d.serverBreaker.RecordFailure()
@@ -776,6 +801,32 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 
 	d.serverBreaker.RecordSuccess()
 	d.consecutiveAuthFailures = 0
+
+	// Phase 2 time-travel: mark this cycle as known-good for next-cycle
+	// comparison. LKG mtime detects clock rollback; last_reported_uptime
+	// detects /proc/uptime regression (VM snapshot revert).
+	// Best-effort: persistence failures should not break checkin flow.
+	if d.reconcileDetector != nil {
+		if err := d.reconcileDetector.WriteLastReportedUptime(req.UptimeSeconds); err != nil {
+			slog.Warn("failed to persist last_reported_uptime",
+				"component", "reconcile", "error", err)
+		}
+		if err := d.reconcileDetector.TouchLKG(); err != nil {
+			slog.Warn("failed to touch last_known_good marker",
+				"component", "reconcile", "error", err)
+		}
+	}
+
+	// Phase 3 time-travel: apply any server-issued reconcile plan. This
+	// runs AFTER LKG+uptime persistence so even a plan that fails mid-
+	// apply (crash between steps) leaves the detector in a consistent
+	// state. applyReconcilePlan is self-contained: signature verify,
+	// appliance scope check, freshness check, nonce purge, UUID write,
+	// ACK. Errors are logged and swallowed — a reconcile failure must
+	// not break the main checkin loop.
+	if resp.ReconcilePlan != nil {
+		d.applyReconcilePlan(ctx, resp.ReconcilePlan)
+	}
 
 	// Drain cached evidence bundles on successful checkin (CC is reachable)
 	if d.evidenceSubmitter != nil {

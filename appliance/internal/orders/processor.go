@@ -329,6 +329,39 @@ func (p *Processor) SetApplianceID(id string) {
 	p.applianceID = id
 }
 
+// VerifySignedPayload verifies an Ed25519 signature over an arbitrary canonical
+// JSON payload signed by Central Command. Used by subsystems outside the order
+// flow (e.g. reconcile plans in Session 205 Phase 3) that share the same
+// signing keys. Returns nil on valid signature, error otherwise.
+//
+// This reuses the same current+previous key pair used for orders, so a
+// reconcile plan issued during a key rotation window still verifies.
+func (p *Processor) VerifySignedPayload(canonicalPayload, signatureHex string) error {
+	return p.verifier.VerifyOrder(canonicalPayload, signatureHex)
+}
+
+// HasServerKey returns true if a server public key has been configured
+// (i.e. at least one successful checkin has completed).
+func (p *Processor) HasServerKey() bool {
+	return p.verifier.HasKey()
+}
+
+// PurgeAllNonces drops every cached nonce in-memory. Called by the
+// reconcile flow when the server advances nonce_epoch — any captured
+// orders from before the epoch become unreplayable because the signed
+// payload's epoch won't match the server's current one, but we ALSO
+// clear the local cache so memory doesn't grow unbounded across
+// reconciles. Also persists the empty state to disk so a subsequent
+// restart doesn't resurrect the cleared nonces.
+//
+// Safe to call multiple times; a no-op on empty cache.
+func (p *Processor) PurgeAllNonces() {
+	p.nonceMu.Lock()
+	defer p.nonceMu.Unlock()
+	p.usedNonces = make(map[string]time.Time)
+	p.persistNoncesLocked()
+}
+
 // ApplianceID returns the current appliance identity (empty if not yet set from checkin).
 func (p *Processor) ApplianceID() string {
 	return p.applianceID
