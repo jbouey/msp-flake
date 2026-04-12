@@ -723,108 +723,24 @@ EOF
   programs.command-not-found.enable = false;
 
   # ============================================================================
-  # Auto-Install Service - Zero Friction USB to Internal Drive
+  # Auto-Install Service — REMOVED (Session 205 bug fix)
+  #
+  # Previous version was a clone-and-reboot service that ran on every boot.
+  # On devices where the internal disk reported `removable=1` in sysfs
+  # (some M.2/NVMe drives, eMMC, certain HP T740/T640 configurations),
+  # the service INCORRECTLY identified the internal drive as a USB and
+  # triggered a clone + reboot, creating an INFINITE BOOT LOOP.
+  #
+  # osiriscare-3 at 192.168.88.232 was stuck in this loop for 18+ hours:
+  # uptime never exceeded ~107 seconds, rebooting every cycle.
+  #
+  # The installer ISO (`appliance-image.nix`) is solely responsible for
+  # installation. The installed system (this file) should NEVER attempt
+  # to reinstall itself. Removed entirely.
+  #
+  # If the marker file `/var/lib/msp/.installed-to-internal` exists on
+  # previously-deployed appliances, it's harmless leftover state.
   # ============================================================================
-  systemd.services.msp-auto-install = {
-    description = "MSP Appliance Auto-Install to Internal Drive";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "local-fs.target" ];
-    before = [ "msp-auto-provision.service" ];
-
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-    };
-
-    script = ''
-      set -e
-      MARKER="/var/lib/msp/.installed-to-internal"
-      LOG_FILE="/var/lib/msp/install.log"
-
-      mkdir -p /var/lib/msp
-
-      log() {
-        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
-      }
-
-      # Skip if already installed to internal drive
-      if [ -f "$MARKER" ]; then
-        log "Already installed to internal drive, skipping"
-        exit 0
-      fi
-
-      # Find boot device
-      BOOT_DEV=$(findmnt -n -o SOURCE / | sed 's/[0-9]*$//' | sed 's/p$//')
-      BOOT_DEV_NAME=$(basename "$BOOT_DEV")
-      log "Boot device: $BOOT_DEV"
-
-      # Check if boot device is on USB bus (more reliable than removable flag)
-      IS_USB=$(readlink -f /sys/block/$BOOT_DEV_NAME/device | grep -q usb && echo "1" || echo "0")
-      IS_REMOVABLE=$(cat /sys/block/$BOOT_DEV_NAME/removable 2>/dev/null || echo "0")
-
-      log "Boot device $BOOT_DEV_NAME: USB=$IS_USB, removable=$IS_REMOVABLE"
-
-      if [ "$IS_USB" != "1" ] && [ "$IS_REMOVABLE" != "1" ]; then
-        log "Not booting from USB/removable media, marking as installed"
-        touch "$MARKER"
-        exit 0
-      fi
-
-      log "=== Booting from USB - Starting Auto-Install ==="
-
-      # Find internal drive (prefer NVMe, then SATA)
-      INTERNAL_DEV=""
-      for dev in /dev/nvme0n1 /dev/sda /dev/sdb /dev/vda /dev/mmcblk0; do
-        [ -b "$dev" ] || continue
-        # Extract block device name for sysfs lookup.
-        # SATA/NVMe: /dev/sda → sda, /dev/nvme0n1 → nvme0n1
-        # eMMC: /dev/mmcblk0 → mmcblk0 (not mmcblk — keep the trailing 0)
-        DEV_NAME=$(basename "$dev")
-        case "$DEV_NAME" in
-          mmcblk*) ;; # eMMC: use full name (mmcblk0)
-          *) DEV_NAME=$(echo "$DEV_NAME" | sed 's/[0-9]*$//') ;; # strip partition number
-        esac
-        [ "$DEV_NAME" = "$BOOT_DEV_NAME" ] && continue
-
-        # Check it's not removable
-        REMOVABLE=$(cat /sys/block/$DEV_NAME/removable 2>/dev/null || echo "1")
-        if [ "$REMOVABLE" = "0" ]; then
-          SIZE=$(blockdev --getsize64 "$dev" 2>/dev/null || echo "0")
-          # Must be at least 20GB
-          if [ "$SIZE" -gt 20000000000 ]; then
-            INTERNAL_DEV="$dev"
-            log "Found internal drive: $INTERNAL_DEV ($(numfmt --to=iec $SIZE))"
-            break
-          fi
-        fi
-      done
-
-      if [ -z "$INTERNAL_DEV" ]; then
-        log "ERROR: No suitable internal drive found"
-        exit 0
-      fi
-
-      # Get boot disk size for progress
-      BOOT_SIZE=$(blockdev --getsize64 "$BOOT_DEV")
-      log "Cloning $BOOT_DEV ($(numfmt --to=iec $BOOT_SIZE)) to $INTERNAL_DEV"
-
-      # Clone boot disk to internal drive
-      log "Starting disk clone... (this takes 2-5 minutes)"
-      ${pkgs.coreutils}/bin/dd if="$BOOT_DEV" of="$INTERNAL_DEV" bs=4M status=progress conv=fsync 2>&1 | tee -a "$LOG_FILE"
-      ${pkgs.coreutils}/bin/sync
-
-      log "Clone complete!"
-      log "=== AUTO-INSTALL COMPLETE ==="
-      log "Remove USB and reboot to start from internal drive"
-      log "Rebooting in 10 seconds..."
-
-      # Give user time to see the message on console
-      sleep 10
-
-      # Reboot to internal drive
-      ${pkgs.systemd}/bin/systemctl reboot
-    '';
-  };
 
   # ============================================================================
   # Secure Boot Key Generation (first boot only)
