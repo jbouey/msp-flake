@@ -109,6 +109,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/security-events/", # WORM archival - admin-only (require_auth)
         "/api/devices/sync",     # Device inventory sync from appliances (API-key auth)
         "/api/logs/",            # Log ingestion from appliances (API-key auth)
+        "/api/install/report/",  # Installer telemetry /start + /complete (X-Install-Token auth, pre-checkin)
         "/incidents/",           # Incident resolve from appliances (machine-to-machine)
         "/api/escalations",      # Agent L3 escalations from appliances (machine-to-machine)
         # --- Webhooks (external service callbacks with their own auth) ---
