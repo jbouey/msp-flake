@@ -1153,10 +1153,39 @@ async def submit_evidence(
     # Store the signed_data for future verification
     stored_signed_data = signed_data.decode('utf-8') if isinstance(signed_data, bytes) else signed_data
 
-    # Insert evidence bundle (upsert via DELETE+INSERT for partitioned table compatibility)
-    await db.execute(text("""
-        DELETE FROM compliance_bundles WHERE bundle_id = :bundle_id
+    # Evidence immutability: if this bundle_id was already ingested, return
+    # idempotent success. Previously the path was DELETE-then-INSERT ("upsert
+    # via DELETE+INSERT for partitioned table compatibility") — but Migration
+    # 151 added a BEFORE DELETE trigger (prevent_audit_deletion) to
+    # compliance_bundles that correctly enforces HIPAA audit immutability.
+    # Attempting to DELETE an evidence row is evidence forgery by design —
+    # the trigger is right to block it. The 2026-04-12 fleet-order delivery
+    # outage postmortem traced the same class of silent txn-poisoning via
+    # the same DELETE-trigger-vs-upsert mismatch on fleet_order_completions.
+    # See docs/session-205-cont-migration-hardening-fleet-outage.md.
+    #
+    # Fix: check bundle_id existence first. If present, return as dedup
+    # (same semantics as the bundle_hash 15-min window above, but
+    # stronger — this covers any future conflict by bundle_id).
+    existing_by_id = await db.execute(text("""
+        SELECT 1 FROM compliance_bundles WHERE bundle_id = :bundle_id LIMIT 1
     """), {"bundle_id": bundle.bundle_id})
+    if existing_by_id.fetchone():
+        logger.info(
+            "evidence_duplicate_bundle_id",
+            extra={
+                "site_id": site_id,
+                "bundle_id": bundle.bundle_id,
+                "bundle_hash_prefix": bundle.bundle_hash[:12],
+            },
+        )
+        return {
+            "status": "accepted",
+            "bundle_id": bundle.bundle_id,
+            "deduplicated": True,
+            "message": "Bundle already recorded (duplicate bundle_id after hash dedup window)",
+        }
+
     await db.execute(text("""
         INSERT INTO compliance_bundles (
             site_id, bundle_id, bundle_hash, check_type, check_result, checked_at,
