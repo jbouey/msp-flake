@@ -970,10 +970,7 @@ func (p *Processor) handleConfigureDNS(_ context.Context, params map[string]inte
 	cmd := exec.Command("systemctl", "restart", "msp-dns-hosts")
 	restartOut, restartErr := cmd.CombinedOutput()
 
-	slog.Info("DNS configured via fleet order",
-		"component", "orders",
-		"entries", len(entries),
-		"restart_output", string(restartOut))
+	log.Printf("[orders] DNS configured via fleet order: %d entries, restart=%s", len(entries), string(restartOut))
 
 	result := map[string]interface{}{
 		"entries_written": len(entries),
