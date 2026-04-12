@@ -163,8 +163,16 @@ jobs:
             set -e
             docker exec mcp-server python3 /app/dashboard_api/migrate.py status
             docker exec mcp-server python3 /app/dashboard_api/migrate.py up
+            # Parse the summary line "N applied, N pending" — avoid grepping
+            # for the word "pending" alone (matches migration NAMES like
+            # pending_alerts and the "0 pending" summary).
             PENDING_OUT=$(docker exec mcp-server python3 /app/dashboard_api/migrate.py status)
-            PENDING_COUNT=$(echo "$PENDING_OUT" | grep -c pending || true)
+            PENDING_COUNT=$(echo "$PENDING_OUT" | grep -oE '[0-9]+ pending$' | awk '{print $1}' | head -1)
+            if [ -z "$PENDING_COUNT" ]; then
+              echo "Could not parse pending count from migrate.py status output"
+              echo "$PENDING_OUT"
+              exit 1
+            fi
             if [ "$PENDING_COUNT" -ne 0 ]; then
               echo "FATAL: $PENDING_COUNT migration(s) still pending after apply"
               echo "$PENDING_OUT"
