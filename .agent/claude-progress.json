@@ -1,6 +1,6 @@
 {
   "session": 205,
-  "updated": "2026-04-12T17:25:51.022576Z",
+  "updated": "2026-04-12T17:33:00.062393Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -18,7 +18,7 @@
     "compliance_packets": "session201_persisted_to_db_hipaa_6yr_retention_compliance_packets_table",
     "ots_proofs": "session201_131678_anchored_100972_legacy_mark_proof_anchored_dry_audit_logged",
     "evidence_verify": "session201_evidence_chain_fixed_delete_insert_upsert_partitioned_table",
-    "fleet_updates": "v0.4.0_2_of_3_appliances_osiriscare_1_and_2_on_0_4_0_osiriscare_3_stuck_on_0_3_92_root_cause_migration_161_dropped_fleet_order_completions_delete_trigger_plus_ec0a9ed_savepoints_plus_1bc6e27_evidence_insert_only",
+    "fleet_updates": "v0_4_0_2_of_3_osiriscare_3_stuck",
     "mesh_discovery": "backend_authoritative_target_assignment_discovery_filter_fixed_normalize_mac_clarified_ui_renamed",
     "landing_page": "session204_always_audit_ready_proof_not_paperwork_fear_language_no_ai_hints_deploy_3hrs",
     "l2_pipeline": "hypothesis_driven_triage_validation_gate_confidence_tagging_audit_trail",
@@ -55,10 +55,10 @@
     "autodeploy_hardening": "session204_sha256_all_3_paths_http_netlogon_b64_final_gate_before_service_install",
     "installer_ux": "session204_emmc_support_poweroff_not_reboot_efibootmgr_umount_usb_provisioning_signing",
     "fleet_3node": "session204_3_appliances_online_hash_ring_192_entries_targets_distributed_evidence_flowing",
-    "time_travel_reconciliation": "session205_phases_2_3_3_1_shipped_ed25519_signed_plans_min_2_signals_nonce_epoch_rotation_client_side_boot_counter_regression_v0_4_0_binary_deployed_admin_ui_at_reconcile_events_124_runbook_idempotency_audited",
-    "migration_auto_apply": "session205_cont_shipped_fail_closed_startup_apply_main_py_lifespan_pg_advisory_lock_migration_database_url_env_required_schema_probe_admin_health_9_logger_warning_to_error_nix_gc_timer_armed_docker_compose_source_controlled_bb4b775_plus_13c0026"
+    "time_travel_reconciliation": "phases_1_2_3_3_1_shipped_session_205",
+    "migration_auto_apply": "fail_closed_at_startup_plus_ci_gate_session_205"
   },
-  "current_blocker": "osiriscare-3 stuck on v0.3.92 \u2014 needs root-cause diagnosis (why did osiriscare-2 accept v0.4.0 but osiriscare-3 hasn't? same site, same order, post-fix state). Next: check osiriscare-3's recent daemon logs + completion records.",
+  "current_blocker": "osiriscare-3 stuck on v0.3.92; fresh order edaa985d-e076 fired 17:29 UTC; watcher b2gcy5ctv running",
   "session_202_work": {
     "summary": "Round-table audit: 67 files, 5 swarms, 360 test cases identified. Critical security fixes + DRY consolidation.",
     "security_fixes": [

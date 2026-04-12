@@ -215,7 +215,7 @@ Primary state: `.agent/claude-progress.json`
 - **`MIGRATION_DATABASE_URL` required on mcp-server.** Direct `mcp-postgres:5432` as `mcp` superuser (NOT `mcp_app` via PgBouncer — lacks schema-public CREATE). In repo `mcp-server/docker-compose.yml`.
 - **`migrate.py cmd_up` uses `pg_advisory_lock(8675309)`.** Serializes concurrent replica startup.
 - **`/api/admin/health` schema probe.** `{schema: {applied, pending}}`, `degraded` (HTTP 503) when pending > 0.
-- **`schema_migrations` backfilled.** 152 numbered + 5 legacy rows. New migrations self-record via `apply_migration`.
+- **New migrations self-record in `schema_migrations` via `apply_migration`.** Pre-Session-205 files were backfilled once; don't manually INSERT rows.
 - **Checkin transactional steps log at ERROR not WARNING.** 9 upgrades in `sites.py` STEPS 3.5/3.5b/3.6/3.6b/3.8b/3.9/4/4.x/4.5. Log shipper alerts on ERROR.
 - **`nix.gc` + `nix.optimise` weekly automatic** in `/etc/nixos/configuration.nix` on VPS. `--delete-older-than 14d`, `persistent = true`.
 - **asyncpg savepoint invariant (Session 205).** Every `conn.execute/fetch*` inside `tenant_connection`/`admin_connection` whose failure is caught non-fatally MUST be inside `async with conn.transaction():` (or SQLAlchemy `db.begin_nested()`). Python's try/except does NOT reset Postgres transaction state.
@@ -223,7 +223,6 @@ Primary state: `.agent/claude-progress.json`
 - **Audit-trigger allowlist.** DELETE/UPDATE-block triggers apply ONLY to audit-classified tables. Audit: admin_audit_log, client_audit_log, portal_access_log, incident_remediation_steps, partner_activity_log. Evidence (immutable, INSERT-only): compliance_bundles. Operational (no triggers): fleet_order_completions, fleet_orders, sessions, nonces, discovered_devices, go_agents. Migration 161 dropped overreach on fleet_order_completions.
 - **Evidence INSERT-only — no DELETE upsert.** `evidence_chain.py submit_evidence` checks bundle_id first, returns idempotent dedup if present. ON CONFLICT incompatible with partitioned tables.
 - **Checkin is a delivery contract.** HTTP 200 with empty `pending_orders` despite active fleet orders = credibility event. Target: Prom `msp_fleet_active_orders_undelivered{appliance_id}` alert > 0 for > 15min. Log shipper alerts on ERROR matching "transaction"/"savepoint"/"cleanup"/"Failed to fetch".
-- **CI integration round-trip required (target).** Testcontainers postgres + `migrate.py up` + `uvicorn main:app` + mocked appliance POST + assert fleet_order in response. Shape tests alone are theater.
 - **Persistence runbooks: RB-WIN-PERSIST-001 (tasks+XML+registry+WMI) and RB-WIN-PERSIST-002 (defender exclusions+GPO+tasks).** L2 recurrence recommends these over symptom-level fixes.
 - **`configure_dns` fleet order** writes `extra_hosts` to config.yaml, restarts msp-dns-hosts.
 - **Flywheel intelligence dashboard card + `/api/dashboard/flywheel-intelligence` endpoint.** Recurrence rate, chronic patterns, auto-promotions, cross-incident correlations. 3 background tasks: `recurrence_velocity_loop` (5min), `recurrence_auto_promotion_loop` (hourly), `cross_incident_correlation_loop` (hourly).
