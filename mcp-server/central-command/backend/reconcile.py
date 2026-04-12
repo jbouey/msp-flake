@@ -40,8 +40,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .auth import require_appliance_bearer, require_admin
-from .shared import execute_with_retry, get_db
+from .auth import require_admin
+from .shared import execute_with_retry, get_db, require_appliance_bearer
 
 logger = logging.getLogger(__name__)
 
