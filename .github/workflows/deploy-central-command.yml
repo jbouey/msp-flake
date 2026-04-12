@@ -130,6 +130,17 @@ jobs:
             mcp-server/central-command/frontend/nginx.conf \
             ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend/nginx.conf
 
+      - name: Deploy docker-compose.yml to release
+        # Source-control the VPS compose file. Without this step, env changes
+        # (e.g., MIGRATION_DATABASE_URL added Session 205) are tribal knowledge
+        # and reappear as silent failures if the VPS is rebuilt or the file is
+        # edited by hand. The compose file holds no hardcoded secrets — all
+        # passwords are ${ENV:-default} references resolved from /opt/mcp-server/.env.
+        run: |
+          rsync -avz \
+            mcp-server/docker-compose.yml \
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/docker-compose.yml
+
       - name: Atomic switch — symlink to new release
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << EOF
@@ -143,6 +154,18 @@ jobs:
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/app/ /opt/mcp-server/app/
             rsync -a --delete ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/ /opt/mcp-server/frontend_dist/
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend/nginx.conf /opt/mcp-server/frontend/nginx.conf
+
+            # Sync docker-compose.yml — tracked in git so env changes
+            # (like MIGRATION_DATABASE_URL) aren't tribal knowledge.
+            # Diff first so we log any change before applying.
+            if ! diff -q ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/docker-compose.yml /opt/mcp-server/docker-compose.yml > /dev/null 2>&1; then
+              echo "docker-compose.yml changed — diffing before sync:"
+              diff /opt/mcp-server/docker-compose.yml ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/docker-compose.yml || true
+              cp /opt/mcp-server/docker-compose.yml /opt/mcp-server/docker-compose.yml.bak.\$(date +%s)
+              rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/docker-compose.yml /opt/mcp-server/docker-compose.yml
+              echo "docker-compose.yml updated; will trigger \`docker compose up -d\` below"
+              export COMPOSE_CHANGED=1
+            fi
 
             # Update symlink to new release (for rollback reference)
             ln -sfn ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }} ${{ env.CURRENT_LINK }}
@@ -181,12 +204,16 @@ jobs:
           EOF
 
       - name: Restart services
+        # `docker compose up -d` instead of `restart` — picks up any env
+        # changes from the compose file we just rsynced. `restart` alone
+        # keeps the old env so e.g. MIGRATION_DATABASE_URL additions won't
+        # take effect without this pattern.
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
             cd /opt/mcp-server
-            docker compose restart pgbouncer
+            docker compose up -d pgbouncer
             sleep 3
-            docker compose restart mcp-server frontend
+            docker compose up -d mcp-server frontend
           EOF
 
       - name: Verify deployment

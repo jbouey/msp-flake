@@ -1,0 +1,232 @@
+version: "3.8"
+
+services:
+  # Caddy - Reverse proxy with auto TLS
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+      - ./static:/opt/mcp-server/static:ro
+      - /var/www/updates:/var/www/updates:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - mcp-server
+      - frontend
+    networks:
+      - mcp-network
+
+  # PostgreSQL - Primary database
+  postgres:
+    image: postgres:16-alpine
+    container_name: mcp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mcp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mcp-secure-password}
+      POSTGRES_DB: ${POSTGRES_DB:-mcp}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+  # Redis - Rate limiting, caching, streams
+  redis:
+    image: redis:7-alpine
+    container_name: mcp-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-mcp-redis-password}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-mcp-redis-password}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+  # MinIO - S3-compatible WORM storage
+  minio:
+    image: minio/minio:latest
+    container_name: mcp-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio-secure-password}
+    volumes:
+      - /mnt/storagebox:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+  # MCP Server - FastAPI application
+  mcp-server:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://mcp_app:${POSTGRES_PASSWORD:-mcp-secure-password}@pgbouncer:6432/${POSTGRES_DB:-mcp}
+      MIGRATION_DATABASE_URL: postgresql://mcp:${POSTGRES_PASSWORD:-mcp-secure-password}@mcp-postgres:5432/${POSTGRES_DB:-mcp}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio-secure-password}
+      MINIO_BUCKET: ${MINIO_BUCKET:-evidence}
+      MINIO_SECURE: "false"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SESSION_TOKEN_SECRET: ${SESSION_TOKEN_SECRET:-}
+      API_KEY_SECRET: ${API_KEY_SECRET:-}
+      SIGNING_KEY_FILE: /app/secrets/signing.key
+      RUNBOOK_DIR: /app/runbooks
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-10}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-300}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-Admin}
+      ORDER_TTL_SECONDS: ${ORDER_TTL_SECONDS:-900}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CHAOS_LAB_ENABLED: "true"
+      CHAOS_LAB_SSH_PASS: "022006"
+      SMTP_HOST: ${SMTP_HOST:-mail.privateemail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-alerts@osiriscare.net}
+      LOCAL_MASTER_KEY_PATH: /app/data/integration-master.key
+      ALERT_EMAIL: ${ALERT_EMAIL:-administrator@osiriscare.net}
+      MICROSOFT_PARTNER_CLIENT_ID: ${MICROSOFT_PARTNER_CLIENT_ID:-}
+      MICROSOFT_PARTNER_CLIENT_SECRET: ${MICROSOFT_PARTNER_CLIENT_SECRET:-}
+      MICROSOFT_PARTNER_TENANT_ID: ${MICROSOFT_PARTNER_TENANT_ID:-common}
+      GOOGLE_PARTNER_CLIENT_ID: ${GOOGLE_PARTNER_CLIENT_ID:-}
+      GOOGLE_PARTNER_CLIENT_SECRET: ${GOOGLE_PARTNER_CLIENT_SECRET:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+    volumes:
+      - ./secrets:/app/secrets:ro
+      - ./runbooks:/app/runbooks:ro
+      # Removed: build-context mount superseded by dashboard_api_mount
+      - ./app/main.py:/app/main.py:ro
+      - ./app/server.py:/app/server.py:ro
+      - /opt/mcp-server/dashboard_api_mount:/app/dashboard_api:ro
+      - ./agent-packages:/opt/mcp-server/agent-packages:ro
+      - /opt/backups/status:/opt/backups/status:ro
+      - /root/.hcloud-token:/root/.hcloud-token:ro
+      - ./wireguard:/opt/mcp-server/wireguard:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+  # Central Command Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: central-command
+    volumes:
+      - ./frontend_dist:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+    ports:
+      - "80"
+    depends_on:
+      - mcp-server
+    networks:
+      - mcp-network
+
+  # Go Checkin Receiver - replaces Python /api/appliances/checkin
+  checkin-receiver:
+    image: alpine:3.19
+    container_name: checkin-receiver
+    restart: unless-stopped
+    entrypoint: ["/opt/checkin-receiver", "--port", "8001", "--db", "postgresql://mcp_app:${POSTGRES_PASSWORD:-mcp-secure-password}@pgbouncer:6432/mcp", "--auth-token", "${API_KEY_SECRET:-}"]
+    volumes:
+      - /opt/mcp-server/checkin-receiver:/opt/checkin-receiver:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+
+  # PgBouncer - Connection pooler for RLS tenant isolation
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: mcp-pgbouncer
+    restart: unless-stopped
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    ports:
+      - "127.0.0.1:6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U mcp_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
+
+networks:
+  mcp-network:
+    driver: bridge
