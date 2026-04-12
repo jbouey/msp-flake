@@ -39,6 +39,7 @@ const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.S
 const FleetUpdates = lazy(() => import('./pages/FleetUpdates'));
 const Provisions = lazy(() => import('./pages/Provisions'));
 const ChaosLab = lazy(() => import('./pages/ChaosLab'));
+const ReconcileEvents = lazy(() => import('./pages/ReconcileEvents'));
 const CVEWatch = lazy(() => import('./pages/CVEWatch'));
 const ComplianceLibrary = lazy(() => import('./pages/ComplianceLibrary'));
 const Users = lazy(() => import('./pages/Users'));
@@ -216,6 +217,7 @@ const pageTitles: Record<string, string> = {
   '/fleet-updates': 'Fleet Updates',
   '/provisions': 'Provisions',
   '/chaos-lab': 'Chaos Lab',
+  '/reconcile-events': 'State Reconciliation',
   '/vpn': 'VPN Management',
   '/cve-watch': 'CVE Watch',
   '/compliance-library': 'Compliance Library',
@@ -370,6 +372,7 @@ const AppLayout: React.FC = () => {
               <Route path="/fleet-updates" element={<FleetUpdates />} />
               <Route path="/provisions" element={<Provisions />} />
               <Route path="/chaos-lab" element={<ChaosLab />} />
+              <Route path="/reconcile-events" element={<ReconcileEvents />} />
               <Route path="/vpn" element={<VPNManagement />} />
               <Route path="/cve-watch" element={<CVEWatch />} />
               <Route path="/compliance-library" element={<ComplianceLibrary />} />

@@ -379,6 +379,42 @@ export interface ChaosHistoryRow {
   step_count: string;
 }
 
+// ReconcileEvent — Session 205 Phase 3 forensic record of a time-travel
+// reconciliation (VM snapshot revert, backup restore, disk clone). Admin-only.
+export interface ReconcileEvent {
+  event_id: string;
+  appliance_id: string;
+  site_id: string;
+  detected_at: string | null;
+  detection_signals: string[];
+  reported_boot_counter: number | null;
+  last_known_boot_counter: number | null;
+  reported_generation_uuid: string | null;
+  last_known_generation_uuid: string | null;
+  reported_uptime_seconds: number | null;
+  clock_skew_seconds: number | null;
+  plan_generated_at: string | null;
+  plan_runbook_ids: string[];
+  plan_nonce_epoch_hex: string | null;
+  plan_status: 'pending' | 'applied' | 'failed' | 'rejected' | string;
+  plan_applied_at: string | null;
+  post_boot_counter: number | null;
+  post_generation_uuid: string | null;
+  error_message: string | null;
+}
+
+export const reconcileApi = {
+  events: (params?: { site_id?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.site_id) qs.set('site_id', params.site_id);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const s = qs.toString();
+    return fetchSitesApi<{ rows: ReconcileEvent[]; count: number }>(
+      `/admin/reconcile/events${s ? `?${s}` : ''}`,
+    );
+  },
+};
+
 export const chaosLabApi = {
   listBundles: () => fetchSitesApi<ChaosBundle[]>('/admin/chaos/bundles'),
 
