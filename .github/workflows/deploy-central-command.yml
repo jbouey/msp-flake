@@ -153,9 +153,23 @@ jobs:
           EOF
 
       - name: Run database migrations
+        # Fail-closed: silent migration drift caused the 2026-04-12 90-min
+        # fleet-order outage. If migrations fail, this step exits non-zero
+        # so the Rollback on failure job triggers. The startup hook in
+        # main.py also applies migrations fail-closed on every boot —
+        # this CI step is belt-and-suspenders.
         run: |
-          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
-            docker exec mcp-server python3 /app/dashboard_api/migrate.py up || echo "Migration runner failed — manual migration may be needed"
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} bash -s <<'EOF'
+            set -e
+            docker exec mcp-server python3 /app/dashboard_api/migrate.py status
+            docker exec mcp-server python3 /app/dashboard_api/migrate.py up
+            PENDING_OUT=$(docker exec mcp-server python3 /app/dashboard_api/migrate.py status)
+            PENDING_COUNT=$(echo "$PENDING_OUT" | grep -c pending || true)
+            if [ "$PENDING_COUNT" -ne 0 ]; then
+              echo "FATAL: $PENDING_COUNT migration(s) still pending after apply"
+              echo "$PENDING_OUT"
+              exit 1
+            fi
           EOF
 
       - name: Restart services

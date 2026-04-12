@@ -3223,7 +3223,11 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     checkin.ip_addresses[0] if checkin.ip_addresses else None
                 )
         except Exception as e:
-            logger.warning(f"Failed to update appliances table: {e}")
+            # Session 205: transactional step failures escalated from warning to
+            # error. Silent savepoint failures previously caused the 2026-04-12
+            # 90-min fleet-order outage — the log shipper's alert rule fires
+            # on ERROR not WARNING.
+            logger.error(f"Failed to update appliances table: {e}")
 
         # === STEP 3.5b: Persist time-travel state (Session 205 Phase 2) ===
         # Store the daemon's reported boot_counter + generation_uuid. The
@@ -3244,7 +3248,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     """, checkin.boot_counter, checkin.generation_uuid,
                         canonical_id, checkin.site_id)
             except Exception as e:
-                logger.warning(
+                # Transactional step failure — escalated to error (see note above).
+                logger.error(
                     f"Checkin {checkin.site_id}: time-travel state persist failed: {e}"
                 )
 
@@ -3272,7 +3277,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                                 f"key={checkin.agent_public_key[:12]}..."
                             )
             except Exception as e:
-                logger.warning(f"Failed to register agent public key: {e}")
+                logger.error(f"Failed to register agent public key: {e}")
 
         # === STEP 3.6b: Update WireGuard VPN status ===
         if checkin.wg_connected and checkin.wg_ip:
@@ -3283,8 +3288,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         checkin.wg_ip, checkin.site_id
                     )
             except Exception as e:
-                import logging
-                logging.warning(f"Checkin {checkin.site_id}: WireGuard status update failed: {e}")
+                logger.error(f"Checkin {checkin.site_id}: WireGuard status update failed: {e}")
 
         # === STEP 3.7: Sync connected Go agents to go_agents table ===
         # Use a savepoint so failures here don't poison the outer transaction
@@ -3533,7 +3537,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 if mesh_peers:
                     logger.info(f"Checkin {checkin.site_id}: delivering {len(mesh_peers)} mesh peer(s) for cross-subnet discovery")
         except Exception as e:
-            logger.warning(f"Checkin {checkin.site_id}: mesh peer lookup failed: {e}")
+            logger.error(f"Checkin {checkin.site_id}: mesh peer lookup failed: {e}")
 
         # === STEP 3.9: Peer witness hash exchange ===
         # Store incoming witness attestations and bundle hashes.
@@ -3591,7 +3595,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 if peer_bundle_hashes:
                     logger.info(f"Checkin {checkin.site_id}: delivering {len(peer_bundle_hashes)} peer bundle hash(es) for witnessing")
         except Exception as e:
-            logger.warning(f"Witness exchange during checkin: {e}")
+            logger.error(f"Witness exchange during checkin: {e}")
 
         # === STEP 4: Get pending orders for this appliance ===
         pending_orders = []
@@ -3623,7 +3627,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     for row in order_rows
                 ]
         except Exception as e:
-            logger.warning(f"Failed to fetch admin orders: {e}")
+            logger.error(f"Failed to fetch admin orders: {e}")
 
         # Also check orders table (healing orders from incidents)
         try:
@@ -3657,7 +3661,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         "signed_payload": row["signed_payload"],
                     })
         except Exception as e:
-            logger.warning(f"Failed to fetch healing orders: {e}")
+            logger.error(f"Failed to fetch healing orders: {e}")
 
         # === STEP 4.5: Get fleet-wide orders ===
         try:
@@ -3667,7 +3671,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 )
                 pending_orders.extend(fleet_orders)
         except Exception as e:
-            logger.warning(f"Failed to fetch fleet orders: {e}")
+            logger.error(f"Failed to fetch fleet orders: {e}")
 
         # === STEP 5: Get windows targets (conditional credential delivery) ===
         # Always check credential freshness — if creds were updated since last checkin,

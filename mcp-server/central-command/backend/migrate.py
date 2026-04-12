@@ -205,10 +205,23 @@ async def rollback_migration(
 
 
 async def cmd_up(target: Optional[str] = None) -> int:
-    """Apply pending migrations."""
+    """Apply pending migrations.
+
+    Serialized via pg_advisory_lock(8675309) so concurrent mcp-server
+    replicas don't race during startup-apply (Session 205 hardening).
+    The lock is an application-level lock, not a relation lock — two
+    replicas starting simultaneously will see the second one block on
+    `pg_advisory_lock` until the first finishes applying + unlocks.
+    """
     conn = await asyncpg.connect(MIGRATION_DB_URL)
+    _MIGRATION_LOCK_ID = 8675309  # Jenny — arbitrary unique int for this advisory lock
+    locked = False
 
     try:
+        # Block concurrent migrators; the unlock at the end is idempotent.
+        await conn.execute(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_ID})")
+        locked = True
+
         await ensure_migrations_table(conn)
         applied = await get_applied_migrations(conn)
         migrations = get_migration_files()
@@ -233,6 +246,11 @@ async def cmd_up(target: Optional[str] = None) -> int:
 
         return 0
     finally:
+        if locked:
+            try:
+                await conn.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_ID})")
+            except Exception:
+                pass  # Connection close below releases the session-level lock anyway
         await conn.close()
 
 

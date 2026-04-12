@@ -1099,6 +1099,49 @@ async def lifespan(app: FastAPI):
         result = await conn.execute(text("SELECT 1"))
         logger.info("Database connected")
 
+    # Apply pending migrations — FAIL-CLOSED.
+    # Rationale: silent migration drift caused a 90-min fleet-order outage on
+    # 2026-04-12 (missing 160_time_travel_reconciliation, STEP 3.5b blew up
+    # with "column boot_counter does not exist", poisoning the checkin
+    # transaction, making every appliance silently starve for fleet orders
+    # while backend returned HTTP 200). Round-table consensus: we do NOT
+    # serve traffic if migrations aren't current. `cmd_up` records per-version
+    # checksums in schema_migrations, takes a pg_advisory_lock(8675309) so
+    # concurrent replicas don't race. See docs/session-206-plan-fleet-order-rollback-detection.md
+    # and docs/runbook-idempotency-audit-2026-04-12.md for the full audit trail.
+    try:
+        import asyncpg as _pg
+        from dashboard_api.migrate import cmd_up, get_migration_files, get_applied_migrations
+        _raw = os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
+        _migration_url = os.getenv("MIGRATION_DATABASE_URL", _raw)
+        _conn = await _pg.connect(_migration_url)
+        try:
+            _applied = await get_applied_migrations(_conn)
+        finally:
+            await _conn.close()
+        _files = get_migration_files()
+        _pending = [v for v, _, _ in _files if v not in _applied]
+        if _pending:
+            logger.info("Applying pending migrations", count=len(_pending), versions=_pending)
+            rc = await cmd_up(None)
+            if rc != 0:
+                raise RuntimeError(f"cmd_up returned non-zero exit code {rc}")
+            # Re-verify: after apply, pending must be empty
+            _conn2 = await _pg.connect(_migration_url)
+            try:
+                _applied2 = await get_applied_migrations(_conn2)
+            finally:
+                await _conn2.close()
+            _still_pending = [v for v, _, _ in _files if v not in _applied2]
+            if _still_pending:
+                raise RuntimeError(f"migrations still pending after apply: {_still_pending}")
+            logger.info("Migrations applied successfully", count=len(_pending))
+        else:
+            logger.info("No pending migrations", applied=len(_applied))
+    except Exception as e:
+        logger.error("FATAL: migration apply failed — refusing to start", error=str(e))
+        raise SystemExit(2)
+
     # Load check type registry (single source of truth for check names → categories)
     try:
         from dashboard_api.db_queries import load_check_registry
@@ -1796,15 +1839,38 @@ async def admin_health(user: dict = Depends(require_auth)):
         except Exception as e:
             return f"error: {str(e)}", False
 
-    redis_result, db_result, minio_result = await asyncio.gather(
-        check_redis(), check_database(), check_minio()
+    async def check_schema():
+        """Schema drift probe. Session 205 hardening — a missing migration
+        silently broke fleet-order delivery for 90 min. This probe surfaces
+        pending migrations so operators see drift BEFORE it causes outages.
+        """
+        try:
+            import asyncpg as _pg
+            from dashboard_api.migrate import get_migration_files, get_applied_migrations
+            _raw = os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
+            _url = os.getenv("MIGRATION_DATABASE_URL", _raw)
+            _c = await _pg.connect(_url)
+            try:
+                applied = await get_applied_migrations(_c)
+            finally:
+                await _c.close()
+            files = get_migration_files()
+            pending = [v for v, _, _ in files if v not in applied]
+            payload = {"applied": len(applied), "pending": pending}
+            return payload, len(pending) == 0
+        except Exception as e:
+            return {"error": str(e)}, False
+
+    redis_result, db_result, minio_result, schema_result = await asyncio.gather(
+        check_redis(), check_database(), check_minio(), check_schema()
     )
 
     checks["redis"] = redis_result[0]
     checks["database"] = db_result[0]
     checks["minio"] = minio_result[0]
+    checks["schema"] = schema_result[0]
 
-    if not all([redis_result[1], db_result[1], minio_result[1]]):
+    if not all([redis_result[1], db_result[1], minio_result[1], schema_result[1]]):
         checks["status"] = "degraded"
 
     checks["timestamp"] = datetime.now(timezone.utc).isoformat()
@@ -1825,7 +1891,7 @@ async def admin_health(user: dict = Depends(require_auth)):
     if crashed_tasks:
         checks["status"] = "degraded"
 
-    if not all([redis_result[1], db_result[1], minio_result[1]]):
+    if not all([redis_result[1], db_result[1], minio_result[1], schema_result[1]]):
         checks["status"] = "degraded"
 
     status_code = 200 if checks["status"] == "ok" else 503
