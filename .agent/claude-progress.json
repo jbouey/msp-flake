@@ -1,6 +1,6 @@
 {
   "session": 205,
-  "updated": "2026-04-12T15:32:49.588460Z",
+  "updated": "2026-04-12T17:25:51.022576Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -18,7 +18,7 @@
     "compliance_packets": "session201_persisted_to_db_hipaa_6yr_retention_compliance_packets_table",
     "ots_proofs": "session201_131678_anchored_100972_legacy_mark_proof_anchored_dry_audit_logged",
     "evidence_verify": "session201_evidence_chain_fixed_delete_insert_upsert_partitioned_table",
-    "fleet_updates": "v0.3.87_both_appliances_health_check_timer_fixed_emergency_access_handlers_l2_hardened",
+    "fleet_updates": "v0.4.0_2_of_3_appliances_osiriscare_1_and_2_on_0_4_0_osiriscare_3_stuck_on_0_3_92_root_cause_migration_161_dropped_fleet_order_completions_delete_trigger_plus_ec0a9ed_savepoints_plus_1bc6e27_evidence_insert_only",
     "mesh_discovery": "backend_authoritative_target_assignment_discovery_filter_fixed_normalize_mac_clarified_ui_renamed",
     "landing_page": "session204_always_audit_ready_proof_not_paperwork_fear_language_no_ai_hints_deploy_3hrs",
     "l2_pipeline": "hypothesis_driven_triage_validation_gate_confidence_tagging_audit_trail",
@@ -58,7 +58,7 @@
     "time_travel_reconciliation": "session205_phases_2_3_3_1_shipped_ed25519_signed_plans_min_2_signals_nonce_epoch_rotation_client_side_boot_counter_regression_v0_4_0_binary_deployed_admin_ui_at_reconcile_events_124_runbook_idempotency_audited",
     "migration_auto_apply": "session205_cont_shipped_fail_closed_startup_apply_main_py_lifespan_pg_advisory_lock_migration_database_url_env_required_schema_probe_admin_health_9_logger_warning_to_error_nix_gc_timer_armed_docker_compose_source_controlled_bb4b775_plus_13c0026"
   },
-  "current_blocker": "Fleet-order delivery broken (STEP 4.5 txn abort). Root cause: get_fleet_orders_for_appliance DELETEs in try/except without savepoints poison asyncpg transaction. Fix next session: wrap each DELETE in async with conn.transaction() savepoint. Impact: v0.4.0 rollout stuck at 1/3 appliances.",
+  "current_blocker": "osiriscare-3 stuck on v0.3.92 \u2014 needs root-cause diagnosis (why did osiriscare-2 accept v0.4.0 but osiriscare-3 hasn't? same site, same order, post-fix state). Next: check osiriscare-3's recent daemon logs + completion records.",
   "session_202_work": {
     "summary": "Round-table audit: 67 files, 5 swarms, 360 test cases identified. Critical security fixes + DRY consolidation.",
     "security_fixes": [
@@ -855,8 +855,11 @@
     "Service recovery: restart 5/10/30s on failure"
   ],
   "active_tasks": [
-    "chaos_lab_tunnel_repair_blocked_on_imac_access_task_83",
-    "phase_3_1_client_side_boot_counter_regression_detection_optional",
-    "deploy_time_travel_phases_2_3_to_vps_pending_commit"
+    "osiriscare_3_stuck_on_v0_3_92_post_migration_161",
+    "savepoint_audit_evidence_chain_routes_background_tasks_client_portal_partners_portal",
+    "migration_162_table_classifications_plus_test_audit_trigger_allowlist",
+    "testcontainers_ci_integration_harness",
+    "prometheus_msp_fleet_active_orders_undelivered_gauge",
+    "chaos_lab_tunnel_repair_task_83"
   ]
 }
