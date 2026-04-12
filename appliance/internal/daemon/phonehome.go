@@ -662,38 +662,48 @@ func getHostname() string {
 // or from an installed disk. This prevents the ghost-registration bug where an
 // appliance registers from the live USB environment but the install never completes.
 //
-// Detection: NixOS live ISOs mount root as tmpfs with a squashfs nix store.
-// Installed systems have a real disk partition (ext4/btrfs) at /.
+// Detection order (most reliable first):
+//  1. /proc/mounts: if / is on a real disk (ext4/btrfs/xfs), it's installed.
+//     If / is tmpfs/ramfs/squashfs, it's a live ISO.
+//  2. MSP-DATA partition label exists → installed (installer creates this).
+//  3. /proc/cmdline: fallback — only trust if mounts unavailable. NixOS installed
+//     systems may have "squashfs" in initrd paths, so we can't use cmdline alone.
 func detectBootSource() string {
-	// Check /proc/cmdline for live ISO indicators
-	cmdline, err := os.ReadFile("/proc/cmdline")
-	if err == nil {
-		cmd := string(cmdline)
-		if strings.Contains(cmd, "boot.shell_on_fail") ||
-			strings.Contains(cmd, "copytoram") ||
-			strings.Contains(cmd, "squashfs") {
-			return "live_usb"
-		}
-	}
-
-	// Check if root filesystem is tmpfs (live ISO) vs real disk
+	// PRIMARY: Check root filesystem type — most reliable signal.
+	// Installed: ext4, btrfs, xfs, zfs. Live: tmpfs, ramfs, squashfs, overlay.
 	mounts, err := os.ReadFile("/proc/mounts")
 	if err == nil {
 		for _, line := range strings.Split(string(mounts), "\n") {
 			fields := strings.Fields(line)
 			if len(fields) >= 3 && fields[1] == "/" {
 				fstype := fields[2]
-				if fstype == "tmpfs" || fstype == "ramfs" || fstype == "squashfs" {
+				switch fstype {
+				case "tmpfs", "ramfs", "squashfs", "overlay":
 					return "live_usb"
+				case "ext4", "ext3", "ext2", "btrfs", "xfs", "zfs", "f2fs":
+					return "installed_disk"
 				}
-				return "installed_disk"
+				// Unknown fstype — fall through to secondary checks
 			}
 		}
 	}
 
-	// Check for the MSP-DATA partition label (created by installer)
+	// SECONDARY: Check for the MSP-DATA partition label (created by installer).
+	// If present, the system has been installed regardless of cmdline.
 	if _, err := os.Stat("/dev/disk/by-label/MSP-DATA"); err == nil {
 		return "installed_disk"
+	}
+
+	// TERTIARY: /proc/cmdline heuristic — only when mounts unavailable.
+	// Note: NixOS installed systems CAN have "squashfs" in cmdline (initrd paths),
+	// so this is not reliable on its own. We only reach here if mounts check failed.
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err == nil {
+		cmd := string(cmdline)
+		if strings.Contains(cmd, "boot.shell_on_fail") ||
+			strings.Contains(cmd, "copytoram") {
+			return "live_usb"
+		}
 	}
 
 	return "unknown"
