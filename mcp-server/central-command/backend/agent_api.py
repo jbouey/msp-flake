@@ -663,6 +663,7 @@ async def report_incident(
                             details=l2_details,
                             pre_state=incident.pre_state,
                             hipaa_controls=incident.hipaa_controls,
+                            site_id=incident.site_id,
                         )
                         await record_l2_decision(
                             db, existing_id, decision,
@@ -1028,6 +1029,7 @@ async def report_incident(
                     details=l2_details,
                     pre_state=incident.pre_state,
                     hipaa_controls=incident.hipaa_controls,
+                    site_id=incident.site_id,
                 )
 
                 try:
@@ -2300,6 +2302,7 @@ async def agent_l2_plan(
         pre_state=request.raw_data.get("pre_state", {}),
         hipaa_controls=hipaa_controls,
         hypotheses=hypotheses,
+        site_id=request.site_id,
     )
 
     # Step 3: Record decision with hypotheses for flywheel analysis

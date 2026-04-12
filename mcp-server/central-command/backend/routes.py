@@ -2364,6 +2364,69 @@ async def get_flywheel_intelligence(db: AsyncSession = Depends(get_db), user: di
     }
 
 
+@router.get("/l2-budget/{site_id}")
+async def get_l2_budget(
+    site_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """L2 spend transparency: show this site's daily budget + current usage.
+
+    Exposes the contextual budget algorithm state so the admin UI can
+    display "L2 budget: $0.50/day. Used: $0.18. Remaining: $0.32." and
+    surface when a site is approaching its cap.
+    """
+    from dashboard_api.l2_planner import compute_l2_budget_context
+
+    # Pattern name is optional here — we use a sentinel to get site-wide state
+    # without incrementing any per-pattern counters.
+    ctx = await compute_l2_budget_context(site_id, "__budget_query__")
+
+    # Fleet-wide patterns summary: list all patterns that called L2 today
+    from .fleet import get_pool
+    from .tenant_middleware import admin_connection
+    pool = await get_pool()
+    patterns: list[dict] = []
+    async with admin_connection(pool) as conn:
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT incident_type, call_count, total_cost_usd,
+                       last_runbook_id, last_confidence, last_call_at
+                FROM l2_rate_limits
+                WHERE site_id = $1 AND day = CURRENT_DATE
+                ORDER BY total_cost_usd DESC
+                """,
+                site_id,
+            )
+            for r in rows:
+                d = dict(r)
+                d["total_cost_usd"] = float(d["total_cost_usd"] or 0)
+                d["last_confidence"] = float(d["last_confidence"]) if d["last_confidence"] is not None else None
+                d["last_call_at"] = d["last_call_at"].isoformat() if d["last_call_at"] else None
+                patterns.append(d)
+        except Exception:
+            pass
+
+    spent = ctx.get("spent_today_usd", 0.0)
+    budget = ctx.get("daily_budget_usd", 0.0)
+    remaining = max(0.0, budget - spent)
+    pct_used = round((spent / budget) * 100, 1) if budget > 0 else 0.0
+
+    return {
+        "site_id": site_id,
+        "tier": ctx.get("tier"),
+        "device_count": ctx.get("device_count", 0),
+        "daily_budget_usd": budget,
+        "spent_today_usd": spent,
+        "remaining_usd": round(remaining, 4),
+        "percent_used": pct_used,
+        "distinct_patterns_today": ctx.get("distinct_patterns_today", 0),
+        "patterns": patterns,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/stats", response_model=GlobalStats)
 async def get_global_stats(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Get aggregate statistics across all clients."""

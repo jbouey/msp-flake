@@ -289,3 +289,107 @@ class TestCheckTypeRegistryCompleteness:
             f"Check names in CATEGORY_CHECKS but not in registry or legacy aliases: {real_missing}. "
             "Add them to migration 157."
         )
+
+
+# ---------------------------------------------------------------------------
+# 6. L2 budget algorithm invariants
+# ---------------------------------------------------------------------------
+class TestL2BudgetAlgorithm:
+    """Verifies the Session 205 contextual L2 budget algorithm stays sane.
+    Algorithm must protect customer budgets in erratic environments where
+    the same pattern recurs thousands of times per day."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.l2_src = (BACKEND / "l2_planner.py").read_text()
+
+    def test_l2_enabled_defaults_off(self):
+        """L2_ENABLED must default to false — the kill switch is opt-in."""
+        m = re.search(r'L2_ENABLED\s*=\s*_L2_ENABLED_ENV\s+in\s+\(([^)]+)\)', self.l2_src)
+        assert m, "L2_ENABLED parsing block not found"
+        # The env default must be false
+        assert 'L2_ENABLED", "false"' in self.l2_src, (
+            "L2_ENABLED env var must default to 'false' — operators opt in explicitly"
+        )
+
+    def test_tier_budgets_are_sane(self):
+        """Per-tier budgets must form a monotonic increasing sequence."""
+        # Extract TIER_DAILY_BUDGET_USD dict
+        m = re.search(r"TIER_DAILY_BUDGET_USD\s*=\s*\{([^}]+)\}", self.l2_src, re.DOTALL)
+        assert m, "TIER_DAILY_BUDGET_USD not found"
+        block = m.group(1)
+        # Parse tier: budget pairs — accept floats or ints
+        tiers = {}
+        for tier, val in re.findall(r'"(\w+)"\s*:\s*([\d.]+)', block):
+            tiers[tier] = float(val)
+
+        required_tiers = {"floor", "standard", "pro", "enterprise"}
+        assert required_tiers.issubset(tiers.keys()), (
+            f"TIER_DAILY_BUDGET_USD missing required tiers: {required_tiers - tiers.keys()}"
+        )
+
+        # Monotonic increase
+        seq = [tiers["floor"], tiers["standard"], tiers["pro"], tiers["enterprise"]]
+        for i in range(len(seq) - 1):
+            assert seq[i] < seq[i + 1], (
+                f"Tier budgets not monotonic: {seq} — floor < standard < pro < enterprise required"
+            )
+
+        # Sanity bounds: floor >= $0.05, enterprise <= $10
+        assert tiers["floor"] >= 0.05, "floor tier budget unreasonably low"
+        assert tiers["enterprise"] <= 10.0, "enterprise tier budget unreasonably high"
+
+    def test_pattern_hard_cap_present(self):
+        """PATTERN_HARD_CAP must exist and be reasonable (5 ≤ cap ≤ 50)."""
+        m = re.search(r'PATTERN_HARD_CAP\s*=\s*int\(os\.getenv\("L2_PATTERN_HARD_CAP",\s*"(\d+)"\)', self.l2_src)
+        assert m, "PATTERN_HARD_CAP not found"
+        default_cap = int(m.group(1))
+        assert 5 <= default_cap <= 50, (
+            f"PATTERN_HARD_CAP default is {default_cap} — should be 5-50. "
+            "Too low = can't learn; too high = unbounded spend per pattern."
+        )
+
+    def test_budget_check_called_before_llm(self):
+        """_check_l2_budget must be called BEFORE any LLM API call in analyze_incident."""
+        # Find analyze_incident function body
+        m = re.search(
+            r'async def analyze_incident\([^)]+\).*?(?=\nasync def |\Z)',
+            self.l2_src, re.DOTALL,
+        )
+        assert m, "analyze_incident function not found"
+        body = m.group(0)
+
+        budget_check_pos = body.find("_check_l2_budget")
+        llm_call_pos = min(
+            (p for p in [body.find("call_openai"), body.find("call_anthropic"), body.find("call_azure_openai")]
+             if p > 0), default=-1,
+        )
+        assert budget_check_pos > 0, "_check_l2_budget not called in analyze_incident"
+        assert llm_call_pos > 0, "no LLM call found in analyze_incident"
+        assert budget_check_pos < llm_call_pos, (
+            "Budget check MUST happen before any LLM call — otherwise budget is advisory only"
+        )
+
+    def test_cost_recorded_on_success(self):
+        """Every successful L2 call must record cost via _record_pattern_l2_call."""
+        m = re.search(
+            r'async def analyze_incident\([^)]+\).*?(?=\nasync def |\Z)',
+            self.l2_src, re.DOTALL,
+        )
+        assert m
+        body = m.group(0)
+        assert "_record_pattern_l2_call" in body, (
+            "_record_pattern_l2_call must be invoked after successful L2 calls — "
+            "otherwise per-pattern budgets never update"
+        )
+
+    def test_migration_159_exists(self):
+        """l2_rate_limits table migration must exist."""
+        migration = BACKEND / "migrations" / "159_l2_rate_limits.sql"
+        assert migration.exists(), "Migration 159 (l2_rate_limits) missing"
+        sql = migration.read_text()
+        assert "CREATE TABLE" in sql and "l2_rate_limits" in sql
+        # Required columns
+        for col in ("site_id", "incident_type", "day", "call_count",
+                    "last_runbook_id", "total_cost_usd"):
+            assert col in sql, f"migration 159 missing column: {col}"

@@ -35,6 +35,14 @@ L2_ENABLED = _L2_ENABLED_ENV in ("true", "1", "yes", "on")
 # Even when L2_ENABLED=true, a hard daily cap prevents any single day from
 # exceeding budget. Default 500 calls ≈ $0.50/day at current model pricing.
 MAX_DAILY_L2_CALLS = int(os.getenv("MAX_DAILY_L2_CALLS", "500"))
+
+# --- Per-pattern L2 rate limit ---
+# Cap L2 calls per (site, incident_type, day) at MAX_L2_CALLS_PER_PATTERN.
+# After this, L2 returns L3 escalation without calling the LLM.
+# This is the structural protection against runaway spend on erratic
+# patterns — worst case at default 3: N_sites * N_patterns * 3 calls/day.
+# Configurable via env so ops can tune per deployment.
+MAX_L2_CALLS_PER_PATTERN = int(os.getenv("MAX_L2_CALLS_PER_PATTERN", "3"))
 # In-memory fallback (used only when Redis is unavailable)
 _daily_l2_calls = 0
 _daily_l2_reset = datetime.now(timezone.utc).date()
@@ -79,6 +87,286 @@ def _record_api_failure():
             consecutive_failures=_consecutive_api_failures,
             cooldown_minutes=CIRCUIT_BREAKER_COOLDOWN_MINUTES,
         )
+
+
+# =============================================================================
+# Contextual L2 Budget Algorithm (Session 205)
+#
+# Flat rate limits are broken in practice: a 5-device clinic and a 100-device
+# hospital get the same budget; well-known patterns cost the same as novel
+# ones; pathological patterns bleed unbounded.
+#
+# Instead, compute a per-customer daily budget in $USD that scales with:
+#   - Subscription tier (floor vs enterprise)
+#   - Device density (log-scaled — more devices need more budget, sub-linear)
+#   - Per-pattern cap (single pattern can't consume entire customer budget)
+#
+# Plus structural guards:
+#   - Hard cap per pattern per day (10 calls — stops pathological bleeding)
+#   - Cache-first (recent same-signature decision reused without LLM call)
+# =============================================================================
+
+# Per-tier daily L2 budget in USD
+TIER_DAILY_BUDGET_USD = {
+    "floor": 0.10,        # $200/mo customers — minimal intelligence
+    "standard": 0.50,     # $499-799/mo — room to explore
+    "pro": 1.00,          # $799-1299/mo
+    "enterprise": 2.00,   # $1299+/mo — near-uncapped with per-pattern limits
+}
+DEFAULT_TIER_BUDGET_USD = 0.25  # unknown/null tier defaults to conservative
+
+# Estimated cost per L2 call (Haiku pricing at avg 2K input + 500 output tokens)
+# This is an estimate — actual cost varies. Keep conservative high to protect budget.
+ESTIMATED_COST_PER_CALL_USD = 0.003
+
+# Hard cap per pattern regardless of tier — stops pathological bleeding
+PATTERN_HARD_CAP = int(os.getenv("L2_PATTERN_HARD_CAP", "10"))
+
+
+def _tier_budget_usd(tier: Optional[str]) -> float:
+    """Look up per-tier daily L2 budget. NULL/unknown → conservative default."""
+    if not tier:
+        return DEFAULT_TIER_BUDGET_USD
+    return TIER_DAILY_BUDGET_USD.get(tier.lower(), DEFAULT_TIER_BUDGET_USD)
+
+
+def _device_multiplier(device_count: int) -> float:
+    """Sub-linear device count scaling.
+
+    Rationale: more devices → more unique patterns expected → more budget needed.
+    BUT a 100-device site does not need 100x the budget of a 1-device site.
+    log2 scaling: 1 device=1.0x, 8 devices=3.0x, 100 devices=6.6x, 1000=10x.
+    """
+    import math
+    return max(1.0, math.log2(max(device_count, 2)))
+
+
+async def compute_l2_budget_context(
+    site_id: str, incident_type: str,
+) -> Dict[str, Any]:
+    """Single-query lookup of all inputs needed for the L2 budget decision.
+
+    Returns a dict with:
+      - spent_today_usd: total $ burned on L2 today for this customer
+      - pattern_cost_today_usd: $ burned on THIS pattern today
+      - pattern_calls_today: raw call count for this pattern today
+      - daily_budget_usd: computed budget for this customer
+      - pattern_budget_usd: this pattern's share of daily budget
+      - tier: customer subscription tier
+      - device_count: total managed devices at the customer
+      - distinct_patterns_today: how many patterns triggered L2 today
+      - last_runbook: most recent L2 recommendation for this pattern (cache candidate)
+      - last_confidence: confidence of the last recommendation
+
+    Failure mode: if any lookup fails, returns a conservative default that
+    allows L2 (don't block the happy path on infra issues). The global
+    MAX_DAILY_L2_CALLS cap is the backstop.
+    """
+    default = {
+        "spent_today_usd": 0.0,
+        "pattern_cost_today_usd": 0.0,
+        "pattern_calls_today": 0,
+        "daily_budget_usd": DEFAULT_TIER_BUDGET_USD,
+        "pattern_budget_usd": DEFAULT_TIER_BUDGET_USD / 3,
+        "tier": None,
+        "device_count": 1,
+        "distinct_patterns_today": 1,
+        "last_runbook": None,
+        "last_confidence": None,
+    }
+    try:
+        from .fleet import get_pool
+        from .tenant_middleware import admin_connection
+        pool = await get_pool()
+        async with admin_connection(pool) as conn:
+            # One query pulling everything we need.
+            # sites.client_org_id → client_orgs.subscription_plan (tier)
+            # go_agents + workstations counts = device density
+            # l2_decisions SUM(cost_usd) = spent today
+            # l2_rate_limits row for this pattern = pattern-local state
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    COALESCE(co.subscription_plan, 'floor') as tier,
+                    COALESCE(
+                        (SELECT COUNT(*) FROM go_agents WHERE site_id = $1),
+                        0
+                    ) +
+                    COALESCE(
+                        (SELECT COUNT(*) FROM workstations WHERE site_id = $1),
+                        0
+                    ) +
+                    COALESCE(
+                        (SELECT COUNT(*) FROM site_appliances
+                         WHERE site_id = $1 AND deleted_at IS NULL),
+                        0
+                    ) as device_count,
+                    COALESCE(
+                        (SELECT SUM(cost_usd) FROM l2_decisions ld
+                         JOIN incidents i ON i.id::text = ld.incident_id
+                         WHERE i.site_id = $1
+                           AND ld.created_at >= CURRENT_DATE),
+                        0
+                    ) as spent_today_usd,
+                    COALESCE(
+                        (SELECT total_cost_usd FROM l2_rate_limits
+                         WHERE site_id = $1 AND incident_type = $2
+                           AND day = CURRENT_DATE),
+                        0
+                    ) as pattern_cost_today_usd,
+                    COALESCE(
+                        (SELECT call_count FROM l2_rate_limits
+                         WHERE site_id = $1 AND incident_type = $2
+                           AND day = CURRENT_DATE),
+                        0
+                    ) as pattern_calls_today,
+                    COALESCE(
+                        (SELECT last_runbook_id FROM l2_rate_limits
+                         WHERE site_id = $1 AND incident_type = $2
+                           AND day = CURRENT_DATE),
+                        NULL
+                    ) as last_runbook,
+                    COALESCE(
+                        (SELECT last_confidence FROM l2_rate_limits
+                         WHERE site_id = $1 AND incident_type = $2
+                           AND day = CURRENT_DATE),
+                        NULL
+                    ) as last_confidence,
+                    COALESCE(
+                        (SELECT COUNT(DISTINCT incident_type) FROM l2_rate_limits
+                         WHERE site_id = $1 AND day = CURRENT_DATE),
+                        1
+                    ) as distinct_patterns_today
+                FROM sites s
+                LEFT JOIN client_orgs co ON co.id = s.client_org_id
+                WHERE s.site_id = $1
+                """,
+                site_id, incident_type,
+            )
+
+            if not row:
+                return default
+
+            tier = row["tier"]
+            device_count = int(row["device_count"] or 1)
+            spent_today = float(row["spent_today_usd"] or 0)
+            pattern_cost_today = float(row["pattern_cost_today_usd"] or 0)
+            pattern_calls_today = int(row["pattern_calls_today"] or 0)
+            distinct_patterns = max(int(row["distinct_patterns_today"] or 1), 3)
+
+            daily_budget = _tier_budget_usd(tier) * _device_multiplier(device_count)
+            pattern_budget = daily_budget / distinct_patterns
+
+            return {
+                "spent_today_usd": round(spent_today, 6),
+                "pattern_cost_today_usd": round(pattern_cost_today, 6),
+                "pattern_calls_today": pattern_calls_today,
+                "daily_budget_usd": round(daily_budget, 4),
+                "pattern_budget_usd": round(pattern_budget, 4),
+                "tier": tier,
+                "device_count": device_count,
+                "distinct_patterns_today": distinct_patterns,
+                "last_runbook": row["last_runbook"],
+                "last_confidence": row["last_confidence"],
+            }
+    except Exception as e:
+        logger.warning(
+            "L2 budget context lookup failed — allowing call with global cap only",
+            site_id=site_id, incident_type=incident_type, error=str(e),
+        )
+        return default
+
+
+async def _check_l2_budget(
+    site_id: Optional[str], incident_type: str,
+) -> Dict[str, Any]:
+    """Decide whether to call L2 for this incident.
+
+    Returns a dict with:
+      - allowed: bool
+      - reason: str (one of: ok, customer_budget_exceeded, pattern_budget_exceeded,
+                     pattern_hard_cap, no_site_id)
+      - cached_runbook: Optional[str] — when not allowed, the best runbook we
+                        can offer (from recent decisions). None means no fallback.
+      - context: dict with budget state (for logging + admin display)
+
+    Failure mode: infra errors fall through to "allowed" — the global
+    MAX_DAILY_L2_CALLS cap is the safety backstop.
+    """
+    if not site_id:
+        # Legacy callers without site_id bypass per-customer budgets and
+        # rely on the global daily cap.
+        return {"allowed": True, "reason": "no_site_id", "cached_runbook": None, "context": {}}
+
+    ctx = await compute_l2_budget_context(site_id, incident_type)
+
+    # 1. Pattern hard cap — pathological pattern, stop asking the LLM
+    if ctx["pattern_calls_today"] >= PATTERN_HARD_CAP:
+        return {
+            "allowed": False,
+            "reason": "pattern_hard_cap",
+            "cached_runbook": ctx.get("last_runbook"),
+            "context": ctx,
+        }
+
+    # 2. Per-pattern budget (within customer)
+    projected_pattern_cost = ctx["pattern_cost_today_usd"] + ESTIMATED_COST_PER_CALL_USD
+    if projected_pattern_cost > ctx["pattern_budget_usd"]:
+        return {
+            "allowed": False,
+            "reason": "pattern_budget_exceeded",
+            "cached_runbook": ctx.get("last_runbook"),
+            "context": ctx,
+        }
+
+    # 3. Customer daily budget
+    projected_daily_cost = ctx["spent_today_usd"] + ESTIMATED_COST_PER_CALL_USD
+    if projected_daily_cost > ctx["daily_budget_usd"]:
+        return {
+            "allowed": False,
+            "reason": "customer_budget_exceeded",
+            "cached_runbook": ctx.get("last_runbook"),
+            "context": ctx,
+        }
+
+    # 4. OK to call L2
+    return {
+        "allowed": True,
+        "reason": "ok",
+        "cached_runbook": None,
+        "context": ctx,
+    }
+
+
+async def _record_pattern_l2_call(
+    site_id: str, incident_type: str,
+    runbook_id: Optional[str], confidence: float, cost_usd: float = 0.0,
+) -> None:
+    """Record an L2 call against the (site, incident_type, day) budget.
+    Best-effort — failures are logged but don't break the happy path."""
+    try:
+        from .fleet import get_pool
+        from .tenant_middleware import admin_connection
+        pool = await get_pool()
+        async with admin_connection(pool) as conn:
+            await conn.execute(
+                """
+                INSERT INTO l2_rate_limits (
+                    site_id, incident_type, day, call_count,
+                    first_call_at, last_call_at, last_runbook_id, last_confidence, total_cost_usd
+                ) VALUES ($1, $2, CURRENT_DATE, 1, NOW(), NOW(), $3, $4, $5)
+                ON CONFLICT (site_id, incident_type, day) DO UPDATE SET
+                    call_count = l2_rate_limits.call_count + 1,
+                    last_call_at = NOW(),
+                    last_runbook_id = EXCLUDED.last_runbook_id,
+                    last_confidence = EXCLUDED.last_confidence,
+                    total_cost_usd = l2_rate_limits.total_cost_usd + EXCLUDED.total_cost_usd
+                """,
+                site_id, incident_type, runbook_id, confidence, cost_usd,
+            )
+    except Exception as e:
+        logger.warning("L2 rate-limit record failed",
+                       site_id=site_id, incident_type=incident_type, error=str(e))
 
 
 async def _get_and_increment_daily_l2_calls() -> int:
@@ -610,6 +898,7 @@ async def analyze_incident(
     pre_state: Optional[Dict[str, Any]] = None,
     hipaa_controls: Optional[List[str]] = None,
     hypotheses: Optional[List[Dict[str, Any]]] = None,
+    site_id: Optional[str] = None,
 ) -> L2Decision:
     """
     Analyze an incident using LLM and recommend a runbook.
@@ -636,6 +925,36 @@ async def analyze_incident(
             llm_model="none",
             llm_latency_ms=0,
             error="l2_disabled",
+        )
+
+    # --- Contextual budget algorithm (Session 205) ---
+    # Per-customer daily budget × per-pattern cap × cache-first. Protects
+    # against unbounded spend in erratic environments.
+    budget_decision = await _check_l2_budget(site_id, incident_type)
+    if not budget_decision["allowed"]:
+        logger.info("L2 blocked by budget algorithm",
+                    incident_type=incident_type,
+                    reason=budget_decision["reason"],
+                    cached_runbook=budget_decision.get("cached_runbook"),
+                    context=budget_decision.get("context"))
+        # If we have a cached recommendation from earlier today, return IT as
+        # the answer (no LLM call). Otherwise escalate to L3 human review.
+        cached = budget_decision.get("cached_runbook")
+        reason_text = {
+            "customer_budget_exceeded": "Daily L2 budget exceeded for this customer.",
+            "pattern_budget_exceeded": "This incident pattern has exhausted its per-pattern budget.",
+            "pattern_hard_cap": f"Pattern hit hard cap ({PATTERN_HARD_CAP} calls). Flagged for review.",
+        }.get(budget_decision["reason"], "L2 budget exceeded.")
+        return L2Decision(
+            runbook_id=cached,
+            reasoning=f"{reason_text} Using cached recommendation: {cached or 'none'}.",
+            confidence=0.5 if cached else 0.0,
+            alternative_runbooks=[],
+            requires_human_review=cached is None,
+            pattern_signature="",
+            llm_model="none",
+            llm_latency_ms=0,
+            error=budget_decision["reason"],
         )
 
     # --- API error circuit breaker (consecutive failure protection) ---
@@ -766,6 +1085,19 @@ async def analyze_incident(
                     runbook_id=runbook_id,
                     confidence=confidence,
                     latency_ms=latency_ms)
+
+        # Record this call against the (site, incident_type, day) budget so
+        # the next incident of this pattern sees the updated spend.
+        # Also populates the "cached runbook" that the budget algorithm
+        # returns when the budget is exceeded.
+        if site_id:
+            await _record_pattern_l2_call(
+                site_id=site_id,
+                incident_type=incident_type,
+                runbook_id=runbook_id,
+                confidence=confidence,
+                cost_usd=ESTIMATED_COST_PER_CALL_USD,
+            )
 
         return decision
 
