@@ -654,6 +654,30 @@ func (d *Daemon) runCycle(ctx context.Context) {
 	elapsed := time.Since(start)
 	log.Printf("[daemon] Cycle complete in %v (agents=%d)",
 		elapsed, d.registry.ConnectedCount())
+
+	// Touch the activity marker so the zombie-watch systemd timer knows the
+	// daemon is doing real work, not just heartbeating. If this file stops
+	// being updated for 15 minutes, msp-daemon-zombie-watch.timer will
+	// force-restart the daemon to clear the deadlock.
+	touchActivityMarker()
+}
+
+// touchActivityMarker updates /var/lib/msp/.last-activity mtime. The
+// zombie-watch systemd timer checks this file's age and restarts the daemon
+// if the marker is stale, catching the "alive goroutine, dead work" failure
+// mode that systemd's built-in WatchdogSec cannot detect.
+func touchActivityMarker() {
+	const path = "/var/lib/msp/.last-activity"
+	now := time.Now()
+	// Ignore errors — if we can't touch the file, the watchdog will
+	// restart the daemon and we'll try again in a fresh process.
+	if err := os.Chtimes(path, now, now); err != nil {
+		// File doesn't exist — create it
+		f, createErr := os.Create(path)
+		if createErr == nil {
+			_ = f.Close()
+		}
+	}
 }
 
 // runCheckin sends a checkin to Central Command and processes the response.

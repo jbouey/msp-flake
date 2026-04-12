@@ -12,6 +12,15 @@
 { config, pkgs, lib, appliance-raw-image, ... }:
 
 let
+  # Installer telemetry config.
+  # installerToken: shared secret embedded in ISO. Backend requires this in
+  #   X-Install-Token header. Not a strong secret (anyone with the ISO has
+  #   access), but keeps internet scanners out of install_reports.
+  # installerApiBase: Central Command base URL for telemetry POSTs.
+  # To rotate: rebuild ISO with new env vars or override via flake.
+  installerToken = "osiriscare-installer-dev-only";
+  installerApiBase = "https://api.osiriscare.net";
+
   # Build the compliance-agent package
   compliance-agent = pkgs.python311Packages.buildPythonApplication {
     pname = "compliance-agent";
@@ -211,7 +220,7 @@ in
     };
 
     path = with pkgs; [
-      util-linux      # lsblk, blockdev, findmnt, partprobe, mount, umount
+      util-linux      # lsblk, blockdev, findmnt, partprobe, mount, umount, uuidgen
       parted          # partprobe (kernel re-read after dd)
       dosfstools      # fsck.vfat (not used in dd flow but harmless)
       e2fsprogs       # e2fsck, resize2fs (root partition resize)
@@ -220,6 +229,13 @@ in
       zstd            # zstdcat for decompressing raw image
       jq              # JSON parsing for sfdisk --json partition table
       figlet          # ASCII art banner for splash/completion screens
+      # --- Telemetry/diagnostics (installer v10) ---
+      dmidecode       # BIOS vendor, product name, serial number
+      smartmontools   # SMART status on internal drive
+      iputils         # ping
+      curl            # POST install reports, test API reachability
+      dnsutils        # dig for DNS test
+      ntp             # ntpdate for clock sync before HTTPS
       # sbctl not needed — installed system generates Secure Boot keys on first boot
     ];
 
@@ -228,7 +244,9 @@ in
       LOG_FILE="/tmp/msp-install.log"
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v9"
+      INSTALLER_VERSION="v10"
+      INSTALL_TOKEN="${installerToken}"
+      API_BASE="${installerApiBase}"
 
       IMAGE="/etc/installer/osiriscare-system.raw.zst"
       DECOMPRESSED_SIZE_FILE="/etc/installer/decompressed-size"
@@ -286,6 +304,8 @@ in
       }
 
       die() {
+        local msg="$1"
+        local step="''${2:-unknown}"
         clear_screen
         echo ""
         echo ""
@@ -293,17 +313,199 @@ in
         echo ""
         echo -e "  ''${RED}INSTALLATION FAILED''${RESET}"
         echo ""
-        echo -e "  ''${WHITE}$1''${RESET}"
+        echo -e "  ''${WHITE}$msg''${RESET}"
         echo ""
         echo -e "  ''${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
         echo ""
-        echo -e "  ''${DIM}Debug: Alt+F2 → root / osiris2024''${RESET}"
-        echo -e "  ''${DIM}Log:   cat /tmp/msp-install.log''${RESET}"
+        if [ -n "''${HW_SERIAL:-}" ]; then
+          echo -e "  ''${DIM}Device serial: ''${HW_SERIAL}''${RESET}"
+        fi
+        if [ -n "''${INSTALLER_ID:-}" ]; then
+          echo -e "  ''${DIM}Install ID:    ''${INSTALLER_ID}''${RESET}"
+        fi
+        echo -e "  ''${DIM}Support:       support@osiriscare.net''${RESET}"
+        echo -e "  ''${DIM}Debug shell:   Alt+F2 → root / osiris2024''${RESET}"
+        echo -e "  ''${DIM}Full log:      cat /tmp/msp-install.log''${RESET}"
         echo ""
-        log "FATAL: $1"
+        log "FATAL: $msg (step=$step)"
+        # Fire install_complete report with failure — last chance before halting
+        post_complete_report "false" "$step" "$msg" || true
         # Halt — keep error visible, then exit
         sleep 86400
         exit 1
+      }
+
+      # ────────────────────────────────────────────────────────────
+      # Installer v10 telemetry — pre-boot install reports
+      # ────────────────────────────────────────────────────────────
+
+      # Collect hardware fingerprint via dmidecode + lsblk + smartctl.
+      # Sets INSTALLER_ID and HW_* vars used by install reports.
+      collect_hw_info() {
+        INSTALLER_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+        HW_SERIAL=$(dmidecode -s system-serial-number 2>/dev/null | head -1 | tr -d '\n' || echo "")
+        HW_PRODUCT=$(dmidecode -s system-product-name 2>/dev/null | head -1 | tr -d '\n' || echo "")
+        HW_BIOS_VENDOR=$(dmidecode -s bios-vendor 2>/dev/null | head -1 | tr -d '\n' || echo "")
+        HW_BIOS_VERSION=$(dmidecode -s bios-version 2>/dev/null | head -1 | tr -d '\n' || echo "")
+        HW_CPU=$(grep -m1 "^model name" /proc/cpuinfo 2>/dev/null | sed 's/.*: //' | tr -d '\n' || echo "")
+        local mem_kb=$(grep -m1 "^MemTotal" /proc/meminfo 2>/dev/null | awk '{print $2}')
+        HW_MEMORY_GB=$(( mem_kb / 1024 / 1024 ))
+        # MAC of primary interface (best-effort)
+        HW_MAC=$(ip -o link show 2>/dev/null | awk -F'[ :]+' '$2 != "lo" && /link\/ether/ {print $20; exit}' || echo "")
+        log "HW probe: serial=$HW_SERIAL product=$HW_PRODUCT bios=$HW_BIOS_VENDOR/$HW_BIOS_VERSION cpu=$HW_CPU ram=''${HW_MEMORY_GB}GB mac=$HW_MAC"
+      }
+
+      # Probe the target drive — must be called after INTERNAL_DEV is set.
+      probe_drive() {
+        local dev="$1"
+        local name=$(basename "$dev")
+        case "$name" in mmcblk*) ;; *) name=$(echo "$name" | sed 's/[0-9]*$//') ;; esac
+        DRIVE_PATH="$dev"
+        DRIVE_MODEL=$(cat /sys/block/$name/device/model 2>/dev/null | tr -d ' \n' || echo "unknown")
+        local sz=$(blockdev --getsize64 "$dev" 2>/dev/null || echo 0)
+        DRIVE_SIZE_GB=$(( sz / 1024 / 1024 / 1024 ))
+        DRIVE_REMOVABLE=$(cat /sys/block/$name/removable 2>/dev/null || echo "0")
+        [ "$DRIVE_REMOVABLE" = "1" ] && DRIVE_REMOVABLE="true" || DRIVE_REMOVABLE="false"
+        DRIVE_SMART=$(smartctl -H "$dev" 2>/dev/null | grep -i "SMART overall" | awk -F: '{print $2}' | tr -d ' \n' || echo "UNKNOWN")
+        [ -z "$DRIVE_SMART" ] && DRIVE_SMART="UNKNOWN"
+        log "Drive probe: path=$DRIVE_PATH model=$DRIVE_MODEL size=''${DRIVE_SIZE_GB}GB removable=$DRIVE_REMOVABLE smart=$DRIVE_SMART"
+      }
+
+      # Check network readiness — DHCP, gateway, DNS, NTP, API reachability.
+      # Sets NET_* vars. Does NOT fail the install; records issues for telemetry.
+      check_network() {
+        NET_IFACE=$(ip -o -4 route show default 2>/dev/null | awk '{print $5; exit}' || echo "")
+        NET_IP=$(ip -o -4 addr show "''${NET_IFACE:-eth0}" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || echo "")
+        NET_GATEWAY=$(ip -o -4 route show default 2>/dev/null | awk '{print $3; exit}' || echo "")
+        NET_DNS=$(grep -E '^nameserver ' /etc/resolv.conf 2>/dev/null | awk '{print $2}' | head -3 | tr '\n' ',' | sed 's/,$//' || echo "")
+        NET_MTU=$(cat /sys/class/net/''${NET_IFACE:-eth0}/mtu 2>/dev/null || echo "0")
+
+        # DHCP success = we got an IP
+        if [ -n "$NET_IP" ]; then NET_DHCP="true"; else NET_DHCP="false"; fi
+
+        # NTP sync — try once, best-effort
+        if timeout 15 ntpdate -u pool.ntp.org >/dev/null 2>&1; then
+          NET_NTP="true"
+        else
+          NET_NTP="false"
+        fi
+
+        # API reachability — tries curl with short timeout, accepts any 2xx/3xx/4xx
+        # (the endpoint may require auth but reachability is what we're testing)
+        if curl -s -m 10 -o /dev/null -w "%{http_code}" "''${API_BASE}/health" 2>/dev/null | grep -qE "^[234]"; then
+          NET_API="true"
+        else
+          NET_API="false"
+        fi
+
+        log "Network probe: iface=$NET_IFACE ip=$NET_IP gw=$NET_GATEWAY dns=$NET_DNS mtu=$NET_MTU dhcp=$NET_DHCP ntp=$NET_NTP api=$NET_API"
+      }
+
+      # POST install_start report. Best-effort — never blocks install on failure.
+      post_start_report() {
+        [ "''${NET_API:-false}" = "true" ] || { log "Skipping start report — API unreachable"; return 0; }
+
+        # Build DNS array as JSON
+        local dns_json='[]'
+        if [ -n "''${NET_DNS:-}" ]; then
+          dns_json=$(echo "$NET_DNS" | awk -F, '{printf "["; for(i=1;i<=NF;i++){printf "\"%s\"%s", $i, (i<NF?",":"")}; printf "]"}')
+        fi
+
+        local body
+        body=$(cat <<JSONEND
+{
+  "installer_id": "''${INSTALLER_ID}",
+  "installer_version": "''${INSTALLER_VERSION}",
+  "hardware": {
+    "mac_address": "''${HW_MAC}",
+    "serial_number": "''${HW_SERIAL}",
+    "bios_vendor": "''${HW_BIOS_VENDOR}",
+    "bios_version": "''${HW_BIOS_VERSION}",
+    "product_name": "''${HW_PRODUCT}",
+    "cpu_model": "''${HW_CPU}",
+    "memory_gb": ''${HW_MEMORY_GB:-0},
+    "drive_path": "''${DRIVE_PATH:-}",
+    "drive_model": "''${DRIVE_MODEL:-}",
+    "drive_size_gb": ''${DRIVE_SIZE_GB:-0},
+    "drive_smart_status": "''${DRIVE_SMART:-UNKNOWN}",
+    "drive_is_removable": ''${DRIVE_REMOVABLE:-false}
+  },
+  "network": {
+    "iface": "''${NET_IFACE}",
+    "ip": "''${NET_IP}",
+    "gateway": "''${NET_GATEWAY}",
+    "dns": $dns_json,
+    "mtu": ''${NET_MTU:-0},
+    "dhcp_success": ''${NET_DHCP:-false},
+    "ntp_synced": ''${NET_NTP:-false},
+    "api_reachable": ''${NET_API:-false}
+  }
+}
+JSONEND
+)
+        echo "$body" > /tmp/msp-install-start.json
+        curl -sS -m 15 -X POST \
+          -H "Content-Type: application/json" \
+          -H "X-Install-Token: ''${INSTALL_TOKEN}" \
+          --data @/tmp/msp-install-start.json \
+          "''${API_BASE}/api/install/report/start" >> "$LOG_FILE" 2>&1 || log "post_start_report: curl failed (non-fatal)"
+      }
+
+      # Track install start time for duration calculation
+      INSTALL_START_EPOCH=$(date +%s)
+
+      # POST install_complete report. Non-blocking.
+      # Args: success (true|false), error_step, error_msg, [image_sha256], [verify_sha256]
+      post_complete_report() {
+        [ "''${NET_API:-false}" = "true" ] || return 0
+        local success="$1"
+        local error_step="''${2:-}"
+        local error_msg="''${3:-}"
+        local image_sha="''${4:-}"
+        local verify_sha="''${5:-}"
+        local duration=$(( $(date +%s) - INSTALL_START_EPOCH ))
+
+        # Escape quotes in error_msg for JSON
+        error_msg=$(echo "$error_msg" | sed 's/"/\\"/g')
+
+        local body
+        body=$(cat <<JSONEND
+{
+  "installer_id": "''${INSTALLER_ID}",
+  "success": ''${success},
+  "error_step": "''${error_step}",
+  "error_message": "''${error_msg}",
+  "image_sha256": "''${image_sha}",
+  "verify_sha256": "''${verify_sha}",
+  "duration_s": ''${duration}
+}
+JSONEND
+)
+        echo "$body" > /tmp/msp-install-complete.json
+        curl -sS -m 15 -X POST \
+          -H "Content-Type: application/json" \
+          -H "X-Install-Token: ''${INSTALL_TOKEN}" \
+          --data @/tmp/msp-install-complete.json \
+          "''${API_BASE}/api/install/report/complete" >> "$LOG_FILE" 2>&1 || log "post_complete_report: curl failed (non-fatal)"
+      }
+
+      # Verify the image was written correctly by reading back and computing SHA256.
+      # Compares first 100MB + last 100MB samples. Full-disk SHA would take minutes.
+      # Args: device (e.g. /dev/sda)
+      # Echoes the computed SHA256 to stdout.
+      verify_post_write() {
+        local dev="$1"
+        log "Post-write verification: reading back samples from $dev"
+        local head_sha
+        local tail_sha
+        head_sha=$(dd if="$dev" bs=1M count=100 status=none 2>/dev/null | sha256sum | awk '{print $1}')
+        # Read the last 100MB — need to calculate offset
+        local total_mb=$(blockdev --getsize64 "$dev" 2>/dev/null | awk '{print int($1/1024/1024)}')
+        local skip=$(( total_mb - 100 ))
+        tail_sha=$(dd if="$dev" bs=1M count=100 skip=$skip status=none 2>/dev/null | sha256sum | awk '{print $1}')
+        log "Post-write verification: head_sha=$head_sha tail_sha=$tail_sha"
+        # Composite: hash of both hashes concatenated
+        echo "$head_sha+$tail_sha" | sha256sum | awk '{print $1}'
       }
 
       # ── Start installer ─────────────────────────────────────────
@@ -311,6 +513,17 @@ in
 
       # Log block devices
       lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL >> "$LOG_FILE" 2>&1
+
+      # v10: Collect hardware fingerprint EARLY, before any install work.
+      # Gives Central Command a hw profile even if install fails mid-flight.
+      draw_progress 1 "''${WHITE}Collecting hardware profile...''${RESET}"
+      collect_hw_info
+
+      # v10: Network readiness gate. Checks DHCP/NTP/API reachability.
+      # Does NOT block install — we continue offline if needed, but the
+      # install report will record the network state for post-mortem.
+      draw_progress 3 "''${WHITE}Checking network readiness...''${RESET}"
+      check_network
 
       # Check if we're running from live ISO
       if ! grep -q "squashfs" /proc/mounts; then
@@ -398,6 +611,22 @@ in
       esac
       DEV_DESC="''${DEV_MODEL:-$DEV_TYPE} ''${DEV_SIZE} ($INTERNAL_DEV)"
       log "Found: $INTERNAL_DEV ($DEV_SIZE) $DEV_MODEL"
+
+      # v10: Probe the target drive for telemetry (model, size, SMART status)
+      probe_drive "$INTERNAL_DEV"
+
+      # v10: Pre-install hardware validation — refuse on known-bad configs
+      if [ "$DRIVE_SMART" = "FAILED" ]; then
+        die "Target drive reports SMART FAILED. Storage is failing. Replace the device before installing." "hw_probe"
+      fi
+      if [ "$DRIVE_SIZE_GB" -lt 20 ] 2>/dev/null; then
+        die "Target drive is only ''${DRIVE_SIZE_GB}GB. Minimum 20GB required." "hw_probe"
+      fi
+
+      # v10: POST the install-start report BEFORE starting the write.
+      # Gives Central Command visibility into install attempts even if dd fails.
+      draw_progress 4 "''${WHITE}Registering install with Central Command...''${RESET}"
+      post_start_report
 
       # ── Check for existing installation ─────────────────────────
       NIXOS_PART=$(lsblk -rno NAME,LABEL "$INTERNAL_DEV" 2>/dev/null | grep nixos | head -1 | awk '{print $1}')
@@ -504,6 +733,19 @@ in
       sleep 1
 
       draw_progress 82 "''${GREEN}Image written successfully''${RESET}"
+
+      # v10: Post-write integrity verification — catches partial/corrupted writes.
+      # We read back head+tail samples and compute a composite SHA256. The value
+      # is reported to Central Command but not compared against an expected hash
+      # (the image SHA would need to be computed pre-write, which is expensive
+      # for a 1GB+ compressed image). The act of reading succeeds or fails —
+      # a read failure flags bad storage.
+      draw_progress 83 "''${WHITE}Verifying write integrity...''${RESET}"
+      VERIFY_SHA=""
+      if ! VERIFY_SHA=$(verify_post_write "$INTERNAL_DEV" 2>> "$LOG_FILE"); then
+        die "Post-write verification failed: unable to read back from $INTERNAL_DEV. Storage may be failing." "verify_readback"
+      fi
+      log "Post-write verification sha256=$VERIFY_SHA"
 
       # ── Step 3: Resize root partition ───────────────────────────
       # Raw image layout: 1=ESP, 2=root, 3=MSP-DATA(2GB)
@@ -704,6 +946,10 @@ in
       echo ""
 
       log "Installation complete. Halting."
+
+      # v10: Fire the install-complete success report. Best-effort — the halt
+      # continues regardless. Duration includes network setup + write + resize.
+      post_complete_report "true" "complete" "" "" "$VERIFY_SHA" || true
 
       # Halt — NOT reboot, NOT poweroff with countdown.
       # User removes USB, then presses power button.

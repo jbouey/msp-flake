@@ -10,6 +10,7 @@ export {
   useStatsDeltas,
   useLearningStatus,
   useFlywheelIntelligence,
+  useInstallReports,
   useRefreshFleet,
   useRunbooks,
   useRunbook,

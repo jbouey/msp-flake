@@ -303,6 +303,17 @@ export const flywheelApi = {
   getIntelligence: () => fetchApi<Record<string, unknown>>('/flywheel-intelligence'),
 };
 
+export const installReportsApi = {
+  list: (params?: { only_failures?: boolean; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.only_failures) qs.set('only_failures', 'true');
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    // Endpoint is /api/install/report — use the /api base fetcher
+    return fetchSitesApi<Record<string, unknown>>(`/install/report${suffix}`);
+  },
+};
+
 // =============================================================================
 // L1 RULES API
 // =============================================================================

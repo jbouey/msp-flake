@@ -19,7 +19,21 @@ import httpx
 
 logger = structlog.get_logger()
 
+# --- L2 KILL SWITCH ---
+# Session 205 emergency: flywheel isn't promoting fixes, same-type incidents
+# recur indefinitely, L2 burns API spend without producing L1 rules that
+# resolve the underlying pattern. Until the promotion path is fixed, L2 is
+# hard-off by default. Flip L2_ENABLED=true in env to re-enable.
+#
+# This protects production from runaway spend when customer environments
+# have persistent issues (chaos, intermittent infra, flaky hardware) that
+# L2 can't solve without a better promotion pipeline.
+_L2_ENABLED_ENV = os.getenv("L2_ENABLED", "false").lower()
+L2_ENABLED = _L2_ENABLED_ENV in ("true", "1", "yes", "on")
+
 # --- Daily L2 cost circuit breaker ---
+# Even when L2_ENABLED=true, a hard daily cap prevents any single day from
+# exceeding budget. Default 500 calls ≈ $0.50/day at current model pricing.
 MAX_DAILY_L2_CALLS = int(os.getenv("MAX_DAILY_L2_CALLS", "500"))
 # In-memory fallback (used only when Redis is unavailable)
 _daily_l2_calls = 0
@@ -605,6 +619,25 @@ async def analyze_incident(
     details = details or {}
     pre_state = pre_state or {}
 
+    # --- KILL SWITCH: L2 is globally disabled ---
+    # Set L2_ENABLED=true in env to re-enable. Until the flywheel promotion
+    # path is fixed, L2 decisions don't produce L1 rules and erratic customer
+    # environments can drive unbounded API spend.
+    if not L2_ENABLED:
+        logger.info("L2 disabled via kill switch (set L2_ENABLED=true to enable)",
+                    incident_type=incident_type)
+        return L2Decision(
+            runbook_id=None,
+            reasoning="L2 disabled — awaiting flywheel promotion fix",
+            confidence=0.0,
+            alternative_runbooks=[],
+            requires_human_review=True,
+            pattern_signature="",
+            llm_model="none",
+            llm_latency_ms=0,
+            error="l2_disabled",
+        )
+
     # --- API error circuit breaker (consecutive failure protection) ---
     circuit_error = _check_circuit_breaker()
     if circuit_error:
@@ -857,7 +890,10 @@ async def lookup_cached_l2_decision(db, pattern_signature: str, max_age_hours: i
 
 
 def is_l2_available() -> bool:
-    """Check if L2 LLM is configured and available."""
+    """Check if L2 LLM is configured AND enabled.
+    Returns False when L2_ENABLED=false (kill switch) even if keys are set."""
+    if not L2_ENABLED:
+        return False
     return bool(
         (AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT) or
         OPENAI_API_KEY or

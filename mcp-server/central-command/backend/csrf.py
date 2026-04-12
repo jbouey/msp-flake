@@ -83,6 +83,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/partners/claim",       # Appliance provision
         "/api/webhook",              # Webhooks have their own auth
         "/api/witness/submit",       # Witness attestation from appliances (API-key auth)
+        "/api/install/report",       # Installer telemetry (shared-secret auth, pre-checkin)
         # Agent endpoints at root level (no /api/ prefix) - use API-key auth
         "/evidence",                 # Evidence bundle submission from appliances
         "/incidents",                # Incident reporting from appliances

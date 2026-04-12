@@ -3,7 +3,7 @@
  */
 
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, flywheelApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi, evidenceApi, l1RulesApi } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, flywheelApi, installReportsApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi, evidenceApi, l1RulesApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderStatus, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice, VPNStatus, EvidenceBundleListResponse, BundleVerifyResult, BatchVerifyResult, BlockchainStatus, L1Rule, IncidentTypeOption } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, StatsDeltas, LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, RunbookSummary, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, IncidentBreakdownResponse, AttentionRequiredResponse } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
@@ -224,6 +224,50 @@ export function useFlywheelIntelligence() {
   return useQuery<FlywheelIntelligence>({
     queryKey: ['flywheel', 'intelligence'],
     queryFn: () => flywheelApi.getIntelligence() as unknown as Promise<FlywheelIntelligence>,
+    ...defaults,
+  });
+}
+
+interface InstallReport {
+  installer_id: string;
+  mac_address: string | null;
+  serial_number: string | null;
+  product_name: string | null;
+  drive_model: string | null;
+  drive_size_gb: number | null;
+  drive_smart_status: string | null;
+  network_api_reachable: boolean | null;
+  network_ntp_synced: boolean | null;
+  install_started_at: string;
+  install_completed_at: string | null;
+  install_duration_s: number | null;
+  install_success: boolean | null;
+  error_step: string | null;
+  error_message: string | null;
+  warnings: string[] | null;
+  installer_version: string | null;
+}
+
+interface InstallReportsResponse {
+  reports: InstallReport[];
+  summary: {
+    success_count: number;
+    failure_count: number;
+    in_progress_count: number;
+    total_7d: number;
+  };
+  computed_at: string;
+}
+
+export function useInstallReports(opts?: { onlyFailures?: boolean; limit?: number }) {
+  const defaults = useQueryDefaults();
+  return useQuery<InstallReportsResponse>({
+    queryKey: ['install-reports', opts?.onlyFailures ?? false, opts?.limit ?? 50],
+    queryFn: () =>
+      installReportsApi.list({
+        only_failures: opts?.onlyFailures,
+        limit: opts?.limit,
+      }) as unknown as Promise<InstallReportsResponse>,
     ...defaults,
   });
 }

@@ -435,6 +435,65 @@ EOF
   };
 
   # ============================================================================
+  # Daemon Zombie Watchdog (Session 205)
+  #
+  # The appliance-daemon has systemd WatchdogSec=120s — if the daemon's
+  # sdnotify ping stops, systemd kills + restarts it. But we've seen a
+  # failure mode where ONE goroutine (the HTTP checkin POST) is alive
+  # and pinging watchdog, while the order-processing goroutine is
+  # deadlocked. systemd sees "daemon healthy" but the daemon does zero
+  # actual work. External watchdog: check that the daemon is BOTH
+  # checking in AND processing something (incidents, bundles, or orders)
+  # — if only checking in for 15+ minutes with zero other activity, force
+  # a restart to clear the deadlock.
+  # ============================================================================
+  systemd.services.msp-daemon-zombie-watch = {
+    description = "OsirisCare Daemon Zombie Watchdog";
+    after = [ "appliance-daemon.service" ];
+
+    path = with pkgs; [ coreutils gnugrep findutils systemd ];
+
+    serviceConfig = {
+      Type = "oneshot";
+    };
+
+    script = ''
+      STATE_DIR="/var/lib/msp"
+      ACTIVITY_MARKER="$STATE_DIR/.last-activity"
+      THRESHOLD_SECONDS=900  # 15 minutes
+
+      # The daemon updates this file on any real work (drift scan, evidence
+      # bundle submit, order execution). Checkin-only activity does NOT
+      # update it. If the file is older than THRESHOLD_SECONDS, the daemon
+      # is zombie — force restart.
+      if [ ! -f "$ACTIVITY_MARKER" ]; then
+        # No marker yet — daemon is fresh or never ran. Don't restart.
+        exit 0
+      fi
+
+      NOW=$(date +%s)
+      LAST=$(stat -c %Y "$ACTIVITY_MARKER" 2>/dev/null || echo 0)
+      AGE=$(( NOW - LAST ))
+
+      if [ "$AGE" -gt "$THRESHOLD_SECONDS" ]; then
+        echo "[zombie-watch] Activity marker is ''${AGE}s old (threshold ''${THRESHOLD_SECONDS}s) — restarting daemon"
+        logger -t msp-zombie-watch "Daemon appears zombie (no activity for ''${AGE}s), force-restarting"
+        systemctl restart appliance-daemon
+      fi
+    '';
+  };
+
+  systemd.timers.msp-daemon-zombie-watch = {
+    description = "Check for zombie daemon every 5 minutes";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "10min";
+      OnUnitActiveSec = "5min";
+      AccuracySec = "30s";
+    };
+  };
+
+  # ============================================================================
   # Network Scanner Service (EYES)
   # ============================================================================
   systemd.services.network-scanner = {

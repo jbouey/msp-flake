@@ -13,7 +13,7 @@ import {
   DashboardSLAStrip,
 } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
-import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFlywheelIntelligence } from '../hooks';
+import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFlywheelIntelligence, useInstallReports } from '../hooks';
 import { METRIC_TOOLTIPS, getScoreStatus, formatTimeAgo } from '../constants';
 
 // Shape of the /api/dashboard/sla-strip response — shared between
@@ -59,6 +59,7 @@ export const Dashboard: React.FC = () => {
   const { data: deltas, refetch: refetchDeltas } = useStatsDeltas();
   const { data: learning, isLoading: learningLoading } = useLearningStatus();
   const { data: flywheel, isLoading: flywheelLoading } = useFlywheelIntelligence();
+  const { data: installs, isLoading: installsLoading } = useInstallReports({ limit: 10 });
   const {
     data: incidents,
     isLoading: incidentsLoading,
@@ -606,6 +607,80 @@ export const Dashboard: React.FC = () => {
                       <span className="text-health-warning tabular-nums">{p.velocity_per_hour.toFixed(1)}/hr</span>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          </GlassCard>
+
+          {/* Install Reports — pre-boot telemetry from installer ISO */}
+          <GlassCard>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-semibold text-label-primary">Installer Telemetry</h3>
+                {installsLoading && <Spinner size="sm" />}
+              </div>
+              {[
+                {
+                  label: 'Installs (7d)',
+                  value: installsLoading ? null : `${installs?.summary?.total_7d ?? 0}`,
+                  color: 'text-ios-blue',
+                  tip: 'Total install attempts in the last 7 days (from installer ISO telemetry).',
+                },
+                {
+                  label: 'Successful',
+                  value: installsLoading ? null : `${installs?.summary?.success_count ?? 0}`,
+                  color: 'text-health-healthy',
+                  tip: 'Installs that completed successfully with verification passed.',
+                },
+                {
+                  label: 'Failed',
+                  value: installsLoading ? null : `${installs?.summary?.failure_count ?? 0}`,
+                  color: (installs?.summary?.failure_count ?? 0) > 0 ? 'text-health-critical' : 'text-label-tertiary',
+                  tip: 'Installs that failed during hardware probe, network check, image write, or verification.',
+                },
+                {
+                  label: 'In Progress',
+                  value: installsLoading ? null : `${installs?.summary?.in_progress_count ?? 0}`,
+                  color: 'text-health-warning',
+                  tip: 'Installers that started but never reported completion. May indicate halted/crashed installs.',
+                },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center justify-between py-0.5">
+                  <span className="text-sm text-label-secondary">{row.label}<InfoTip text={row.tip} /></span>
+                  {row.value !== null ? (
+                    <span className={`text-sm font-semibold tabular-nums ${row.color}`}>{row.value}</span>
+                  ) : (
+                    <span className="skeleton inline-block w-10 h-4" />
+                  )}
+                </div>
+              ))}
+              {!installsLoading && installs?.reports && installs.reports.length > 0 && (
+                <div className="pt-2 mt-2 border-t border-glass-border">
+                  <p className="text-[10px] text-label-tertiary mb-1">Recent installs:</p>
+                  {installs.reports.slice(0, 3).map((r) => {
+                    const started = new Date(r.install_started_at);
+                    const ago = Math.round((Date.now() - started.getTime()) / 60_000);
+                    const status =
+                      r.install_success === true ? '✓' :
+                      r.install_success === false ? '✗' :
+                      '…';
+                    const statusColor =
+                      r.install_success === true ? 'text-health-healthy' :
+                      r.install_success === false ? 'text-health-critical' :
+                      'text-health-warning';
+                    return (
+                      <div key={r.installer_id} className="flex justify-between text-xs py-0.5">
+                        <span className="text-label-secondary truncate max-w-[70%]" title={r.serial_number || r.mac_address || r.installer_id}>
+                          <span className={`${statusColor} mr-1`}>{status}</span>
+                          {r.product_name || r.drive_model || r.installer_id.slice(0, 8)}
+                          {r.error_step && <span className="text-health-critical ml-1">({r.error_step})</span>}
+                        </span>
+                        <span className="text-label-tertiary tabular-nums">
+                          {ago < 60 ? `${ago}m` : ago < 1440 ? `${Math.round(ago / 60)}h` : `${Math.round(ago / 1440)}d`}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
