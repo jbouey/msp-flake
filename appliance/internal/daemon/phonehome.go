@@ -259,6 +259,14 @@ type DaemonHealth struct {
 	// WireGuard access state — auditable proof of tunnel status
 	WgAccessState   string   `json:"wg_access_state"`    // "off", "active", "bootstrap"
 	WgAccessExpires string   `json:"wg_access_expires,omitempty"` // ISO8601 if active
+	// Boot/clock diagnostics — catches HP T-series TSC stuck-clock issues.
+	// ProcUptimeRaw is the raw /proc/uptime content so we can see what the
+	// kernel is reporting vs what we parse. If ProcUptimeRaw is "107.00 62.33"
+	// every checkin, the kernel clocksource is frozen and we need
+	// clocksource=hpet kernel param.
+	BootSource      string   `json:"boot_source,omitempty"`   // live_usb, installed_disk
+	ProcUptimeRaw   string   `json:"proc_uptime_raw,omitempty"`
+	Clocksource     string   `json:"clocksource,omitempty"`   // from /sys/devices/system/clocksource/
 }
 
 // ConnectedAgent represents a Go agent connected to this appliance via gRPC.
@@ -293,6 +301,9 @@ func collectDaemonHealth(startTime time.Time, mesh *Mesh) *DaemonHealth {
 		GCCycles:      m.NumGC,
 		NumCPU:        runtime.NumCPU(),
 		UptimeSeconds: int64(time.Since(startTime).Seconds()),
+		BootSource:    detectBootSource(),
+		ProcUptimeRaw: getProcUptimeRaw(),
+		Clocksource:   getCurrentClocksource(),
 	}
 	if mesh != nil {
 		stats := mesh.Stats()
@@ -766,18 +777,80 @@ func getIPAddresses() []string {
 	return ips
 }
 
+// lastUptimeReading caches the last /proc/uptime read for diagnostic purposes.
+// If the kernel clocksource is broken (HP T-series TSC bug), we can see the
+// raw value the kernel returned and know to pin clocksource=hpet.
+var (
+	lastUptimeRaw     string
+	lastUptimeReadAt  time.Time
+	lastUptimeSeconds int
+)
+
 func getUptimeSeconds() int {
 	data, err := os.ReadFile("/proc/uptime")
 	if err != nil {
+		slog.Warn("/proc/uptime read failed", "component", "daemon", "error", err)
 		return 0
 	}
-	parts := strings.Fields(string(data))
+	raw := strings.TrimSpace(string(data))
+	parts := strings.Fields(raw)
 	if len(parts) == 0 {
+		slog.Warn("/proc/uptime empty", "component", "daemon", "raw", raw)
 		return 0
 	}
 	var seconds float64
-	fmt.Sscanf(parts[0], "%f", &seconds)
-	return int(seconds)
+	n, err := fmt.Sscanf(parts[0], "%f", &seconds)
+	if err != nil || n != 1 {
+		slog.Warn("/proc/uptime parse failed", "component", "daemon", "value", parts[0], "error", err)
+		return 0
+	}
+	result := int(seconds)
+
+	// Diagnostic: if uptime appears frozen (identical reads), log it.
+	// This catches the HP T-series TSC-stuck bug and daemon cache issues.
+	if !lastUptimeReadAt.IsZero() && lastUptimeSeconds == result &&
+		time.Since(lastUptimeReadAt) > 60*time.Second {
+		slog.Warn("/proc/uptime reads frozen — possible kernel clocksource issue",
+			"component", "daemon",
+			"frozen_at_seconds", result,
+			"frozen_duration", time.Since(lastUptimeReadAt).Round(time.Second).String(),
+			"raw", raw,
+			"recommendation", "kernel clocksource=hpet")
+	}
+	lastUptimeRaw = raw
+	lastUptimeReadAt = time.Now()
+	lastUptimeSeconds = result
+	return result
+}
+
+// GetUptimeDiagnostics returns the raw uptime reading for daemon_health telemetry.
+// Exposed so the checkin can include raw /proc/uptime bytes when diagnostic mode
+// is enabled, helping root-cause clock issues on problem hardware.
+func GetUptimeDiagnostics() (raw string, readAt time.Time, parsed int) {
+	return lastUptimeRaw, lastUptimeReadAt, lastUptimeSeconds
+}
+
+// getProcUptimeRaw returns the raw /proc/uptime content.
+// Used in daemon_health telemetry to diagnose clock freezes (e.g. HP T-series
+// TSC stuck-clock bug). The field is small (~20 bytes) and harmless to ship.
+func getProcUptimeRaw() string {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// getCurrentClocksource reads the active kernel clocksource.
+// On healthy systems: "tsc", "hpet", "acpi_pm", "kvm-clock", etc.
+// If the kernel keeps marking TSC as unstable, the active source may
+// flap — we report whatever is active at checkin time.
+func getCurrentClocksource() string {
+	data, err := os.ReadFile("/sys/devices/system/clocksource/clocksource0/current_clocksource")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func getNixOSVersion() string {

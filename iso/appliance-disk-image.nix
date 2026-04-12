@@ -50,7 +50,7 @@ let
   # Build the Go appliance daemon (replaces Python compliance-agent)
   # Feature-flagged: enabled by /var/lib/msp/.use-go-daemon or config.yaml use_go_daemon: true
   # Single source of truth for daemon version. Update this ONE line to bump.
-  daemonVersion = "0.3.91";
+  daemonVersion = "0.3.92";
 
   appliance-daemon-go = pkgs.buildGoModule {
     pname = "appliance-daemon";
@@ -193,8 +193,20 @@ in
       pkiBundle = "/etc/secureboot";
     };
 
-    # Kernel params — quiet boot, suppress noisy drivers
-    kernelParams = [ "quiet" "loglevel=3" "console=tty1" "console=ttyS0,115200" ];
+    # Kernel params — quiet boot, suppress noisy drivers, pin reliable clocksource
+    #
+    # clocksource=hpet: TSC is unreliable on HP T-series mini-PCs with certain
+    #   BIOS versions. Symptom: /proc/uptime freezes or reports stale values,
+    #   causing the appliance-daemon to report impossible uptime values and
+    #   breaking health-gate/watchdog timers. HPET is slower but monotonic.
+    # nowatchdog: disable generic hardware watchdogs. Some BIOS-level watchdogs
+    #   reset the system if not fed, but our software watchdog is sufficient.
+    # tsc=reliable: fallback if BIOS forces TSC — tells kernel to trust TSC
+    #   without recalibration (prevents the "Marking TSC unstable" crash path).
+    kernelParams = [
+      "quiet" "loglevel=3" "console=tty1" "console=ttyS0,115200"
+      "clocksource=hpet" "nowatchdog" "tsc=reliable"
+    ];
     blacklistedKernelModules = [
       "hid_logitech_hidpp"
       "usb_storage" "uas"              # Block USB mass storage (HIPAA physical security)
