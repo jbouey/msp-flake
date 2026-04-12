@@ -1,6 +1,6 @@
 {
   "session": 205,
-  "updated": "2026-04-12T17:33:00.062393Z",
+  "updated": "2026-04-12T17:41:25.016064Z",
   "agent_version": "1.0.74",
   "iso_version": "installer-v8-dialog-tui",
   "disk_image_version": "v56",
@@ -58,7 +58,7 @@
     "time_travel_reconciliation": "phases_1_2_3_3_1_shipped_session_205",
     "migration_auto_apply": "fail_closed_at_startup_plus_ci_gate_session_205"
   },
-  "current_blocker": "osiriscare-3 stuck on v0.3.92; fresh order edaa985d-e076 fired 17:29 UTC; watcher b2gcy5ctv running",
+  "current_blocker": "osiriscare-3 daemon crash-looping since 07:12 UTC (polling /api/provision/{mac} every 60s, not hitting /api/appliances/checkin, log shipper dead). Needs LAN access (192.168.88.232) or physical console. See task #91.",
   "session_202_work": {
     "summary": "Round-table audit: 67 files, 5 swarms, 360 test cases identified. Critical security fixes + DRY consolidation.",
     "security_fixes": [
