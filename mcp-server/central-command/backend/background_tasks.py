@@ -1414,13 +1414,17 @@ async def cross_incident_correlation_loop():
 
             pool = await get_pool()
             async with admin_connection(pool) as conn:
-                # Find A→B pairs: A resolved, B created within 10 min
+                # Find A→B pairs: A resolved, B created within 10 min.
+                # Count DISTINCT A instances (each A may precede multiple B types
+                # — without DISTINCT, confidence can exceed 1.0).
+                # Exclude monitoring-only checks (from check_type_registry)
+                # since their correlations aren't actionable.
                 pairs = await conn.fetch("""
                     SELECT
                         a.site_id,
                         a.incident_type as type_a,
                         b.incident_type as type_b,
-                        COUNT(*) as co_occurrences,
+                        COUNT(DISTINCT a.id) as co_occurrences,
                         AVG(EXTRACT(EPOCH FROM (b.created_at - a.resolved_at))) as avg_gap_sec
                     FROM incidents a
                     JOIN incidents b ON b.site_id = a.site_id
@@ -1429,12 +1433,19 @@ async def cross_incident_correlation_loop():
                         AND b.created_at < a.resolved_at + INTERVAL '10 minutes'
                     WHERE a.status = 'resolved'
                       AND a.resolved_at > NOW() - INTERVAL '7 days'
+                      -- Exclude monitoring-only types from both sides
+                      AND NOT EXISTS (
+                          SELECT 1 FROM check_type_registry r
+                          WHERE r.check_name IN (a.incident_type, b.incident_type)
+                            AND r.is_monitoring_only = true
+                      )
                     GROUP BY a.site_id, a.incident_type, b.incident_type
-                    HAVING COUNT(*) >= 3
+                    HAVING COUNT(DISTINCT a.id) >= 3
                 """)
 
                 for pair in pairs:
-                    # Compute confidence: co_occurrences / total resolutions of type A
+                    # Compute confidence: distinct A instances with a B follow-up
+                    # divided by total A resolutions. Clamped to [0.0, 1.0].
                     total_a = await conn.fetchval("""
                         SELECT COUNT(*) FROM incidents
                         WHERE site_id = $1 AND incident_type = $2
@@ -1442,7 +1453,7 @@ async def cross_incident_correlation_loop():
                           AND resolved_at > NOW() - INTERVAL '7 days'
                     """, pair["site_id"], pair["type_a"])
 
-                    confidence = pair["co_occurrences"] / max(total_a, 1)
+                    confidence = min(pair["co_occurrences"] / max(total_a, 1), 1.0)
 
                     await conn.execute("""
                         INSERT INTO incident_correlation_pairs (
