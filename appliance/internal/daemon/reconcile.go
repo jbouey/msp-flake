@@ -149,6 +149,36 @@ func (d *ReconcileDetector) WriteLastReportedUptime(uptime int) error {
 	return os.WriteFile(path, []byte(fmt.Sprintf("%d", uptime)), 0644)
 }
 
+// readLastReportedBootCounter returns the boot_counter value from our
+// previous successful checkin. Used for the CLIENT-SIDE
+// boot_counter_regression signal (Phase 3.1): if current < last,
+// the filesystem has been reverted (VM snapshot, backup restore).
+//
+// Before Phase 3.1 this signal was "server-side only" — CC compared
+// reported vs last-known. That was too slow: a snapshot revert on the
+// appliance would only trigger `uptime_cliff` (1 signal), below the
+// MIN_SIGNALS_REQUIRED=2 threshold, so no reconcile fired. With this
+// helper the daemon itself detects the regression and the combination
+// of `boot_counter_regression` + `uptime_cliff` reliably trips the
+// threshold on every snapshot revert.
+func (d *ReconcileDetector) readLastReportedBootCounter() int64 {
+	path := filepath.Join(d.stateDir, "last_reported_boot_counter")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	return n
+}
+
+// WriteLastReportedBootCounter persists the boot_counter we just
+// reported. Called from daemon.go alongside WriteLastReportedUptime
+// on successful checkin.
+func (d *ReconcileDetector) WriteLastReportedBootCounter(counter int64) error {
+	path := filepath.Join(d.stateDir, "last_reported_boot_counter")
+	return os.WriteFile(path, []byte(fmt.Sprintf("%d", counter)), 0644)
+}
+
 // readLKGMTime reads the mtime of the last_known_good marker file.
 // Zero time if missing. Used to detect clock rollback.
 func (d *ReconcileDetector) readLKGMTime() time.Time {
@@ -213,10 +243,23 @@ func (d *ReconcileDetector) Detect() DetectionResult {
 		res.Signals = append(res.Signals, SignalLKGFutureMtime)
 	}
 
-	// boot_counter_regression and generation_mismatch can ONLY be
-	// detected server-side (we don't know what CC's last value was).
-	// Agent passes current values; CC compares and signals back in
-	// the reconcile response if regression is detected.
+	// Signal 3 (Phase 3.1): boot_counter_regression — the on-disk
+	// boot_counter is LOWER than what we reported in our previous
+	// successful checkin. Filesystem reverted without rebooting to
+	// the newer state (VM snapshot revert is the canonical case).
+	//
+	// Only emit when last_reported > 0 — a fresh state dir has no
+	// baseline and a 0 comparison would false-positive on first boot.
+	lastReportedBC := d.readLastReportedBootCounter()
+	if lastReportedBC > 0 && res.BootCounter < lastReportedBC {
+		res.Signals = append(res.Signals, SignalBootCounterRegression)
+	}
+
+	// generation_mismatch is still server-side-only: the daemon doesn't
+	// know what UUID CC expects. CC compares reported vs last-known and
+	// can echo the signal back via future reconcile response fields if
+	// needed. For now the 3 client-side signals above cover every
+	// realistic snapshot/restore scenario.
 
 	// Trigger if ≥2 signals. MIN_SIGNALS_REQUIRED in backend/reconcile.py
 	// must match — if these drift, backend rejects our request.

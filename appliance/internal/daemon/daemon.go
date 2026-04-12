@@ -805,10 +805,17 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	// Phase 2 time-travel: mark this cycle as known-good for next-cycle
 	// comparison. LKG mtime detects clock rollback; last_reported_uptime
 	// detects /proc/uptime regression (VM snapshot revert).
+	// Phase 3.1: last_reported_boot_counter gives the detector a second
+	// client-side signal on snapshot revert (filesystem rewind observable
+	// without network consultation).
 	// Best-effort: persistence failures should not break checkin flow.
 	if d.reconcileDetector != nil {
 		if err := d.reconcileDetector.WriteLastReportedUptime(req.UptimeSeconds); err != nil {
 			slog.Warn("failed to persist last_reported_uptime",
+				"component", "reconcile", "error", err)
+		}
+		if err := d.reconcileDetector.WriteLastReportedBootCounter(req.BootCounter); err != nil {
+			slog.Warn("failed to persist last_reported_boot_counter",
 				"component", "reconcile", "error", err)
 		}
 		if err := d.reconcileDetector.TouchLKG(); err != nil {

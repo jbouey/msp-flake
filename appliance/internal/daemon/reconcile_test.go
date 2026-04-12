@@ -237,6 +237,133 @@ func TestWriteLastReportedUptime_RoundTrips(t *testing.T) {
 	}
 }
 
+// Phase 3.1: regression detection round-trip.
+func TestWriteLastReportedBootCounter_RoundTrips(t *testing.T) {
+	tmp := t.TempDir()
+	d := NewReconcileDetector(tmp)
+	if err := d.WriteLastReportedBootCounter(42); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := d.readLastReportedBootCounter(); got != 42 {
+		t.Fatalf("read=%d want=42", got)
+	}
+}
+
+// Phase 3.1 core scenario: daemon's boot_counter went backwards
+// relative to what we last told CC → emit boot_counter_regression.
+// This is the signal that flips a VBox-revert scenario from
+// 1-signal (uptime_cliff only) to 2-signal (triggers reconcile).
+func TestDetect_BootCounterRegressionFiresClientSide(t *testing.T) {
+	tmp := t.TempDir()
+	d := NewReconcileDetector(tmp) // starts counter at 1
+
+	// Simulate: previously we reported boot_counter=50 to CC.
+	if err := d.WriteLastReportedBootCounter(50); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res := d.Detect()
+	found := false
+	for _, s := range res.Signals {
+		if s == SignalBootCounterRegression {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected SignalBootCounterRegression when current (%d) < last_reported (50), got %v",
+			res.BootCounter, res.Signals)
+	}
+}
+
+// False-positive guard: a fresh state dir (no last_reported file)
+// must NOT fire boot_counter_regression. Every brand-new install
+// would get spurious signals otherwise.
+func TestDetect_BootCounterRegressionDoesNotFireOnFreshBoot(t *testing.T) {
+	tmp := t.TempDir()
+	d := NewReconcileDetector(tmp)
+
+	res := d.Detect()
+	for _, s := range res.Signals {
+		if s == SignalBootCounterRegression {
+			t.Fatalf("boot_counter_regression must not fire on fresh install (no baseline yet)")
+		}
+	}
+}
+
+// False-positive guard: boot_counter equal or greater than last
+// reported is the normal case after a successful reboot.
+func TestDetect_BootCounterEqualOrGreaterDoesNotFire(t *testing.T) {
+	tmp := t.TempDir()
+	d := NewReconcileDetector(tmp) // counter starts at 1
+
+	// Case 1: last reported == current
+	if err := d.WriteLastReportedBootCounter(1); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	res := d.Detect()
+	for _, s := range res.Signals {
+		if s == SignalBootCounterRegression {
+			t.Fatalf("regression fired on equal counter (%d == %d)", res.BootCounter, 1)
+		}
+	}
+
+	// Case 2: current > last (normal reboot advance)
+	// Bump counter via a fresh detector, then seed lower last_reported
+	d2 := NewReconcileDetector(tmp) // counter → 2
+	if err := d2.WriteLastReportedBootCounter(1); err != nil {
+		t.Fatalf("seed 2: %v", err)
+	}
+	res2 := d2.Detect()
+	for _, s := range res2.Signals {
+		if s == SignalBootCounterRegression {
+			t.Fatalf("regression fired on normal advance (current=%d, last=1)", res2.BootCounter)
+		}
+	}
+}
+
+// End-to-end snapshot-revert scenario — the exact case Phase 3.1
+// exists to close. Seed a high last_reported_boot_counter + high
+// last_reported_uptime. Fresh detector has boot_counter=1 and
+// current_uptime=0 (macOS test env). Both signals should fire,
+// ReconcileNeeded=true. This is the test that would have caught
+// the Phase 3 MVP gap.
+func TestDetect_SnapshotRevertScenario_TwoSignalsTriggerReconcile(t *testing.T) {
+	tmp := t.TempDir()
+	d := NewReconcileDetector(tmp) // counter=1
+
+	// Pretend we had previously reported counter=100, uptime=7200 (2h).
+	if err := d.WriteLastReportedBootCounter(100); err != nil {
+		t.Fatalf("seed counter: %v", err)
+	}
+	if err := d.WriteLastReportedUptime(7200); err != nil {
+		t.Fatalf("seed uptime: %v", err)
+	}
+
+	res := d.Detect()
+
+	haveRegression := false
+	haveCliff := false
+	for _, s := range res.Signals {
+		if s == SignalBootCounterRegression {
+			haveRegression = true
+		}
+		if s == SignalUptimeCliff {
+			haveCliff = true
+		}
+	}
+	if !haveRegression {
+		t.Fatalf("expected boot_counter_regression in signals, got %v", res.Signals)
+	}
+	if !haveCliff {
+		t.Fatalf("expected uptime_cliff in signals, got %v", res.Signals)
+	}
+	if !res.ReconcileNeeded {
+		t.Fatalf("2 signals present (%v) but ReconcileNeeded=false — threshold bug",
+			res.Signals)
+	}
+}
+
 // Ensures the signal string constants used by detector match the ones
 // reconcile.py expects — these are the wire protocol between agent + CC.
 // If either side drifts, backend rejects the reconcile request.
