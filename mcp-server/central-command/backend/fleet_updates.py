@@ -1333,34 +1333,52 @@ async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version:
     # Failed completions older than 1 hour are deleted — the appliance will
     # re-receive the order on next checkin and try again (e.g. after a
     # binary URL is fixed or network issue resolves).
+    #
+    # Savepoint (async with conn.transaction()) is REQUIRED even though
+    # the outer try/except catches the error. Without it, a failed DELETE
+    # leaves the outer asyncpg transaction in aborted state and EVERY
+    # subsequent query on the same connection fails with
+    # InFailedSQLTransactionError. This caused the 2026-04-12 90-min
+    # fleet-order outage — STEP 4.5 at sites.py:3667 consistently saw
+    # "transaction is aborted" because a DELETE here failed silently and
+    # poisoned the surrounding savepoint. See MEMORY.md "asyncpg
+    # transaction poisoning" invariant.
     try:
-        await conn.execute("""
-            DELETE FROM fleet_order_completions
-            WHERE appliance_id = $1
-            AND status = 'failed'
-            AND completed_at < NOW() - INTERVAL '1 hour'
-        """, appliance_id)
-    except Exception:
-        pass  # Non-critical — worst case is order doesn't retry this cycle
+        async with conn.transaction():
+            await conn.execute("""
+                DELETE FROM fleet_order_completions
+                WHERE appliance_id = $1
+                AND status = 'failed'
+                AND completed_at < NOW() - INTERVAL '1 hour'
+            """, appliance_id)
+    except Exception as e:
+        logger.warning(
+            f"Fleet order cleanup (failed): {e}",
+            extra={"appliance_id": appliance_id},
+        )
 
     # Clean up stale "skipped" completions where the appliance has regressed
     # to an older version (e.g., NixOS reboot restores original binary).
     # This allows the fleet order to re-deliver after version regression.
     if agent_version:
         try:
-            await conn.execute("""
-                DELETE FROM fleet_order_completions foc
-                USING fleet_orders fo
-                WHERE foc.fleet_order_id = fo.id
-                AND foc.appliance_id = $1
-                AND foc.status = 'skipped'
-                AND fo.status = 'active'
-                AND fo.expires_at > NOW()
-                AND fo.skip_version IS NOT NULL
-                AND fo.skip_version != $2
-            """, appliance_id, agent_version)
-        except Exception:
-            pass  # Non-critical — worst case order doesn't re-deliver this cycle
+            async with conn.transaction():
+                await conn.execute("""
+                    DELETE FROM fleet_order_completions foc
+                    USING fleet_orders fo
+                    WHERE foc.fleet_order_id = fo.id
+                    AND foc.appliance_id = $1
+                    AND foc.status = 'skipped'
+                    AND fo.status = 'active'
+                    AND fo.expires_at > NOW()
+                    AND fo.skip_version IS NOT NULL
+                    AND fo.skip_version != $2
+                """, appliance_id, agent_version)
+        except Exception as e:
+            logger.warning(
+                f"Fleet order cleanup (skipped regression): {e}",
+                extra={"appliance_id": appliance_id, "agent_version": agent_version},
+            )
 
     # Get active, non-expired fleet orders that this appliance hasn't completed.
     # "skipped" completions are cleaned up above on version regression,
