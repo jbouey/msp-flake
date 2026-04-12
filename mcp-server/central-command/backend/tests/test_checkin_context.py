@@ -1,7 +1,7 @@
 """Tests for CheckinContext — the shared state dataclass for checkin decomposition."""
 from datetime import datetime, timezone
 
-from dashboard_api.checkin.context import CheckinContext
+from checkin.context import CheckinContext
 
 
 def test_context_defaults_empty_collections():
