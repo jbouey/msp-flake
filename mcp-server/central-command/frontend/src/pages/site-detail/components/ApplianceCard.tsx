@@ -160,6 +160,21 @@ export const ApplianceCard: React.FC<ApplianceCardProps> = ({ appliance, latestV
         </div>
       </div>
 
+      {/* Live USB warning — device booted from installer USB, not installed disk */}
+      {appliance.boot_source === 'live_usb' && (
+        <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+          <p className="text-sm font-semibold text-amber-800 mb-1">
+            ⚠ Booted from installer USB — not installed
+          </p>
+          <p className="text-xs text-amber-700">
+            This device is running from the installer USB drive, not from its
+            internal disk. Short uptime resets every ~60 seconds indicate the
+            installer is looping. <strong>Remove the USB drive and power-cycle</strong>
+            to boot from the installed system.
+          </p>
+        </div>
+      )}
+
       {/* Assigned Targets */}
       {(applianceCount ?? 0) >= 1 && (
         <div className="mt-3 pt-3 border-t border-separator-light">
