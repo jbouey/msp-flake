@@ -567,6 +567,22 @@ func (d *Daemon) Run(ctx context.Context) error {
 		log.Printf("[daemon] sd_notify READY failed: %v", err)
 	}
 
+	// Watchdog ping goroutine — pings every 30s independent of poll cycle.
+	// Without this, a slow runCycle (>120s) would trigger systemd watchdog
+	// timeout and force-restart the daemon, losing uptime.
+	watchdogTicker := time.NewTicker(30 * time.Second)
+	defer watchdogTicker.Stop()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-watchdogTicker.C:
+				_ = sdnotify.Watchdog()
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -595,7 +611,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 			return nil
 		case <-ticker.C:
-			_ = sdnotify.Watchdog()
+			// Watchdog is pinged by a separate goroutine above
 			d.runCycle(ctx)
 		}
 	}
