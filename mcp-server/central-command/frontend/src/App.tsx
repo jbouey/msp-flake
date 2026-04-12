@@ -37,6 +37,7 @@ const L4Queue = lazy(() => import('./pages/L4Queue').then(m => ({ default: m.L4Q
 const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 // These have default exports
 const FleetUpdates = lazy(() => import('./pages/FleetUpdates'));
+const Provisions = lazy(() => import('./pages/Provisions'));
 const CVEWatch = lazy(() => import('./pages/CVEWatch'));
 const ComplianceLibrary = lazy(() => import('./pages/ComplianceLibrary'));
 const Users = lazy(() => import('./pages/Users'));
@@ -212,6 +213,7 @@ const pageTitles: Record<string, string> = {
   '/learning': 'Learning Loop',
   '/rule-builder': 'L1 Rule Builder',
   '/fleet-updates': 'Fleet Updates',
+  '/provisions': 'Provisions',
   '/vpn': 'VPN Management',
   '/cve-watch': 'CVE Watch',
   '/compliance-library': 'Compliance Library',
@@ -364,6 +366,7 @@ const AppLayout: React.FC = () => {
               <Route path="/settings" element={<Settings />} />
               <Route path="/settings/oauth" element={<AdminOAuthSettings />} />
               <Route path="/fleet-updates" element={<FleetUpdates />} />
+              <Route path="/provisions" element={<Provisions />} />
               <Route path="/vpn" element={<VPNManagement />} />
               <Route path="/cve-watch" element={<CVEWatch />} />
               <Route path="/compliance-library" element={<ComplianceLibrary />} />

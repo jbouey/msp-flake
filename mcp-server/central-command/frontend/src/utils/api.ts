@@ -315,6 +315,52 @@ export const installReportsApi = {
 };
 
 // =============================================================================
+// PROVISIONS API — MAC pre-registration management (admin)
+// =============================================================================
+
+export interface ProvisionRow {
+  mac_address: string;
+  site_id: string | null;
+  clinic_name: string | null;
+  client_contact_email: string | null;
+  registered_at: string | null;
+  provisioned_at: string | null;
+  notes: string | null;
+  status: 'pending' | 'claimed' | 'stale';
+}
+
+export interface ProvisionsListResponse {
+  provisions: ProvisionRow[];
+  summary: {
+    claimed: number;
+    pending: number;
+    stale: number;
+    total: number;
+  };
+  computed_at: string;
+}
+
+export const provisionsApi = {
+  list: (params?: { status?: string; site_id?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status_filter', params.status);
+    if (params?.site_id) qs.set('site_id', params.site_id);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return fetchApi<ProvisionsListResponse>(`/provisions${suffix}`);
+  },
+  update: (mac: string, body: { notes?: string; site_id?: string; client_email?: string }) =>
+    fetchApi<{ status: string; mac_address: string }>(`/provisions/${encodeURIComponent(mac)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  remove: (mac: string) =>
+    fetchApi<{ status: string; mac_address: string }>(`/provisions/${encodeURIComponent(mac)}`, {
+      method: 'DELETE',
+    }),
+};
+
+// =============================================================================
 // L1 RULES API
 // =============================================================================
 

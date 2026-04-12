@@ -12,7 +12,7 @@ import logging
 import secrets
 from enum import Enum
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Query, HTTPException, Request, Depends, Response
 from pydantic import BaseModel
 from .websocket_manager import broadcast_event
@@ -6164,6 +6164,195 @@ async def create_site_provision(
         "site_id": site_id,
         "message": "Enter the appliance MAC address to pre-register it for this site. The MAC is printed on the device label or shown on the BIOS POST screen.",
     }
+
+
+@router.get("/provisions")
+async def list_all_provisions(
+    status_filter: Optional[str] = None,
+    site_id: Optional[str] = None,
+    limit: int = 100,
+    user: dict = Depends(auth_module.require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: list ALL appliance provisions across all sites with filters.
+
+    Powers the admin Provisions page. Every row can be edited (email/notes),
+    toggled active/inactive (via status), or deleted. Status values:
+      - pending: MAC registered, appliance has NOT called home yet
+      - claimed: MAC registered, appliance has provisioned (provisioned_at set)
+      - stale:   pending but registered_at > 30 days ago, no claim
+    """
+    limit = max(1, min(500, int(limit)))
+
+    where = []
+    params: Dict[str, Any] = {"lim": limit}
+    if site_id:
+        where.append("ap.site_id = :sid")
+        params["sid"] = site_id
+
+    sql = """
+        SELECT
+            ap.mac_address,
+            ap.site_id,
+            s.clinic_name,
+            s.client_contact_email,
+            ap.registered_at,
+            ap.provisioned_at,
+            ap.notes,
+            CASE
+              WHEN ap.provisioned_at IS NOT NULL THEN 'claimed'
+              WHEN ap.registered_at < NOW() - INTERVAL '30 days' THEN 'stale'
+              ELSE 'pending'
+            END AS status
+        FROM appliance_provisioning ap
+        LEFT JOIN sites s ON s.site_id = ap.site_id
+    """
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY ap.registered_at DESC LIMIT :lim"
+
+    result = await execute_with_retry(db, text(sql), params)
+    rows = [dict(r._mapping) for r in result.fetchall()]
+
+    # Apply status filter in Python (CASE expression in WHERE is awkward)
+    if status_filter:
+        rows = [r for r in rows if r["status"] == status_filter]
+
+    # Format for JSON
+    for r in rows:
+        for k in ("registered_at", "provisioned_at"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+
+    # Summary counts
+    counts_result = await execute_with_retry(db, text("""
+        SELECT
+          COUNT(*) FILTER (WHERE provisioned_at IS NOT NULL) as claimed,
+          COUNT(*) FILTER (WHERE provisioned_at IS NULL AND registered_at >= NOW() - INTERVAL '30 days') as pending,
+          COUNT(*) FILTER (WHERE provisioned_at IS NULL AND registered_at < NOW() - INTERVAL '30 days') as stale,
+          COUNT(*) as total
+        FROM appliance_provisioning
+    """))
+    summary = dict(counts_result.fetchone()._mapping)
+
+    return {
+        "provisions": rows,
+        "summary": summary,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+class ProvisionUpdate(BaseModel):
+    notes: Optional[str] = None
+    site_id: Optional[str] = None  # move to a different site
+    client_email: Optional[str] = None  # updates sites.client_contact_email
+
+
+@router.patch("/provisions/{mac_address}")
+async def update_provision(
+    mac_address: str,
+    body: ProvisionUpdate,
+    user: dict = Depends(auth_module.require_operator),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit a provision: update notes, move to different site, change client email.
+
+    Common use case: typo in MAC when creating (delete + recreate), or updating
+    the contact email after client assigns a different IT person.
+    """
+    mac_norm = mac_address.upper().strip()
+
+    existing = await execute_with_retry(
+        db, text("SELECT site_id FROM appliance_provisioning WHERE mac_address = :mac"),
+        {"mac": mac_norm},
+    )
+    row = existing.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Provision not found")
+
+    updates: list[str] = []
+    params: Dict[str, Any] = {"mac": mac_norm}
+
+    if body.notes is not None:
+        updates.append("notes = :notes")
+        params["notes"] = body.notes
+    if body.site_id is not None:
+        # Verify target site exists
+        site_check = await execute_with_retry(
+            db, text("SELECT 1 FROM sites WHERE site_id = :sid"), {"sid": body.site_id},
+        )
+        if not site_check.fetchone():
+            raise HTTPException(status_code=400, detail=f"Target site {body.site_id} does not exist")
+        updates.append("site_id = :new_sid")
+        params["new_sid"] = body.site_id
+
+    if updates:
+        sql = f"UPDATE appliance_provisioning SET {', '.join(updates)} WHERE mac_address = :mac"
+        await execute_with_retry(db, text(sql), params)
+
+    if body.client_email is not None:
+        # client_email lives on sites, not on appliance_provisioning
+        target_site = body.site_id or row.site_id
+        if target_site:
+            await execute_with_retry(db, text(
+                "UPDATE sites SET client_contact_email = :email WHERE site_id = :sid"
+            ), {"email": body.client_email.strip(), "sid": target_site})
+
+    # Audit log
+    await execute_with_retry(db, text("""
+        INSERT INTO admin_audit_log (username, action, target, details, created_at)
+        VALUES (:user, 'PROVISION_UPDATED', :mac, :details::jsonb, NOW())
+    """), {
+        "user": user.get("username", "admin"),
+        "mac": mac_norm,
+        "details": json.dumps({
+            "notes": body.notes,
+            "new_site_id": body.site_id,
+            "client_email_updated": body.client_email is not None,
+        }),
+    })
+    await db.commit()
+    return {"status": "updated", "mac_address": mac_norm}
+
+
+@router.delete("/provisions/{mac_address}")
+async def delete_provision(
+    mac_address: str,
+    user: dict = Depends(auth_module.require_operator),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a provision. If the appliance has already claimed (provisioned_at set),
+    this only removes the pre-registration row — the running appliance continues.
+    Use when cleaning up typos or stale pre-registrations.
+    """
+    mac_norm = mac_address.upper().strip()
+
+    existing = await execute_with_retry(
+        db, text("SELECT site_id, provisioned_at FROM appliance_provisioning WHERE mac_address = :mac"),
+        {"mac": mac_norm},
+    )
+    row = existing.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Provision not found")
+
+    await execute_with_retry(db, text(
+        "DELETE FROM appliance_provisioning WHERE mac_address = :mac"
+    ), {"mac": mac_norm})
+
+    # Audit log
+    await execute_with_retry(db, text("""
+        INSERT INTO admin_audit_log (username, action, target, details, created_at)
+        VALUES (:user, 'PROVISION_DELETED', :mac, :details::jsonb, NOW())
+    """), {
+        "user": user.get("username", "admin"),
+        "mac": mac_norm,
+        "details": json.dumps({
+            "site_id": row.site_id,
+            "was_claimed": row.provisioned_at is not None,
+        }),
+    })
+    await db.commit()
+    return {"status": "deleted", "mac_address": mac_norm}
 
 
 @router.get("/sites/{site_id}/provisions")
