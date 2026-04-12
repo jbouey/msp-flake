@@ -756,14 +756,7 @@ async def report_incident(
     )
     chronic_count = chronic_check.scalar() or 0
 
-    if chronic_count >= 10:
-        resolution_tier = "L3"
-        logger.warning("Chronic drift detected — L1+L2 insufficient, escalating to L3",
-                       site_id=incident.site_id,
-                       incident_type=incident.incident_type,
-                       recent_4h=recent_recurrence_count,
-                       resolved_7d=chronic_count)
-    elif recent_recurrence_count >= 3:
+    if recent_recurrence_count >= 3:
         # L1 keeps fixing this and it keeps coming back.
         # Skip L1, go straight to L2 with recurrence context so the LLM
         # can analyze the root cause and recommend a deeper fix.
@@ -784,6 +777,14 @@ async def report_incident(
                      incident_type=incident.incident_type,
                      recent_4h=recent_recurrence_count,
                      resolved_7d=chronic_count)
+    elif chronic_count >= 10 and recent_recurrence_count < 3:
+        # Only escalate to L3 if there's NO short-term recurrence pattern
+        # to learn from. If it IS recurring in 4h, L2 should analyze it.
+        resolution_tier = "L3"
+        logger.warning("Chronic drift with no short-term pattern — escalating to L3",
+                       site_id=incident.site_id,
+                       incident_type=incident.incident_type,
+                       resolved_7d=chronic_count)
 
     # Step 1: Query l1_rules table (skip if recurrence detected — L1 isn't solving it)
     if resolution_tier != "L3" and recurrence_context is None:
