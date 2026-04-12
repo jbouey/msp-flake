@@ -294,6 +294,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["chaos_quicktest"] = p.handleChaosQuicktest
 	p.handlers["enable_emergency_access"] = p.handleEnableEmergencyAccess
 	p.handlers["disable_emergency_access"] = p.handleDisableEmergencyAccess
+	p.handlers["configure_dns"] = p.handleConfigureDNS
 
 	return p
 }
@@ -897,6 +898,91 @@ func (p *Processor) handleDiagnostic(_ context.Context, params map[string]interf
 		"exit_code": exitCode,
 		"output":    outStr,
 	}, nil
+}
+
+// handleConfigureDNS writes extra_hosts entries to config.yaml and restarts
+// the msp-dns-hosts service. This allows Central Command to push DNS entries
+// (like AD domain controller hostnames) to appliances without SSH access.
+//
+// Parameters:
+//
+//	extra_hosts: map[string]string  e.g. {"NVDC01": "192.168.88.250"}
+func (p *Processor) handleConfigureDNS(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	hostsRaw, ok := params["extra_hosts"]
+	if !ok {
+		return nil, fmt.Errorf("extra_hosts parameter required")
+	}
+
+	hostsMap, ok := hostsRaw.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("extra_hosts must be a map of hostname→IP")
+	}
+
+	// Validate entries
+	entries := make(map[string]string)
+	for hostname, ipRaw := range hostsMap {
+		ip, ok := ipRaw.(string)
+		if !ok {
+			return nil, fmt.Errorf("invalid IP for host %s", hostname)
+		}
+		// Basic validation: hostname must be alphanumeric+dash, IP must have dots
+		if len(hostname) == 0 || len(hostname) > 63 {
+			return nil, fmt.Errorf("invalid hostname: %s", hostname)
+		}
+		if len(ip) < 7 || len(ip) > 45 {
+			return nil, fmt.Errorf("invalid IP: %s", ip)
+		}
+		entries[hostname] = ip
+	}
+
+	configPath := "/var/lib/msp/config.yaml"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config.yaml: %w", err)
+	}
+
+	// Parse YAML
+	var config map[string]interface{}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config.yaml: %w", err)
+	}
+
+	// Merge extra_hosts (don't replace — add/update entries)
+	existing, _ := config["extra_hosts"].(map[string]interface{})
+	if existing == nil {
+		existing = make(map[string]interface{})
+	}
+	for hostname, ip := range entries {
+		existing[hostname] = ip
+	}
+	config["extra_hosts"] = existing
+
+	// Write back
+	out, err := yaml.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config.yaml: %w", err)
+	}
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write config.yaml: %w", err)
+	}
+
+	// Restart the DNS hosts service to apply
+	cmd := exec.Command("systemctl", "restart", "msp-dns-hosts")
+	restartOut, restartErr := cmd.CombinedOutput()
+
+	slog.Info("DNS configured via fleet order",
+		"component", "orders",
+		"entries", len(entries),
+		"restart_output", string(restartOut))
+
+	result := map[string]interface{}{
+		"entries_written": len(entries),
+		"hosts":           entries,
+	}
+	if restartErr != nil {
+		result["restart_error"] = restartErr.Error()
+	}
+	return result, nil
 }
 
 func (p *Processor) handleDeploySensor(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {

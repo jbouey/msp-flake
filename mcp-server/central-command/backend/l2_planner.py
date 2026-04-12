@@ -265,6 +265,29 @@ AVAILABLE_RUNBOOKS = {
         "hipaa_controls": ["164.312(a)(2)(iv)", "164.312(e)(2)(ii)"],
         "is_disruptive": True,
     },
+    # Persistence-aware runbooks — L2 recurrence analysis should recommend
+    # these when the same issue keeps coming back after L1 fixes the symptom.
+    "RB-WIN-PERSIST-001": {
+        "name": "Full Persistence Mechanism Cleanup",
+        "description": "Remove ALL persistence mechanisms: suspicious scheduled tasks AND their Task Scheduler XML definitions, registry Run/RunOnce keys with script launchers, and WMI event subscriptions. Use when rogue_scheduled_tasks or similar keeps recurring after L1 removal — L1 removes the task but not the mechanism that recreates it.",
+        "triggers": ["persistence", "recurring", "scheduled_task", "rogue", "wmi", "registry_run"],
+        "hipaa_controls": ["164.308(a)(1)(ii)(D)", "164.312(b)"],
+        "is_disruptive": False,
+    },
+    "RB-WIN-PERSIST-002": {
+        "name": "Defender Exclusion Root Cause Cleanup",
+        "description": "Remove Defender exclusions AND the root cause that recreates them: GPO-managed exclusion registry keys, scheduled tasks that call Add-MpPreference. Use when defender_exclusions keeps recurring after L1 removal.",
+        "triggers": ["exclusion", "defender_exclusions", "recurring_exclusion", "add-mppreference"],
+        "hipaa_controls": ["164.308(a)(5)(ii)(B)"],
+        "is_disruptive": False,
+    },
+    "RB-WIN-SEC-018": {
+        "name": "Suspicious Scheduled Task Removal",
+        "description": "Detect and remove suspicious scheduled tasks at root path. Symptom-level fix — for recurring issues, use RB-WIN-PERSIST-001 instead.",
+        "triggers": ["scheduled_task", "rogue_scheduled"],
+        "hipaa_controls": ["164.308(a)(1)(ii)(D)"],
+        "is_disruptive": False,
+    },
 }
 
 # --- Dynamic runbook cache (loaded from DB) ---
