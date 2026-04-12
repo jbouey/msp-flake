@@ -608,19 +608,19 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
     except Exception:
         pass  # If table doesn't exist yet, skip
 
-    # Get the latest compliance bundle for this site
+    # Get recent compliance bundles. We fetch enough to cover all check types
+    # across all appliances, but we'll deduplicate to latest-per-check below.
     result = await db.execute(text("""
         SELECT checks, summary, checked_at
         FROM compliance_bundles
         WHERE site_id = :site_id
         ORDER BY checked_at DESC
-        LIMIT 50
+        LIMIT 100
     """), {"site_id": site_id})
-    
+
     bundles = result.fetchall()
-    
+
     if not bundles:
-        # No compliance data - return defaults indicating unknown
         return {
             "patching": None,
             "antivirus": None,
@@ -631,14 +631,15 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
             "score": None,
             "has_data": False,
         }
-    
-    # Collect pass/warn/fail counts by category using pre-computed lookup.
-    # Uses the unified formula: score = (passes + 0.5 * warnings) / total * 100
-    # This matches the admin compliance-health endpoint for consistent scoring.
-    cat_pass: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
-    cat_warn: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
-    cat_fail: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
-    check_sequences: Dict[str, list] = {}  # check_type -> [bool pass/fail]
+
+    # LATEST-PER-CHECK scoring: for each unique (check_type, hostname),
+    # take only the most recent result. This produces a stable point-in-time
+    # score that doesn't oscillate based on which bundles landed in the window.
+    #
+    # Round Table: "The same underlying state was producing scores between
+    # 50-90% because the ratio of Windows-to-Linux bundles in the last 50
+    # changed on every page load. One vote per check per host."
+    latest_check: Dict[str, str] = {}  # (check_type, hostname) -> status
 
     for bundle in bundles:
         checks = bundle.checks or []
@@ -646,38 +647,29 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
             check_type = check.get("check", "")
             if check_type in disabled_checks:
                 continue
-            status = check.get("status", "").lower()
+            hostname = check.get("hostname", "unknown")
+            key = f"{check_type}:{hostname}"
+            # First occurrence = most recent (bundles ordered DESC)
+            if key not in latest_check:
+                latest_check[key] = check.get("status", "").lower()
 
-            if status in ("compliant", "pass"):
-                passed = True
-                category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
-                if category:
-                    cat_pass[category] += 1
-            elif status == "warning":
-                passed = True
-                category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
-                if category:
-                    cat_warn[category] += 1
-            elif status in ("non_compliant", "fail"):
-                passed = False
-                category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
-                if category:
-                    cat_fail[category] += 1
-            else:
-                continue  # Skip unknown statuses
+    # Count pass/warn/fail per category from latest-per-check results
+    cat_pass: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
+    cat_warn: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
+    cat_fail: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
 
-            # Track sequence for flap detection
-            if check_type not in check_sequences:
-                check_sequences[check_type] = []
-            check_sequences[check_type].append(passed)
+    for key, status in latest_check.items():
+        check_type = key.split(":")[0]
+        category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+        if not category:
+            continue
 
-    # Detect flapping check types and dampen their scores
-    flapping_checks = set()
-    for ct, seq in check_sequences.items():
-        if len(seq) >= 4:
-            pass_pct = (sum(1 for s in seq if s) / len(seq)) * 100
-            if 20 < pass_pct < 80:
-                flapping_checks.add(ct)
+        if status in ("compliant", "pass"):
+            cat_pass[category] += 1
+        elif status == "warning":
+            cat_warn[category] += 1
+        elif status in ("non_compliant", "fail"):
+            cat_fail[category] += 1
 
     # Unified formula: score = (passes + 0.5 * warnings) / total * 100
     # Overall uses HIPAA-weighted average (encryption/access_control weighted higher)
@@ -689,11 +681,6 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
         total = cat_pass[category] + cat_warn[category] + cat_fail[category]
         if total > 0:
             avg = ((cat_pass[category] + 0.5 * cat_warn[category]) / total) * 100
-            # Flap dampening: floor at 50 if any check in category is flapping
-            cat_checks = CATEGORY_CHECKS.get(category, [])
-            has_flapping = any(ct in flapping_checks for ct in cat_checks)
-            if has_flapping and avg < 50:
-                avg = 50.0
             result_scores[category] = round(avg)
             weight = HIPAA_CATEGORY_WEIGHTS.get(category, 0.06)
             weighted_sum += avg * weight
@@ -756,11 +743,13 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
     for row in rows:
         site_bundles.setdefault(row.site_id, []).append(row.checks)
 
-    # Score each site from bundles
+    # Score each site using LATEST-PER-CHECK (same logic as single-site version).
+    # For each unique (check_type, hostname), take only the most recent result.
+    # Bundles are already ordered DESC by checked_at from the window function.
     scores = {}
     for site_id, bundles_checks in site_bundles.items():
         site_disabled = disabled_by_site.get(site_id, default_disabled)
-        category_scores = {cat: [] for cat in CATEGORY_CHECKS}
+        latest_check: Dict[str, str] = {}  # (check_type:hostname) -> status
         bundle_check_count = 0
 
         for checks in bundles_checks:
@@ -770,41 +759,49 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
                 check_type = check.get("check", "")
                 if check_type in site_disabled:
                     continue
-                status = check.get("status", "").lower()
+                hostname = check.get("hostname", "unknown")
+                key = f"{check_type}:{hostname}"
+                if key not in latest_check:
+                    latest_check[key] = check.get("status", "").lower()
 
-                if status in ("compliant", "pass"):
-                    score = 100
-                elif status == "warning":
-                    score = 50
-                elif status in ("non_compliant", "fail"):
-                    score = 0
-                else:
-                    continue
+        cat_pass: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
+        cat_warn: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
+        cat_fail: Dict[str, int] = {cat: 0 for cat in CATEGORY_CHECKS}
 
-                bundle_check_count += 1
-                category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
-                if category:
-                    category_scores[category].append(score)
+        for key, status in latest_check.items():
+            check_type = key.split(":")[0]
+            category = _CHECK_TYPE_TO_CATEGORY.get(check_type)
+            if not category:
+                continue
+            bundle_check_count += 1
+            if status in ("compliant", "pass"):
+                cat_pass[category] += 1
+            elif status == "warning":
+                cat_warn[category] += 1
+            elif status in ("non_compliant", "fail"):
+                cat_fail[category] += 1
 
         result_scores = {}
-        total_score = 0
-        categories_with_data = 0
+        weighted_sum = 0.0
+        weight_sum = 0.0
 
-        for category, cat_scores in category_scores.items():
-            if cat_scores:
-                avg = sum(cat_scores) / len(cat_scores)
+        for category in CATEGORY_CHECKS:
+            total = cat_pass[category] + cat_warn[category] + cat_fail[category]
+            if total > 0:
+                avg = ((cat_pass[category] + 0.5 * cat_warn[category]) / total) * 100
                 result_scores[category] = round(avg)
-                total_score += avg
-                categories_with_data += 1
+                weight = HIPAA_CATEGORY_WEIGHTS.get(category, 0.06)
+                weighted_sum += avg * weight
+                weight_sum += weight
             else:
                 result_scores[category] = None
 
-        if categories_with_data > 0:
-            result_scores["score"] = round(total_score / categories_with_data, 1)
+        if weight_sum > 0:
+            result_scores["score"] = round(weighted_sum / weight_sum, 1)
         else:
             result_scores["score"] = None
 
-        result_scores["has_data"] = categories_with_data > 0
+        result_scores["has_data"] = weight_sum > 0
         result_scores["_bundle_check_count"] = bundle_check_count
         scores[site_id] = result_scores
 
