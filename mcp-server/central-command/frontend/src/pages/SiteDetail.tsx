@@ -744,15 +744,33 @@ export const SiteDetail: React.FC = () => {
                 onClick={async () => {
                   setProvisionLoading(true);
                   try {
+                    const csrfToken = document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '';
+                    if (!csrfToken) {
+                      setToast({ message: 'Session expired — refresh the page and log in again.', type: 'error' });
+                      setProvisionLoading(false);
+                      return;
+                    }
                     const res = await fetch(`/api/dashboard/sites/${siteId}/provision`, {
                       method: 'POST', credentials: 'same-origin',
-                      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '' },
+                      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
                       body: JSON.stringify({ mac_address: provisionMac.trim() || undefined, client_email: provisionEmail.trim() || undefined }),
                     });
-                    const data = await res.json();
-                    setToast({ message: data.message || 'Provision created', type: 'success' });
+                    // res.ok check is REQUIRED. Previously this block read res.json() unconditionally and
+                    // coerced any error body into a "success" toast because `data.message` fell through to
+                    // the default string. Silent failures from 401/403/CSRF-mismatch looked indistinguishable
+                    // from real success. See Session 205 add-appliance silent-failure incident.
+                    let body: { detail?: string; message?: string } = {};
+                    try { body = await res.json(); } catch { /* non-JSON error response */ }
+                    if (!res.ok) {
+                      const reason = body.detail || body.message || `HTTP ${res.status}`;
+                      throw new Error(reason);
+                    }
+                    setToast({ message: body.message || 'Provision created', type: 'success' });
                     setShowProvisionModal(false); setProvisionMac(''); setProvisionEmail('');
-                  } catch { setToast({ message: 'Failed to create provision', type: 'error' }); }
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : 'Failed to create provision';
+                    setToast({ message: `Provision failed: ${msg}`, type: 'error' });
+                  }
                   setProvisionLoading(false);
                 }}
                 className="px-4 py-2 text-sm font-medium rounded-lg text-white"
