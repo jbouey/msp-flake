@@ -608,14 +608,17 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
     except Exception:
         pass  # If table doesn't exist yet, skip
 
-    # Get recent compliance bundles. We fetch enough to cover all check types
-    # across all appliances, but we'll deduplicate to latest-per-check below.
+    # Get compliance bundles from last 24 hours. Staleness cutoff ensures
+    # offline hosts don't carry stale "pass" results indefinitely.
+    # LIMIT 200 covers 10+ appliances with 5+ scan types each.
+    # Deduplication to latest-per-check happens below.
     result = await db.execute(text("""
         SELECT checks, summary, checked_at
         FROM compliance_bundles
         WHERE site_id = :site_id
+          AND checked_at > NOW() - INTERVAL '24 hours'
         ORDER BY checked_at DESC
-        LIMIT 100
+        LIMIT 200
     """), {"site_id": site_id})
 
     bundles = result.fetchall()
@@ -730,8 +733,9 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
             SELECT site_id, checks,
                    ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY checked_at DESC) as rn
             FROM compliance_bundles
+            WHERE checked_at > NOW() - INTERVAL '24 hours'
         ) ranked
-        WHERE rn <= 50
+        WHERE rn <= 200
     """))
     rows = result.fetchall()
 
