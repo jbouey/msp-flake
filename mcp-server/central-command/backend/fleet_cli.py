@@ -52,6 +52,7 @@ VALID_ORDER_TYPES = {
     "remove_agent", "rotate_wg_key", "isolate_host",
     "chaos_quicktest",
     "enable_emergency_access", "disable_emergency_access",
+    "configure_dns",
 }
 
 DEFAULT_PARAMS = {
@@ -62,6 +63,7 @@ REQUIRED_PARAMS = {
     "update_daemon": ["binary_url", "binary_sha256", "version"],
     "diagnostic": ["command"],
     "isolate_host": ["hostname"],
+    "configure_dns": ["extra_hosts"],
 }
 
 _HEX_RE = re.compile(r"^[0-9a-f]{128}$")
@@ -99,7 +101,8 @@ def sign_order(
 
 
 def parse_params(param_list: list[str] | None) -> dict:
-    """Parse --param KEY=VALUE arguments into a dict."""
+    """Parse --param KEY=VALUE arguments into a dict.
+    Values starting with '{' or '[' are parsed as JSON (for maps/arrays)."""
     if not param_list:
         return {}
     result = {}
@@ -107,6 +110,13 @@ def parse_params(param_list: list[str] | None) -> dict:
         key, sep, value = p.partition("=")
         if not sep:
             sys.exit(f"Invalid --param format: {p!r} (expected KEY=VALUE)")
+        # Auto-parse JSON for map/array values (e.g. extra_hosts={"NVDC01":"192.168.88.250"})
+        if value and value[0] in "{[":
+            try:
+                result[key] = json.loads(value)
+                continue
+            except json.JSONDecodeError:
+                pass  # Fall through to string
         result[key] = value
     return result
 
