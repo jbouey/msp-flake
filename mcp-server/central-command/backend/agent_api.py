@@ -606,13 +606,76 @@ async def report_incident(
             )
 
         if existing_status == 'resolved':
+            # Reopen the incident
             await db.execute(
                 text("""
-                    UPDATE incidents SET status = 'resolving', resolved_at = NULL
+                    UPDATE incidents SET
+                        status = 'resolving',
+                        resolved_at = NULL,
+                        reopen_count = COALESCE(reopen_count, 0) + 1
                     WHERE id = :id
                 """),
                 {"id": existing_id}
             )
+
+            # CRITICAL: Check for recurrence pattern on reopen.
+            # Without this, the flywheel NEVER gets to analyze recurring
+            # issues because dedup reopens them instead of creating new
+            # incidents that would trigger the recurrence check.
+            recurrence_check = await db.execute(
+                text("""
+                    SELECT COUNT(*) FROM incidents
+                    WHERE appliance_id = :appliance_id
+                    AND incident_type = :incident_type
+                    AND status = 'resolved'
+                    AND resolved_at > NOW() - INTERVAL '4 hours'
+                """),
+                {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+            )
+            reopen_recurrence_count = recurrence_check.scalar() or 0
+
+            if reopen_recurrence_count >= 3:
+                logger.info("Recurrence detected on reopen — escalating existing incident to L2",
+                            site_id=incident.site_id,
+                            incident_type=incident.incident_type,
+                            recurrence_4h=reopen_recurrence_count,
+                            incident_id=existing_id)
+
+                # Call L2 with recurrence context for the REOPENED incident
+                try:
+                    from dashboard_api.l2_planner import analyze_incident as l2_analyze, record_l2_decision, is_l2_available
+                    if is_l2_available():
+                        l2_details = dict(incident.details or {})
+                        l2_details["recurrence"] = {
+                            "recurrence_count_4h": reopen_recurrence_count,
+                            "recurrence_count_7d": reopen_recurrence_count,
+                            "message": (
+                                f"This incident type ({incident.incident_type}) has been "
+                                f"resolved {reopen_recurrence_count} times in 4h and is "
+                                f"recurring again. L1's fix is not sticking. Analyze the "
+                                f"persistence mechanism and recommend a root-cause fix."
+                            ),
+                        }
+                        decision = await l2_analyze(
+                            incident_type=incident.incident_type,
+                            severity=incident.severity,
+                            check_type=incident.check_type or incident.incident_type,
+                            details=l2_details,
+                            pre_state=incident.pre_state,
+                            hipaa_controls=incident.hipaa_controls,
+                        )
+                        await record_l2_decision(
+                            db, existing_id, decision,
+                            incident_type=incident.incident_type,
+                            escalation_reason="recurrence",
+                        )
+                        logger.info("L2 recurrence decision recorded on reopen",
+                                    incident_id=existing_id,
+                                    recommended_runbook=decision.runbook_id,
+                                    confidence=decision.confidence)
+                except Exception as e:
+                    logger.error(f"L2 recurrence analysis on reopen failed: {e}")
+
             await db.commit()
             return {
                 "status": "reopened",
