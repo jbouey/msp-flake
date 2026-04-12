@@ -45,6 +45,7 @@ from dashboard_api.sites import router as sites_router, orders_router, appliance
 from dashboard_api.portal import router as portal_router
 from dashboard_api.evidence_chain import router as evidence_router
 from dashboard_api.install_reports import router as install_router
+from dashboard_api.chaos_lab import router as chaos_lab_router
 from dashboard_api.org_credentials import router as org_credentials_router
 from dashboard_api.provisioning import router as provisioning_router
 from dashboard_api.partners import router as partners_router, branding_public_router
@@ -1634,6 +1635,7 @@ app.include_router(alerts_router)
 app.include_router(portal_router)
 app.include_router(evidence_router)
 app.include_router(install_router)
+app.include_router(chaos_lab_router)
 app.include_router(provisioning_router)
 app.include_router(partners_router)
 app.include_router(branding_public_router)  # Public partner branding (no auth, for login pages)

@@ -340,6 +340,65 @@ export interface ProvisionsListResponse {
   computed_at: string;
 }
 
+// =============================================================================
+// CHAOS LAB API (admin-only push-button scenario activation)
+// =============================================================================
+
+export interface ChaosBundle {
+  id: string;
+  name: string;
+  difficulty: string | null;
+  category: string | null;
+  steps: number | null;
+  target: string | null;
+  file: string | null;
+  error: string | null;
+}
+
+export interface ChaosJobOutcome {
+  job_id: string;
+  bundle_id: string;
+  started_at: string;
+  completed_at: string | null;
+  overall_success: boolean | null;
+  duration_s: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  returncode: number | null;
+}
+
+export interface ChaosHistoryRow {
+  timestamp: string;
+  job_id: string;
+  bundle_id: string;
+  mode: string;
+  target_host: string;
+  duration_s: string;
+  overall_success: boolean;
+  steps_succeeded: string;
+  step_count: string;
+}
+
+export const chaosLabApi = {
+  listBundles: () => fetchSitesApi<ChaosBundle[]>('/admin/chaos/bundles'),
+
+  activate: (bundleId: string, mode: 'activate' | 'test-promotion' | 'cadence' = 'activate') =>
+    fetchSitesApi<ChaosJobOutcome>('/admin/chaos/activate', {
+      method: 'POST',
+      body: JSON.stringify({ bundle_id: bundleId, mode }),
+    }),
+
+  cleanup: (bundleId: string) =>
+    fetchSitesApi<ChaosJobOutcome>(`/admin/chaos/cleanup/${encodeURIComponent(bundleId)}`, {
+      method: 'POST',
+    }),
+
+  history: (limit = 20) =>
+    fetchSitesApi<{ rows: ChaosHistoryRow[]; computed_at: string }>(
+      `/admin/chaos/history?limit=${limit}`,
+    ),
+};
+
 export const provisionsApi = {
   list: (params?: { status?: string; site_id?: string; limit?: number }) => {
     const qs = new URLSearchParams();
