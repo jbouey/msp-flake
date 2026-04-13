@@ -68,18 +68,21 @@ jobs:
         working-directory: mcp-server/central-command/frontend
         run: npx vitest run
 
-  privileged-chain-trigger-test:
-    # Phase 15 A-spec hygiene: end-to-end test of the privileged-chain
-    # enforcement triggers (migrations 175 + 176) against a real
-    # Postgres. Exercises the trigger by INSERTing/UPDATEing privileged
-    # fleet_orders rows and asserting the expected pass/fail behavior.
+  privileged-chain-pg-tests:
+    # Phase 15 A-spec hygiene: end-to-end tests against real Postgres
+    # for the Session 205 privileged-access security primitives:
+    #   - chain enforcement triggers (migrations 175 + 176)
+    #   - magic-link token mint/verify/consume cycle
+    #   - separate MAGIC_LINK_HMAC_KEY_FILE defense-in-depth
     #
-    # Why this exists: the Session 205 migration 175/176 %% RAISE bug
+    # Why these exist: the Session 205 migration 175/176 %% RAISE bug
     # passed a syntax check (plpgsql function bodies are stored as
     # text), but failed at trigger-fire time with "too many parameters
     # specified for RAISE". A static migrations-up smoke test wouldn't
     # have caught it — only an INSERT/UPDATE test that fires the
-    # trigger does.
+    # trigger does. Magic-link tokens are similarly only safe if the
+    # whole HMAC + expiry + single-use + session-binding chain is
+    # actually exercised against a real DB.
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -104,18 +107,31 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install asyncpg + pytest
-        run: pip install asyncpg==0.30.0 pytest==8.3.4 pytest-asyncio==0.24.0
+      - name: Install backend deps
+        # Same pattern as the `test` job — backend conftest imports the
+        # full package (models → pydantic → ...). Cheaper than
+        # surgically pruning conftest just for these PG tests.
+        working-directory: mcp-server/central-command/backend
+        run: |
+          pip install pytest==8.3.4 pytest-asyncio==0.24.0
+          pip install -r requirements.txt
 
-      - name: Run chain-trigger integration test
+      - name: Privileged-chain trigger integration test
         env:
           PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
         working-directory: mcp-server/central-command/backend
         run: |
           python3 -m pytest tests/test_privileged_chain_triggers_pg.py -v --tb=short
 
+      - name: Magic-link token integration test
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_privileged_magic_link_pg.py -v --tb=short
+
   deploy:
-    needs: [test, privileged-chain-trigger-test]
+    needs: [test, privileged-chain-pg-tests]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

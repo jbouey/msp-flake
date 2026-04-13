@@ -43,6 +43,13 @@ logger = logging.getLogger(__name__)
 
 
 SIGNING_KEY_PATH = os.getenv("SIGNING_KEY_FILE", "/app/secrets/signing.key")
+# Phase 15 A-spec hygiene — defense in depth: prefer a dedicated magic-
+# link HMAC secret when the operator provisions one, so a leak of the
+# Ed25519 signing key (which signs fleet orders + attestation bundles)
+# does not also enable forgery of magic-link approval tokens. Falls
+# back to deriving from signing.key when unset, preserving the
+# Session 205 single-secret default for existing deploys.
+MAGIC_LINK_HMAC_KEY_FILE = os.getenv("MAGIC_LINK_HMAC_KEY_FILE", "").strip()
 DEFAULT_TTL_SECONDS = 30 * 60  # 30 minutes
 ALLOWED_ACTIONS = frozenset({"approve", "reject"})
 
@@ -60,10 +67,34 @@ class VerifiedToken:
 
 
 def _hmac_key() -> bytes:
-    """Derive HMAC key from server signing key. Stable across restarts
-    without storing a second secret. If someone rotates signing.key,
-    outstanding magic links become invalid — that's acceptable;
-    clients can always fall back to the session-auth API path."""
+    """Derive the HMAC key for magic-link tokens.
+
+    Preference order:
+      1. MAGIC_LINK_HMAC_KEY_FILE (separate secret, defense in depth) —
+         when the file exists and is non-empty, use its raw bytes
+         hashed with the magic-link domain tag.
+      2. SIGNING_KEY_FILE (default) — derive from the Ed25519 signing
+         key. Stable across restarts without storing a second secret.
+
+    Why the optional separate file: a leak of signing.key would
+    otherwise allow forgery of BOTH fleet orders AND magic-link
+    approval tokens. With a dedicated magic-link key, a signing.key
+    rotation does not invalidate outstanding links and a leak of one
+    secret does not compromise the other.
+
+    Domain separation: even when derived from signing.key, we hash
+    `b"magic-link-v1|" + key_bytes` so the HMAC key is never the
+    signing key itself.
+    """
+    if MAGIC_LINK_HMAC_KEY_FILE:
+        try:
+            mlk = pathlib.Path(MAGIC_LINK_HMAC_KEY_FILE).read_bytes().strip()
+        except Exception as e:
+            raise MagicLinkError(f"magic-link HMAC key unreadable: {e}")
+        if not mlk:
+            raise MagicLinkError("magic-link HMAC key file is empty")
+        return hashlib.sha256(b"magic-link-v1|" + mlk).digest()
+
     try:
         raw = pathlib.Path(SIGNING_KEY_PATH).read_bytes().strip()
     except Exception as e:
