@@ -723,36 +723,77 @@ def generate_pattern_signature(incident_type: str, check_type: str, runbook_id: 
     return hashlib.sha256(pattern_str.encode()).hexdigest()[:16]
 
 
-def build_system_prompt(all_runbooks: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
-    """Build the system prompt for L2 analysis."""
+def build_system_prompt(
+    all_runbooks: Optional[Dict[str, Dict[str, Any]]] = None,
+    incident_type: Optional[str] = None,
+    check_type: Optional[str] = None,
+) -> str:
+    """Build the system prompt for L2 analysis.
+
+    When `incident_type` or `check_type` is provided, the runbook catalog is
+    pre-filtered to runbooks matching either the exact check_type or that
+    name the incident_type in their triggers. This shrinks the prompt by
+    10-50× and dramatically improves grounding — the LLM is less likely
+    to hallucinate a runbook ID when the catalog is small and on-topic.
+    The validator (line 1060) is the final guard, but a tighter prompt
+    means fewer hallucinations to nullify, fewer wasted LLM tokens.
+    """
     runbooks = all_runbooks or _get_all_runbooks_sync()
+
+    # Pre-filter: keep runbooks whose check_type matches or whose triggers
+    # name the incident. Always include at least 5 runbooks so the LLM can
+    # see enough alternatives to make a confident pick.
+    filtered: Dict[str, Dict[str, Any]] = {}
+    if incident_type or check_type:
+        target_keys = {(check_type or "").lower(), (incident_type or "").lower()}
+        target_keys.discard("")
+        for rb_id, rb in runbooks.items():
+            rb_check = (rb.get("check_type") or "").lower()
+            rb_triggers = {t.lower() for t in (rb.get("triggers") or [])}
+            if rb_check in target_keys or rb_triggers & target_keys:
+                filtered[rb_id] = rb
+    if len(filtered) < 5:
+        filtered = runbooks  # fall back to full catalog if filter is too narrow
+
     runbook_list = "\n".join([
-        f"- {rb_id}: {rb['name']} - {rb['description']}"
+        f"- {rb_id}: {rb['name']} - {rb.get('description', '')}"
         + (f" (Triggers: {', '.join(rb['triggers'])})" if rb.get('triggers') else "")
-        for rb_id, rb in runbooks.items()
+        for rb_id, rb in filtered.items()
     ])
+
+    valid_id_list = ", ".join(sorted(filtered.keys())[:60])
+    if len(filtered) > 60:
+        valid_id_list += f", ... ({len(filtered) - 60} more)"
 
     return f"""You are an expert IT operations analyst for a HIPAA-compliant healthcare MSP.
 Your job is to analyze incidents and select the most appropriate automated runbook for remediation.
 
 {_UNTRUSTED_DATA_NOTICE}
 
-AVAILABLE RUNBOOKS:
+AVAILABLE RUNBOOKS (these are the ONLY valid runbook_id values you may return):
 {runbook_list}
 
+VALID runbook_id VALUES (you MUST pick one of these or return null — DO NOT invent new IDs):
+{valid_id_list}
+
 DECISION GUIDELINES:
-1. Select the runbook that best matches the incident type and symptoms
-2. Consider HIPAA compliance requirements
-3. Prefer non-disruptive runbooks when possible
-4. If no runbook clearly matches, recommend human review
-5. Provide confidence score: 0.9+ for clear matches, 0.7-0.9 for good matches, <0.7 for uncertain
+1. Select the runbook that best matches the incident type and symptoms.
+2. The runbook_id you return MUST be exactly one of the values listed above.
+   If you are unsure, return null and set requires_human_review=true.
+3. NEVER invent a new runbook_id (e.g. "L2-fix-foo", "AUTO-bar"). Hallucinated
+   IDs are rejected by the validator and waste both an LLM call and an
+   incident-resolution opportunity.
+4. Consider HIPAA compliance requirements.
+5. Prefer non-disruptive runbooks when possible.
+6. Confidence score: 0.9+ for clear matches, 0.7-0.9 for good matches,
+   <0.7 means uncertain — set requires_human_review=true.
 
 OUTPUT FORMAT (JSON):
 {{
-  "runbook_id": "RB-XXX-001" or null if no match,
+  "runbook_id": "<one of the valid IDs above>" or null if no match,
   "reasoning": "Brief explanation of why this runbook was selected",
   "confidence": 0.0-1.0,
-  "alternative_runbooks": ["RB-YYY-001"],
+  "alternative_runbooks": ["<another valid ID>"],
   "requires_human_review": true/false
 }}
 
@@ -1102,7 +1143,13 @@ async def analyze_incident(
     # Load all runbooks (static + DB-backed)
     all_runbooks = await _load_dynamic_runbooks()
 
-    system_prompt = build_system_prompt(all_runbooks)
+    # Phase 1 grounding: pre-filter the catalog to runbooks relevant to this
+    # incident_type / check_type. Smaller catalog → less hallucination.
+    system_prompt = build_system_prompt(
+        all_runbooks,
+        incident_type=incident_type,
+        check_type=check_type,
+    )
     user_prompt = build_incident_prompt(
         incident_type, severity, check_type, details, pre_state, hipaa_controls,
         hypotheses=hypotheses,
