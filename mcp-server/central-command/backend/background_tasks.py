@@ -545,6 +545,129 @@ async def temporal_decay_loop():
         await asyncio.sleep(21600)  # 6 hours
 
 
+async def threshold_tuner_loop():
+    """Phase 8: Bayesian update of per-incident-type promotion thresholds.
+
+    Runs once per 24h. For each promotion_thresholds row with
+    auto_tune_enabled=true:
+
+      1. Find all l1_rules with this incident_type that have been live
+         for at least 7d post-promotion.
+      2. Compute their actual L1 success rate (last 30d).
+      3. If observed << threshold: we were over-confident; RAISE threshold.
+         If observed >> threshold: we were under-confident; LOWER threshold.
+
+    Update rule is a simple bounded weighted average — not full Bayesian
+    posterior — biased toward stability: new threshold moves at most
+    ±0.02 per day, clamped to [min_rate_floor, min_rate_ceiling].
+    This prevents a single bad promotion from overcorrecting the
+    threshold far into either direction.
+
+    Rationale: we can't know the *true* post-promotion success rate
+    from pre-promotion signals alone; this is the feedback loop that
+    makes promotion thresholds data-driven rather than heuristic.
+    """
+    await asyncio.sleep(900)  # Wait 15 min after startup
+    while True:
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Pull incident types enrolled in auto-tune
+                enrolled = await conn.fetch(
+                    "SELECT incident_type, min_success_rate, "
+                    "min_rate_floor, min_rate_ceiling, tune_count "
+                    "FROM promotion_thresholds "
+                    "WHERE auto_tune_enabled = true "
+                    "AND incident_type <> '__default__'"
+                )
+
+                tuned = 0
+                for cfg in enrolled:
+                    itype = cfg["incident_type"]
+                    current = float(cfg["min_success_rate"] or 0.90)
+                    floor = float(cfg["min_rate_floor"] or 0.70)
+                    ceiling = float(cfg["min_rate_ceiling"] or 0.99)
+
+                    # Observed post-promotion performance: L1 runs
+                    # triggered by rules promoted for this incident_type,
+                    # last 30d, created at least 7d ago.
+                    obs = await conn.fetchrow("""
+                        WITH elig AS (
+                            SELECT rule_id, runbook_id
+                            FROM l1_rules
+                            WHERE promoted_from_l2 = true
+                              AND enabled = true
+                              AND created_at < NOW() - INTERVAL '7 days'
+                              AND incident_pattern->>'incident_type' = $1
+                        )
+                        SELECT
+                            COUNT(*)                                   AS n,
+                            SUM(CASE WHEN et.success THEN 1 ELSE 0 END) AS s
+                        FROM execution_telemetry et
+                        JOIN elig r ON r.runbook_id = et.runbook_id
+                        WHERE et.resolution_level = 'L1'
+                          AND et.created_at > NOW() - INTERVAL '30 days'
+                    """, itype)
+                    n = int(obs["n"] or 0)
+                    s = int(obs["s"] or 0)
+                    if n < 10:
+                        continue  # insufficient evidence
+
+                    observed = s / n
+                    # Aim to promote at rates where we actually see
+                    # observed performance. New threshold = 0.5 * current
+                    # + 0.5 * observed, bounded by ±0.02/day drift cap.
+                    target = 0.5 * current + 0.5 * observed
+                    max_step = 0.02
+                    if target > current + max_step:
+                        target = current + max_step
+                    elif target < current - max_step:
+                        target = current - max_step
+                    # Clamp to configured bounds
+                    target = max(floor, min(ceiling, target))
+
+                    # Only update if material change
+                    if abs(target - current) < 0.005:
+                        continue
+
+                    await conn.execute("""
+                        UPDATE promotion_thresholds
+                        SET min_success_rate = $1,
+                            last_observed_rate = $2,
+                            last_observed_n = $3,
+                            last_tuned_at = NOW(),
+                            tune_count = tune_count + 1,
+                            updated_at = NOW()
+                        WHERE incident_type = $4
+                    """, round(target, 3), round(observed, 3), n, itype)
+
+                    logger.info(
+                        "promotion threshold tuned",
+                        incident_type=itype,
+                        previous=round(current, 3),
+                        new=round(target, 3),
+                        observed_rate=round(observed, 3),
+                        observed_n=n,
+                    )
+                    tuned += 1
+
+                if tuned > 0:
+                    logger.info(
+                        "threshold_tuner cycle complete",
+                        tuned=tuned,
+                        enrolled=len(enrolled),
+                    )
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"Threshold tuner error: {e}")
+
+        await asyncio.sleep(86400)  # 24 hours
+
+
 async def regime_change_detector_loop():
     """Phase 6: detect sudden success-rate drops on active L1 rules.
 
@@ -918,19 +1041,28 @@ async def flywheel_promotion_loop():
                     await db.rollback()
 
                 # Step 4: Auto-promote platform rules
+                # Phase 8: use per-incident-type thresholds from
+                # promotion_thresholds table (falls back to __default__).
                 try:
                     remaining = max(0, 5 - promotions_this_cycle)
                     if remaining == 0:
                         logger.info("Flywheel promotion cap reached (5/cycle), skipping platform auto-promotion")
                     platform_result = await db.execute(text("""
-                        SELECT pattern_key, incident_type, runbook_id,
-                               distinct_orgs, total_occurrences, success_rate
-                        FROM platform_pattern_stats
-                        WHERE promoted_at IS NULL
-                          AND distinct_orgs >= 5
-                          AND success_rate >= 0.90
-                          AND total_occurrences >= 20
-                        ORDER BY distinct_orgs DESC, total_occurrences DESC
+                        SELECT pps.pattern_key, pps.incident_type, pps.runbook_id,
+                               pps.distinct_orgs, pps.total_occurrences, pps.success_rate
+                        FROM platform_pattern_stats pps
+                        LEFT JOIN promotion_thresholds pt
+                               ON pt.incident_type = pps.incident_type
+                        LEFT JOIN promotion_thresholds pt_default
+                               ON pt_default.incident_type = '__default__'
+                        WHERE pps.promoted_at IS NULL
+                          AND pps.distinct_orgs >= COALESCE(
+                              pt.min_distinct_orgs, pt_default.min_distinct_orgs, 5)
+                          AND pps.success_rate >= COALESCE(
+                              pt.min_success_rate, pt_default.min_success_rate, 0.90)
+                          AND pps.total_occurrences >= COALESCE(
+                              pt.min_total_occurrences, pt_default.min_total_occurrences, 20)
+                        ORDER BY pps.distinct_orgs DESC, pps.total_occurrences DESC
                         LIMIT :remaining
                     """), {"remaining": remaining})
                     platform_candidates = platform_result.fetchall()
