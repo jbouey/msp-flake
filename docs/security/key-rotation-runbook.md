@@ -172,22 +172,56 @@ credentials in our DB would be exposed.
 
 ### Procedure
 
+OsirisCare ships a keyring-based rotation already — `MultiFernet`
+lets us decrypt with ANY key in `CREDENTIAL_ENCRYPTION_KEYS` while
+encrypting new writes with the primary (first) key. The
+`POST /api/admin/credentials/rotate-key` endpoint (see
+`backend/credential_rotation.py`) walks every encrypted column and
+re-encrypts the ciphertext with the new primary key. No application
+downtime; online re-encrypt in per-row commits.
+
 1. **Generate the new key.**
    ```bash
+   docker exec mcp-server python3 -m dashboard_api.credential_crypto gen
+   # or
    python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
    ```
-2. **Decrypt + re-encrypt every row.** Fernet does NOT support
-   multi-key verify — the whole store must be re-encrypted in a
-   single transaction. See `scripts/rotate_credential_encryption.py`
-   (to be written — TODO, not yet delivered).
-3. **Atomic swap.** Env `CREDENTIAL_ENCRYPTION_KEY=<new>` in the
-   compose file, restart mcp-server.
-4. **Destroy the old key material** only after verifying every row
-   decrypts with the new key.
+2. **Prepend to the keyring + restart app.** Set
+   `CREDENTIAL_ENCRYPTION_KEYS=<NEW>,<OLD>` in compose env. The
+   newest key is always first. Restart mcp-server so the keyring
+   reloads.
+3. **Trigger the re-encrypt.**
+   ```bash
+   curl -X POST -b "session=<admin_session>" \
+     https://api.osiriscare.net/api/admin/credentials/rotate-key
+   ```
+   Returns immediately; rotation runs in the background.
+4. **Watch progress.**
+   ```bash
+   curl -b "session=<admin_session>" \
+     https://api.osiriscare.net/api/admin/credentials/rotation-status
+   ```
+   Reports: running | finished, tables touched, rows re-encrypted,
+   started_by, started_at, finished_at.
+5. **Verify active keys.**
+   ```bash
+   curl -b "session=<admin_session>" \
+     https://api.osiriscare.net/api/admin/credentials/key-fingerprints
+   ```
+   Returns the SHA-256 fingerprint of every key in the keyring. After
+   a successful rotation, every ciphertext row in the DB should
+   decrypt under the NEW key (primary).
+6. **Retire the old key.** After the rotation shows `finished: true`,
+   trim the old key from `CREDENTIAL_ENCRYPTION_KEYS` (leave only
+   the new one), restart mcp-server. Keep the old key in cold
+   storage for 7 years per HIPAA retention.
 
-**Open gap:** the rotation script does not exist yet. Until it does,
-Fernet key rotation requires a maintenance window + manual DB
-transaction + application downtime. File an issue if you need this.
+### Online vs. offline
+
+This rotation is **online** — no downtime, individual rows committed
+one at a time so a crash mid-rotation resumes on next invocation.
+Large tenants may want to run this during low-traffic hours anyway
+to minimize lock contention.
 
 ---
 
