@@ -158,15 +158,15 @@ async def test_full_rollout_loop(conn):
     await conn.execute("INSERT INTO sites (site_id) VALUES ('site-1')")
     await conn.execute(
         "INSERT INTO promoted_rules (rule_id, site_id, rule_yaml) "
-        "VALUES ('rule-test-1', 'site-1', 'id: rule-test-1\nrunbook_id: RB-X')"
+        "VALUES ('rule-test-1', 'site-1', 'id: rule-test-1\nrunbook_id: RB-WIN-TEST-001')"
     )
 
     # Step 1: issue the rollout order
     n = await issue_sync_promoted_rule_orders(
         conn,
         rule_id="rule-test-1",
-        runbook_id="RB-X",
-        rule_yaml="id: rule-test-1\nrunbook_id: RB-X",
+        runbook_id="RB-WIN-TEST-001",
+        rule_yaml="id: rule-test-1\nrunbook_id: RB-WIN-TEST-001",
         site_id="site-1",
         scope="site",
     )
@@ -182,7 +182,7 @@ async def test_full_rollout_loop(conn):
     params = json.loads(order["parameters"])
     assert params["rule_id"] == "rule-test-1"
     assert params["site_id"] == "site-1"
-    assert params["runbook_id"] == "RB-X"
+    assert params["runbook_id"] == "RB-WIN-TEST-001"
 
     # Step 3: deployment_count is still 0 (no completion yet)
     pre = await conn.fetchval(
@@ -219,7 +219,7 @@ async def test_failed_completion_does_not_increment(conn):
         "VALUES ('rule-fail', 's2', 'yaml')"
     )
     await issue_sync_promoted_rule_orders(
-        conn, rule_id="rule-fail", runbook_id="RB-Y",
+        conn, rule_id="rule-fail", runbook_id="RB-WIN-TEST-002",
         rule_yaml="yaml", site_id="s2", scope="site",
     )
     order_id = await conn.fetchval(
@@ -271,7 +271,7 @@ async def test_multiple_completions_each_increment(conn):
         "VALUES ('rule-multi', 's4', 'y')"
     )
     await issue_sync_promoted_rule_orders(
-        conn, rule_id="rule-multi", runbook_id="RB-M",
+        conn, rule_id="rule-multi", runbook_id="RB-WIN-TEST-003",
         rule_yaml="y", site_id="s4", scope="site",
     )
     order_id = await conn.fetchval(
