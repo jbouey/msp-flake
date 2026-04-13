@@ -158,6 +158,13 @@ jobs:
         run: |
           python3 -m pytest tests/test_privileged_access_attestation_pg.py -v --tb=short
 
+      - name: Fleet-intelligence scope isolation test
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_fleet_intelligence_scope_pg.py -v --tb=short
+
   deploy:
     needs: [test, privileged-chain-pg-tests]
     runs-on: ubuntu-latest
