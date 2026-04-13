@@ -545,6 +545,100 @@ async def temporal_decay_loop():
         await asyncio.sleep(21600)  # 6 hours
 
 
+async def exemplar_miner_loop():
+    """Phase 10: mine high-confidence correct L2 picks and publish them
+    as few-shot exemplars for the adaptive prompt system.
+
+    Runs once per 24h. Finds (incident_type, runbook_id) pairs where:
+      - last 14d has ≥ 5 decisions
+      - confidence ≥ 0.85
+      - resolution in execution_telemetry succeeded
+    Writes a draft exemplar row to l2_prompt_exemplars. Draft rows do
+    NOT take effect — human approval via the admin UI flips status to
+    'approved'. Only approved exemplars appear in the L2 prompt.
+
+    Security: this job NEVER activates a prompt on its own. It only
+    drafts. §164.312(b) human-sign-off preserved.
+    """
+    await asyncio.sleep(1200)  # Wait 20 min after startup
+    while True:
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Pull candidate exemplars: high-confidence L2 picks that
+                # succeeded at execution time (via execution_telemetry).
+                rows = await conn.fetch("""
+                    WITH hi_conf AS (
+                        SELECT
+                            ld.id,
+                            COALESCE(et.incident_type, ld.pattern_signature) AS incident_type,
+                            ld.runbook_id,
+                            ld.reasoning,
+                            ld.confidence
+                        FROM l2_decisions ld
+                        JOIN execution_telemetry et
+                          ON et.runbook_id = ld.runbook_id
+                         AND et.created_at BETWEEN ld.created_at
+                                               AND ld.created_at + INTERVAL '1 hour'
+                        WHERE ld.created_at > NOW() - INTERVAL '14 days'
+                          AND ld.confidence >= 0.85
+                          AND ld.runbook_id IS NOT NULL
+                          AND et.success = true
+                    )
+                    SELECT
+                        incident_type,
+                        runbook_id,
+                        array_agg(id ORDER BY id DESC) AS decision_ids,
+                        -- Representative exemplar text — take the
+                        -- highest-confidence reasoning
+                        (array_agg(reasoning ORDER BY confidence DESC))[1] AS exemplar_text,
+                        COUNT(*) AS n
+                    FROM hi_conf
+                    WHERE incident_type IS NOT NULL
+                    GROUP BY incident_type, runbook_id
+                    HAVING COUNT(*) >= 5
+                """)
+
+                drafted = 0
+                for r in rows:
+                    # Skip if we already have a row for this pair (draft
+                    # or approved) — don't churn the miner
+                    existing = await conn.fetchval(
+                        "SELECT status FROM l2_prompt_exemplars "
+                        "WHERE incident_type = $1 AND runbook_id = $2",
+                        r["incident_type"], r["runbook_id"],
+                    )
+                    if existing:
+                        continue
+
+                    text_short = (r["exemplar_text"] or "")[:500]
+                    await conn.execute("""
+                        INSERT INTO l2_prompt_exemplars (
+                            incident_type, runbook_id, exemplar_text,
+                            source_decision_ids, status
+                        ) VALUES ($1, $2, $3, $4, 'draft')
+                        ON CONFLICT (incident_type, runbook_id) DO NOTHING
+                    """, r["incident_type"], r["runbook_id"], text_short, list(r["decision_ids"]))
+                    drafted += 1
+
+                if drafted > 0:
+                    logger.info(
+                        "exemplar_miner cycle complete",
+                        drafted=drafted,
+                        candidates_evaluated=len(rows),
+                    )
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"Exemplar miner error: {e}")
+
+        await asyncio.sleep(86400)  # 24 hours
+
+
 async def threshold_tuner_loop():
     """Phase 8: Bayesian update of per-incident-type promotion thresholds.
 

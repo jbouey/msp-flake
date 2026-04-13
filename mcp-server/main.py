@@ -1537,6 +1537,7 @@ async def lifespan(app: FastAPI):
         temporal_decay_loop,
         regime_change_detector_loop,
         threshold_tuner_loop,
+        exemplar_miner_loop,
     )
 
     task_defs = [
@@ -1548,6 +1549,7 @@ async def lifespan(app: FastAPI):
         ("temporal_decay", temporal_decay_loop),
         ("regime_change_detector", regime_change_detector_loop),
         ("threshold_tuner", threshold_tuner_loop),
+        ("exemplar_miner", exemplar_miner_loop),
         ("cve_watch", cve_sync_loop),
         ("cve_remediation", cve_remediation_loop),
         ("framework_sync", framework_sync_loop),

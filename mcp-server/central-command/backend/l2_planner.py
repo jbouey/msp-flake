@@ -728,6 +728,7 @@ def build_system_prompt(
     incident_type: Optional[str] = None,
     check_type: Optional[str] = None,
     neighbors: Optional[List[Dict[str, Any]]] = None,
+    exemplars: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Build the system prompt for L2 analysis.
 
@@ -770,6 +771,25 @@ def build_system_prompt(
     if len(filtered) > 60:
         valid_id_list += f", ... ({len(filtered) - 60} more)"
 
+    # Phase 10: approved exemplars block (human-curated, highest priority)
+    exemplar_block = ""
+    if exemplars:
+        lines = []
+        for i, ex in enumerate(exemplars, 1):
+            text_short = (ex.get("exemplar_text") or "").strip()[:240]
+            if not text_short:
+                continue
+            lines.append(
+                f"  {i}. For incident_type={incident_type!r}, use "
+                f"runbook_id={ex['runbook_id']!r}. Rationale: {text_short}"
+            )
+        if lines:
+            exemplar_block = (
+                "\n\nCURATED EXEMPLARS (approved by our team — these pairings "
+                "have high observed success rate; prefer them when applicable):\n"
+                + "\n".join(lines)
+            )
+
     # Phase 7: neighbor-based few-shot block. If we have historical patterns
     # similar to this incident, show them as exemplars the LLM can pattern-
     # match against. Filter to neighbors that actually resolved with a known
@@ -805,7 +825,7 @@ AVAILABLE RUNBOOKS (these are the ONLY valid runbook_id values you may return):
 {runbook_list}
 
 VALID runbook_id VALUES (you MUST pick one of these or return null — DO NOT invent new IDs):
-{valid_id_list}{neighbor_block}
+{valid_id_list}{exemplar_block}{neighbor_block}
 
 DECISION GUIDELINES:
 1. Select the runbook that best matches the incident type and symptoms.
@@ -1179,6 +1199,8 @@ async def analyze_incident(
     # "we saw X before → we picked Y → it worked Z%" rows. Warm-starts
     # novel incidents from their statistical cousins.
     neighbors: List[Dict[str, Any]] = []
+    approved_exemplars: List[Dict[str, Any]] = []
+    prompt_version_tag = "system-v1"
     try:
         from .fleet import get_pool
         from .tenant_middleware import admin_connection
@@ -1192,8 +1214,23 @@ async def analyze_incident(
                 k=5,
                 min_similarity=0.3,
             )
+            # Phase 10: approved exemplars for THIS incident_type
+            ex_rows = await _conn.fetch(
+                "SELECT runbook_id, exemplar_text FROM l2_prompt_exemplars "
+                "WHERE incident_type = $1 AND status = 'approved' "
+                "ORDER BY approved_at DESC LIMIT 3",
+                incident_type,
+            )
+            approved_exemplars = [dict(r) for r in ex_rows]
+            # Phase 10: which prompt version is currently active?
+            v_row = await _conn.fetchrow(
+                "SELECT version_tag FROM l2_prompt_versions "
+                "WHERE status = 'active' AND purpose = 'system' LIMIT 1"
+            )
+            if v_row and v_row["version_tag"]:
+                prompt_version_tag = v_row["version_tag"]
     except Exception as _e:
-        logger.debug("pattern-embedding lookup skipped", error=str(_e))
+        logger.debug("pattern-embedding/exemplar lookup skipped", error=str(_e))
 
     # Phase 1 grounding: pre-filter the catalog to runbooks relevant to this
     # incident_type / check_type. Smaller catalog → less hallucination.
@@ -1202,6 +1239,7 @@ async def analyze_incident(
         incident_type=incident_type,
         check_type=check_type,
         neighbors=neighbors,
+        exemplars=approved_exemplars,
     )
     user_prompt = build_incident_prompt(
         incident_type, severity, check_type, details, pre_state, hipaa_controls,
@@ -1302,6 +1340,9 @@ async def analyze_incident(
             llm_model=llm_model,
             llm_latency_ms=latency_ms,
         )
+        # Phase 10: stamp the prompt version on the decision object so
+        # record_l2_decision can persist it for audit.
+        decision.prompt_version = prompt_version_tag
 
         logger.info("L2 decision made",
                     incident_type=incident_type,
@@ -1362,11 +1403,13 @@ async def record_l2_decision(
         INSERT INTO l2_decisions (
             incident_id, runbook_id, reasoning, confidence,
             pattern_signature, llm_model, llm_latency_ms,
-            requires_human_review, hypotheses, escalation_reason, created_at
+            requires_human_review, hypotheses, escalation_reason,
+            prompt_version, created_at
         ) VALUES (
             :incident_id, :runbook_id, :reasoning, :confidence,
             :pattern_signature, :llm_model, :llm_latency_ms,
-            :requires_human_review, :hypotheses, :escalation_reason, :created_at
+            :requires_human_review, :hypotheses, :escalation_reason,
+            :prompt_version, :created_at
         )
     """), {
         "incident_id": incident_id,
@@ -1379,6 +1422,7 @@ async def record_l2_decision(
         "requires_human_review": decision.requires_human_review,
         "hypotheses": json.dumps(hypotheses) if hypotheses else None,
         "escalation_reason": escalation_reason or "normal",
+        "prompt_version": getattr(decision, "prompt_version", "system-v1"),
         "created_at": datetime.now(timezone.utc),
     })
 
