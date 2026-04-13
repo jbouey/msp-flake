@@ -216,7 +216,10 @@ def sign_data(data: str) -> str:
 
     Phase B: routes through signing_backend so shadow/vault mode is
     a one-env-var flip. Byte-identical output in file mode."""
-    from .signing_backend import get_signing_backend
+    try:
+        from .signing_backend import get_signing_backend
+    except ImportError:
+        from signing_backend import get_signing_backend
     result = get_signing_backend().sign(data.encode())
     return result.signature.hex()
 

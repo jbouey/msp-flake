@@ -144,7 +144,12 @@ async def create_privileged_access_attestation(
     # signature is byte-identical to the old sk.sign() path (same key,
     # same data). In vault mode it comes from Transit. Failure here
     # must abort — callers check for PrivilegedAccessAttestationError.
-    from .signing_backend import get_signing_backend, SigningBackendError
+    # Try relative import (production package path) first, fall back
+    # to top-level (pytest path where backend/ is on sys.path).
+    try:
+        from .signing_backend import get_signing_backend, SigningBackendError
+    except ImportError:
+        from signing_backend import get_signing_backend, SigningBackendError
     try:
         _signer = get_signing_backend()
     except SigningBackendError as e:
