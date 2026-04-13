@@ -137,14 +137,22 @@ async def check_all_invariants(conn) -> List[InvariantResult]:
     ]:
         # We don't know the exact trigger name per table from this
         # context, so check that SOME BEFORE-DELETE trigger exists.
+        # pg_trigger.tgtype is a bitfield (src/include/catalog/pg_trigger.h):
+        #   TRIGGER_TYPE_ROW      1 << 0 = 0x01 (row-level vs statement)
+        #   TRIGGER_TYPE_BEFORE   1 << 1 = 0x02 (SET means BEFORE; CLEAR = AFTER)
+        #   TRIGGER_TYPE_INSERT   1 << 2 = 0x04
+        #   TRIGGER_TYPE_DELETE   1 << 3 = 0x08
+        #   TRIGGER_TYPE_UPDATE   1 << 4 = 0x10
+        # So BEFORE DELETE trigger = (tgtype & 2) = 2 AND (tgtype & 8) = 8
+        # We accept either row or statement granularity.
         row = await conn.fetchrow(
             """
             SELECT COUNT(*)::int AS n
             FROM pg_trigger t
             JOIN pg_class c ON c.oid = t.tgrelid
             WHERE c.relname = $1
-              AND t.tgtype & 8 = 8     -- BEFORE
-              AND t.tgtype & 4 = 4     -- DELETE
+              AND (t.tgtype & 2) = 2   -- BEFORE (bit 1 SET)
+              AND (t.tgtype & 8) = 8   -- DELETE
               AND NOT t.tgisinternal
             """,
             table,
@@ -166,14 +174,15 @@ async def check_all_invariants(conn) -> List[InvariantResult]:
     # some earlier migrations used a different convention. Fall back
     # to any BEFORE UPDATE trigger.
     if not ok:
+        # BEFORE UPDATE = (tgtype & 2) = 2 AND (tgtype & 16) = 16
         row = await conn.fetchrow(
             """
             SELECT COUNT(*)::int AS n
             FROM pg_trigger t
             JOIN pg_class c ON c.oid = t.tgrelid
             WHERE c.relname = 'fleet_orders'
-              AND t.tgtype & 8 = 8     -- BEFORE
-              AND t.tgtype & 16 = 16   -- UPDATE
+              AND (t.tgtype & 2) = 2   -- BEFORE
+              AND (t.tgtype & 16) = 16 -- UPDATE
               AND NOT t.tgisinternal
               AND t.tgname LIKE '%complet%'
             """
