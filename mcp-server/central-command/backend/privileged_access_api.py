@@ -258,59 +258,46 @@ async def list_partner_requests(
 
 # ─── Client endpoints ─────────────────────────────────────────────
 
-@client_router.post("/approve")
-async def client_approve(
-    body: ApproveRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_auth),  # client session
+async def _execute_client_approval(
+    db: AsyncSession,
+    request_id: str,
+    client_user_email: str,
+    client_user_role: str,
+    client_user_id: Optional[str] = None,
+    via: str = "session",  # 'session' | 'magic_link'
 ) -> Dict[str, Any]:
-    """Client admin approves a pending privileged-access request against
-    one of their sites. Writes a second attestation bundle recording
-    the approval, flips the request to 'approved', unlocks fleet-order
-    issuance.
+    """Shared approval logic used by both the session-auth API and the
+    magic-link consume path. Caller is responsible for verifying the
+    client_user has appropriate permission BEFORE calling this.
 
-    Security: require_auth covers the client session; we then verify
-    the client user actually has access to the site via client_users
-    (existing client_portal RBAC). No cross-org leakage."""
+    Writes the chained attestation bundle + flips the request row.
+    Returns dict with status + bundle metadata. Raises HTTPException
+    on not-pending / not-found.
+    """
     row = (await db.execute(text("""
         SELECT id, site_id, event_type, initiator_email, reason,
                duration_minutes, status
         FROM privileged_access_requests
         WHERE id = :id AND status = 'pending'
         FOR UPDATE
-    """), {"id": body.request_id})).fetchone()
+    """), {"id": request_id})).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Request not pending")
 
-    # Verify user has client-admin role on the site's org
-    client_user = (await db.execute(text("""
-        SELECT cu.role, cu.email, co.id AS org_id
-        FROM client_users cu
-        JOIN client_orgs co ON co.id = cu.client_org_id
-        JOIN sites s ON s.client_org_id = co.id
-        WHERE cu.id = :uid AND s.site_id = :sid
-    """), {"uid": user.get("id"), "sid": row.site_id})).fetchone()
-    if not client_user:
-        raise HTTPException(status_code=403, detail="Not authorized for this site")
-    if client_user.role not in ("admin", "owner"):
-        raise HTTPException(status_code=403, detail="Role 'admin' or 'owner' required")
-
-    # Second attestation bundle — records the client-side approval in the chain
     att = await _write_attestation(
         db, row.site_id, row.event_type,
-        actor_email=client_user.email,
+        actor_email=client_user_email,
         reason=f"Client approval of request {row.id}: {row.reason}",
         duration_minutes=row.duration_minutes,
         approvals=[{
-            "role": "client_" + (client_user.role or "unknown"),
-            "email": client_user.email,
+            "role": "client_" + (client_user_role or "unknown"),
+            "email": client_user_email,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "stage": "client_approved",
             "approved_request": str(row.id),
+            "via": via,
         }],
     )
-
     await db.execute(text("""
         UPDATE privileged_access_requests
         SET client_approver_email = :email,
@@ -318,15 +305,103 @@ async def client_approve(
             client_approver_role = 'client_admin',
             status = 'approved'
         WHERE id = :id
-    """), {"email": client_user.email, "id": row.id})
+    """), {"email": client_user_email, "id": row.id})
     await db.commit()
-
     return {
         "request_id": str(row.id),
         "status": "approved",
         "client_attestation_bundle_id": att["bundle_id"],
         "client_attestation_chain_position": att["chain_position"],
+        "via": via,
     }
+
+
+async def _execute_client_rejection(
+    db: AsyncSession,
+    request_id: str,
+    client_user_email: str,
+    client_user_role: str,
+    reason: str,
+    via: str = "session",
+) -> Dict[str, Any]:
+    """Shared rejection logic; mirrors _execute_client_approval."""
+    row = (await db.execute(text("""
+        SELECT id, site_id, event_type, reason FROM privileged_access_requests
+        WHERE id = :id AND status = 'pending'
+    """), {"id": request_id})).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Request not pending")
+
+    att = await _write_attestation(
+        db, row.site_id, row.event_type,
+        actor_email=client_user_email,
+        reason=f"REJECTED request {row.id}: {reason}",
+        approvals=[{
+            "role": "client_" + (client_user_role or "unknown"),
+            "email": client_user_email,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "stage": "client_rejected",
+            "rejected_request": str(row.id),
+            "rejection_reason": reason,
+            "via": via,
+        }],
+    )
+    await db.execute(text("""
+        UPDATE privileged_access_requests
+        SET status = 'rejected',
+            rejected_by = :email,
+            rejection_reason = :reason
+        WHERE id = :id
+    """), {"email": client_user_email, "reason": reason, "id": row.id})
+    await db.commit()
+    return {
+        "request_id": str(row.id),
+        "status": "rejected",
+        "rejection_attestation_bundle_id": att["bundle_id"],
+        "via": via,
+    }
+
+
+async def _resolve_client_user(
+    db: AsyncSession, user: dict, site_id: str,
+) -> Any:
+    """Look up the client_user for this session AND site; return None if
+    they don't have access. Used by session-auth endpoints."""
+    return (await db.execute(text("""
+        SELECT cu.role, cu.email, co.id AS org_id
+        FROM client_users cu
+        JOIN client_orgs co ON co.id = cu.client_org_id
+        JOIN sites s ON s.client_org_id = co.id
+        WHERE cu.id = :uid AND s.site_id = :sid
+    """), {"uid": user.get("id"), "sid": site_id})).fetchone()
+
+
+@client_router.post("/approve")
+async def client_approve(
+    body: ApproveRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Client admin approves a pending privileged-access request.
+    Session-auth path — see /magic-link/consume for the email-click
+    path. Same security model: verify client user has access +
+    admin/owner role before calling the shared approval executor."""
+    lookup = (await db.execute(text("""
+        SELECT site_id FROM privileged_access_requests WHERE id = :id
+    """), {"id": body.request_id})).fetchone()
+    if not lookup:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    cu = await _resolve_client_user(db, user, lookup.site_id)
+    if not cu:
+        raise HTTPException(status_code=403, detail="Not authorized for this site")
+    if cu.role not in ("admin", "owner"):
+        raise HTTPException(status_code=403, detail="Role 'admin' or 'owner' required")
+
+    return await _execute_client_approval(
+        db, body.request_id, cu.email, cu.role, via="session",
+    )
 
 
 @client_router.post("/reject")
@@ -337,52 +412,127 @@ async def client_reject(
     user: dict = Depends(require_auth),
 ) -> Dict[str, Any]:
     """Client admin rejects a pending privileged-access request.
-    Writes a rejection attestation bundle (chain continues)."""
-    row = (await db.execute(text("""
-        SELECT id, site_id, event_type, reason FROM privileged_access_requests
-        WHERE id = :id AND status = 'pending'
+    Session-auth path. See /magic-link/consume for email-click path."""
+    lookup = (await db.execute(text("""
+        SELECT site_id FROM privileged_access_requests WHERE id = :id
     """), {"id": body.request_id})).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Request not pending")
+    if not lookup:
+        raise HTTPException(status_code=404, detail="Request not found")
 
-    client_user = (await db.execute(text("""
-        SELECT cu.role, cu.email
+    cu = await _resolve_client_user(db, user, lookup.site_id)
+    if not cu or cu.role not in ("admin", "owner"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    return await _execute_client_rejection(
+        db, body.request_id, cu.email, cu.role, body.reason, via="session",
+    )
+
+
+# ─── Magic-link consume endpoint (Phase 14 T2.1 Part 2) ─────────────
+
+class MagicLinkConsumeRequest(BaseModel):
+    token: str = Field(..., min_length=16, max_length=256)
+    rejection_reason: Optional[str] = Field(
+        None, max_length=1000,
+        description="Required for reject-action tokens",
+    )
+
+
+@client_router.post("/magic-link/consume")
+async def consume_magic_link(
+    body: MagicLinkConsumeRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Consume a magic-link token + perform the approve/reject action
+    it authorizes. Security invariant: token authorizes the action but
+    the ATTESTED ACTOR is the current authenticated session user —
+    the token is a deep-link convenience, not a bypass of auth.
+
+    Flow:
+      1. HMAC-verify the token, check expiry, check single-use
+      2. Assert session user email == token's target_user_email
+      3. Execute via the same _execute_client_* helpers as session path
+      4. Same attestation bundle written, tagged with via='magic_link'
+    """
+    from .privileged_magic_link import verify_and_consume, MagicLinkError
+    from .fleet import get_pool
+    from .tenant_middleware import admin_connection
+
+    session_email = (user.get("email") or "").strip().lower()
+    if not session_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Session has no email; magic-link consume requires authenticated session",
+        )
+
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent", "")[:512]
+
+    # Parse token_id from the dotted format and peek at the stored
+    # action BEFORE calling verify_and_consume (which requires
+    # expected_action as an input).
+    token_id = body.token.split(".", 1)[0] if "." in body.token else ""
+    if not token_id:
+        raise HTTPException(status_code=400, detail="malformed token")
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow(
+            "SELECT action FROM privileged_access_magic_links WHERE token_id = $1",
+            token_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="token not found")
+
+        try:
+            verified = await verify_and_consume(
+                conn,
+                token=body.token,
+                expected_action=row["action"],
+                session_user_email=session_email,
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
+        except MagicLinkError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    # Token verified + consumed atomically. Now execute the action.
+    # The authenticated session user IS the attested actor.
+    cu = (await db.execute(text("""
+        SELECT cu.role, cu.email, co.id AS org_id
         FROM client_users cu
         JOIN client_orgs co ON co.id = cu.client_org_id
         JOIN sites s ON s.client_org_id = co.id
-        WHERE cu.id = :uid AND s.site_id = :sid
-    """), {"uid": user.get("id"), "sid": row.site_id})).fetchone()
-    if not client_user or client_user.role not in ("admin", "owner"):
-        raise HTTPException(status_code=403, detail="Not authorized")
+        JOIN privileged_access_requests par ON par.site_id = s.site_id
+        WHERE cu.id = :uid AND par.id = :req
+    """), {"uid": user.get("id"), "req": verified.request_id})).fetchone()
+    if not cu:
+        raise HTTPException(
+            status_code=403,
+            detail="Authenticated user does not have access to this site",
+        )
+    if cu.role not in ("admin", "owner"):
+        raise HTTPException(
+            status_code=403,
+            detail="admin/owner role required to approve privileged access",
+        )
 
-    att = await _write_attestation(
-        db, row.site_id, row.event_type,
-        actor_email=client_user.email,
-        reason=f"REJECTED request {row.id}: {body.reason}",
-        approvals=[{
-            "role": "client_" + (client_user.role or "unknown"),
-            "email": client_user.email,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "stage": "client_rejected",
-            "rejected_request": str(row.id),
-            "rejection_reason": body.reason,
-        }],
-    )
-
-    await db.execute(text("""
-        UPDATE privileged_access_requests
-        SET status = 'rejected',
-            rejected_by = :email,
-            rejection_reason = :reason
-        WHERE id = :id
-    """), {"email": client_user.email, "reason": body.reason, "id": row.id})
-    await db.commit()
-
-    return {
-        "request_id": str(row.id),
-        "status": "rejected",
-        "rejection_attestation_bundle_id": att["bundle_id"],
-    }
+    if verified.action == "approve":
+        return await _execute_client_approval(
+            db, verified.request_id, cu.email, cu.role, via="magic_link",
+        )
+    elif verified.action == "reject":
+        # For magic-link rejections, the "reason" is auto-generated
+        # unless the client provided one in the body. Pre-populated
+        # reason: "rejected via email link".
+        reason = (body.rejection_reason or "Rejected via email magic-link").strip()
+        return await _execute_client_rejection(
+            db, verified.request_id, cu.email, cu.role, reason, via="magic_link",
+        )
+    else:
+        raise HTTPException(status_code=500, detail=f"unexpected action {verified.action}")
 
 
 @client_router.get("/consent-config/{site_id}")

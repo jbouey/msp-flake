@@ -100,6 +100,7 @@ const PortalDashboard = lazy(() => import('./portal/PortalDashboard').then(m => 
 const PortalLogin = lazy(() => import('./portal/PortalLogin').then(m => ({ default: m.PortalLogin })));
 const PortalVerify = lazy(() => import('./portal/PortalVerify').then(m => ({ default: m.PortalVerify })));
 const PortalScorecard = lazy(() => import('./portal/PortalScorecard').then(m => ({ default: m.PortalScorecard })));
+const PrivilegedAccessAct = lazy(() => import('./portal/PrivilegedAccessAct').then(m => ({ default: m.PrivilegedAccessAct })));
 
 // Partner module - lazy loaded with provider
 const PartnerRoutes = lazy(() => import('./partner').then(m => ({
@@ -446,6 +447,14 @@ const App: React.FC = () => {
                 <Route path="/portal/site/:siteId/verify" element={<PortalVerify />} />
                 <Route path="/portal/site/:siteId/scorecard" element={<PortalScorecard />} />
                 <Route path="/portal/site/:siteId/login" element={<PortalLogin />} />
+
+                {/* Privileged-access magic-link landing (Phase 14 T2.1).
+                    Reads ?t=<token>&action=approve|reject&rid=<request_id>
+                    from the notifier email and POSTs to
+                    /api/client/privileged-access/magic-link/consume.
+                    The endpoint requires session auth — the magic link
+                    proves WHO was emailed; the session proves WHO acted. */}
+                <Route path="/portal/privileged-access/act" element={<PrivilegedAccessAct />} />
 
                 {/* White-label branded client login */}
                 <Route path="/portal/:slug/login" element={<BrandedClientLogin />} />

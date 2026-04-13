@@ -79,8 +79,18 @@ async def _collect_recipients(conn, site_id: str) -> Dict[str, List[str]]:
     }
 
 
-def _compose_email(bundle: Dict[str, Any], recipients: Dict[str, List[str]]) -> Dict[str, str]:
-    """Build subject + body. Plain text to maximize deliverability."""
+def _compose_email(
+    bundle: Dict[str, Any],
+    recipients: Dict[str, List[str]],
+    approval_urls: Optional[Dict[str, Dict[str, str]]] = None,
+) -> Dict[str, str]:
+    """Build subject + body. Plain text to maximize deliverability.
+
+    Phase 14 T2.1 Part 2: if `approval_urls` is provided (a dict keyed
+    by recipient email, each value = {'approve': URL, 'reject': URL}),
+    the generated body includes the magic-link URLs for that recipient.
+    Callers produce ONE email per recipient with their specific links.
+    """
     event = bundle.get("event") or {}
     event_type = event.get("event_type", "privileged_access")
     actor = event.get("actor_email", "unknown")
@@ -96,7 +106,33 @@ def _compose_email(bundle: Dict[str, Any], recipients: Dict[str, List[str]]) -> 
     )
     verify_url = f"{PORTAL_BASE}/api/evidence/sites/{site_id}/bundles/{bundle_id}"
     ots_url = f"{PORTAL_BASE}/api/evidence/sites/{site_id}/bundles/{bundle_id}/ots"
+
+    approval_block = ""
+    if approval_urls:
+        # When this email is destined for a single recipient with approval
+        # links, insert the CTA section at the top. approval_urls is
+        # expected to be keyed by recipient email; caller passes a
+        # per-recipient slice.
+        first_entry = next(iter(approval_urls.values()), None)
+        if first_entry:
+            approve_url = first_entry.get("approve")
+            reject_url = first_entry.get("reject")
+            if approve_url and reject_url:
+                approval_block = (
+                    "═══════════════════════════════════════════════════════════\n"
+                    "ACTION REQUIRED — This privileged access requires your\n"
+                    "approval. Click one of the links below; you will be\n"
+                    "asked to log in to your OsirisCare portal.\n\n"
+                    f"  APPROVE:  {approve_url}\n"
+                    f"  REJECT:   {reject_url}\n\n"
+                    "These links expire in 30 minutes and can each be used\n"
+                    "only once. The link proves WHO should act; your logged-\n"
+                    "in session proves YOU acted. Both are required.\n"
+                    "═══════════════════════════════════════════════════════════\n\n"
+                )
+
     body = (
+        f"{approval_block}"
         f"A privileged-access event was recorded on {site_id}.\n\n"
         f"  Event:      {event_type}\n"
         f"  Actor:      {actor}\n"
@@ -117,6 +153,69 @@ def _compose_email(bundle: Dict[str, Any], recipients: Dict[str, List[str]]) -> 
         f"-- OsirisCare Privileged-Access Attestation\n"
     )
     return {"subject": subject, "body": body}
+
+
+async def _mint_approval_links(
+    conn,
+    bundle: Dict[str, Any],
+    client_emails: List[str],
+) -> Dict[str, Dict[str, str]]:
+    """For an INITIATED privileged_access bundle whose matching request
+    is still 'pending' AND the site has client_approval_required=true,
+    mint a pair of magic-link tokens (approve + reject) for each
+    client admin recipient. Returns {email: {'approve': URL, 'reject': URL}}.
+    """
+    event = bundle.get("event") or {}
+    if (event.get("approvals") or [{}])[0].get("stage") != "initiated":
+        return {}
+
+    row = await conn.fetchrow(
+        "SELECT par.id::text AS id, par.status, cfg.client_approval_required "
+        "FROM privileged_access_requests par "
+        "LEFT JOIN privileged_access_consent_config cfg "
+        "       ON cfg.site_id = par.site_id "
+        "WHERE par.attestation_bundle_id = $1",
+        bundle["bundle_id"],
+    )
+    if not row:
+        return {}
+    if row["status"] != "pending":
+        return {}
+    if not (row["client_approval_required"] or False):
+        return {}
+
+    try:
+        from .privileged_magic_link import mint_token
+    except Exception:
+        return {}
+
+    out: Dict[str, Dict[str, str]] = {}
+    for email in client_emails:
+        email_clean = (email or "").strip().lower()
+        if not email_clean or "@" not in email_clean:
+            continue
+        try:
+            # Per-recipient SAVEPOINT: a failed mint for one email
+            # must not poison the outer SELECT-FOR-UPDATE transaction
+            # holding locks on the bundle batch (CLAUDE.md asyncpg
+            # savepoint invariant).
+            async with conn.transaction():
+                approve_tok = await mint_token(conn, row["id"], "approve", email_clean)
+                reject_tok = await mint_token(conn, row["id"], "reject", email_clean)
+        except Exception as e:
+            logger.warning(f"magic-link mint failed for {email_clean}: {e}")
+            continue
+        out[email_clean] = {
+            "approve": (
+                f"{PORTAL_BASE}/portal/privileged-access/act"
+                f"?t={approve_tok}&action=approve&rid={row['id']}"
+            ),
+            "reject": (
+                f"{PORTAL_BASE}/portal/privileged-access/act"
+                f"?t={reject_tok}&action=reject&rid={row['id']}"
+            ),
+        }
+    return out
 
 
 async def _send_email(to: List[str], subject: str, body: str) -> bool:
@@ -190,18 +289,63 @@ async def privileged_notifier_loop():
                             "event": event,
                         }
                         recipients = await _collect_recipients(conn, r["site_id"])
-                        msg = _compose_email(bundle, recipients)
+
+                        # Mint per-recipient magic-link tokens IF this is
+                        # an INITIATED bundle whose request still needs
+                        # client approval. Returns {} otherwise so the
+                        # email path stays unchanged for non-approval
+                        # notifications (completed events, monitoring,
+                        # config-change attestations, etc.).
+                        approval_links = await _mint_approval_links(
+                            conn, bundle, recipients["client_notify_emails"],
+                        )
+
+                        # Bulk message used for partner-admin + security
+                        # rings (no approval CTA), and as the no-link
+                        # fallback for any client recipients we couldn't
+                        # mint for.
+                        bulk_msg = _compose_email(bundle, recipients)
 
                         all_ok = True
                         all_ok &= await _send_email(
-                            recipients["partner_admins"], msg["subject"], msg["body"],
+                            recipients["partner_admins"], bulk_msg["subject"], bulk_msg["body"],
                         )
                         all_ok &= await _send_email(
-                            recipients["client_notify_emails"], msg["subject"], msg["body"],
+                            recipients["security"], bulk_msg["subject"], bulk_msg["body"],
                         )
-                        all_ok &= await _send_email(
-                            recipients["security"], msg["subject"], msg["body"],
-                        )
+
+                        if approval_links:
+                            # ONE email per client recipient — each gets
+                            # only their own magic-link URLs. Pre-Session
+                            # 205, this was a single bulk email; that
+                            # made it impossible to know which recipient
+                            # a click came from and would have leaked
+                            # other admins' single-use tokens to anyone
+                            # forwarded the email.
+                            for email, links in approval_links.items():
+                                per_msg = _compose_email(
+                                    bundle, recipients,
+                                    approval_urls={email: links},
+                                )
+                                all_ok &= await _send_email(
+                                    [email], per_msg["subject"], per_msg["body"],
+                                )
+                            # Any client emails we couldn't mint for
+                            # (rare — bad email format) still get the
+                            # plain notification so visibility isn't lost.
+                            unminted = [
+                                e for e in recipients["client_notify_emails"]
+                                if (e or "").strip().lower() not in approval_links
+                            ]
+                            if unminted:
+                                all_ok &= await _send_email(
+                                    unminted, bulk_msg["subject"], bulk_msg["body"],
+                                )
+                        else:
+                            all_ok &= await _send_email(
+                                recipients["client_notify_emails"],
+                                bulk_msg["subject"], bulk_msg["body"],
+                            )
 
                         if all_ok:
                             await conn.execute(
