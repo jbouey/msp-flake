@@ -35,14 +35,14 @@ SET runbook_id = 'RB-BACKUP-001',
     pattern_key = REPLACE(pattern_key, ':L2-run_backup_job', ':RB-BACKUP-001')
 WHERE runbook_id = 'L2-run_backup_job';
 
--- Update aggregated_pattern_stats — alternate aggregation table
+-- Update aggregated_pattern_stats — schema uses recommended_action, not runbook_id
 UPDATE aggregated_pattern_stats
-SET runbook_id = 'RB-FIREWALL-001'
-WHERE runbook_id = 'L2-restore_firewall_baseline';
+SET recommended_action = 'RB-FIREWALL-001'
+WHERE recommended_action = 'L2-restore_firewall_baseline';
 
 UPDATE aggregated_pattern_stats
-SET runbook_id = 'RB-BACKUP-001'
-WHERE runbook_id = 'L2-run_backup_job';
+SET recommended_action = 'RB-BACKUP-001'
+WHERE recommended_action = 'L2-run_backup_job';
 
 -- Update legacy patterns table for completeness
 UPDATE patterns
