@@ -458,6 +458,8 @@ jobs:
             done
             echo "Retention complete."
           EOF
+
+      - name: Rollback on failure
         if: failure()
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
@@ -481,7 +483,6 @@ jobs:
             fi
           EOF
 
-      - name: Cleanup old releases (keep last 5)
-        if: success()
-        run: |
-          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "ls -dt ${{ env.RELEASES_DIR }}/*/ | tail -n +6 | xargs rm -rf 2>/dev/null; echo 'Kept last 5 releases:'; ls -dt ${{ env.RELEASES_DIR }}/*/ | head -5"
+      # Cleanup step superseded by the `Retention — prune old releases + compose backups`
+      # step above (keeps last 10 releases, skips the `current` symlink target, also
+      # prunes compose backups). Keeping last 5 was too aggressive for rollback.
