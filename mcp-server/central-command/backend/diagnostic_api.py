@@ -149,6 +149,75 @@ async def recent_failures(
     ]
 
 
+@router.get("/pubkey-divergence")
+async def pubkey_divergence(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Phase 13 H2/H5: report appliances whose most-recently-delivered
+    server pubkey fingerprint diverges from the current signing key.
+    Diverged appliances will reject signed fleet orders until they
+    check in again and cache the current key.
+    """
+    import os as _os
+    import pathlib as _p
+    try:
+        from nacl.signing import SigningKey
+        from nacl.encoding import HexEncoder
+        key_hex = _p.Path(
+            _os.getenv("SIGNING_KEY_FILE", "/app/secrets/signing.key")
+        ).read_bytes().strip()
+        sk = SigningKey(key_hex, encoder=HexEncoder)
+        current_fp = sk.verify_key.encode(encoder=HexEncoder).decode()[:16]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"server pubkey unavailable: {e}")
+
+    rows = (await db.execute(text("""
+        SELECT site_id, hostname, mac_address,
+               server_pubkey_fingerprint_seen,
+               server_pubkey_fingerprint_seen_at,
+               last_checkin,
+               agent_version
+        FROM site_appliances
+        WHERE deleted_at IS NULL
+        ORDER BY last_checkin DESC NULLS LAST
+    """))).fetchall()
+
+    divergent: List[Dict[str, Any]] = []
+    matched: List[Dict[str, Any]] = []
+    unknown: List[Dict[str, Any]] = []
+    for r in rows:
+        entry = {
+            "site_id": r.site_id,
+            "hostname": r.hostname,
+            "mac_address": r.mac_address,
+            "agent_version": r.agent_version,
+            "fingerprint_seen": r.server_pubkey_fingerprint_seen,
+            "fingerprint_seen_at": r.server_pubkey_fingerprint_seen_at.isoformat()
+                if r.server_pubkey_fingerprint_seen_at else None,
+            "last_checkin": r.last_checkin.isoformat() if r.last_checkin else None,
+        }
+        if r.server_pubkey_fingerprint_seen is None:
+            unknown.append(entry)
+        elif r.server_pubkey_fingerprint_seen == current_fp:
+            matched.append(entry)
+        else:
+            divergent.append(entry)
+
+    return {
+        "current_server_fingerprint": current_fp,
+        "divergent": divergent,
+        "matched": matched,
+        "unknown": unknown,
+        "summary": {
+            "divergent_count": len(divergent),
+            "matched_count": len(matched),
+            "unknown_count": len(unknown),
+        },
+    }
+
+
 def _preview(output: Any) -> Optional[str]:
     if output is None:
         return None

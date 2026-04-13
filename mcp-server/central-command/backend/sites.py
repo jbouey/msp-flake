@@ -4139,6 +4139,14 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     except Exception as e:
         logger.warning(f"Checkin: server public key not available: {e}")
 
+    # Phase 13 H5: record which pubkey fingerprint we're delivering to
+    # this appliance on this checkin. Divergence between this value
+    # (what we sent) and the server's current key means the appliance
+    # has an out-of-date cache.  We update this AFTER the appliance
+    # record is created/upserted further below — see STEP just before
+    # `return {... server_public_key ...}`.
+    pubkey_fingerprint = server_public_key[:16] if server_public_key else None
+
     # Envelope-encrypt credentials if appliance supports it
     encrypted_credentials = None
     if checkin.encryption_public_key and (windows_targets or linux_targets):
@@ -4325,6 +4333,22 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 await _rsess.close()
             except Exception:
                 pass
+
+    # Phase 13 H5: stamp the fingerprint we're delivering so divergence
+    # from the current server key is queryable + gauge-able. Best-effort
+    # (checkin already succeeded; failure here must not break the response).
+    if pubkey_fingerprint and canonical_id:
+        try:
+            async with admin_connection(pool) as _fp_conn:
+                await _fp_conn.execute(
+                    "UPDATE site_appliances "
+                    "SET server_pubkey_fingerprint_seen = $1, "
+                    "    server_pubkey_fingerprint_seen_at = NOW() "
+                    "WHERE appliance_id = $2",
+                    pubkey_fingerprint, canonical_id,
+                )
+        except Exception as _e:
+            logger.debug(f"pubkey fingerprint stamp failed: {_e}")
 
     return {
         "status": "ok",

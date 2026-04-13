@@ -793,6 +793,46 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: orphan runbooks query failed")
 
+            # Phase 13: server-pubkey fingerprint divergence across the fleet.
+            # We compute the fingerprint server-side (first 16 hex of the
+            # current signing pubkey) and count appliances whose most
+            # recently delivered fingerprint doesn't match. > 0 means
+            # some appliances will reject signed fleet orders until they
+            # re-sync; investigate via /api/admin/diagnostics/pubkey-divergence.
+            try:
+                import os as _os
+                import pathlib as _p
+                try:
+                    from nacl.signing import SigningKey
+                    from nacl.encoding import HexEncoder
+                    _key_hex = _p.Path(
+                        _os.getenv("SIGNING_KEY_FILE", "/app/secrets/signing.key")
+                    ).read_bytes().strip()
+                    _sk = SigningKey(_key_hex, encoder=HexEncoder)
+                    _current_fp = _sk.verify_key.encode(encoder=HexEncoder).decode()[:16]
+                except Exception:
+                    _current_fp = None
+                row = await conn.fetchrow("""
+                    SELECT
+                      COUNT(*) FILTER (WHERE server_pubkey_fingerprint_seen IS DISTINCT FROM $1) AS divergent,
+                      COUNT(*) AS total
+                    FROM site_appliances
+                    WHERE deleted_at IS NULL
+                """, _current_fp)
+                sections.append(_gauge(
+                    "osiriscare_appliance_server_pubkey_divergence",
+                    "Appliances whose last-seen server pubkey fingerprint diverges from current signing key",
+                    [({}, float(row["divergent"] or 0))],
+                ))
+                if _current_fp:
+                    sections.append(_gauge(
+                        "osiriscare_server_signing_key_current",
+                        "Current server signing-key fingerprint (first 16 hex)",
+                        [({"fingerprint": _current_fp}, 1.0)],
+                    ))
+            except Exception:
+                logger.exception("metrics: server-pubkey divergence query failed")
+
             # Phase 6: regime change events in the last 7 days (unacknowledged)
             try:
                 row = await conn.fetchrow("""

@@ -8,6 +8,7 @@ package crypto
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -100,10 +101,18 @@ func (v *OrderVerifier) PublicKeyHex() string {
 // VerifyOrder verifies the Ed25519 signature on a signed order payload.
 // signedPayload is the canonical JSON string that was signed.
 // signatureHex is the hex-encoded 64-byte Ed25519 signature.
+//
+// Phase 13 H1 (Session 205): on failure, the error carries the cached
+// key fingerprint(s), signed_payload length, and a SHA-256 prefix of the
+// payload bytes. Enables server-side triage without physical access.
+// None of these values are secrets — the pubkey is public, the hash is
+// one-way, the length is meta.
 func (v *OrderVerifier) VerifyOrder(signedPayload, signatureHex string) error {
 	v.mu.RLock()
 	pk := v.publicKey
 	prevPK := v.previousKey
+	keyHex := v.keyHex
+	prevKeyHex := v.prevKeyHex
 	v.mu.RUnlock()
 
 	if pk == nil {
@@ -137,11 +146,31 @@ func (v *OrderVerifier) VerifyOrder(signedPayload, signatureHex string) error {
 		return nil
 	}
 
+	// Phase 13 H1: enrich the failure with diagnostic metadata.
+	spSum := sha256.Sum256([]byte(signedPayload))
+	spSumHex := hex.EncodeToString(spSum[:])
+	curFp := safeFingerprint(keyHex)
+	prevFp := safeFingerprint(prevKeyHex)
 	keyCount := 1
 	if prevPK != nil {
 		keyCount = 2
 	}
-	return fmt.Errorf("Ed25519 signature verification failed (tried %d keys)", keyCount)
+	return fmt.Errorf(
+		"Ed25519 signature verification failed "+
+			"(tried %d keys; cur_fp=%s prev_fp=%s sp_len=%d sp_sha256_16=%s)",
+		keyCount, curFp, prevFp, len(signedPayload), spSumHex[:16],
+	)
+}
+
+// safeFingerprint returns the first 16 hex chars of a pubkey or "-" when empty.
+func safeFingerprint(hexKey string) string {
+	if hexKey == "" {
+		return "-"
+	}
+	if len(hexKey) > 16 {
+		return hexKey[:16]
+	}
+	return hexKey
 }
 
 // VerifyRulesBundle verifies the signature on a rules sync response.
