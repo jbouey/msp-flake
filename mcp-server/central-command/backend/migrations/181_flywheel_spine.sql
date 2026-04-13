@@ -254,6 +254,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- ─── Initial lifecycle_state backfill (BEFORE trigger installs) ──
+--
+-- Must run before the UPDATE-blocking trigger is installed below,
+-- otherwise the trigger rejects the migration's own bootstrap UPDATE.
+
+UPDATE promoted_rules pr
+SET lifecycle_state = CASE
+    WHEN pr.status = 'retired' THEN 'retired'
+    WHEN pr.deployment_count > 0 THEN 'active'
+    WHEN EXISTS (
+        SELECT 1 FROM l1_rules l
+        WHERE l.rule_id = pr.rule_id AND l.enabled = false
+    ) THEN 'auto_disabled'
+    ELSE 'approved'
+END
+WHERE pr.lifecycle_state = 'proposed';  -- only touch newly-defaulted
+
 -- ─── 5. Block direct UPDATE of lifecycle_state (tamper-evident) ───
 --
 -- Only advance_lifecycle() can change lifecycle_state. Direct
@@ -361,21 +378,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- ─── 6. Infer initial lifecycle_state for existing rows ──────────
-
--- Rules with deployment_count > 0 → active
--- Rules enabled but deployment_count = 0 → approved (no rollout yet)
--- Rules disabled → auto_disabled (best-effort inference)
-UPDATE promoted_rules pr
-SET lifecycle_state = CASE
-    WHEN pr.status = 'retired' THEN 'retired'
-    WHEN pr.deployment_count > 0 THEN 'active'
-    WHEN EXISTS (
-        SELECT 1 FROM l1_rules l
-        WHERE l.rule_id = pr.rule_id AND l.enabled = false
-    ) THEN 'auto_disabled'
-    ELSE 'approved'
-END
-WHERE pr.lifecycle_state = 'proposed';  -- only touch newly-defaulted
+-- Initial backfill moved above (runs BEFORE the enforce trigger).
 
 COMMIT;
