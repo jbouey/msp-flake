@@ -195,3 +195,93 @@ Written to:
 - WORM S3/MinIO bucket with object lock
 
 Nightly job emits Compliance Packet PDF per client.
+
+---
+
+## Recovery Runbook — Migration-Induced Restart Loop
+
+**Symptom:** mcp-server container in `Restarting (N)` loop. Logs show either
+"column X does not exist" (schema drift in new migration) or
+`DuplicatePreparedStatementError` (PgBouncer backend poisoning from
+prior restart loop). CI deploy fails because it can't `docker exec` into
+the container.
+
+**Reference postmortem:** `docs/postmortem-2026-04-13-migration-162-outage.md`
+
+### Diagnosis
+
+```bash
+ssh root@178.156.162.116
+docker ps --format 'table {{.Names}}\t{{.Status}}' | grep mcp-server
+docker logs mcp-server --tail 50 2>&1 | grep -iE 'migration|Prepared|column|Duplicate'
+docker exec mcp-postgres psql -U mcp -d mcp -c \
+  "SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 5;"
+```
+
+### Recovery (in order)
+
+1. **Identify the failing migration.** The container log will name the file
+   (e.g. `Applying: 162_backfill_synthetic_l2_runbook_ids` followed by
+   `ERROR: column X does not exist`).
+
+2. **Fix the migration locally** — inspect production schema, correct
+   column references, commit. Example diagnostic:
+   ```bash
+   ssh root@178.156.162.116 "docker exec mcp-postgres psql -U mcp -d mcp -c \
+     'SELECT column_name FROM information_schema.columns WHERE table_name=<table>;'"
+   ```
+
+3. **Push fixed migration manually to the VPS mount** (CI is blocked by
+   the restart loop):
+   ```bash
+   scp <migration.sql> root@178.156.162.116:/opt/mcp-server/dashboard_api_mount/migrations/
+   ```
+
+4. **Atomic restart sequence** (MUST be this order):
+   ```bash
+   ssh root@178.156.162.116 '
+     docker stop mcp-server
+     docker exec mcp-postgres psql -U mcp -d postgres -c \
+       "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=\"mcp\" AND pid != pg_backend_pid();"
+     docker restart mcp-pgbouncer
+     sleep 3
+     docker start mcp-server
+   '
+   ```
+
+5. **Verify recovery:**
+   ```bash
+   curl -sf https://api.osiriscare.net/health
+   ssh root@178.156.162.116 "docker exec mcp-postgres psql -U mcp -d mcp -c \
+     \"SELECT version, name, applied_at FROM schema_migrations ORDER BY version DESC LIMIT 5;\""
+   ```
+
+### Why this sequence
+
+- **`docker stop mcp-server` first** — breaks the restart loop so we stop
+  creating new orphaned prepared statements each ~10s
+- **`pg_terminate_backend` ALL mcp backends** — forces Postgres to reap
+  the backend processes holding stale prepared statements
+- **Restart PgBouncer** — clears the pool and forces fresh backend
+  connections
+- **Start mcp-server** — now it gets clean backends, migration applies,
+  app starts normally
+
+### Non-interventions that DON'T work
+
+- Restarting only PgBouncer while mcp-server is still running: new
+  orphaned prepared statements created immediately on next retry
+- Restarting only mcp-server: PgBouncer's pool still holds dirty backends
+- Waiting for CI to self-heal: CI `docker exec` requires a running
+  container, which is precisely what's broken
+
+### Prevention
+
+- **Pre-flight schema check in CI** — apply new migrations against a
+  scratch DB seeded from production schema before merging the PR
+- **Migration dry-run locally** — `docker exec mcp-postgres psql -U mcp
+  -d mcp -f <migration.sql>` against a fresh branch of the production DB
+- **Never trust the schema you remember** — always query
+  `information_schema.columns` before writing UPDATE/ALTER migrations
+
+
