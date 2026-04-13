@@ -193,11 +193,122 @@ async def promote_candidate(
         f"actor={actor} ({actor_type}) confidence={confidence:.2f}"
     )
 
+    # Step 8: emit fleet order so appliances actually receive the rule.
+    # This was missing prior to Session 205 — promoted_rules accumulated
+    # but deployment_count stayed 0 forever. Site-local scope: only the
+    # originating site's appliances get the rule. Fleet-wide rules
+    # (SYNC-L1-*) require partner approval (separate path, not yet wired).
+    try:
+        order_count = await issue_sync_promoted_rule_orders(
+            conn,
+            rule_id=rule_id,
+            runbook_id=runbook_id,
+            rule_yaml=effective_yaml,
+            site_id=site_id,
+            scope="site",
+        )
+        logger.info(
+            f"Promotion fleet orders issued: rule_id={rule_id} count={order_count}"
+        )
+    except Exception as e:
+        # Order issuance failure must not block the promotion record. The
+        # rule is in promoted_rules and l1_rules; a follow-up reconciliation
+        # job can re-issue if needed. But log loudly.
+        logger.error(
+            f"Failed to issue sync_promoted_rule fleet order for {rule_id}: {e}",
+            exc_info=True,
+        )
+
     return {
         "rule_id": rule_id,
         "synced_rule_id": synced_rule_id,
         "pattern_signature": pattern_sig,
     }
+
+
+async def issue_sync_promoted_rule_orders(
+    conn: asyncpg.Connection,
+    rule_id: str,
+    runbook_id: str,
+    rule_yaml: str,
+    site_id: Optional[str] = None,
+    scope: str = "site",
+) -> int:
+    """Emit signed sync_promoted_rule fleet orders so appliances pick up
+    the new L1 rule on next checkin.
+
+    Args:
+      conn: open asyncpg connection
+      rule_id: the L1 rule ID just promoted
+      runbook_id: the runbook the rule maps to
+      rule_yaml: the full rule YAML (delivered to appliance)
+      site_id: required if scope='site'
+      scope: 'site' = one order for the originating site; 'fleet' = one
+             order per active appliance site
+
+    Returns the number of fleet orders created.
+
+    Pre-Session-205 this code path didn't exist; promoted_rules accumulated
+    but appliances never received them. The fleet_order_completion ack
+    increments promoted_rules.deployment_count via DB trigger (migration
+    163), closing the flywheel measurement loop.
+    """
+    import sys
+    sys.path.insert(0, "/app")
+    from datetime import datetime, timedelta, timezone
+    try:
+        from dashboard_api.order_signing import sign_fleet_order
+    except ImportError:
+        from .order_signing import sign_fleet_order
+
+    if scope == "site":
+        if not site_id:
+            raise ValueError("scope='site' requires a site_id")
+        target_sites = [site_id]
+    elif scope == "fleet":
+        rows = await conn.fetch(
+            "SELECT DISTINCT site_id FROM site_appliances WHERE deleted_at IS NULL"
+        )
+        target_sites = [r["site_id"] for r in rows]
+    else:
+        raise ValueError(f"Unknown scope: {scope!r}")
+
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=24)
+    created = 0
+    for sid in target_sites:
+        params = {
+            "site_id": sid,
+            "rule_id": rule_id,
+            "runbook_id": runbook_id,
+            "rule_yaml": rule_yaml,
+            "promoted_at": now.isoformat(),
+        }
+        nonce, signature, signed_payload = sign_fleet_order(
+            0, "sync_promoted_rule", params, now, expires_at,
+        )
+        try:
+            await conn.execute(
+                """
+                INSERT INTO fleet_orders (
+                    order_type, parameters, status, expires_at, created_by,
+                    nonce, signature, signed_payload
+                ) VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+                """,
+                "sync_promoted_rule",
+                json.dumps(params),
+                expires_at,
+                "flywheel-promote",
+                nonce,
+                signature,
+                signed_payload,
+            )
+            created += 1
+        except Exception as e:
+            logger.error(
+                f"sync_promoted_rule INSERT failed site={sid} rule_id={rule_id}: {e}"
+            )
+    return created
 
 
 def _slugify(s: str) -> str:

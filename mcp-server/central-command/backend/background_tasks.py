@@ -757,51 +757,71 @@ async def flywheel_promotion_loop():
                             )
                             continue
 
-                        rule_id = f"L1-PLATFORM-{pc.incident_type.upper()}-{pc.runbook_id[:12].upper().replace('-', '')}"
+                        # Phase 2 (Session 205): use the unified promote_candidate()
+                        # path so platform auto-promotions also write promoted_rules,
+                        # runbooks, runbook_id_mapping, promotion_audit_log AND
+                        # emit fleet orders to deploy. Pre-Session-205 this code
+                        # only INSERTed into l1_rules — no audit, no orders,
+                        # promoted_rules.deployment_count never moved.
+                        rule_id = (
+                            f"L1-PLATFORM-{pc.incident_type.upper()}-"
+                            f"{pc.runbook_id[:12].upper().replace('-', '')}"
+                        )
                         try:
-                            incident_pattern = {"incident_type": pc.incident_type}
-                            if pc.incident_type:
-                                incident_pattern["check_type"] = pc.incident_type
+                            from .flywheel_promote import (
+                                promote_candidate,
+                                issue_sync_promoted_rule_orders,
+                            )
+                            from .fleet import get_pool
+                            pool = await get_pool()
+                            async with pool.acquire() as conn_pg:
+                                async with conn_pg.transaction():
+                                    # Synthesize a candidate dict from the
+                                    # platform_pattern_stats row. promote_candidate
+                                    # writes 6 tables + emits fleet orders.
+                                    candidate = {
+                                        "id": None,  # no real candidate row; UPDATE no-op
+                                        "site_id": "PLATFORM",
+                                        "pattern_signature": pc.pattern_key,
+                                        "check_type": pc.incident_type,
+                                        "success_rate": float(pc.success_rate),
+                                        "total_occurrences": int(pc.total_occurrences),
+                                        "l2_resolutions": int(pc.total_occurrences),
+                                        "recommended_action": pc.runbook_id,
+                                    }
+                                    promotion = await promote_candidate(
+                                        conn_pg,
+                                        candidate,
+                                        actor="auto-platform",
+                                        actor_type="auto",
+                                        custom_name=f"Platform: {pc.incident_type}",
+                                    )
+                                    rule_id = promotion["rule_id"]
 
-                            result = await db.execute(text("""
-                                INSERT INTO l1_rules (
-                                    rule_id, incident_pattern, runbook_id,
-                                    confidence, promoted_from_l2, enabled, source
-                                ) VALUES (
-                                    :rule_id, CAST(:pattern AS jsonb), :runbook_id,
-                                    :confidence, true, true, 'platform'
-                                )
-                                ON CONFLICT (rule_id) DO UPDATE SET
-                                    confidence = EXCLUDED.confidence
-                                RETURNING (xmax = 0) AS inserted
-                            """), {
-                                "rule_id": rule_id,
-                                "pattern": json.dumps(incident_pattern),
-                                "runbook_id": pc.runbook_id,
-                                "confidence": float(pc.success_rate),
-                            })
-                            was_inserted = result.fetchone().inserted
-
+                            # Mark platform_pattern_stats as promoted (separate connection
+                            # because the previous transaction owned conn_pg).
                             await db.execute(text("""
                                 UPDATE platform_pattern_stats
                                 SET promoted_at = NOW(), promoted_rule_id = :rid
                                 WHERE pattern_key = :pk
                             """), {"rid": rule_id, "pk": pc.pattern_key})
-
                             await db.commit()
-                            if was_inserted:
-                                platform_promoted += 1
-                                promotions_this_cycle += 1
-                                logger.info(
-                                    "Platform rule auto-promoted",
-                                    rule_id=rule_id,
-                                    incident_type=pc.incident_type,
-                                    distinct_orgs=pc.distinct_orgs,
-                                    success_rate=f"{pc.success_rate:.1%}",
-                                    total_occurrences=pc.total_occurrences,
-                                )
+
+                            platform_promoted += 1
+                            promotions_this_cycle += 1
+                            logger.info(
+                                "Platform rule auto-promoted (full path)",
+                                rule_id=rule_id,
+                                incident_type=pc.incident_type,
+                                distinct_orgs=pc.distinct_orgs,
+                                success_rate=f"{pc.success_rate:.1%}",
+                                total_occurrences=pc.total_occurrences,
+                            )
                         except Exception as e:
-                            logger.warning(f"Failed to promote platform rule {rule_id}: {e}")
+                            logger.warning(
+                                f"Failed to promote platform rule {rule_id}: {e}",
+                                exc_info=True,
+                            )
                             await db.rollback()
 
                     if platform_promoted > 0:
