@@ -11,6 +11,13 @@ Tables touched (all in one transaction):
 4. runbooks — auto-generated entry for the new rule
 5. runbook_id_mapping — l1_rule_id → canonical runbook
 6. promotion_audit_log — append-only audit trail
+7. fleet_orders — sync_promoted_rule order so appliances receive the rule
+8. pattern_embeddings — upsert so future L2 warm-starts benefit
+
+Phase 9 shadow mode:
+  evaluate_shadow_agreement() can be called before promote_candidate to
+  compare the candidate's predicted matches vs actual past resolutions.
+  Opt-in per incident_type via shadow_mode_config.enabled.
 
 This module is the ONLY place that writes to promoted_rules + audit log.
 If you're tempted to duplicate this logic — don't. Call promote_candidate()
@@ -240,6 +247,144 @@ async def promote_candidate(
         "rule_id": rule_id,
         "synced_rule_id": synced_rule_id,
         "pattern_signature": pattern_sig,
+    }
+
+
+async def evaluate_shadow_agreement(
+    conn: asyncpg.Connection,
+    incident_type: str,
+    runbook_id: str,
+    pattern_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Shadow-evaluate whether a candidate rule's predictions would have
+    matched actual past resolutions. Called BEFORE promote_candidate()
+    when shadow_mode_config is enabled for this incident_type.
+
+    Returns a dict:
+      - decision: 'promote' | 'hold' | 'insufficient_data' | 'disabled'
+      - agreement_rate: float (0.0–1.0) or None
+      - incidents_considered, would_have_matched, actually_resolved_l1
+      - hold_reason (when decision='hold')
+      - shadow_record_id (the row written to shadow_evaluations, if any)
+
+    If the config is disabled or missing for this incident_type, returns
+    decision='disabled' with no side effects.
+
+    Shadow mode is CONSERVATIVE: it writes a shadow_evaluations audit
+    row so we can inspect WHY a candidate was held, but never modifies
+    any other state. The caller (auto-promote loop, manual approval UI)
+    inspects the decision and acts accordingly.
+    """
+    # Look up config — fall back to __default__
+    cfg_row = await conn.fetchrow(
+        "SELECT enabled, min_agreement_rate, min_sample_size, eval_window_days "
+        "FROM shadow_mode_config WHERE incident_type = $1",
+        incident_type,
+    )
+    if cfg_row is None:
+        cfg_row = await conn.fetchrow(
+            "SELECT enabled, min_agreement_rate, min_sample_size, eval_window_days "
+            "FROM shadow_mode_config WHERE incident_type = '__default__'",
+        )
+    enabled = bool(cfg_row and cfg_row["enabled"])
+    if not enabled:
+        return {"decision": "disabled", "agreement_rate": None}
+
+    min_agree = float(cfg_row["min_agreement_rate"] or 0.90)
+    min_n = int(cfg_row["min_sample_size"] or 10)
+    window_days = int(cfg_row["eval_window_days"] or 14)
+
+    # Candidate "would have matched" = incidents with this incident_type
+    # that resolved via ANY L1 rule or ANY L2 LLM pick in the window.
+    # (The candidate rule would match on incident_type + executable
+    # runbook_id — we treat any resolution as "it would have been
+    # matchable".)
+    #
+    # Candidate "actually resolved L1" = the same incidents that were
+    # resolved at L1 level (our prediction: the promoted rule would
+    # resolve them at L1). A candidate with high agreement has L1 +
+    # L2 decisions that lined up with the pattern we're promoting.
+    stats = await conn.fetchrow("""
+        SELECT
+            COUNT(*) AS total_incidents,
+            COUNT(*) FILTER (WHERE resolution_level = 'L1') AS l1_count,
+            COUNT(*) FILTER (
+                WHERE resolution_level IN ('L1','L2') AND success = true
+            ) AS success_count
+        FROM execution_telemetry
+        WHERE incident_type = $1
+          AND created_at > NOW() - make_interval(days => $2)
+    """, incident_type, window_days)
+
+    total = int(stats["total_incidents"] or 0)
+    l1_count = int(stats["l1_count"] or 0)
+    success_count = int(stats["success_count"] or 0)
+
+    if total < min_n:
+        record_id = await conn.fetchval("""
+            INSERT INTO shadow_evaluations (
+                pattern_key, incident_type, runbook_id,
+                eval_window_start, eval_window_end,
+                incidents_considered, would_have_matched, actually_resolved_l1,
+                agreement_rate, decision, hold_reason
+            ) VALUES (
+                $1, $2, $3,
+                NOW() - make_interval(days => $4), NOW(),
+                $5, 0, $6,
+                0, 'insufficient_data', $7
+            )
+            RETURNING id
+        """, pattern_key or f"{incident_type}:{runbook_id}", incident_type,
+            runbook_id, window_days, total, l1_count,
+            f"Only {total} incidents in window, need ≥{min_n}")
+        return {
+            "decision": "insufficient_data",
+            "agreement_rate": None,
+            "incidents_considered": total,
+            "would_have_matched": 0,
+            "actually_resolved_l1": l1_count,
+            "hold_reason": f"Only {total} incidents in window, need ≥{min_n}",
+            "shadow_record_id": record_id,
+        }
+
+    # Agreement: fraction of incidents that succeeded AND resolved at L1.
+    # Low agreement means either L1 wasn't firing (mismatched pattern) or
+    # L2 was needed (our confidence that L1 would handle it is wrong).
+    would_match = total  # the candidate rule's incident_type matches all
+    agreement = (l1_count / total) if total else 0.0
+
+    decision = "promote" if agreement >= min_agree else "hold"
+    hold_reason = None
+    if decision == "hold":
+        hold_reason = (
+            f"Shadow agreement {agreement:.2f} < {min_agree:.2f} threshold "
+            f"(L1 resolved {l1_count}/{total} in {window_days}d)"
+        )
+
+    record_id = await conn.fetchval("""
+        INSERT INTO shadow_evaluations (
+            pattern_key, incident_type, runbook_id,
+            eval_window_start, eval_window_end,
+            incidents_considered, would_have_matched, actually_resolved_l1,
+            agreement_rate, decision, hold_reason
+        ) VALUES (
+            $1, $2, $3,
+            NOW() - make_interval(days => $4), NOW(),
+            $5, $6, $7, $8, $9, $10
+        )
+        RETURNING id
+    """, pattern_key or f"{incident_type}:{runbook_id}", incident_type,
+        runbook_id, window_days, total, would_match, l1_count,
+        round(agreement, 3), decision, hold_reason)
+
+    return {
+        "decision": decision,
+        "agreement_rate": round(agreement, 3),
+        "incidents_considered": total,
+        "would_have_matched": would_match,
+        "actually_resolved_l1": l1_count,
+        "hold_reason": hold_reason,
+        "shadow_record_id": record_id,
     }
 
 

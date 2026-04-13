@@ -1102,10 +1102,40 @@ async def flywheel_promotion_loop():
                             from .flywheel_promote import (
                                 promote_candidate,
                                 issue_sync_promoted_rule_orders,
+                                evaluate_shadow_agreement,
                             )
                             from .fleet import get_pool
                             pool = await get_pool()
                             async with pool.acquire() as conn_pg:
+                                # Phase 9: shadow-mode check. If enabled for
+                                # this incident_type AND the candidate fails
+                                # the agreement threshold, HOLD and move on
+                                # (no state change beyond the shadow_evaluations
+                                # audit row which evaluate_shadow_agreement writes).
+                                shadow = await evaluate_shadow_agreement(
+                                    conn_pg,
+                                    incident_type=pc.incident_type,
+                                    runbook_id=pc.runbook_id,
+                                    pattern_key=pc.pattern_key,
+                                )
+                                if shadow["decision"] == "hold":
+                                    logger.info(
+                                        "Platform promotion HELD by shadow mode",
+                                        incident_type=pc.incident_type,
+                                        runbook_id=pc.runbook_id,
+                                        agreement=shadow["agreement_rate"],
+                                        reason=shadow["hold_reason"],
+                                    )
+                                    continue
+                                if shadow["decision"] == "insufficient_data":
+                                    # Default to promoting since we were already
+                                    # willing to promote on the hard-coded path;
+                                    # shadow just can't verify — not a red flag.
+                                    logger.debug(
+                                        "Shadow mode inconclusive — proceeding",
+                                        incident_type=pc.incident_type,
+                                    )
+
                                 async with conn_pg.transaction():
                                     # Synthesize a candidate dict from the
                                     # platform_pattern_stats row. promote_candidate
