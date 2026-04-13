@@ -1919,6 +1919,82 @@ async def admin_health(user: dict = Depends(require_auth)):
     status_code = 200 if checks["status"] == "ok" else 503
     return JSONResponse(content=checks, status_code=status_code)
 
+
+@app.get("/api/admin/health/loops")
+async def admin_health_loops(user: dict = Depends(require_auth)):
+    """Per-loop heartbeat status (Phase 15 A-spec hygiene).
+
+    Surfaces SILENTLY STUCK loops — running but not making progress.
+    `/api/admin/health` already detects CRASHED tasks via task.done();
+    this endpoint complements it for the deadlocked / blocked-on-lock
+    case. Each instrumented loop calls `bg_heartbeat.record_heartbeat`
+    at the top of every iteration; a stale heartbeat means the loop
+    body is hung.
+
+    Response includes per-loop:
+      iterations, errors, age_s (since last heartbeat),
+      expected_interval_s, status (fresh|stale|unknown),
+      task_state (running|crashed|completed) from the asyncio supervisor.
+
+    HTTP 200 always — staleness is reported, not enforced — so an
+    operator can see partial state. Wire alerts to the per-loop
+    `status: stale` field.
+    """
+    from dashboard_api.bg_heartbeat import (
+        get_all_heartbeats, EXPECTED_INTERVAL_S, assess_staleness,
+    )
+
+    heartbeats = get_all_heartbeats()
+    bg_tasks = getattr(app.state, 'bg_tasks', {})
+
+    loops = []
+    # Cover every loop that's either instrumented OR registered as bg task,
+    # so an uninstrumented loop shows up with status='unknown' rather than
+    # being silently absent.
+    all_names = set(heartbeats.keys()) | set(bg_tasks.keys())
+    for name in sorted(all_names):
+        hb = heartbeats.get(name)
+        task = bg_tasks.get(name)
+        task_state = "absent"
+        if task is not None:
+            if task.done():
+                exc = task.exception() if not task.cancelled() else None
+                task_state = f"crashed: {exc}" if exc else "completed"
+            else:
+                task_state = "running"
+
+        entry = {
+            "loop_name": name,
+            "task_state": task_state,
+            "expected_interval_s": EXPECTED_INTERVAL_S.get(name),
+            "instrumented": hb is not None,
+        }
+        if hb:
+            entry.update({
+                "iterations": hb["iterations"],
+                "errors": hb["errors"],
+                "age_s": hb["age_s"],
+                "first_seen_iso": datetime.fromtimestamp(
+                    hb["first_seen"], tz=timezone.utc
+                ).isoformat(),
+                "last_seen_iso": datetime.fromtimestamp(
+                    hb["last_seen"], tz=timezone.utc
+                ).isoformat(),
+                "status": assess_staleness(hb),
+            })
+        else:
+            entry["status"] = "uninstrumented"
+        loops.append(entry)
+
+    return {
+        "loops": loops,
+        "total": len(loops),
+        "stale_count": sum(1 for l in loops if l.get("status") == "stale"),
+        "uninstrumented_count": sum(1 for l in loops if l.get("status") == "uninstrumented"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @app.post("/checkin")
 async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """

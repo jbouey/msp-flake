@@ -247,6 +247,11 @@ async def privileged_notifier_loop():
     await asyncio.sleep(60)  # wait past initial startup
     while True:
         try:
+            from .bg_heartbeat import record_heartbeat
+            record_heartbeat("privileged_notifier")
+        except Exception:
+            pass  # heartbeat must never break the loop
+        try:
             from .fleet import get_pool
             from .tenant_middleware import admin_connection
             pool = await get_pool()
