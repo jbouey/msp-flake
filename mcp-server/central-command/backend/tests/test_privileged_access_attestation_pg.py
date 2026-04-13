@@ -102,7 +102,18 @@ def _make_signing_key(tmp_path: pathlib.Path) -> pathlib.Path:
 async def setup(tmp_path, monkeypatch):
     sk_path = _make_signing_key(tmp_path)
     monkeypatch.setenv("SIGNING_KEY_FILE", str(sk_path))
+    # Force the signing_backend singleton to re-read the new env.
+    # Without this, a FileSigningBackend built in an earlier test
+    # keeps pointing at the first SIGNING_KEY_FILE value, producing
+    # signatures that don't verify under this test's fresh key.
     import sys, importlib
+    sys.modules.pop("signing_backend", None)
+    import signing_backend as sb_mod  # noqa
+    importlib.reload(sb_mod)
+    try:
+        sb_mod.reset_singleton()
+    except Exception:
+        pass
     sys.modules.pop("privileged_access_attestation", None)
     import privileged_access_attestation as paa
     importlib.reload(paa)
