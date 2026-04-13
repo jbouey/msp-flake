@@ -47,7 +47,10 @@ async def find_orphan_promotions(conn: asyncpg.Connection) -> List[Tuple[str, st
     Filters:
       - promoted_rules.status = 'active'
       - linked l1_rules.enabled = true (don't re-deploy disabled rules)
-      - site is not decommissioned (site row exists with status != 'decommissioned')
+      - site is not decommissioned
+      - site has at least one appliance that checked in within the
+        last 7 days (skip zombie/pilot/test sites — their orders would
+        sit unacked forever)
       - no sync_promoted_rule fleet_order with this rule_id has ever been created
     """
     rows = await conn.fetch("""
@@ -61,10 +64,16 @@ async def find_orphan_promotions(conn: asyncpg.Connection) -> List[Tuple[str, st
         WHERE pr.status = 'active'
           AND COALESCE(l.enabled, true) = true
           AND COALESCE(s.status, 'active') != 'decommissioned'
+          AND EXISTS (
+              SELECT 1 FROM site_appliances sa
+              WHERE sa.site_id = pr.site_id
+                AND sa.last_checkin > NOW() - INTERVAL '7 days'
+          )
           AND NOT EXISTS (
               SELECT 1 FROM fleet_orders fo
               WHERE fo.order_type = 'sync_promoted_rule'
                 AND fo.parameters->>'rule_id' = pr.rule_id
+                AND fo.parameters->>'site_id' = pr.site_id
           )
         ORDER BY pr.promoted_at ASC
     """)
