@@ -144,6 +144,13 @@ jobs:
         run: |
           python3 -m pytest tests/test_startup_invariants_pg.py -v --tb=short
 
+      - name: Chain adversarial pen-test
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_privileged_chain_adversarial_pg.py -v --tb=short
+
   deploy:
     needs: [test, privileged-chain-pg-tests]
     runs-on: ubuntu-latest
