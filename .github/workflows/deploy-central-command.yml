@@ -6,6 +6,10 @@ on:
     paths:
       - 'mcp-server/central-command/**'
       - 'mcp-server/main.py'
+      # Include the workflow itself so YAML-only changes trigger a real
+      # run (validates the new workflow AND refreshes GH's cached name,
+      # avoiding the 0-job "ghost failure" behavior seen on 3cf4490).
+      - '.github/workflows/deploy-central-command.yml'
   workflow_dispatch:  # Allow manual trigger
 
 env:
