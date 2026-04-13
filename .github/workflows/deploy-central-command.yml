@@ -214,6 +214,17 @@ jobs:
         run: |
           python3 -m pytest tests/test_yaml_daemon_compat.py -v --tb=short
 
+      - name: Flywheel Spine — state machine + orchestrator (PG)
+        # Session 206 redesign: the spine. This test is the contract —
+        # if it passes, the flywheel's state machine is intact end-to-end.
+        # If it fails, the thing that broke is exactly named. Replaces
+        # the audit-driven discovery of silent auto-disable failures.
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_flywheel_spine_pg.py -v --tb=short
+
   deploy:
     needs: [test, privileged-chain-pg-tests]
     runs-on: ubuntu-latest

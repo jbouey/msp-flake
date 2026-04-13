@@ -2052,6 +2052,63 @@ async def cross_incident_correlation_loop():
         await asyncio.sleep(3600)  # Hourly
 
 
+# ─── Session 206 Spine: Flywheel Orchestrator loop ─────────────────
+
+FLYWHEEL_ORCHESTRATOR_INTERVAL_SECONDS = 300  # 5 minutes
+FLYWHEEL_ORCHESTRATOR_MODE = os.getenv("FLYWHEEL_ORCHESTRATOR_MODE", "shadow").lower()
+
+
+async def flywheel_orchestrator_loop():
+    """Run the flywheel state-machine orchestrator every 5 minutes.
+
+    Mode is controlled by FLYWHEEL_ORCHESTRATOR_MODE env var:
+      - 'shadow'  (default): evaluate transitions, log intent, DON'T apply.
+                  Run alongside the old step-5 block in flywheel_promotion_loop
+                  for 24-48h to compare outputs before cutover.
+      - 'enforce' (production): apply transitions. Each transition is
+                  individually try/except'd — one failure never blocks
+                  another. No logger.debug anywhere: failures log ERROR
+                  with exc_info=True.
+
+    Ships as part of the Session 206 redesign. Replaces the silent-failure
+    prone step 5a-bis that let SCREEN_LOCK sit at 0%/83 for 2+ hours
+    undetected.
+    """
+    await asyncio.sleep(90)  # let startup settle
+    while True:
+        _hb("flywheel_orchestrator")
+        try:
+            from dashboard_api.flywheel_state import run_orchestrator_tick
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                enforce = FLYWHEEL_ORCHESTRATOR_MODE == "enforce"
+                result = await run_orchestrator_tick(conn, enforce=enforce)
+            applied = sum(result.transitions_by_name.values())
+            failed = sum(result.failures_by_name.values())
+            if applied or failed:
+                logger.info(
+                    "flywheel_orchestrator_tick_complete",
+                    extra={
+                        "mode": FLYWHEEL_ORCHESTRATOR_MODE,
+                        "scanned": result.total_rules_scanned,
+                        "applied": applied,
+                        "failed": failed,
+                        "elapsed_ms": result.elapsed_ms,
+                        "transitions": dict(result.transitions_by_name),
+                    },
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(
+                f"flywheel_orchestrator_loop iteration failed: {e}",
+                exc_info=True,
+            )
+        await asyncio.sleep(FLYWHEEL_ORCHESTRATOR_INTERVAL_SECONDS)
+
+
 # ─── Phase 15 closing: enterprise appliance offline detection ──────
 
 APPLIANCE_STALE_THRESHOLD_MINUTES = 5
