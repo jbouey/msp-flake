@@ -136,6 +136,10 @@ async def conn(tmp_path, monkeypatch):
         await c.execute(_read_migration("176_privileged_chain_update_guard.sql"))
         await c.execute(_read_migration("174_privileged_access_requests.sql"))
         await c.execute(_read_migration("178_privileged_magic_links.sql"))
+        # Phase 15 closing pass: migration 179 hardens triggers
+        # (ENABLE ALWAYS + BEFORE TRUNCATE). Without this, the two new
+        # invariants INV-CHAIN-ALWAYS-ENABLED + INV-TRUNCATE-* are broken.
+        await c.execute(_read_migration("179_privileged_chain_hardening.sql"))
         yield c, sk
     finally:
         await c.execute("""

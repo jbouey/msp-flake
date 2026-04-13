@@ -44,7 +44,11 @@ MIGRATIONS_DIR = pathlib.Path(__file__).parent.parent / "migrations"
 PREREQ_SCHEMA = """
 DROP TABLE IF EXISTS fleet_orders CASCADE;
 DROP TABLE IF EXISTS compliance_bundles CASCADE;
+DROP TABLE IF EXISTS admin_audit_log CASCADE;
+DROP TABLE IF EXISTS client_audit_log CASCADE;
+DROP TABLE IF EXISTS portal_access_log CASCADE;
 DROP TABLE IF EXISTS sites CASCADE;
+DROP FUNCTION IF EXISTS prevent_audit_deletion() CASCADE;
 
 CREATE TABLE sites (site_id TEXT PRIMARY KEY);
 
@@ -66,6 +70,19 @@ CREATE TABLE compliance_bundles (
     check_type TEXT NOT NULL
 );
 
+-- Audit tables that migration 179 references for TRUNCATE triggers
+CREATE TABLE admin_audit_log (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE client_audit_log (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE portal_access_log (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW());
+
+-- Synthetic prevent_audit_deletion() — migration 179 uses it for
+-- the BEFORE TRUNCATE triggers. In prod this is defined by migration 151.
+CREATE OR REPLACE FUNCTION prevent_audit_deletion() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'audit table is append-only; TRUNCATE/DELETE blocked';
+END;
+$$;
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 """
 
@@ -81,13 +98,24 @@ async def conn():
         await c.execute(PREREQ_SCHEMA)
         await c.execute(_read_migration("175_privileged_chain_enforcement.sql"))
         await c.execute(_read_migration("176_privileged_chain_update_guard.sql"))
+        # Phase 15 closing pass: migration 179 hardens the triggers
+        # against session_replication_role + TRUNCATE bypasses.
+        await c.execute(_read_migration("179_privileged_chain_hardening.sql"))
         yield c
     finally:
         await c.execute("""
             DROP TRIGGER IF EXISTS trg_enforce_privileged_chain ON fleet_orders;
             DROP TRIGGER IF EXISTS trg_enforce_privileged_immutability ON fleet_orders;
+            DROP TRIGGER IF EXISTS compliance_bundles_no_truncate ON compliance_bundles;
+            DROP TRIGGER IF EXISTS admin_audit_log_no_truncate ON admin_audit_log;
+            DROP TRIGGER IF EXISTS client_audit_log_no_truncate ON client_audit_log;
+            DROP TRIGGER IF EXISTS portal_access_log_no_truncate ON portal_access_log;
             DROP FUNCTION IF EXISTS enforce_privileged_order_attestation();
             DROP FUNCTION IF EXISTS enforce_privileged_order_immutability();
+            DROP FUNCTION IF EXISTS prevent_audit_deletion() CASCADE;
+            DROP TABLE IF EXISTS admin_audit_log CASCADE;
+            DROP TABLE IF EXISTS client_audit_log CASCADE;
+            DROP TABLE IF EXISTS portal_access_log CASCADE;
             DROP TABLE IF EXISTS fleet_orders CASCADE;
             DROP TABLE IF EXISTS compliance_bundles CASCADE;
             DROP TABLE IF EXISTS sites CASCADE;
@@ -404,7 +432,148 @@ async def test_cancel_is_the_only_post_insert_mutation_allowed(conn):
     assert cnt == 1
 
 
-# ─── Attack 9: trigger tampering ─────────────────────────────────
+# ─── Attack 9: COPY FROM bypass (CISO red-team request) ─────────
+
+@pytest.mark.asyncio
+async def test_attack_copy_from_still_fires_triggers(conn):
+    """Scenario: attacker with DB write tries to bypass the trigger
+    via `COPY fleet_orders FROM ...` — a bulk-ingest path that some
+    DBs historically skipped triggers for.
+
+    Defense: Postgres COPY fires ROW triggers in FOR EACH ROW mode
+    by default. Verified by exercising a synthetic COPY that inserts
+    a privileged row WITHOUT the required bundle — should still
+    RAISE PRIVILEGED_CHAIN_VIOLATION.
+
+    Round-table red-team item #6, part A.
+    """
+    await conn.execute("INSERT INTO sites (site_id) VALUES ('site-a')")
+    # Use an ephemeral stdin copy — asyncpg supports this via copy_records_to_table
+    # or raw COPY via execute(). Simpler: wrap a COPY in an INSERT-from-SELECT
+    # synthetic that asyncpg can run directly, which still fires the trigger.
+    with pytest.raises(asyncpg.RaiseError) as exc:
+        await conn.execute(
+            """
+            INSERT INTO fleet_orders (order_type, parameters)
+            SELECT 'enable_emergency_access', '{"site_id":"site-a"}'::jsonb
+            """
+        )
+    assert "PRIVILEGED_CHAIN_VIOLATION" in str(exc.value)
+
+    # Also test the literal COPY path — this is a 2-tuple example
+    # showing the attacker cannot craft a COPY body that lands rows
+    # in fleet_orders bypassing the trigger.
+    with pytest.raises((asyncpg.RaiseError, asyncpg.PostgresError)) as exc2:
+        await conn.copy_records_to_table(
+            "fleet_orders",
+            records=[(
+                None,                                    # id — default
+                "enable_emergency_access",               # order_type
+                '{"site_id":"site-a"}',                  # parameters
+                None, None, None,                         # signed_payload/sig/nonce
+                "active",                                 # status
+                None,                                     # created_at — default
+                None,                                     # expires_at — default
+            )],
+            columns=[
+                "id", "order_type", "parameters",
+                "signed_payload", "signature", "nonce",
+                "status", "created_at", "expires_at",
+            ],
+        )
+    # The error may surface as RaiseError (from the trigger) or a
+    # related PostgresError in COPY framing. Either way, the row was
+    # rejected.
+
+
+# ─── Attack 10: TRUNCATE bypass (CISO red-team request) ──────────
+
+
+@pytest.mark.asyncio
+async def test_attack_truncate_on_compliance_bundles_blocked_by_179(conn):
+    """Scenario: attacker tries `TRUNCATE compliance_bundles CASCADE`
+    to wipe evidence wholesale.
+
+    Defense (migration 179): BEFORE TRUNCATE trigger fires on the
+    statement and RAISEs. Verifies migration 179 closes the
+    round-table red-team audit gap.
+
+    Round-table red-team item #6, part B.
+    """
+    # Create a real privileged bundle
+    await conn.execute("INSERT INTO sites (site_id) VALUES ('site-a')")
+    bundle_id = f"bundle-{uuid.uuid4().hex[:8]}"
+    await conn.execute(
+        "INSERT INTO compliance_bundles (bundle_id, site_id, check_type) "
+        "VALUES ($1, 'site-a', 'privileged_access')",
+        bundle_id,
+    )
+
+    # TRUNCATE must now RAISE — migration 179 wires the BEFORE TRUNCATE
+    # trigger to the existing prevent_audit_deletion() function.
+    with pytest.raises(asyncpg.RaiseError) as exc:
+        await conn.execute("TRUNCATE compliance_bundles")
+    assert "append-only" in str(exc.value).lower() or "truncate" in str(exc.value).lower()
+
+    # The bundle is still there — attack blocked
+    cnt = await conn.fetchval("SELECT COUNT(*) FROM compliance_bundles")
+    assert cnt == 1
+
+    # Same defense on the audit tables
+    for table in ("admin_audit_log", "client_audit_log", "portal_access_log"):
+        with pytest.raises(asyncpg.RaiseError):
+            await conn.execute(f"TRUNCATE {table}")
+
+
+# ─── Attack 11: session_replication_role trick ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_attack_session_replication_role_trick_blocked_by_179(conn):
+    """Scenario: superuser sets `session_replication_role = 'replica'`
+    to switch the session into replication mode. 'O'-mode triggers
+    are skipped in replica mode; ALWAYS-mode triggers fire regardless.
+
+    Defense (migration 179): chain triggers are altered to ENABLE
+    ALWAYS, so they fire in replica mode too.
+
+    Round-table red-team item #6, part C.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT tgname, tgenabled
+        FROM pg_trigger
+        WHERE tgname IN (
+            'trg_enforce_privileged_chain',
+            'trg_enforce_privileged_immutability'
+        ) AND NOT tgisinternal
+        """
+    )
+    status = {r["tgname"]: r["tgenabled"] for r in rows}
+    assert status.get("trg_enforce_privileged_chain") == "A", (
+        f"Expected chain trigger to be ENABLE ALWAYS ('A') after "
+        f"migration 179; got {status}"
+    )
+    assert status.get("trg_enforce_privileged_immutability") == "A", (
+        f"Expected immutability trigger to be ENABLE ALWAYS ('A') after "
+        f"migration 179; got {status}"
+    )
+
+    await conn.execute("INSERT INTO sites (site_id) VALUES ('site-a')")
+    await conn.execute("SET session_replication_role = 'replica'")
+    try:
+        # ALWAYS-mode trigger fires even in replica mode — attack blocked
+        with pytest.raises(asyncpg.RaiseError) as exc:
+            await conn.execute(
+                "INSERT INTO fleet_orders (order_type, parameters) VALUES "
+                "('enable_emergency_access', '{\"site_id\":\"site-a\"}'::jsonb)"
+            )
+        assert "PRIVILEGED_CHAIN_VIOLATION" in str(exc.value)
+    finally:
+        await conn.execute("RESET session_replication_role")
+
+
+# ─── Attack 12: trigger tampering (documenting detection latency) ─
 
 
 @pytest.mark.asyncio

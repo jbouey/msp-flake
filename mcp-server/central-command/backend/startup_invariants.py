@@ -217,6 +217,67 @@ async def check_all_invariants(conn) -> List[InvariantResult]:
         ),
     ))
 
+    # ── ENABLE ALWAYS on chain triggers (session_replication_role
+    # bypass defense from migration 179) ─────────────────────────
+    # pg_trigger.tgenabled: 'O' origin-only (default; skipped in
+    # replica mode), 'A' always (fires regardless). We REQUIRE 'A'
+    # on the chain-enforcement triggers so a superuser cannot
+    # `SET session_replication_role='replica'` to bypass the chain.
+    rows = await conn.fetch(
+        """
+        SELECT tgname, tgenabled
+        FROM pg_trigger
+        WHERE tgname IN (
+            'trg_enforce_privileged_chain',
+            'trg_enforce_privileged_immutability'
+        ) AND NOT tgisinternal
+        """
+    )
+    status = {r["tgname"]: r["tgenabled"] for r in rows}
+    always_ok = (
+        status.get("trg_enforce_privileged_chain") == "A"
+        and status.get("trg_enforce_privileged_immutability") == "A"
+    )
+    results.append(InvariantResult(
+        "INV-CHAIN-ALWAYS-ENABLED", always_ok,
+        "" if always_ok else (
+            "Chain triggers are not ENABLE ALWAYS — "
+            f"got {status}. A superuser can bypass by setting "
+            "session_replication_role='replica'. Apply migration 179."
+        ),
+    ))
+
+    # ── TRUNCATE defenses on evidence + audit tables ─────────────
+    # Migration 179 adds BEFORE TRUNCATE triggers so bulk wipe is
+    # blocked even by a superuser. pg_trigger tgtype bit for TRUNCATE
+    # is 1 << 5 = 32. BEFORE bit still 2.
+    for table, inv in [
+        ("compliance_bundles", "INV-TRUNCATE-EVIDENCE"),
+        ("admin_audit_log", "INV-TRUNCATE-AUDIT-ADMIN"),
+        ("client_audit_log", "INV-TRUNCATE-AUDIT-CLIENT"),
+        ("portal_access_log", "INV-TRUNCATE-AUDIT-PORTAL"),
+    ]:
+        row = await conn.fetchrow(
+            """
+            SELECT COUNT(*)::int AS n
+            FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            WHERE c.relname = $1
+              AND (t.tgtype & 2) = 2    -- BEFORE
+              AND (t.tgtype & 32) = 32  -- TRUNCATE
+              AND NOT t.tgisinternal
+            """,
+            table,
+        )
+        ok = bool(row and row["n"] > 0)
+        results.append(InvariantResult(
+            inv, ok,
+            "" if ok else (
+                f"No BEFORE TRUNCATE trigger on {table} — bulk wipe "
+                f"bypasses DELETE protection. Apply migration 179."
+            ),
+        ))
+
     return results
 
 
