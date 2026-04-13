@@ -145,6 +145,53 @@ in
   networking.hostName = lib.mkForce "osiriscare";
   system.stateVersion = "24.05";
 
+  # ════════════════════════════════════════════════════════════════════════
+  # Brand scrub — hide underlying distro in user-facing places.
+  # The internal Nix machinery stays, but anything a customer or auditor
+  # sees on the CLI, systemd-boot menu, or /etc/os-release reads as
+  # "OsirisCare Appliance".
+  # ════════════════════════════════════════════════════════════════════════
+  system.nixos.label = lib.mkForce "OsirisCare";
+  system.nixos.distroName = lib.mkForce "OsirisCare Appliance";
+  system.nixos.distroId = lib.mkForce "osiriscare";
+
+  # /etc/os-release — the first thing SSH login, audit scripts, or CMDB
+  # enumeration reads. Replace NAME/PRETTY_NAME/HOME_URL with OsirisCare.
+  environment.etc."os-release".text = lib.mkForce ''
+    NAME="OsirisCare Appliance"
+    PRETTY_NAME="OsirisCare Appliance"
+    ID=osiriscare
+    ID_LIKE=
+    VERSION="24.05"
+    VERSION_ID="24.05"
+    HOME_URL="https://osiriscare.net"
+    DOCUMENTATION_URL="https://osiriscare.net/docs"
+    SUPPORT_URL="https://osiriscare.net/support"
+    BUG_REPORT_URL="https://osiriscare.net/support"
+    LOGO=osiriscare
+  '';
+
+  # Quieter boot menu — the systemd-boot entry title inherits from
+  # system.nixos.label, which we already overrode to "OsirisCare".
+  boot.loader.systemd-boot = {
+    consoleMode = lib.mkDefault "max";
+    editor = lib.mkDefault false;   # auditors: no grub-edit-to-root
+  };
+
+  # Quiet MOTD/issue files that sometimes leak branding
+  environment.etc."issue".text = lib.mkForce ''
+    OsirisCare Appliance \n \l
+
+  '';
+  users.motd = lib.mkDefault ''
+
+    ────────────────────────────────────────
+     OsirisCare Appliance
+     Compliance attestation substrate
+    ────────────────────────────────────────
+
+  '';
+
   # ============================================================================
   # Filesystem configuration for disk image
   # ============================================================================

@@ -191,6 +191,14 @@
         system = "x86_64-linux";
         specialArgs = {
           appliance-raw-image = self.packages.x86_64-linux.appliance-raw-image;
+          # Passed through so the ISO can stamp /etc/osiriscare-build.json
+          # with the source git revision. self.rev is only set when the
+          # working tree is clean; self.dirtyRev when dirty; absent when
+          # neither (CI or tarball build).
+          builtFrom = {
+            git_sha = self.rev or self.dirtyRev or "unknown";
+            dirty = self ? dirtyRev;
+          };
         };
         modules = [
           "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"

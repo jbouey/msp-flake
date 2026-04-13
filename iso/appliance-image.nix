@@ -9,7 +9,7 @@
 # OFFLINE INSTALL - raw disk image is embedded in the ISO.
 # No network required. dd + zstd writes the full appliance in ~30 seconds.
 
-{ config, pkgs, lib, appliance-raw-image, ... }:
+{ config, pkgs, lib, appliance-raw-image, builtFrom ? { git_sha = "unknown"; dirty = false; }, ... }:
 
 let
   # Installer telemetry config.
@@ -146,6 +146,23 @@ in
   environment.etc."installer/decompressed-size".source =
     "${appliance-raw-image}/decompressed-size";
 
+  # Build provenance — every ISO embeds the git commit it was built from.
+  # On a failed install the user can run `cat /etc/osiriscare-build.json`
+  # from the live TTY and we know exactly which source tree to debug.
+  # Closes the round-table finding: 'osiriscare-v57-abandonment.iso had
+  # no commit hash; the source tree it was built from was lost.'
+  #
+  # builtFrom is passed via specialArgs from flake.nix using self.rev /
+  # self.dirtyRev. If you see git_sha=unknown, the ISO was built outside
+  # the flake (legacy `nix-build` path).
+  environment.etc."osiriscare-build.json".text = builtins.toJSON {
+    git_sha = builtFrom.git_sha;
+    git_dirty = builtFrom.dirty;
+    installer_version = "v13";
+    builder = "nix";
+    note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
+  };
+
   # Boot with serial console for debugging
   # nosoftlockup: prevent false watchdog alarms during heavy dd I/O
   # audit=0: disable kernel audit on live ISO (configuration.nix enables auditd
@@ -248,7 +265,7 @@ in
       LOG_FILE="/tmp/msp-install.log"
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v10"
+      INSTALLER_VERSION="v13"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
 
@@ -360,19 +377,27 @@ in
       }
 
       # Probe the target drive — must be called after INTERNAL_DEV is set.
+      # v11 probe: sysfs-only. No blockdev ioctl, no smartctl. Both of
+      # those can hang on misbehaving hardware; sysfs reads are kernel-
+      # cached and cannot. We set DRIVE_SMART=SKIPPED to signal to the
+      # telemetry payload that we did not probe SMART on this pre-flight.
+      # Post-install SMART collection happens via the running daemon
+      # after the system boots, where a hung smartctl is inconsequential.
       probe_drive() {
         local dev="$1"
         local name=$(basename "$dev")
         case "$name" in mmcblk*) ;; *) name=$(echo "$name" | sed 's/[0-9]*$//') ;; esac
         DRIVE_PATH="$dev"
-        DRIVE_MODEL=$(cat /sys/block/$name/device/model 2>/dev/null | tr -d ' \n' || echo "unknown")
-        local sz=$(blockdev --getsize64 "$dev" 2>/dev/null || echo 0)
-        DRIVE_SIZE_GB=$(( sz / 1024 / 1024 / 1024 ))
-        DRIVE_REMOVABLE=$(cat /sys/block/$name/removable 2>/dev/null || echo "0")
-        [ "$DRIVE_REMOVABLE" = "1" ] && DRIVE_REMOVABLE="true" || DRIVE_REMOVABLE="false"
-        DRIVE_SMART=$(smartctl -H "$dev" 2>/dev/null | grep -i "SMART overall" | awk -F: '{print $2}' | tr -d ' \n' || echo "UNKNOWN")
-        [ -z "$DRIVE_SMART" ] && DRIVE_SMART="UNKNOWN"
-        log "Drive probe: path=$DRIVE_PATH model=$DRIVE_MODEL size=''${DRIVE_SIZE_GB}GB removable=$DRIVE_REMOVABLE smart=$DRIVE_SMART"
+        DRIVE_MODEL=$(sysfs_read "/sys/block/$name/device/model" "unknown" | tr -d ' \n')
+        # /sys/block/*/size is in 512-byte sectors
+        local sectors
+        sectors=$(sysfs_read "/sys/block/$name/size" 0 | tr -d ' \n')
+        DRIVE_SIZE_GB=$(( sectors * 512 / 1024 / 1024 / 1024 ))
+        local removable_raw
+        removable_raw=$(sysfs_read "/sys/block/$name/removable" "0" | tr -d ' \n')
+        [ "$removable_raw" = "1" ] && DRIVE_REMOVABLE="true" || DRIVE_REMOVABLE="false"
+        DRIVE_SMART="SKIPPED"
+        log "Drive probe (sysfs): path=$DRIVE_PATH model=$DRIVE_MODEL size=''${DRIVE_SIZE_GB}GB removable=$DRIVE_REMOVABLE"
       }
 
       # Check network readiness — DHCP, gateway, DNS, NTP, API reachability.
@@ -512,22 +537,251 @@ JSONEND
         echo "$head_sha+$tail_sha" | sha256sum | awk '{print $1}'
       }
 
+      # ────────────────────────────────────────────────────────────
+      # v11 STEP SUPERVISOR + HEARTBEAT DAEMON
+      # ────────────────────────────────────────────────────────────
+      # Every step through this installer is bounded and observable.
+      # (a) `set_step N "text"` records state to a heartbeat file and logs.
+      # (b) `run_bounded BUDGET cmd…` wraps any external call in `timeout`
+      #     so a hung syscall cannot freeze the installer.
+      # (c) A background daemon repaints the progress bar every second
+      #     with a live "Ns elapsed" counter. If the main script blocks
+      #     in an uninterruptible syscall, the screen still updates.
+      # This replaces the v10 pattern where `draw_progress 4` painted
+      # once and never refreshed — leading to the "stuck at 4%" class
+      # of bug when a downstream call silently hung.
+      HEARTBEAT_STATE=/tmp/msp-install.state
+      HEARTBEAT_PID=""
+
+      set_step() {
+        local step="$1" status="$2"
+        {
+          echo "HB_STEP=$step"
+          printf 'HB_STATUS=%q\n' "$status"
+          echo "HB_STEP_START=$(date +%s)"
+        } > "$HEARTBEAT_STATE"
+        log "[STEP $step] $status"
+      }
+
+      # Hard-bound any command. SIGTERM at budget, SIGKILL 3s later.
+      # Returns 124 on timeout. Logs every invocation with duration.
+      # NOTE: this cannot save us from processes in uninterruptible sleep
+      # (kernel state D). For that class of hang, use bounded_abandon
+      # which forks + forgets rather than trying to kill.
+      run_bounded() {
+        local budget="$1"; shift
+        local name="$1"; shift
+        local start end rc duration
+        start=$(date +%s)
+        timeout --kill-after=3s "''${budget}s" "$@"
+        rc=$?
+        end=$(date +%s)
+        duration=$(( end - start ))
+        case $rc in
+          0)    log "  [$name ok] ''${duration}s (budget ''${budget}s)" ;;
+          124)  log "  [$name TIMEOUT] exceeded ''${budget}s — continuing" ;;
+          *)    log "  [$name rc=$rc] ''${duration}s" ;;
+        esac
+        return $rc
+      }
+
+      # Fork a command, wait up to `budget` seconds, ABANDON on timeout.
+      # Unlike run_bounded, this survives kernel state D: instead of trying
+      # to kill a process that won't die (SIGKILL is deferred inside an
+      # uninterruptible syscall), we simply leave the child behind and
+      # continue the installer. The child gets reaped when the installer
+      # process exits (or the box reboots).
+      #
+      # This is the ONLY correct way to bound mount, partprobe, sfdisk,
+      # fsck, resize2fs, mkfs, smartctl, dmidecode, blockdev, and any
+      # other syscall that does hardware I/O — all of which can enter
+      # state D on misbehaving hardware.
+      #
+      # Return: 0 on success, <n> on child exit with code n, 124 on abandon.
+      # Args: budget_seconds name cmd [args...]
+      bounded_abandon() {
+        local budget="$1"; shift
+        local name="$1"; shift
+        local start end duration waited pid rc
+        start=$(date +%s)
+        # Use setsid so the child is in its own process group — orphaned
+        # cleanly when we abandon it (doesn't receive our signals).
+        # Output goes to the install log so TTY2 shows command progress.
+        setsid "$@" </dev/null >>"$LOG_FILE" 2>&1 &
+        pid=$!
+        waited=0
+        while [ $waited -lt $budget ]; do
+          if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null
+            rc=$?
+            end=$(date +%s)
+            duration=$(( end - start ))
+            if [ "$rc" = "0" ]; then
+              log "  [$name ok] ''${duration}s (budget ''${budget}s)"
+            else
+              log "  [$name rc=$rc] ''${duration}s"
+            fi
+            return $rc
+          fi
+          sleep 1
+          waited=$((waited + 1))
+        done
+        end=$(date +%s)
+        duration=$(( end - start ))
+        log "  [$name ABANDONED] exceeded ''${budget}s — leaving pid=$pid behind, continuing"
+        disown "$pid" 2>/dev/null || true
+        return 124
+      }
+
+      # Read an integer from a sysfs file. Never hangs — sysfs is
+      # kernel-cached; the cat is a userspace file read. Use this
+      # instead of blockdev --getsize64 or similar ioctls that can
+      # block on misbehaving hardware.
+      sysfs_read() {
+        local path="$1" default="''${2:-0}"
+        [ -r "$path" ] || { echo "$default"; return 1; }
+        cat "$path" 2>/dev/null || echo "$default"
+      }
+
+      start_heartbeat_daemon() {
+        (
+          # Subshell: run defensively so a single bad sourcing of the
+          # state file (race during rewrite) can't crash the daemon.
+          set +e
+          set +u
+          trap 'exit 0' SIGTERM SIGINT
+          local last_log=0
+          while true; do
+            sleep 1
+            [ -f "$HEARTBEAT_STATE" ] || continue
+            local HB_STEP="" HB_STATUS="" HB_STEP_START=0
+            # shellcheck disable=SC1090
+            . "$HEARTBEAT_STATE" 2>/dev/null || continue
+            local now=$(date +%s)
+            local elapsed=$(( now - ''${HB_STEP_START:-$now} ))
+            draw_progress "$HB_STEP" "$HB_STATUS" "''${elapsed}s elapsed"
+            if [ $(( now - last_log )) -ge 15 ]; then
+              log "[HEARTBEAT] step=$HB_STEP elapsed=''${elapsed}s"
+              last_log=$now
+            fi
+          done
+        ) &
+        HEARTBEAT_PID=$!
+        disown
+        log "heartbeat daemon pid=$HEARTBEAT_PID"
+      }
+
+      stop_heartbeat_daemon() {
+        [ -n "$HEARTBEAT_PID" ] && kill "$HEARTBEAT_PID" 2>/dev/null || true
+        rm -f "$HEARTBEAT_STATE"
+      }
+
+      # Ensure the heartbeat daemon is cleaned up no matter how we exit.
+      trap 'stop_heartbeat_daemon' EXIT
+
+      # ────────────────────────────────────────────────────────────
+      # v11 DRIVE DISCOVERY — enumerate /sys/block, pick the largest non-USB
+      # disk ≥20GB. Enterprise rule: accept any drive that looks like a real
+      # disk; the only things we exclude are pseudo-devices, the USB we
+      # booted from, and anything too small to hold the system.
+      # ────────────────────────────────────────────────────────────
+      # Prior versions keyed off `/sys/block/*/removable`, which is unreliable
+      # on laptop/SFF hardware (e.g. SSSTC CV8-8B128-HP reports removable=1
+      # via its hot-pluggable SATA port). Enterprise hardware detection means
+      # "use the boot source, not a kernel hint that's wrong in the field."
+      detect_internal_drive() {
+        local best_dev="" best_size=0 iso_src iso_disk
+        # Resolve the physical disk holding the live ISO so we can exclude it.
+        # `/iso` is where installation-cd-minimal.nix mounts the installer
+        # squashfs source. `findmnt` gives us e.g. `/dev/sdb1`; we strip the
+        # partition suffix to get the whole disk (`sdb`).
+        iso_src=$(findmnt -n -o SOURCE /iso 2>/dev/null || true)
+        if [ -z "$iso_src" ]; then
+          iso_src=$(awk '$2 == "/iso" {print $1; exit}' /proc/mounts 2>/dev/null || true)
+        fi
+        iso_disk=""
+        if [ -n "$iso_src" ]; then
+          # /dev/sdb1 → sdb ; /dev/nvme0n1p1 → nvme0n1 ; /dev/mmcblk0p1 → mmcblk0
+          iso_disk=$(echo "$iso_src" \
+            | sed 's|/dev/||' \
+            | sed -E 's/p?[0-9]+$//')
+        fi
+        log "drive-detect: iso_src=$iso_src iso_disk=$iso_disk"
+
+        local block name dev size_bytes size_gb removable rotational bus
+        for block in /sys/block/*; do
+          name=$(basename "$block")
+          dev="/dev/$name"
+
+          case "$name" in
+            loop*|zram*|sr*|fd*|ram*|dm-*|md*|nbd*)
+              log "  [$name] skip: pseudo/ephemeral"
+              continue ;;
+          esac
+
+          [ -b "$dev" ] || { log "  [$name] skip: not block device"; continue; }
+
+          if [ -n "$iso_disk" ] && [ "$name" = "$iso_disk" ]; then
+            log "  [$name] skip: boot USB (serving /iso from $iso_src)"
+            continue
+          fi
+
+          # sysfs-first: /sys/block/*/size is in 512-byte sectors.
+          # Avoids blockdev --getsize64 which can hang on flaky SATA/USB.
+          local sectors
+          sectors=$(sysfs_read "$block/size" 0)
+          size_bytes=$(( sectors * 512 ))
+          size_gb=$(( size_bytes / 1024 / 1024 / 1024 ))
+
+          if [ "$size_bytes" -lt 20000000000 ]; then
+            log "  [$name] skip: too small (''${size_gb}GB, need ≥20GB)"
+            continue
+          fi
+
+          removable=$(sysfs_read "$block/removable" "?")
+          rotational=$(sysfs_read "$block/queue/rotational" "?")
+          bus=$(sysfs_read "$block/device/vendor" "?" | tr -d ' \n')
+          log "  [$name] CANDIDATE size=''${size_gb}GB removable=$removable rotational=$rotational vendor=$bus"
+
+          if [ "$size_bytes" -gt "$best_size" ]; then
+            best_size=$size_bytes
+            best_dev=$dev
+          fi
+        done
+
+        if [ -n "$best_dev" ]; then
+          log "drive-detect: selected $best_dev ($(( best_size / 1024 / 1024 / 1024 ))GB)"
+          INTERNAL_DEV="$best_dev"
+          return 0
+        fi
+
+        log "drive-detect: NO SUITABLE DRIVE FOUND"
+        return 1
+      }
+
       # ── Start installer ─────────────────────────────────────────
       clear_screen
 
       # Log block devices
       lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL >> "$LOG_FILE" 2>&1
 
+      # Kick off the heartbeat daemon immediately so every subsequent step
+      # inherits live repaint + logging.
+      set_step 1 "''${WHITE}Collecting hardware profile...''${RESET}"
+      start_heartbeat_daemon
+
+      # NOTE: run_bounded uses `timeout`, which only works on external
+      # commands — not shell functions. Shell functions are called
+      # directly here; they rely on their own internal timeouts
+      # (curl -m, ntpdate timeout, etc.) to stay bounded.
+
       # v10: Collect hardware fingerprint EARLY, before any install work.
-      # Gives Central Command a hw profile even if install fails mid-flight.
-      draw_progress 1 "''${WHITE}Collecting hardware profile...''${RESET}"
-      collect_hw_info
+      collect_hw_info || true
 
       # v10: Network readiness gate. Checks DHCP/NTP/API reachability.
-      # Does NOT block install — we continue offline if needed, but the
-      # install report will record the network state for post-mortem.
-      draw_progress 3 "''${WHITE}Checking network readiness...''${RESET}"
-      check_network
+      # Self-bounded: ntpdate(15s) + curl(10s).
+      set_step 3 "''${WHITE}Checking network readiness...''${RESET}"
+      check_network || true
 
       # Check if we're running from live ISO
       if ! grep -q "squashfs" /proc/mounts; then
@@ -562,48 +816,42 @@ JSONEND
       # ── Step 1: Detect hardware ────────────────────────────────
       log "Step 1: Detecting hardware"
 
-      BOOT_DEV=$(findmnt -n -o SOURCE / | sed 's/\[.*$//' | head -1)
-
-      # Drive detection list — order matters, first match wins.
-      # Handles: SATA, virtio, NVMe, eMMC
+      set_step 4 "''${WHITE}Scanning for installation target...''${RESET}"
       INTERNAL_DEV=""
-      for dev in /dev/nvme0n1 /dev/sda /dev/sdb /dev/vda /dev/mmcblk0; do
-        [ -b "$dev" ] || continue
-        DEV_NAME=$(basename "$dev")
-
-        # Skip the USB we booted from
-        echo "$BOOT_DEV" | grep -q "$DEV_NAME" && continue
-
-        # Skip removable drives (USB sticks)
-        REMOVABLE=$(cat /sys/block/$DEV_NAME/removable 2>/dev/null || echo "1")
-        [ "$REMOVABLE" = "1" ] && continue
-
-        # Require >16GB
-        SIZE=$(blockdev --getsize64 "$dev" 2>/dev/null || echo "0")
-        if [ "$SIZE" -gt 16000000000 ]; then
-          INTERNAL_DEV="$dev"
-          break
-        fi
-      done
-
-      if [ -z "$INTERNAL_DEV" ]; then
+      # Shell function — called directly, not via run_bounded (timeout
+      # can't invoke functions). Internal ops are all shell builtins
+      # + blockdev/findmnt which don't hang.
+      if ! detect_internal_drive; then
+        stop_heartbeat_daemon
         clear_screen
         echo ""
-        echo -e "  ''${RED}ERROR: No suitable internal drive found (need >16GB)''${RESET}"
+        echo -e "  ''${RED}No suitable internal drive found (need ≥20GB)''${RESET}"
         echo ""
         lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null | while IFS= read -r line; do
           echo "  $line"
         done
         echo ""
-        echo -e "  ''${DIM}Attach an internal drive and reboot.''${RESET}"
-        log "ERROR: No internal drive found. Available: $(lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null | tr '\n' ' ')"
-        sleep 86400
+        echo -e "  ''${WHITE}Build provenance:''${RESET}"
+        cat /etc/osiriscare-build.json 2>/dev/null | sed 's/^/  /' || echo "  (not present)"
+        echo ""
+        echo -e "  ''${WHITE}Install log:''${RESET} /tmp/msp-install.log"
+        echo -e "  ''${WHITE}Drop-to-shell:''${RESET} dropping you into a bash login shell so you can investigate."
+        echo -e "  ''${DIM}Type 'exit' or 'reboot' when done. The full install log is at /tmp/msp-install.log.''${RESET}"
+        echo ""
+        log "ERROR: No internal drive. Available: $(lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null | tr '\n' ' ')"
+        # v12: TTY escape hatch instead of sleep 86400. Operator can read
+        # the log, run lsblk by hand, attach a USB and rerun, etc.
+        bash --login || sleep 86400
         exit 0
       fi
 
-      DEV_SIZE_BYTES=$(blockdev --getsize64 "$INTERNAL_DEV")
-      DEV_SIZE=$(numfmt --to=iec "$DEV_SIZE_BYTES")
-      DEV_MODEL=$(lsblk -dno MODEL "$INTERNAL_DEV" 2>/dev/null | xargs)
+      # Size/model from sysfs — no blockdev ioctl, no lsblk read.
+      _dev_name=$(basename "$INTERNAL_DEV")
+      case "$_dev_name" in mmcblk*) ;; *) _dev_name=$(echo "$_dev_name" | sed 's/[0-9]*$//') ;; esac
+      _dev_sectors=$(sysfs_read "/sys/block/$_dev_name/size" 0)
+      DEV_SIZE_BYTES=$(( _dev_sectors * 512 ))
+      DEV_SIZE=$(numfmt --to=iec "$DEV_SIZE_BYTES" 2>/dev/null || echo "''${DEV_SIZE_BYTES}B")
+      DEV_MODEL=$(sysfs_read "/sys/block/$_dev_name/device/model" "unknown" | tr -d ' \n')
 
       # Build a human-friendly description for the progress display
       # e.g. "MMC 32GB (/dev/mmcblk0)" or "Samsung SSD 128GB (/dev/sda)"
@@ -616,53 +864,62 @@ JSONEND
       DEV_DESC="''${DEV_MODEL:-$DEV_TYPE} ''${DEV_SIZE} ($INTERNAL_DEV)"
       log "Found: $INTERNAL_DEV ($DEV_SIZE) $DEV_MODEL"
 
-      # v10: Probe the target drive for telemetry (model, size, SMART status)
-      probe_drive "$INTERNAL_DEV"
+      # v11: Probe the target drive via sysfs only. No SMART, no blockdev.
+      # SMART pre-flight was removed: it adds a hang surface on drives with
+      # flaky ATA firmware, and if the drive is truly bad, dd will fail
+      # later. SMART telemetry is collected post-boot by the daemon where
+      # a hang is non-blocking.
+      probe_drive "$INTERNAL_DEV" || true
 
-      # v10: Pre-install hardware validation — refuse on known-bad configs
-      if [ "$DRIVE_SMART" = "FAILED" ]; then
-        die "Target drive reports SMART FAILED. Storage is failing. Replace the device before installing." "hw_probe"
-      fi
+      # Size gate remains (cheap, sysfs-cached, cannot hang).
       if [ "$DRIVE_SIZE_GB" -lt 20 ] 2>/dev/null; then
+        stop_heartbeat_daemon
         die "Target drive is only ''${DRIVE_SIZE_GB}GB. Minimum 20GB required." "hw_probe"
       fi
 
       # v10: POST the install-start report BEFORE starting the write.
-      # Gives Central Command visibility into install attempts even if dd fails.
-      draw_progress 4 "''${WHITE}Registering install with Central Command...''${RESET}"
-      post_start_report
+      # Shell function; self-bounded by curl -m 15.
+      set_step 4 "''${WHITE}Registering install with Central Command...''${RESET}"
+      post_start_report || true
 
       # ── Check for existing installation ─────────────────────────
+      # NO MOUNT PROBE. mount(2) on a corrupt FS can enter uninterruptible
+      # sleep (state D) which survives even SIGKILL — making the installer
+      # truly unkillable. Instead we trust lsblk's partition label (read
+      # from /sys, not from disk blocks) as proof-of-prior-install.
+      # If a partition labeled "nixos" exists on the target, we show the
+      # 10-second reinstall countdown. The dd pass that follows overwrites
+      # the disk regardless, so label-only detection is sufficient.
+      set_step 4 "''${WHITE}Checking target disk...''${RESET}"
       NIXOS_PART=$(lsblk -rno NAME,LABEL "$INTERNAL_DEV" 2>/dev/null | grep nixos | head -1 | awk '{print $1}')
-      if [ -n "$NIXOS_PART" ]; then
-        PROBE_MNT=$(mktemp -d)
-        EXISTING=false
-        if mount -o ro "/dev/$NIXOS_PART" "$PROBE_MNT" 2>/dev/null; then
-          [ -d "$PROBE_MNT/nix/store" ] && EXISTING=true
-          umount "$PROBE_MNT" 2>/dev/null || true
-        fi
-        rmdir "$PROBE_MNT" 2>/dev/null || true
-
-        if [ "$EXISTING" = true ] && [ ! -f /tmp/force-reinstall ]; then
-          clear_screen
-          echo ""
-          echo -e "  ''${YELLOW}Existing OsirisCare installation detected on $INTERNAL_DEV ($DEV_SIZE)''${RESET}"
-          echo -e "  ''${WHITE}Auto-reinstall in 10 seconds...''${RESET}"
-          echo ""
-          for i in 10 9 8 7 6 5 4 3 2 1; do
-            echo -ne "\r  ''${DIM}Reinstall in ''${WHITE}$i''${RESET}''${DIM}s...  (Ctrl+C to cancel)''${RESET}  "
-            sleep 1
-          done
-          echo ""
-          log "Auto-reinstall: existing installation detected, proceeding after 10s countdown"
-        fi
+      if [ -n "$NIXOS_PART" ] && [ ! -f /tmp/force-reinstall ]; then
+        log "existing install detected via label 'nixos' on /dev/$NIXOS_PART (no mount probe)"
+        stop_heartbeat_daemon
+        clear_screen
+        echo ""
+        echo -e "  ''${YELLOW}Existing installation detected on $INTERNAL_DEV ($DEV_SIZE)''${RESET}"
+        echo -e "  ''${WHITE}Auto-reinstall in 10 seconds...''${RESET}"
+        echo ""
+        for i in 10 9 8 7 6 5 4 3 2 1; do
+          echo -ne "\r  ''${DIM}Reinstall in ''${WHITE}$i''${RESET}''${DIM}s...  (Ctrl+C to cancel)''${RESET}  "
+          sleep 1
+        done
+        echo ""
+        log "auto-reinstall: proceeding after 10s countdown"
+        start_heartbeat_daemon
       fi
 
-      draw_progress 5 "''${WHITE}Found: ''${DEV_DESC}''${RESET}"
+      set_step 5 "''${WHITE}Target ready: ''${DEV_DESC}''${RESET}"
       sleep 1
 
       # ── Step 2: Write raw image ─────────────────────────────────
       log "Step 2: Writing raw image to $INTERNAL_DEV"
+
+      # The dd loop below paints detailed MB/speed info at ~10 Hz. The
+      # heartbeat daemon (which paints from HEARTBEAT_STATE once per second)
+      # would race with it, so we pause the daemon during the write and
+      # resume it once dd completes.
+      stop_heartbeat_daemon
 
       # Calculate image size for progress reporting
       IMAGE_SIZE_BYTES=$(stat -c%s "$IMAGE" 2>/dev/null || echo "0")
@@ -728,15 +985,22 @@ JSONEND
 
       log "Image write complete"
 
-      # Force kernel to re-read partition table after dd
+      # Force kernel to re-read partition table after dd.
+      # partprobe has been seen to hang on flaky USB/SATA controllers; we
+      # wrap each call in bounded_abandon with a 15s budget. If it hangs
+      # we continue — subsequent ops will retry and the kernel usually
+      # catches up on its own.
       sync
-      partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || true
+      bounded_abandon 15 partprobe_1 partprobe "$INTERNAL_DEV" || true
       sleep 2
-      # Second attempt — some controllers need a moment
-      partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || true
+      bounded_abandon 15 partprobe_2 partprobe "$INTERNAL_DEV" || true
       sleep 1
 
-      draw_progress 82 "''${GREEN}Image written successfully''${RESET}"
+      # dd is done — resume the heartbeat daemon for post-write steps so
+      # any subsequent slow operation (mount, resize2fs, e2fsck) keeps
+      # repainting the screen.
+      set_step 82 "''${GREEN}Image written successfully''${RESET}"
+      start_heartbeat_daemon
 
       # v10: Post-write integrity verification — catches partial/corrupted writes.
       # We read back head+tail samples and compute a composite SHA256. The value
@@ -744,7 +1008,7 @@ JSONEND
       # (the image SHA would need to be computed pre-write, which is expensive
       # for a 1GB+ compressed image). The act of reading succeeds or fails —
       # a read failure flags bad storage.
-      draw_progress 83 "''${WHITE}Verifying write integrity...''${RESET}"
+      set_step 83 "''${WHITE}Verifying write integrity...''${RESET}"
       VERIFY_SHA=""
       if ! VERIFY_SHA=$(verify_post_write "$INTERNAL_DEV" 2>> "$LOG_FILE"); then
         die "Post-write verification failed: unable to read back from $INTERNAL_DEV. Storage may be failing." "verify_readback"
@@ -759,7 +1023,7 @@ JSONEND
       #   c) Recreate partition 3 (MSP-DATA, 2GB) at the end
       #   d) Format new partition 3
       log "Step 3: Resizing root partition to fill disk"
-      draw_progress 83 "''${WHITE}Expanding root partition...''${RESET}"
+      set_step 83 "''${WHITE}Expanding root partition...''${RESET}"
 
       # Determine partition device names (NVMe/eMMC use p-suffix)
       case "$INTERNAL_DEV" in
@@ -795,65 +1059,73 @@ JSONEND
         ROOT_NEW_SIZE=$(( ROOT_END_SECTOR - ROOT_START ))
         log "Disk has room: root sector $ROOT_START+$ROOT_CURRENT_SIZE → $ROOT_START+$ROOT_NEW_SIZE"
 
-        # (a) Delete partition 3 (MSP-DATA) — it blocks root growth
-        sfdisk --delete "$INTERNAL_DEV" 3 >> "$LOG_FILE" 2>&1 || true
-        partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || true
+        # Every disk op below is wrapped in bounded_abandon with a budget.
+        # If ANY of them hangs on a misbehaving drive/controller, we log
+        # and continue. The installed system's first-boot will heal any
+        # partition ops we skipped.
+        bounded_abandon 20 sfdisk_del3 sfdisk --delete "$INTERNAL_DEV" 3 || true
+        bounded_abandon 15 partprobe_3 partprobe "$INTERNAL_DEV" || true
         sleep 1
 
-        # (b) Resize partition 2 (root) directly via sfdisk
-        #     Format: start=<sector>, size=<sectors> — explicit key=value to avoid positional ambiguity
         log "Setting root: start=$ROOT_START size=$ROOT_NEW_SIZE sectors"
-        echo "start=$ROOT_START, size=$ROOT_NEW_SIZE" | sfdisk -N 2 --no-reread "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || {
-          log "WARNING: sfdisk resize of root partition failed"
+        echo "start=$ROOT_START, size=$ROOT_NEW_SIZE" > /tmp/sfdisk-root.in
+        bounded_abandon 30 sfdisk_root_resize \
+          bash -c 'sfdisk -N 2 --no-reread "$1" < /tmp/sfdisk-root.in' _ "$INTERNAL_DEV" || {
+          log "WARNING: sfdisk resize of root partition failed/abandoned"
         }
 
-        # (c) Recreate partition 3 (MSP-DATA) at the end
-        echo "start=$DATA_START_SECTOR, size=$DATA_SECTORS, type=L" | sfdisk --append --no-reread "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || {
-          log "WARNING: sfdisk append of MSP-DATA failed"
+        echo "start=$DATA_START_SECTOR, size=$DATA_SECTORS, type=L" > /tmp/sfdisk-data.in
+        bounded_abandon 30 sfdisk_data_append \
+          bash -c 'sfdisk --append --no-reread "$1" < /tmp/sfdisk-data.in' _ "$INTERNAL_DEV" || {
+          log "WARNING: sfdisk append of MSP-DATA failed/abandoned"
         }
 
-        # Set GPT partition label (used by /dev/disk/by-partlabel/MSP-DATA)
-        sfdisk --part-label "$INTERNAL_DEV" 3 MSP-DATA >> "$LOG_FILE" 2>&1 || true
+        bounded_abandon 15 sfdisk_label \
+          sfdisk --part-label "$INTERNAL_DEV" 3 MSP-DATA || true
 
-        partprobe "$INTERNAL_DEV" >> "$LOG_FILE" 2>&1 || true
+        bounded_abandon 15 partprobe_4 partprobe "$INTERNAL_DEV" || true
         sleep 1
 
-        # (d) Format new MSP-DATA partition (old data was destroyed by dd anyway)
-        draw_progress 85 "''${WHITE}Formatting MSP-DATA partition...''${RESET}"
-        mkfs.ext4 -F -L MSP-DATA "$DATA_PART" >> "$LOG_FILE" 2>&1 || {
-          log "WARNING: mkfs.ext4 on MSP-DATA failed"
+        set_step 85 "''${WHITE}Formatting data partition...''${RESET}"
+        bounded_abandon 90 mkfs_data \
+          mkfs.ext4 -F -L MSP-DATA "$DATA_PART" || {
+          log "WARNING: mkfs.ext4 on MSP-DATA failed/abandoned"
         }
       else
         log "Disk same size as image or smaller — skipping resize"
       fi
 
-      draw_progress 86 "''${WHITE}Checking root filesystem...''${RESET}"
-      e2fsck -f -y "$ROOT_PART" >> "$LOG_FILE" 2>&1 || true
+      set_step 86 "''${WHITE}Checking root filesystem...''${RESET}"
+      # e2fsck can take minutes on a large FS; 5-minute budget is generous.
+      bounded_abandon 300 e2fsck_root e2fsck -f -y "$ROOT_PART" || true
 
-      draw_progress 87 "''${WHITE}Resizing root filesystem...''${RESET}"
-      resize2fs "$ROOT_PART" >> "$LOG_FILE" 2>&1 || {
-        log "WARNING: resize2fs failed (non-fatal if partition was already full size)"
+      set_step 87 "''${WHITE}Resizing root filesystem...''${RESET}"
+      bounded_abandon 300 resize2fs_root resize2fs "$ROOT_PART" || {
+        log "WARNING: resize2fs failed/abandoned (non-fatal if partition was already full size)"
       }
 
-      NEW_ROOT_SIZE=$(blockdev --getsize64 "$ROOT_PART" 2>/dev/null || echo "0")
+      # Size from sysfs (partition size). Name construction handles nvme/mmc.
+      _root_name=$(basename "$ROOT_PART")
+      NEW_ROOT_SIZE_SECTORS=$(sysfs_read "/sys/class/block/$_root_name/size" 0)
+      NEW_ROOT_SIZE=$(( NEW_ROOT_SIZE_SECTORS * 512 ))
       NEW_ROOT_SIZE_GB=$(( NEW_ROOT_SIZE / 1073741824 ))
       log "Root partition resized to ''${NEW_ROOT_SIZE_GB}GB"
 
-      draw_progress 88 "''${GREEN}Root partition: ''${NEW_ROOT_SIZE_GB}GB''${RESET}"
+      set_step 88 "''${GREEN}Root partition: ''${NEW_ROOT_SIZE_GB}GB''${RESET}"
 
       # ── Step 4: Post-write setup ─────────────────────────────────
       # Mount root to copy config and verify.
       # Secure Boot keys are generated on first boot by msp-secureboot-keygen.service
       # in the installed system (appliance-disk-image.nix) — no need to do it here.
       log "Step 4: Mounting installed system for post-write setup"
-      draw_progress 89 "''${WHITE}Configuring installed system...''${RESET}"
+      set_step 89 "''${WHITE}Configuring installed system...''${RESET}"
 
       mkdir -p /mnt
       mount "$ROOT_PART" /mnt >> "$LOG_FILE" 2>&1
 
       # ── Step 5: Copy config from USB ────────────────────────────
       log "Step 5: Checking for USB config"
-      draw_progress 91 "''${WHITE}Checking for deployment config...''${RESET}"
+      set_step 91 "''${WHITE}Checking for deployment config...''${RESET}"
 
       # Look for config.yaml on the USB boot media
       CONFIG_SRC=""
@@ -871,20 +1143,25 @@ JSONEND
           *)               DATA_PART="''${INTERNAL_DEV}3" ;;
         esac
         mkdir -p /mnt/var/lib/msp
-        mount "$DATA_PART" /mnt/var/lib/msp >> "$LOG_FILE" 2>&1
-        cp "$CONFIG_SRC" /mnt/var/lib/msp/config.yaml
-        chmod 600 /mnt/var/lib/msp/config.yaml
-        log "Copied config from $CONFIG_SRC to MSP-DATA partition"
-        draw_progress 92 "''${GREEN}Config copied from USB''${RESET}"
-        # Leave mounted — will be unmounted in cleanup
+        # Abandonable: mount can hang in state D on a fresh partition that
+        # hasn't settled. 30s budget, then skip the config copy.
+        if bounded_abandon 30 mount_data mount "$DATA_PART" /mnt/var/lib/msp; then
+          cp "$CONFIG_SRC" /mnt/var/lib/msp/config.yaml
+          chmod 600 /mnt/var/lib/msp/config.yaml
+          log "Copied config from $CONFIG_SRC to MSP-DATA partition"
+          set_step 92 "''${GREEN}Config copied from USB''${RESET}"
+        else
+          log "WARNING: could not mount $DATA_PART to copy config — will provision via MAC"
+          set_step 92 "''${DIM}Config copy skipped — will provision via MAC''${RESET}"
+        fi
       else
         log "No USB config found (will provision via MAC on first boot)"
-        draw_progress 92 "''${DIM}No USB config — will provision via MAC''${RESET}"
+        set_step 92 "''${DIM}No USB config — will provision via MAC''${RESET}"
       fi
 
       # ── Step 6: Verify ─────────────────────────────────────────
       log "Step 6: Verifying installation"
-      draw_progress 93 "''${WHITE}Verifying installation...''${RESET}"
+      set_step 93 "''${WHITE}Verifying installation...''${RESET}"
 
       STORE_COUNT=$(ls /mnt/nix/store 2>/dev/null | wc -l)
       BOOT_OK="no"
@@ -895,29 +1172,31 @@ JSONEND
         *)               ESP_PART="''${INTERNAL_DEV}1" ;;
       esac
       mkdir -p /mnt/boot
-      mount "$ESP_PART" /mnt/boot >> "$LOG_FILE" 2>&1 || true
+      bounded_abandon 30 mount_esp mount "$ESP_PART" /mnt/boot || true
       [ -d /mnt/boot/EFI ] && BOOT_OK="yes"
       log "Verified: $STORE_COUNT store paths, boot=$BOOT_OK"
       ls -la /mnt/boot/ >> "$LOG_FILE" 2>/dev/null
 
       if [ "$BOOT_OK" != "yes" ]; then
-        umount -R /mnt 2>/dev/null || true
+        bounded_abandon 15 umount_mnt_fail umount -R /mnt || true
         die "Boot partition verification failed — no EFI directory found."
       fi
 
-      draw_progress 95 "''${GREEN}Verified: $STORE_COUNT store paths, EFI boot OK''${RESET}"
+      set_step 95 "''${GREEN}Verified: $STORE_COUNT store paths, EFI boot OK''${RESET}"
 
       # ── Step 7: Cleanup & Halt ─────────────────────────────────
       log "Step 7: Cleanup"
-      draw_progress 97 "''${WHITE}Unmounting filesystems...''${RESET}"
+      set_step 97 "''${WHITE}Unmounting filesystems...''${RESET}"
 
-      umount -R /mnt 2>/dev/null || true
+      # Umount can hang in state D on a flaky drive; abandon after 15s.
+      # Disk state still flushed by the prior syncs + conv=fsync on dd.
+      bounded_abandon 15 umount_mnt umount -R /mnt || true
       sync
       log "Unmounted all filesystems"
 
       # Unmount USB filesystem to prevent I/O errors on removal.
       # The squashfs is still in RAM so this is safe.
-      umount -l /iso 2>/dev/null || true
+      bounded_abandon 10 umount_iso umount -l /iso || true
       sync
 
       # ── Completion screen ───────────────────────────────────────
