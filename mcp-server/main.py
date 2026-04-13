@@ -1618,6 +1618,7 @@ async def lifespan(app: FastAPI):
         regime_change_detector_loop,
         threshold_tuner_loop,
         exemplar_miner_loop,
+        mark_stale_appliances_loop,
     )
     from dashboard_api.privileged_access_notifier import privileged_notifier_loop
     from dashboard_api.chain_tamper_detector import chain_tamper_detector_loop
@@ -1655,6 +1656,7 @@ async def lifespan(app: FastAPI):
         ("compliance_packets", _compliance_packet_loop),
         ("alert_digest", digest_sender_loop),
         ("audit_log_retention", _audit_log_retention_loop),
+        ("mark_stale_appliances", mark_stale_appliances_loop),
     ]
 
     for name, fn in task_defs:

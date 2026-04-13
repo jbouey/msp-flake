@@ -2050,3 +2050,102 @@ async def cross_incident_correlation_loop():
             logger.warning(f"Cross-incident correlation scan failed: {e}")
 
         await asyncio.sleep(3600)  # Hourly
+
+
+# ─── Phase 15 closing: enterprise appliance offline detection ──────
+
+APPLIANCE_STALE_THRESHOLD_MINUTES = 5
+APPLIANCE_OFFLINE_SCAN_SECONDS = 120
+
+
+async def mark_stale_appliances_loop():
+    """Flip appliances whose check-ins have stopped to status='offline'.
+
+    Before this loop, status stayed 'online' until the next successful
+    check-in — operators only noticed downtime by coincidence. Now:
+
+      - After APPLIANCE_STALE_THRESHOLD_MINUTES of no check-in, the row
+        moves to status='offline' with offline_since=NOW(), counter
+        incremented.
+      - A critical email alert fires on the FIRST transition (debounced
+        via offline_notified flag — reset on recovery).
+      - On a later successful check-in, sites.py checkin STEP 3 resets
+        status='online', offline_notified=false, stamps recovered_at,
+        and emits an 'appliance_recovered' alert.
+
+    This closes the enterprise visibility gap the round-table audit
+    surfaced: an appliance was powered down and the dashboard + alerts
+    kept claiming it was healthy.
+    """
+    await asyncio.sleep(60)  # Let startup settle
+    while True:
+        _hb("mark_stale_appliances")
+        try:
+            from dashboard_api.fleet import get_pool
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    rows = await conn.fetch("""
+                        UPDATE site_appliances
+                        SET status = 'offline',
+                            offline_since = COALESCE(offline_since, NOW()),
+                            offline_event_count = offline_event_count + 1
+                        WHERE status != 'offline'
+                          AND status != 'decommissioned'
+                          AND deleted_at IS NULL
+                          AND last_checkin IS NOT NULL
+                          AND last_checkin < NOW() - ($1 || ' minutes')::INTERVAL
+                        RETURNING appliance_id, site_id, display_name, hostname,
+                                  last_checkin, offline_notified
+                    """, str(APPLIANCE_STALE_THRESHOLD_MINUTES))
+
+            for row in rows:
+                logger.warning(
+                    "Appliance transitioned to offline",
+                    appliance_id=row["appliance_id"],
+                    site_id=row["site_id"],
+                    display_name=row["display_name"],
+                    last_checkin=str(row["last_checkin"]),
+                )
+                # Only send email on the FIRST detection — debounced
+                # via offline_notified flag (reset on recovery).
+                if not row["offline_notified"]:
+                    try:
+                        from dashboard_api.email_alerts import send_critical_alert
+                        label = row["display_name"] or row["hostname"] or row["appliance_id"]
+                        send_critical_alert(
+                            title=f"Appliance offline: {label}",
+                            message=(
+                                f"Appliance {label} at site {row['site_id']} "
+                                f"stopped checking in at {row['last_checkin']}. "
+                                f"Threshold: {APPLIANCE_STALE_THRESHOLD_MINUTES} min."
+                            ),
+                            site_id=row["site_id"],
+                            category="appliance_health",
+                            severity="critical",
+                            metadata={
+                                "appliance_id": row["appliance_id"],
+                                "display_name": row["display_name"],
+                                "last_checkin": str(row["last_checkin"]),
+                                "event": "appliance_offline",
+                            },
+                        )
+                        async with pool.acquire() as c2:
+                            async with c2.transaction():
+                                await c2.execute(
+                                    "UPDATE site_appliances SET offline_notified = true "
+                                    "WHERE appliance_id = $1",
+                                    row["appliance_id"],
+                                )
+                    except Exception as e:
+                        logger.error(
+                            "Failed to send appliance_offline alert",
+                            appliance_id=row["appliance_id"],
+                            exc_info=True,
+                        )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"mark_stale_appliances_loop iteration failed: {e}", exc_info=True)
+
+        await asyncio.sleep(APPLIANCE_OFFLINE_SCAN_SECONDS)

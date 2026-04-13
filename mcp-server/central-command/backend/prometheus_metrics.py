@@ -110,6 +110,39 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: appliance status query failed")
 
+            # --- Per-appliance offline gauge (alert surface) ---
+            # F4 (Phase 15 closing): enterprise-grade alerting needs to
+            # identify WHICH appliance is offline, not just the count.
+            # Emit 1.0 for each appliance currently offline so Prom rules
+            # can page with the display_name + site_id attached.
+            try:
+                offline_rows = await conn.fetch("""
+                    SELECT appliance_id, site_id,
+                           COALESCE(display_name, hostname, appliance_id) AS label,
+                           EXTRACT(EPOCH FROM (NOW() - last_checkin))::int AS since_sec
+                    FROM site_appliances
+                    WHERE status = 'offline'
+                      AND deleted_at IS NULL
+                """)
+                sections.append(_gauge(
+                    "osiriscare_appliance_offline",
+                    "1 if appliance is currently offline (labels: site_id, appliance_id, display_name, since_sec)",
+                    [
+                        (
+                            {
+                                "site_id": r["site_id"][:80],
+                                "appliance_id": r["appliance_id"][:80],
+                                "display_name": r["label"][:80],
+                                "since_sec": str(r["since_sec"] or 0),
+                            },
+                            1.0,
+                        )
+                        for r in offline_rows
+                    ] or [({}, 0.0)],
+                ))
+            except Exception:
+                logger.exception("metrics: per-appliance offline gauge query failed")
+
             # --- Open incidents by severity (gauge) ---
             try:
                 rows = await conn.fetch("""

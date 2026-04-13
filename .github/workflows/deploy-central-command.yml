@@ -193,6 +193,13 @@ jobs:
         run: |
           python3 -m pytest tests/test_promotion_rollout_pg.py -v --tb=short
 
+      - name: Appliance offline-detection state machine
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_appliance_offline_detection_pg.py -v --tb=short
+
   deploy:
     needs: [test, privileged-chain-pg-tests]
     runs-on: ubuntu-latest

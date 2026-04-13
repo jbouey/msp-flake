@@ -854,7 +854,13 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
                 'ip_addresses': parse_ip_addresses(row['ip_addresses']),
                 'agent_version': row['agent_version'],
                 'nixos_version': row['nixos_version'],
-                'status': row['status'] or 'pending',
+                # F3 (Phase 15 closing): `status` is the source of truth
+                # for UI — live_status is computed fresh from last_checkin
+                # so it's never stale. Stored DB status (updated by the
+                # mark_stale_appliances_loop every 2 min) is exposed as
+                # `stored_status` for admin/diagnostic use only.
+                'status': live_status,
+                'stored_status': row['status'] or 'pending',
                 'live_status': live_status,
                 'first_checkin': first_checkin.isoformat() if first_checkin else None,
                 'last_checkin': last_checkin.isoformat() if last_checkin else None,
@@ -1364,7 +1370,13 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 'ip_addresses': parse_ip_addresses(row['ip_addresses']),
                 'agent_version': row['agent_version'],
                 'nixos_version': row['nixos_version'],
-                'status': row['status'] or 'pending',
+                # F3 (Phase 15 closing): `status` is the source of truth
+                # for UI — live_status is computed fresh from last_checkin
+                # so it's never stale. Stored DB status (updated by the
+                # mark_stale_appliances_loop every 2 min) is exposed as
+                # `stored_status` for admin/diagnostic use only.
+                'status': live_status,
+                'stored_status': row['status'] or 'pending',
                 'live_status': live_status,
                 'first_checkin': row['first_checkin'].isoformat() if row['first_checkin'] else None,
                 'last_checkin': last_checkin.isoformat() if last_checkin else None,
@@ -3119,6 +3131,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         _health_json = json.dumps(_health)
 
         # === STEP 3: Upsert the canonical appliance entry (skip for ghosts) ===
+        # recovered_at is stamped atomically inside the upsert when the
+        # prior status was 'offline'. STEP 3.0a below reads it and fires
+        # the recovery alert.
         if not _ghost_detected:
             await conn.execute("""
                 INSERT INTO site_appliances (
@@ -3138,6 +3153,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     daemon_health = COALESCE(EXCLUDED.daemon_health, site_appliances.daemon_health),
                     offline_since = NULL,
                     offline_notified = false,
+                    recovered_at = CASE
+                        WHEN site_appliances.status = 'offline' THEN NOW()
+                        ELSE site_appliances.recovered_at
+                    END,
                     deleted_at = NULL,
                     deleted_by = NULL
             """,
@@ -3153,6 +3172,61 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 now,
                 _health_json,
             )
+
+        # STEP 3.0a: detect + announce offline→online recovery.
+        # We rely on `offline_since IS NOT NULL BEFORE the UPSERT` which is
+        # captured via `recovered_at` being set by the UPDATE above. A
+        # non-NULL recovered_at that's within this request window means we
+        # just transitioned. Running in the checkin transaction is OK —
+        # recovered_at is idempotent once set.
+        if not _ghost_detected:
+            try:
+                async with conn.transaction():
+                    rec = await conn.fetchrow("""
+                        SELECT display_name, hostname, recovered_at, offline_event_count
+                        FROM site_appliances
+                        WHERE appliance_id = $1
+                          AND recovered_at IS NOT NULL
+                          AND recovered_at > NOW() - INTERVAL '30 seconds'
+                    """, canonical_id)
+                if rec:
+                    label = rec["display_name"] or rec["hostname"] or canonical_id
+                    logger.info(
+                        "Appliance recovered from offline",
+                        appliance_id=canonical_id,
+                        site_id=checkin.site_id,
+                        display_name=label,
+                    )
+                    try:
+                        from dashboard_api.email_alerts import send_critical_alert
+                        send_critical_alert(
+                            title=f"Appliance recovered: {label}",
+                            message=(
+                                f"Appliance {label} at site {checkin.site_id} "
+                                f"resumed check-ins. Lifetime offline events: "
+                                f"{rec['offline_event_count']}."
+                            ),
+                            site_id=checkin.site_id,
+                            category="appliance_health",
+                            severity="info",
+                            metadata={
+                                "appliance_id": canonical_id,
+                                "display_name": label,
+                                "event": "appliance_recovered",
+                            },
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to send appliance_recovered alert",
+                            appliance_id=canonical_id,
+                            exc_info=True,
+                        )
+            except Exception as e:
+                logger.error(
+                    "Appliance recovery detection failed",
+                    appliance_id=canonical_id,
+                    exc_info=True,
+                )
 
         # === STEP 3.3: Auto-generate display_name if missing ===
         # When multiple appliances share hostname "osiriscare", the display_name
