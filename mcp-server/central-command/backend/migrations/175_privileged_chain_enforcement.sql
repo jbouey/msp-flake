@@ -47,7 +47,7 @@ BEGIN
 
     IF v_bundle_id IS NULL OR length(v_bundle_id) = 0 THEN
         RAISE EXCEPTION
-            'PRIVILEGED_CHAIN_VIOLATION: order_type %% requires '
+            'PRIVILEGED_CHAIN_VIOLATION: order_type % requires '
             'parameters->>attestation_bundle_id (Session 205 Phase 14). '
             'Issue via fleet_cli --actor-email / --reason, or via the '
             '/api/partners/me/privileged-access request flow.',
@@ -58,7 +58,7 @@ BEGIN
 
     IF v_site_id IS NULL OR length(v_site_id) = 0 THEN
         RAISE EXCEPTION
-            'PRIVILEGED_CHAIN_VIOLATION: order_type %% requires '
+            'PRIVILEGED_CHAIN_VIOLATION: order_type % requires '
             'parameters->>site_id to match the attestation bundle site.',
             NEW.order_type;
     END IF;
@@ -74,8 +74,8 @@ BEGIN
 
     IF NOT v_bundle_exists THEN
         RAISE EXCEPTION
-            'PRIVILEGED_CHAIN_VIOLATION: attestation_bundle_id %% not '
-            'found for site %% (order_type %%). The chain-of-custody '
+            'PRIVILEGED_CHAIN_VIOLATION: attestation_bundle_id % not '
+            'found for site % (order_type %). The chain-of-custody '
             'requires an attestation bundle to exist for the same site '
             'before the fleet order is accepted.',
             v_bundle_id, v_site_id, NEW.order_type;

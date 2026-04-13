@@ -33,7 +33,7 @@ BEGIN
     IF v_was_privileged <> v_is_privileged THEN
         RAISE EXCEPTION
             'PRIVILEGED_CHAIN_VIOLATION: order_type cannot be UPDATEd '
-            'into or out of the privileged set (was %%, now %%). '
+            'into or out of the privileged set (was %, now %). '
             'Create a new order with the correct type.',
             OLD.order_type, NEW.order_type;
     END IF;
@@ -48,7 +48,7 @@ BEGIN
         RAISE EXCEPTION
             'PRIVILEGED_CHAIN_VIOLATION: attestation_bundle_id is '
             'immutable on privileged fleet_orders rows. '
-            'old=%% new=%%',
+            'old=% new=%',
             OLD.parameters->>'attestation_bundle_id',
             NEW.parameters->>'attestation_bundle_id';
     END IF;
