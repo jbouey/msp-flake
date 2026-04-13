@@ -121,6 +121,16 @@ def parse_params(param_list: list[str] | None) -> dict:
     return result
 
 
+# Phase 14 (Session 205): privileged order types that MUST have a signed,
+# hash-chained, OTS-anchored attestation bundle written BEFORE the order
+# is signed. If the attestation fails, the order MUST NOT be created.
+PRIVILEGED_ORDER_TYPES = {
+    "enable_emergency_access",
+    "disable_emergency_access",
+}
+PRIVILEGED_RATE_LIMIT_PER_WEEK = 3  # per site, per event_type
+
+
 async def cmd_create(args: argparse.Namespace) -> None:
     order_type = args.order_type
     if order_type not in VALID_ORDER_TYPES:
@@ -149,6 +159,31 @@ async def cmd_create(args: argparse.Namespace) -> None:
                 f"Upload binary to VPS and use: https://api.osiriscare.net/updates/<filename>"
             )
 
+    # ── Phase 14: privileged-order attestation gate ───────────────────
+    if order_type in PRIVILEGED_ORDER_TYPES:
+        actor_email = (args.actor_email or "").strip()
+        reason = (args.reason or "").strip()
+        if not actor_email or "@" not in actor_email:
+            sys.exit(
+                f"Order type {order_type!r} is privileged and requires\n"
+                f"  --actor-email <you@yourdomain.com>\n"
+                f"to name the human initiating this action. Audit/HIPAA\n"
+                f"compliance requires every privileged access to be bound\n"
+                f"to a specific, named individual."
+            )
+        if len(reason) < 20:
+            sys.exit(
+                f"Order type {order_type!r} requires --reason \"...\" with ≥20 chars.\n"
+                f"Describe the incident, change ticket, or operational reason.\n"
+                f"This reason is written into the WORM evidence bundle and\n"
+                f"visible to the customer + auditors."
+            )
+        target_site = params.get("site_id")
+        if not target_site:
+            sys.exit(
+                f"Order type {order_type!r} requires --param site_id=<site>."
+            )
+
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=args.expires)
 
@@ -159,6 +194,56 @@ async def cmd_create(args: argparse.Namespace) -> None:
 
     conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
     try:
+        # ── Phase 14: write the attestation bundle BEFORE the order ──
+        # If the bundle write fails, the order is NOT created. Same flow
+        # for enable_ and disable_ so revocation is auditable too.
+        attestation = None
+        if order_type in PRIVILEGED_ORDER_TYPES:
+            sys.path.insert(0, "/app")
+            try:
+                from dashboard_api.privileged_access_attestation import (
+                    create_privileged_access_attestation,
+                    count_recent_privileged_events,
+                    PrivilegedAccessAttestationError,
+                )
+            except ImportError:
+                sys.exit(
+                    "Phase 14 attestation module unavailable — refusing "
+                    "privileged order. Check deployment."
+                )
+            target_site = params["site_id"]
+            # Rate-limit check
+            if not args.override_rate_limit:
+                recent = await count_recent_privileged_events(
+                    conn, target_site, days=7, event_type=order_type,
+                )
+                if recent >= PRIVILEGED_RATE_LIMIT_PER_WEEK:
+                    sys.exit(
+                        f"RATE LIMIT: site {target_site!r} has had "
+                        f"{recent} {order_type} events in the last 7 days "
+                        f"(max {PRIVILEGED_RATE_LIMIT_PER_WEEK}). Anomalous "
+                        f"activity. If this is a genuine incident, pass "
+                        f"--override-rate-limit and document in the reason."
+                    )
+            try:
+                attestation = await create_privileged_access_attestation(
+                    conn,
+                    site_id=target_site,
+                    event_type=order_type,
+                    actor_email=args.actor_email.strip(),
+                    reason=args.reason.strip(),
+                    fleet_order_id=None,  # filled below after INSERT
+                    duration_minutes=int(params.get("duration_minutes", 0))
+                        if str(params.get("duration_minutes", "")).isdigit()
+                        else None,
+                )
+            except PrivilegedAccessAttestationError as e:
+                sys.exit(
+                    f"Attestation write failed — REFUSING to create privileged order.\n"
+                    f"  {e}\n"
+                    f"This is a HARD STOP. The order is not signed or inserted."
+                )
+
         row = await conn.fetchrow(
             """
             INSERT INTO fleet_orders
@@ -171,11 +256,26 @@ async def cmd_create(args: argparse.Namespace) -> None:
             json.dumps(params),
             args.skip_version,
             expires_at,
-            "fleet-cli",
+            # Phase 14: use actor email when privileged, preserve fleet-cli for non-privileged
+            args.actor_email.strip() if order_type in PRIVILEGED_ORDER_TYPES else "fleet-cli",
             nonce,
             signature,
             signed_payload,
         )
+
+        # If we wrote an attestation, stamp the fleet_order_id onto its
+        # admin_audit_log entry so the two are cross-linked for review.
+        if attestation is not None:
+            try:
+                await conn.execute(
+                    "UPDATE admin_audit_log SET details = details || "
+                    "jsonb_build_object('fleet_order_id', $1::text) "
+                    "WHERE (details->>'bundle_id') = $2",
+                    str(row["id"]), attestation["bundle_id"],
+                )
+            except Exception:
+                pass  # audit cross-link is best-effort
+
         print(f"Fleet order created:")
         print(f"  ID:         {row['id']}")
         print(f"  Type:       {row['order_type']}")
@@ -183,6 +283,10 @@ async def cmd_create(args: argparse.Namespace) -> None:
         print(f"  Parameters: {json.dumps(params)}")
         print(f"  Created:    {row['created_at'].isoformat()}")
         print(f"  Expires:    {row['expires_at'].isoformat()}")
+        if attestation:
+            print(f"  Attestation bundle_id: {attestation['bundle_id']}")
+            print(f"  Attestation hash: {attestation['bundle_hash']}")
+            print(f"  Chain position: {attestation['chain_position']}")
         if args.skip_version:
             print(f"  Skip ver:   {args.skip_version}")
     finally:
@@ -259,6 +363,26 @@ def main() -> None:
     p_create.add_argument("--param", action="append", help="Parameter KEY=VALUE (repeatable)")
     p_create.add_argument("--expires", type=int, default=24, help="Expiry in hours (default: 24)")
     p_create.add_argument("--skip-version", help="Skip appliances at this version")
+    # Phase 14: privileged-order attestation inputs (required for
+    # enable_emergency_access / disable_emergency_access)
+    p_create.add_argument(
+        "--actor-email",
+        help="Email of the human initiating this action. REQUIRED for "
+             "privileged order types. Written into the WORM attestation "
+             "bundle and admin_audit_log.",
+    )
+    p_create.add_argument(
+        "--reason",
+        help="Operational reason (≥20 chars). REQUIRED for privileged "
+             "order types. Written into the WORM attestation bundle "
+             "and visible to customers + auditors.",
+    )
+    p_create.add_argument(
+        "--override-rate-limit",
+        action="store_true",
+        help="Override the per-site-per-week privileged-access rate "
+             "limit. Requires an incident-track reason.",
+    )
 
     # list
     p_list = sub.add_parser("list", help="List fleet orders")

@@ -793,6 +793,41 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: orphan runbooks query failed")
 
+            # Phase 14: privileged-access event counts (7d + 24h-per-site)
+            # Feeds anomaly detection: >10 fleet-wide/7d OR ≥2 per site/24h
+            # are alert conditions. Source of truth = compliance_bundles
+            # (same as every other evidence class).
+            try:
+                row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '7 days')
+                            AS events_7d,
+                        COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '24 hours')
+                            AS events_24h,
+                        COUNT(DISTINCT site_id) FILTER (
+                            WHERE checked_at > NOW() - INTERVAL '24 hours'
+                        ) AS sites_24h
+                    FROM compliance_bundles
+                    WHERE check_type = 'privileged_access'
+                """)
+                sections.append(_gauge(
+                    "osiriscare_privileged_access_events_7d",
+                    "Fleet-wide privileged-access attestation events in last 7 days",
+                    [({}, float(row["events_7d"] or 0))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_privileged_access_events_24h",
+                    "Fleet-wide privileged-access attestation events in last 24 hours",
+                    [({}, float(row["events_24h"] or 0))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_privileged_access_sites_24h",
+                    "Distinct sites that had a privileged-access event in last 24h",
+                    [({}, float(row["sites_24h"] or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: privileged-access counts failed")
+
             # Phase 13: server-pubkey fingerprint divergence across the fleet.
             # We compute the fingerprint server-side (first 16 hex of the
             # current signing pubkey) and count appliances whose most

@@ -117,6 +117,20 @@ async def partner_fleet_intelligence_summary(
     """))).fetchone()
     n_alerts = int(alerts.n or 0) if alerts else 0
 
+    # Phase 14: privileged-access events on partner's fleet (90d).
+    priv = (await db.execute(text("""
+        SELECT
+            COUNT(*)                                   AS n,
+            COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '7 days')
+                                                       AS n_7d
+        FROM compliance_bundles
+        WHERE check_type = 'privileged_access'
+          AND site_id = ANY(:sites)
+          AND checked_at > NOW() - INTERVAL '90 days'
+    """), {"sites": sites})).fetchone()
+    n_priv = int(priv.n or 0) if priv else 0
+    n_priv_7d = int(priv.n_7d or 0) if priv else 0
+
     return {
         "active_rules": n_rules,
         "deployments_30d": n_deploys,
@@ -124,6 +138,8 @@ async def partner_fleet_intelligence_summary(
         "pending_exemplars": n_pending,
         "regime_alerts_unacked": n_alerts,
         "fleet_size": len(sites),
+        "privileged_access_events_90d": n_priv,
+        "privileged_access_events_7d": n_priv_7d,
         "methodology": {
             "minutes_per_resolution": MINUTES_PER_RESOLUTION,
             "calculation": "L1 successful executions × 8 min ÷ 60",
