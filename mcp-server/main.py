@@ -1921,30 +1921,45 @@ import pathlib as _pathlib
 _PROCESS_GIT_SHA: str = "unknown"
 
 
+# Canonical RELEASE_SHA path inside the mcp-server container. The
+# deploy workflow writes this file into /opt/mcp-server/dashboard_api_mount/
+# on the host — bind-mounted as /app/dashboard_api/.
+_RELEASE_SHA_PATH = "/app/dashboard_api/RELEASE_SHA"
+
+
+def _read_release_sha_from_disk() -> str:
+    """Read the on-disk RELEASE_SHA file fresh each time. Returns
+    'unknown' if missing/empty."""
+    try:
+        p = _pathlib.Path(_RELEASE_SHA_PATH)
+        if p.exists():
+            val = p.read_text().strip()[:40]
+            return val or "unknown"
+    except Exception:
+        pass
+    return "unknown"
+
+
 def _read_runtime_git_sha() -> str:
     """Return the git SHA the current Python process was started with.
-    Cached on first call (process startup) so it never changes mid-run.
-    """
+    Cached on FIRST SUCCESSFUL read so it never changes mid-run — even
+    if the on-disk RELEASE_SHA is updated by a subsequent deploy. That
+    asymmetry (cached runtime vs fresh disk) is the whole point: when
+    runtime != disk, the container missed a restart."""
     global _PROCESS_GIT_SHA
     if _PROCESS_GIT_SHA != "unknown":
         return _PROCESS_GIT_SHA
-    # Try the deploy workflow's release stamp first
-    for cand in ("/app/RELEASE_SHA", "/app/dashboard_api/RELEASE_SHA",
-                 "/opt/mcp-server/current/RELEASE_SHA"):
-        try:
-            p = _pathlib.Path(cand)
-            if p.exists():
-                _PROCESS_GIT_SHA = p.read_text().strip()[:40]
-                return _PROCESS_GIT_SHA
-        except Exception:
-            pass
-    # Fall back to git directly (only works in dev where .git is present)
+    val = _read_release_sha_from_disk()
+    if val != "unknown":
+        _PROCESS_GIT_SHA = val
+        return _PROCESS_GIT_SHA
+    # Dev fallback — git command only works where .git is present.
     try:
         out = _subprocess.run(
             ["git", "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=2, check=False,
         )
-        if out.returncode == 0:
+        if out.returncode == 0 and out.stdout.strip():
             _PROCESS_GIT_SHA = out.stdout.strip()[:40]
             return _PROCESS_GIT_SHA
     except Exception:
@@ -1953,15 +1968,8 @@ def _read_runtime_git_sha() -> str:
 
 
 def _read_disk_git_sha() -> str:
-    """SHA stamped on disk by the most recent deploy (or current symlink)."""
-    for cand in ("/app/RELEASE_SHA", "/opt/mcp-server/current/RELEASE_SHA"):
-        try:
-            p = _pathlib.Path(cand)
-            if p.exists():
-                return p.read_text().strip()[:40]
-        except Exception:
-            pass
-    return "unknown"
+    """SHA stamped on disk by the most recent deploy (read fresh)."""
+    return _read_release_sha_from_disk()
 
 
 @app.api_route("/api/version", methods=["GET", "HEAD"])

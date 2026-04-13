@@ -287,10 +287,19 @@ jobs:
         # P0-fix (Session 206 round-table): write the commit SHA into a
         # file the running app can read at /api/version. Post-deploy
         # verify asserts the SHA the process reports matches GITHUB_SHA.
-        # If they diverge, the deploy didn't actually restart Python —
-        # the bug we hit on 2026-04-13 12:12-18:03 UTC.
+        # Writing INSIDE the dashboard_api/ subdir so the atomic rsync
+        # (--delete) naturally carries it to dashboard_api_mount/ —
+        # which is bind-mounted into the container as /app/dashboard_api.
+        env:
+          SHA: ${{ github.sha }}
+          RDIR: ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}
         run: |
-          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} bash -c "echo '${{ github.sha }}' > ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/RELEASE_SHA"
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} \
+            "printf '%s' '$SHA' > '$RDIR/RELEASE_SHA' && \
+             printf '%s' '$SHA' > '$RDIR/dashboard_api/RELEASE_SHA'"
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} \
+            "echo 'RELEASE_SHA root:'; cat '$RDIR/RELEASE_SHA'; echo; \
+             echo 'RELEASE_SHA dashboard_api:'; cat '$RDIR/dashboard_api/RELEASE_SHA'; echo"
 
       - name: Atomic switch — symlink to new release
         run: |
@@ -305,9 +314,12 @@ jobs:
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/app/ /opt/mcp-server/app/
             rsync -a --delete ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/ /opt/mcp-server/frontend_dist/
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend/nginx.conf /opt/mcp-server/frontend/nginx.conf
-            # Copy RELEASE_SHA into both runtime mounts so /api/version reads it
-            cp ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/RELEASE_SHA /opt/mcp-server/dashboard_api_mount/RELEASE_SHA
-            cp ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/RELEASE_SHA /opt/mcp-server/app/RELEASE_SHA
+            # RELEASE_SHA travels INSIDE the dashboard_api/ rsync
+            # source tree (see Stamp step), so the atomic rsync above
+            # already placed it at
+            # /opt/mcp-server/dashboard_api_mount/RELEASE_SHA.
+            # That path is bind-mounted as /app/dashboard_api/RELEASE_SHA
+            # inside the container, which is what /api/version reads.
 
             # Sync docker-compose.yml — tracked in git so env changes
             # (like MIGRATION_DATABASE_URL) aren't tribal knowledge.
