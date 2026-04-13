@@ -934,5 +934,78 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             status_code=503,
         )
 
+    # ── Phase 15: bg_heartbeat + startup_invariants metrics ────────
+    # These come from process-local state (not DB) so we produce them
+    # outside the admin_connection block and they never 503 the
+    # scrape even if DB is down. That is intentional — if DB is down,
+    # these metrics are exactly what you want visible.
+    try:
+        from .bg_heartbeat import get_all_heartbeats, EXPECTED_INTERVAL_S
+        import time as _time
+        now = _time.time()
+        hb_snapshot = get_all_heartbeats()
+
+        # Age-since-last-heartbeat per loop (seconds). 0 when fresh;
+        # larger values signal a stuck loop.
+        hb_age_values = []
+        for name, entry in hb_snapshot.items():
+            hb_age_values.append(
+                ({"loop_name": name}, float(entry["age_s"])),
+            )
+        if hb_age_values:
+            sections.append(_gauge(
+                "osiriscare_bg_loop_last_heartbeat_seconds",
+                "Seconds since the named background loop last recorded a heartbeat. Higher = likely stuck.",
+                hb_age_values,
+            ))
+
+        # Absolute last_seen timestamp (unix) — alert on (time() - this) > 3*interval
+        last_seen_values = []
+        for name, entry in hb_snapshot.items():
+            last_seen_values.append(
+                ({"loop_name": name}, float(entry["last_seen"])),
+            )
+        if last_seen_values:
+            sections.append(_gauge(
+                "osiriscare_bg_loop_last_heartbeat_timestamp",
+                "Unix timestamp of the most recent heartbeat per loop",
+                last_seen_values,
+            ))
+
+        # Iterations + errors since process start — enables rate() in alert rules
+        iter_values = [
+            ({"loop_name": n}, float(e["iterations"]))
+            for n, e in hb_snapshot.items()
+        ]
+        err_values = [
+            ({"loop_name": n}, float(e["errors"]))
+            for n, e in hb_snapshot.items()
+        ]
+        if iter_values:
+            sections.append(_counter(
+                "osiriscare_bg_loop_iterations_total",
+                "Total iterations a background loop has completed since process start",
+                iter_values,
+            ))
+            sections.append(_counter(
+                "osiriscare_bg_loop_errors_total",
+                "Total iterations a background loop caught + logged an error",
+                err_values,
+            ))
+
+        # Expected-interval declarative table so PromQL rules can
+        # derive the alert threshold per loop.
+        exp_values = [
+            ({"loop_name": n}, float(v))
+            for n, v in EXPECTED_INTERVAL_S.items()
+        ]
+        sections.append(_gauge(
+            "osiriscare_bg_loop_expected_interval_seconds",
+            "Declared expected interval between iterations per loop (3x this = staleness alert)",
+            exp_values,
+        ))
+    except Exception:
+        logger.exception("metrics: bg_heartbeat export failed")
+
     body = "\n\n".join(sections) + "\n"
     return PlainTextResponse(body, media_type=PROM_CONTENT_TYPE)

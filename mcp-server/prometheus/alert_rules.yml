@@ -1,0 +1,167 @@
+groups:
+  - name: osiriscare_security_invariants
+    interval: 60s
+    rules:
+      - alert: PrivilegedChainTriggersNotInstalled
+        expr: osiriscare_privileged_chain_triggers_installed != 2
+        for: 5m
+        labels:
+          severity: critical
+          category: security_chain_integrity
+        annotations:
+          summary: "Privileged-access chain enforcement triggers missing"
+          description: |
+            osiriscare_privileged_chain_triggers_installed = {{ $value }} (expected 2).
+            Migration 175 + 176 must both be applied. Without them, a
+            privileged fleet order can be INSERTed without an attestation
+            bundle — chain-of-custody break.
+          runbook: https://docs.osiriscare.net/security/alert-runbooks#startup_invariant_broken
+
+      - alert: ChainTamperDetected
+        expr: increase(osiriscare_chain_tamper_events_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          category: security_chain_integrity
+          pager: on-call
+        annotations:
+          summary: "Evidence-chain tampering detected on at least one site"
+          description: |
+            The hourly chain_tamper_detector loop found a broken bundle.
+            This SHOULD be impossible (migrations 151/161 block DELETE;
+            migration 179 blocks TRUNCATE). If this alert fires,
+            investigate immediately — see alert-runbooks.md
+            CHAIN_TAMPER_DETECTED entry.
+
+      - alert: StartupInvariantsDegraded
+        expr: min(osiriscare_startup_invariant_ok) == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: security_chain_integrity
+        annotations:
+          summary: "One or more DB-layer security invariants broken at startup"
+          description: |
+            Startup invariant check found {{ $labels.name }} = 0.
+            The server is running but DB-layer protection is partial.
+            See admin_audit_log.action = STARTUP_INVARIANT_BROKEN.
+
+  - name: osiriscare_privileged_access
+    interval: 60s
+    rules:
+      - alert: PrivilegedNotifierQueueDepthHigh
+        expr: osiriscare_privileged_notifier_queue_depth > 5
+        for: 10m
+        labels:
+          severity: warning
+          category: operations
+        annotations:
+          summary: "Privileged-access notifier queue is backlogged"
+          description: |
+            {{ $value }} privileged_access bundles unnotified for >10min.
+            Check SMTP connectivity + notifier loop heartbeat. Pending
+            approval requests may time out.
+
+      - alert: PrivilegedAccessEventsSpike
+        expr: increase(osiriscare_privileged_access_events_7d[1d]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          category: security_access_governance
+        annotations:
+          summary: "Unusual spike in privileged-access events"
+          description: |
+            More than 10 privileged-access events in a single day across
+            the fleet. This may be legitimate (mass maintenance window)
+            OR the symptom of a compromised partner credential being
+            used to issue emergency-access orders at scale. Investigate.
+
+      - alert: MagicLinkMintFailureRatio
+        expr: |
+          rate(osiriscare_magic_link_mint_failed_total[15m]) /
+          (rate(osiriscare_magic_link_mint_total[15m]) + 0.0001) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          category: operations
+        annotations:
+          summary: "Magic-link mint failure rate >10%"
+          description: |
+            Approval emails are being dispatched but ≥10% of mint
+            attempts are failing. Clients cannot approve via email.
+            Check HMAC key, DB, and notifier loop health.
+
+  - name: osiriscare_background_loops
+    interval: 60s
+    rules:
+      - alert: BackgroundLoopStale
+        # Age (in seconds since last iteration) > 3x declared expected
+        # interval per loop. Uses the declarative per-loop metric
+        # exported by prometheus_metrics.py so the threshold is driven
+        # from code (bg_heartbeat.EXPECTED_INTERVAL_S), not duplicated
+        # in the alert-rules file.
+        expr: |
+          osiriscare_bg_loop_last_heartbeat_seconds
+            > on(loop_name) 3 * osiriscare_bg_loop_expected_interval_seconds
+        for: 5m
+        labels:
+          severity: warning
+          category: operations
+        annotations:
+          summary: "Background loop {{ $labels.loop_name }} heartbeat stale"
+          description: |
+            Loop {{ $labels.loop_name }} last recorded a heartbeat
+            {{ $value | humanizeDuration }} ago, exceeding 3x its
+            declared interval. Not crashed (different alert) — stuck.
+            See /api/admin/health/loops for triage. Runbook:
+            docs/security/alert-runbooks.md → Loop heartbeat stale.
+
+      - alert: BackgroundLoopErrorRateHigh
+        # Healthy loops have errors_total near-flat. A sustained rate
+        # > 10% of iterations indicates an upstream problem the loop
+        # is silently absorbing.
+        expr: |
+          rate(osiriscare_bg_loop_errors_total[15m])
+            / (rate(osiriscare_bg_loop_iterations_total[15m]) + 0.0001)
+            > 0.1
+        for: 30m
+        labels:
+          severity: warning
+          category: operations
+        annotations:
+          summary: "Loop {{ $labels.loop_name }} error rate > 10% for 30m"
+          description: |
+            Iterations are running but ≥10% are failing. Check logs for
+            bg_task_crashed entries or the loop's own structured log
+            output.
+
+  - name: osiriscare_evidence_chain
+    interval: 60s
+    rules:
+      - alert: OTSAnchoringLag
+        expr: osiriscare_ots_unanchored_bundles_older_than_24h > 0
+        for: 30m
+        labels:
+          severity: warning
+          category: evidence_integrity
+        annotations:
+          summary: "Evidence bundles not anchored within 24h SLO"
+          description: |
+            {{ $value }} bundles are older than 24h but not OTS-anchored.
+            Tier-1 SLO target: 99% of bundles anchored within 24h.
+            Check merkle_batch loop + OpenTimestamps calendar reachability.
+
+      - alert: ApplianceServerPubkeyDivergence
+        expr: osiriscare_appliance_server_pubkey_divergence > 0
+        for: 15m
+        labels:
+          severity: warning
+          category: security_key_rotation
+        annotations:
+          summary: "Appliance fleet has diverged server-pubkey state"
+          description: |
+            {{ $value }} appliances are on a different server_pubkey
+            than the majority. Mid-rotation is expected for short
+            windows; sustained divergence means some appliances are
+            decommissioned or unable to rotate. Follow key-rotation
+            runbook step "Wait for ACKs".
