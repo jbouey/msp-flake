@@ -132,7 +132,7 @@ async def conn(setup_signing):
     try:
         await c.execute(PREREQ_SCHEMA)
         # Apply migration 163 — the trigger that bumps deployment_count
-        await c.execute(_read_migration("163_promoted_rule_deployment_tracking.sql"))
+        await c.execute(_read_migration("163_promotion_deployment_trigger.sql"))
         yield c
     finally:
         await c.execute("""
