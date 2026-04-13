@@ -233,7 +233,13 @@ async def check_all_invariants(conn) -> List[InvariantResult]:
         ) AND NOT tgisinternal
         """
     )
-    status = {r["tgname"]: r["tgenabled"] for r in rows}
+    # pg_trigger.tgenabled is 'char' type; asyncpg returns it as bytes.
+    # Normalize to str so comparisons work regardless.
+    def _tgenabled_str(v):
+        if isinstance(v, bytes):
+            return v.decode()
+        return v
+    status = {r["tgname"]: _tgenabled_str(r["tgenabled"]) for r in rows}
     always_ok = (
         status.get("trg_enforce_privileged_chain") == "A"
         and status.get("trg_enforce_privileged_immutability") == "A"

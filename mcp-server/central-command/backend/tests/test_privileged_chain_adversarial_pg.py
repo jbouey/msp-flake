@@ -549,7 +549,10 @@ async def test_attack_session_replication_role_trick_blocked_by_179(conn):
         ) AND NOT tgisinternal
         """
     )
-    status = {r["tgname"]: r["tgenabled"] for r in rows}
+    # asyncpg returns the pg_trigger.tgenabled 'char' column as bytes.
+    def _s(v):
+        return v.decode() if isinstance(v, bytes) else v
+    status = {r["tgname"]: _s(r["tgenabled"]) for r in rows}
     assert status.get("trg_enforce_privileged_chain") == "A", (
         f"Expected chain trigger to be ENABLE ALWAYS ('A') after "
         f"migration 179; got {status}"
