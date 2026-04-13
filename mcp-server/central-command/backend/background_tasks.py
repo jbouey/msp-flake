@@ -781,6 +781,16 @@ async def threshold_tuner_loop():
         await asyncio.sleep(86400)  # 24 hours
 
 
+# Pure math helpers moved to flywheel_math.py for unit-testability.
+# Thresholds + classifier imported here so the rest of the file can
+# call them without touching import discipline.
+from .flywheel_math import (
+    REGIME_DROP_THRESHOLD,
+    REGIME_CRITICAL_THRESHOLD,
+    classify_regime_delta,
+)
+
+
 async def regime_change_detector_loop():
     """Phase 6: detect sudden success-rate drops on active L1 rules.
 
@@ -835,8 +845,8 @@ async def regime_change_detector_loop():
                         continue
                     rate_7 = float(s7) / n7
                     rate_30 = float(s30) / n30
-                    delta = rate_7 - rate_30
-                    if delta >= -0.15:
+                    severity = classify_regime_delta(rate_7, rate_30)
+                    if severity is None:
                         continue  # No significant drop
 
                     # Idempotency: skip if we already flagged this in the last 24h
@@ -850,7 +860,7 @@ async def regime_change_detector_loop():
                     if existing:
                         continue
 
-                    severity = "critical" if delta <= -0.30 else "warning"
+                    delta = rate_7 - rate_30
                     await conn.execute("""
                         INSERT INTO l1_rule_regime_events
                             (rule_id, window_7d_rate, baseline_30d_rate,
