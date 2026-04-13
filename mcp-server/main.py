@@ -1547,6 +1547,7 @@ async def lifespan(app: FastAPI):
         exemplar_miner_loop,
     )
     from dashboard_api.privileged_access_notifier import privileged_notifier_loop
+    from dashboard_api.chain_tamper_detector import chain_tamper_detector_loop
 
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
@@ -1559,6 +1560,7 @@ async def lifespan(app: FastAPI):
         ("threshold_tuner", threshold_tuner_loop),
         ("exemplar_miner", exemplar_miner_loop),
         ("privileged_notifier", privileged_notifier_loop),
+        ("chain_tamper_detector", chain_tamper_detector_loop),
         ("cve_watch", cve_sync_loop),
         ("cve_remediation", cve_remediation_loop),
         ("framework_sync", framework_sync_loop),

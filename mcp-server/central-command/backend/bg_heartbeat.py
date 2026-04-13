@@ -79,6 +79,7 @@ def get_heartbeat(loop_name: str) -> Dict[str, Any] | None:
 # Add new loops here as you instrument them.
 EXPECTED_INTERVAL_S: Dict[str, int] = {
     "privileged_notifier": 60,
+    "chain_tamper_detector": 3600,
     "fleet_order_expiry": 300,
     "merkle_batch": 600,
     "audit_log_retention": 86400,

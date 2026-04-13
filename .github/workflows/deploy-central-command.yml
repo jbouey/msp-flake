@@ -130,6 +130,13 @@ jobs:
         run: |
           python3 -m pytest tests/test_privileged_magic_link_pg.py -v --tb=short
 
+      - name: Chain-tamper detector integration test
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_chain_tamper_detector_pg.py -v --tb=short
+
   deploy:
     needs: [test, privileged-chain-pg-tests]
     runs-on: ubuntu-latest
