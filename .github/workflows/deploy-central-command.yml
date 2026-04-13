@@ -336,16 +336,24 @@ jobs:
           EOF
 
       - name: Restart services
-        # `docker compose up -d` instead of `restart` — picks up any env
-        # changes from the compose file we just rsynced. `restart` alone
-        # keeps the old env so e.g. MIGRATION_DATABASE_URL additions won't
-        # take effect without this pattern.
+        # Python code is BIND-MOUNTED from /opt/mcp-server/dashboard_api_mount/
+        # — `docker compose up -d` alone is a no-op when compose config hasn't
+        # changed, which meant new code sat on disk but the old process kept
+        # running. `restart` forces a fresh Python interpreter so new modules
+        # are loaded. `up -d` still runs first so any compose/env changes from
+        # the rsynced docker-compose.yml (e.g. new env vars) do take effect.
+        #
+        # Discovered Session 206: mcp-server container had been up for 6h
+        # despite 3+ green deploys; none of the new bg_tasks were actually
+        # running. Add `restart` so every green deploy is actually live.
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
             cd /opt/mcp-server
             docker compose up -d pgbouncer
             sleep 3
             docker compose up -d mcp-server frontend
+            sleep 2
+            docker compose restart mcp-server frontend
           EOF
 
       - name: Verify deployment
