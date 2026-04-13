@@ -2261,6 +2261,215 @@ async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)
     }
 
 
+@router.get("/flywheel-spine")
+async def get_flywheel_spine(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Flywheel Spine observability (Session 206 redesign).
+
+    Returns a coherent view of the state machine + ledger so operators
+    + auditors can see the entire flywheel's health from one endpoint
+    instead of joining 8 tables in a SQL console.
+
+    Response shape:
+      {
+        "state_distribution":    { lifecycle_state: count },
+        "events_last_24h":       { event_type: count },
+        "stuck_rules":           [ {rule_id, state, stuck_days}, ... ],
+        "failed_transitions_7d": int,
+        "operator_ack_required": [ {rule_id, reason, since}, ... ],
+        "generated_at":          iso-8601 timestamp,
+      }
+
+    The Prom scraper reads the same underlying data via the /metrics
+    endpoint (see prometheus_metrics.py additions). This JSON view is
+    for the dashboard UI.
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Distribution across lifecycle states
+        try:
+            dist_rows = await conn.fetch("""
+                SELECT lifecycle_state, COUNT(*) AS n
+                FROM promoted_rules
+                GROUP BY lifecycle_state
+                ORDER BY lifecycle_state
+            """)
+            state_distribution = {r["lifecycle_state"]: r["n"] for r in dist_rows}
+        except Exception:
+            state_distribution = {}
+
+        # Event counts by type, last 24h
+        try:
+            evt_rows = await conn.fetch("""
+                SELECT event_type, COUNT(*) AS n
+                FROM promoted_rule_events
+                WHERE created_at > NOW() - INTERVAL '24 hours'
+                GROUP BY event_type
+                ORDER BY n DESC
+            """)
+            events_last_24h = {r["event_type"]: r["n"] for r in evt_rows}
+        except Exception:
+            events_last_24h = {}
+
+        # Rules stuck at a non-terminal state for > 3 days.
+        # Terminal states (graduated, retired, auto_disabled) are
+        # excluded — stuck means "should have transitioned but didn't".
+        try:
+            stuck_rows = await conn.fetch("""
+                SELECT rule_id, lifecycle_state,
+                       EXTRACT(EPOCH FROM (NOW() - lifecycle_state_updated_at))
+                         / 86400.0 AS stuck_days,
+                       site_id
+                FROM promoted_rules
+                WHERE lifecycle_state IN (
+                      'proposed', 'shadow', 'approved', 'rolling_out'
+                  )
+                  AND lifecycle_state_updated_at < NOW() - INTERVAL '3 days'
+                ORDER BY stuck_days DESC
+                LIMIT 25
+            """)
+            stuck_rules = [
+                {
+                    "rule_id": r["rule_id"],
+                    "state": r["lifecycle_state"],
+                    "stuck_days": round(float(r["stuck_days"]), 1),
+                    "site_id": r["site_id"],
+                }
+                for r in stuck_rows
+            ]
+        except Exception:
+            stuck_rules = []
+
+        # Failed transitions in the last 7 days
+        try:
+            failed = await conn.fetchval("""
+                SELECT COUNT(*) FROM promoted_rule_events
+                WHERE outcome = 'failed'
+                  AND created_at > NOW() - INTERVAL '7 days'
+            """)
+            failed_transitions_7d = int(failed or 0)
+        except Exception:
+            failed_transitions_7d = 0
+
+        # Operator-ack-required (auto-disabled + not yet acknowledged)
+        try:
+            ack_rows = await conn.fetch("""
+                SELECT pr.rule_id, pr.lifecycle_state, pr.site_id,
+                       pr.lifecycle_state_updated_at AS since,
+                       (SELECT reason FROM promoted_rule_events e
+                        WHERE e.rule_id = pr.rule_id
+                        ORDER BY e.created_at DESC LIMIT 1) AS reason
+                FROM promoted_rules pr
+                WHERE pr.operator_ack_required = TRUE
+                  AND pr.operator_ack_at IS NULL
+                ORDER BY pr.lifecycle_state_updated_at DESC
+                LIMIT 50
+            """)
+            operator_ack_required = [
+                {
+                    "rule_id": r["rule_id"],
+                    "state": r["lifecycle_state"],
+                    "site_id": r["site_id"],
+                    "since": r["since"].isoformat() if r["since"] else None,
+                    "reason": r["reason"],
+                }
+                for r in ack_rows
+            ]
+        except Exception:
+            operator_ack_required = []
+
+    return {
+        "state_distribution": state_distribution,
+        "events_last_24h": events_last_24h,
+        "stuck_rules": stuck_rules,
+        "failed_transitions_7d": failed_transitions_7d,
+        "operator_ack_required": operator_ack_required,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/flywheel-spine/acknowledge")
+async def acknowledge_auto_disabled_rule(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Operator ack flow — after reviewing an auto_disabled rule,
+    the operator either re-enables or confirms the disable.
+
+    Body: {"rule_id": "...", "decision": "re_enable" | "confirm_disable",
+           "reason": "...", "acknowledged_by": "operator@email"}
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.flywheel_state import advance
+
+    rule_id = (body.get("rule_id") or "").strip()
+    decision = (body.get("decision") or "").strip()
+    reason = (body.get("reason") or "").strip()
+    acknowledged_by = (body.get("acknowledged_by") or user.get("email") or "").strip()
+
+    if not rule_id or decision not in ("re_enable", "confirm_disable"):
+        raise HTTPException(status_code=400, detail="rule_id + decision required")
+    if not acknowledged_by or "@" not in acknowledged_by:
+        raise HTTPException(
+            status_code=400,
+            detail="acknowledged_by must be a valid email (named operator)",
+        )
+    if len(reason) < 10:
+        raise HTTPException(
+            status_code=400,
+            detail="reason must be >=10 chars describing the decision",
+        )
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            if decision == "re_enable":
+                await advance(
+                    conn,
+                    rule_id=rule_id,
+                    new_state="active",
+                    event_type="operator_re_enabled",
+                    actor=acknowledged_by,
+                    stage="governance",
+                    proof={"decision": decision},
+                    reason=reason,
+                )
+                await conn.execute(
+                    "UPDATE l1_rules SET enabled = true WHERE rule_id = $1",
+                    rule_id,
+                )
+            else:
+                # confirm_disable — keep state but record acknowledgement
+                await advance(
+                    conn,
+                    rule_id=rule_id,
+                    new_state="auto_disabled",  # self-transition + event
+                    event_type="operator_acknowledged",
+                    actor=acknowledged_by,
+                    stage="governance",
+                    proof={"decision": decision},
+                    reason=reason,
+                )
+            await conn.execute(
+                """
+                UPDATE promoted_rules
+                SET operator_ack_required = FALSE,
+                    operator_ack_at = NOW(),
+                    operator_ack_by = $2
+                WHERE rule_id = $1
+                """,
+                rule_id, acknowledged_by,
+            )
+    return {"ok": True, "rule_id": rule_id, "decision": decision}
+
+
 @router.get("/flywheel-intelligence")
 async def get_flywheel_intelligence(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Flywheel intelligence dashboard: recurrence velocity, auto-promotions,

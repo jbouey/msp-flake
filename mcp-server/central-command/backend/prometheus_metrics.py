@@ -143,6 +143,96 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: per-appliance offline gauge query failed")
 
+            # --- Flywheel Spine: lifecycle_state distribution ---
+            # Session 206 redesign: single source of truth for flywheel
+            # health. Every alert fires off this metric family.
+            try:
+                lifecycle_rows = await conn.fetch("""
+                    SELECT lifecycle_state, COUNT(*) AS n
+                    FROM promoted_rules
+                    GROUP BY lifecycle_state
+                """)
+                # Always emit all known states so dashboards don't render
+                # as "no data" when there are zero rules in a state.
+                all_states = [
+                    "proposed", "shadow", "approved", "rolling_out",
+                    "active", "regime_warning", "auto_disabled",
+                    "graduated", "retired",
+                ]
+                counts = {r["lifecycle_state"]: int(r["n"]) for r in lifecycle_rows}
+                sections.append(_gauge(
+                    "osiriscare_flywheel_rules_by_state",
+                    "Promoted rules per lifecycle_state (Session 206 Spine)",
+                    [
+                        ({"state": s}, float(counts.get(s, 0)))
+                        for s in all_states
+                    ],
+                ))
+            except Exception:
+                logger.exception("metrics: flywheel lifecycle gauge query failed")
+
+            # --- Flywheel Spine: event volume by type, last 1h ---
+            try:
+                evt_rows = await conn.fetch("""
+                    SELECT event_type,
+                           COUNT(*) FILTER (WHERE outcome = 'success') AS ok,
+                           COUNT(*) FILTER (WHERE outcome = 'failed') AS failed
+                    FROM promoted_rule_events
+                    WHERE created_at > NOW() - INTERVAL '1 hour'
+                    GROUP BY event_type
+                """)
+                all_types = [
+                    "pattern_detected", "shadow_evaluated", "promotion_approved",
+                    "rollout_issued", "rollout_acked", "first_execution",
+                    "regime_warning", "regime_critical", "regime_absolute_low",
+                    "auto_disabled", "manually_disabled", "graduated",
+                    "retired_site_dead", "retired_manual",
+                    "operator_acknowledged", "operator_re_enabled",
+                ]
+                ok_by = {r["event_type"]: int(r["ok"]) for r in evt_rows}
+                fail_by = {r["event_type"]: int(r["failed"]) for r in evt_rows}
+                sections.append(_gauge(
+                    "osiriscare_flywheel_events_1h",
+                    "Flywheel state-transition events in last 1h by type + outcome",
+                    [
+                        ({"event_type": t, "outcome": "success"},
+                         float(ok_by.get(t, 0)))
+                        for t in all_types
+                    ] + [
+                        ({"event_type": t, "outcome": "failed"},
+                         float(fail_by.get(t, 0)))
+                        for t in all_types
+                    ],
+                ))
+            except Exception:
+                logger.exception("metrics: flywheel events gauge query failed")
+
+            # --- Flywheel Spine: stuck rules + operator_ack_required ---
+            try:
+                stuck = await conn.fetchval("""
+                    SELECT COUNT(*) FROM promoted_rules
+                    WHERE lifecycle_state IN
+                          ('proposed', 'shadow', 'approved', 'rolling_out')
+                      AND lifecycle_state_updated_at < NOW() - INTERVAL '3 days'
+                """)
+                ack_pending = await conn.fetchval("""
+                    SELECT COUNT(*) FROM promoted_rules
+                    WHERE operator_ack_required = TRUE
+                      AND operator_ack_at IS NULL
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_stuck_rules",
+                    "Rules stuck in non-terminal state > 3 days",
+                    [({}, float(stuck or 0))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_flywheel_operator_ack_pending",
+                    "Auto-disabled rules awaiting operator acknowledgement",
+                    [({}, float(ack_pending or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: flywheel stuck/ack gauge query failed")
+
             # --- Open incidents by severity (gauge) ---
             try:
                 rows = await conn.fetch("""
