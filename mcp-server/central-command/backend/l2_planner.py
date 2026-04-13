@@ -43,6 +43,20 @@ MAX_DAILY_L2_CALLS = int(os.getenv("MAX_DAILY_L2_CALLS", "500"))
 # patterns — worst case at default 3: N_sites * N_patterns * 3 calls/day.
 # Configurable via env so ops can tune per deployment.
 MAX_L2_CALLS_PER_PATTERN = int(os.getenv("MAX_L2_CALLS_PER_PATTERN", "3"))
+
+# --- Confidence floor for executing L2 decisions ---
+# Below this threshold, we still record the decision (for telemetry) but
+# return runbook_id=None so the consumer escalates to L3 instead of
+# executing a low-quality LLM recommendation. Raised from historical 0.6
+# after Session 205 audit found ~70% of L2 outputs were below 0.5.
+L2_MIN_CONFIDENCE = float(os.getenv("L2_MIN_CONFIDENCE", "0.7"))
+
+# --- Zero-actionable circuit ---
+# When two consecutive L2 calls for a (site, incident_type) pair returned
+# no actionable runbook (runbook_id NULL after validation/confidence check),
+# stop calling the LLM for that pair for the rest of the day. The pattern
+# is signalling that the LLM cannot solve it; further calls just burn $$.
+L2_ZERO_RESULT_CIRCUIT_THRESHOLD = int(os.getenv("L2_ZERO_RESULT_CIRCUIT_THRESHOLD", "2"))
 # In-memory fallback (used only when Redis is unavailable)
 _daily_l2_calls = 0
 _daily_l2_reset = datetime.now(timezone.utc).date()
@@ -336,6 +350,52 @@ async def _check_l2_budget(
         "cached_runbook": None,
         "context": ctx,
     }
+
+
+async def _count_recent_zero_results(
+    site_id: str, incident_type: str, hours: int = 24,
+) -> int:
+    """Count consecutive recent L2 calls for (site, incident_type) that
+    produced no actionable runbook (NULL after validation/confidence).
+    Returns the streak length back from now until the most recent SUCCESS.
+
+    A streak of N zero-result calls means the LLM has tried N times to
+    solve this pattern and produced nothing useful. The zero-result
+    circuit uses this to refuse further LLM spend on the pattern.
+    """
+    try:
+        from .fleet import get_pool
+        from .tenant_middleware import admin_connection
+        from datetime import timedelta
+        pool = await get_pool()
+        async with admin_connection(pool) as conn:
+            # Pull the most recent N decisions for this pattern (ordered
+            # newest-first). Count consecutive runbook_id IS NULL until we
+            # hit a non-null (i.e., a previous good answer breaks the streak).
+            rows = await conn.fetch(
+                """
+                SELECT runbook_id
+                FROM l2_decisions
+                WHERE site_id = $1
+                  AND created_at >= NOW() - ($2 || ' hours')::interval
+                  AND llm_model NOT IN ('none', 'cached')  -- only count actual LLM calls
+                ORDER BY created_at DESC
+                LIMIT 10
+                """,
+                site_id, str(hours),
+            )
+            streak = 0
+            for r in rows:
+                if r["runbook_id"] is None:
+                    streak += 1
+                else:
+                    break
+            return streak
+    except Exception as e:
+        # On infra error, return 0 to avoid blocking the happy path.
+        # The hard pattern cap is the backstop.
+        logger.debug("zero-result lookup failed", error=str(e))
+        return 0
 
 
 async def _record_pattern_l2_call(
@@ -908,6 +968,25 @@ async def analyze_incident(
     details = details or {}
     pre_state = pre_state or {}
 
+    # --- INPUT GATE: refuse to call LLM on inputs that can never aggregate ---
+    # Session 205 audit: 107 L2 calls/week had pattern_signature='' because
+    # incident_type was empty/unknown. Those calls cannot produce a learnable
+    # pattern signature and are pure cost waste.
+    if not incident_type or incident_type == "unknown":
+        logger.info("L2 declined: incident_type missing or 'unknown'",
+                    incident_type=incident_type)
+        return L2Decision(
+            runbook_id=None,
+            reasoning="L2 declined: incident_type missing or 'unknown' — cannot produce learnable pattern.",
+            confidence=0.0,
+            alternative_runbooks=[],
+            requires_human_review=True,
+            pattern_signature="",
+            llm_model="none",
+            llm_latency_ms=0,
+            error="missing_incident_type",
+        )
+
     # --- KILL SWITCH: L2 is globally disabled ---
     # Set L2_ENABLED=true in env to re-enable. Until the flywheel promotion
     # path is fixed, L2 decisions don't produce L1 rules and erratic customer
@@ -926,6 +1005,34 @@ async def analyze_incident(
             llm_latency_ms=0,
             error="l2_disabled",
         )
+
+    # --- ZERO-RESULT CIRCUIT (Session 205 audit fix) ---
+    # If recent L2 calls for THIS pattern have all produced no actionable
+    # runbook (NULL after validation/confidence), the LLM is repeatedly
+    # signalling it cannot solve this pattern. Stop spending.
+    if site_id:
+        recent_zero = await _count_recent_zero_results(site_id, incident_type)
+        if recent_zero >= L2_ZERO_RESULT_CIRCUIT_THRESHOLD:
+            logger.warning(
+                "L2 zero-result circuit open — refusing call",
+                site_id=site_id, incident_type=incident_type,
+                recent_zero_count=recent_zero,
+                threshold=L2_ZERO_RESULT_CIRCUIT_THRESHOLD,
+            )
+            return L2Decision(
+                runbook_id=None,
+                reasoning=(
+                    f"L2 zero-result circuit open: last {recent_zero} calls for this "
+                    f"pattern produced no actionable runbook. Escalating to human review."
+                ),
+                confidence=0.0,
+                alternative_runbooks=[],
+                requires_human_review=True,
+                pattern_signature="",
+                llm_model="none",
+                llm_latency_ms=0,
+                error="zero_result_circuit_open",
+            )
 
     # --- Contextual budget algorithm (Session 205) ---
     # Per-customer daily budget × per-pattern cap × cache-first. Protects
@@ -1061,6 +1168,22 @@ async def analyze_incident(
             logger.warning("L2 recommended unknown runbook", runbook_id=runbook_id)
             runbook_id = None
             confidence = 0.0
+
+        # Confidence floor: don't return an actionable runbook below
+        # L2_MIN_CONFIDENCE. We still record the decision (telemetry),
+        # but the consumer sees runbook_id=None and escalates to L3.
+        # Prevents the ~70% low-confidence outputs observed in Session 205
+        # from being executed.
+        if runbook_id and confidence < L2_MIN_CONFIDENCE:
+            logger.info(
+                "L2 below confidence floor — declining to recommend runbook",
+                runbook_id=runbook_id,
+                confidence=confidence,
+                floor=L2_MIN_CONFIDENCE,
+            )
+            runbook_id = None
+            # confidence is preserved for telemetry; aggregation will see 0
+            # via the runbook_id=None gate on pattern_sig below.
 
         # Generate pattern signature for data flywheel
         pattern_sig = generate_pattern_signature(

@@ -1041,7 +1041,10 @@ async def report_incident(
                 except Exception as e:
                     logger.error(f"Failed to record L2 decision: {e}")
 
-                if decision.runbook_id and decision.confidence >= 0.6 and not decision.requires_human_review:
+                # Confidence floor moved to 0.7 (Session 205 audit). Below this
+                # the planner already nullifies runbook_id, but kept here as a
+                # belt-and-suspenders gate in case planner config diverges.
+                if decision.runbook_id and decision.confidence >= 0.7 and not decision.requires_human_review:
                     runbook_id = decision.runbook_id
                     resolution_tier = "L2"
                     l2_succeeded = True

@@ -727,6 +727,72 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: pattern sync query failed")
 
+            # --- Flywheel health (3 gauges from Session 205 audit) ---
+            # Why these three: each one would have caught the broken flywheel
+            # weeks before the manual audit did.
+            #
+            # 1) L2 success ratio < 50% over 24h means LLM is producing useless
+            #    output that incurs cost without resolving incidents.
+            # 2) promotions_deployed_7d == 0 means the data-flywheel loop is
+            #    not closed: rules may promote but never reach an appliance.
+            # 3) orphan_runbooks > 0 means promoted L1 rules reference a
+            #    runbook_id that doesn't exist — they will fail on execution.
+            try:
+                l2_row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE success) as successes,
+                        COUNT(*) as total
+                    FROM execution_telemetry
+                    WHERE resolution_level = 'L2'
+                      AND created_at > NOW() - INTERVAL '24 hours'
+                """)
+                total = float(l2_row["total"] or 0)
+                successes = float(l2_row["successes"] or 0)
+                ratio = (successes / total) if total > 0 else 1.0
+                sections.append(_gauge(
+                    "osiriscare_flywheel_l2_success_ratio_24h",
+                    "L2 LLM success ratio over last 24 hours (1.0 = all succeeded)",
+                    [({}, ratio)],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_flywheel_l2_calls_24h",
+                    "L2 LLM call count over last 24 hours",
+                    [({}, total)],
+                ))
+            except Exception:
+                logger.exception("metrics: L2 success ratio query failed")
+
+            try:
+                row = await conn.fetchrow("""
+                    SELECT COALESCE(SUM(deployment_count), 0) as deployments
+                    FROM promoted_rules
+                    WHERE last_deployed_at > NOW() - INTERVAL '7 days'
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_promotions_deployed_7d",
+                    "Total promoted-rule deployments to appliances in last 7 days",
+                    [({}, float(row["deployments"] or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: promotion deployment query failed")
+
+            try:
+                row = await conn.fetchrow("""
+                    SELECT COUNT(*) as orphans
+                    FROM l1_rules l
+                    LEFT JOIN runbooks r ON r.runbook_id = l.runbook_id
+                    WHERE l.promoted_from_l2 = true
+                      AND l.enabled = true
+                      AND r.runbook_id IS NULL
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_orphan_runbooks",
+                    "Promoted L1 rules referencing a runbook_id missing from runbooks library",
+                    [({}, float(row["orphans"] or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: orphan runbooks query failed")
+
     except Exception:
         logger.exception("metrics: database connection failed")
         return PlainTextResponse(
