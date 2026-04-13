@@ -57,25 +57,40 @@ def save_progress(data: dict):
 
 
 def status():
-    """Show current state."""
+    """Show current state. Schema v2 aware (Session 205+)."""
     # Auto-compact stale sessions on every status check
     compact_sessions(days_to_keep=14, quiet=True)
 
     progress = load_progress()
+    schema = progress.get("schema_version", "1.0")
 
     print("=" * 60)
-    print(f"SESSION {progress.get('session', '?')} | Agent v{progress.get('agent_version', '?')} | ISO {progress.get('iso_version', '?')}")
+    versions = progress.get("versions", {})
+    if isinstance(versions, dict) and versions:
+        agent_v = versions.get("agent", "?")
+        iso_v = versions.get("iso", "?")
+    else:
+        agent_v = progress.get("agent_version", "?")
+        iso_v = progress.get("iso_version", "?")
+    print(f"SESSION {progress.get('session', '?')} | Agent v{agent_v} | ISO {iso_v} | schema v{schema}")
     print(f"Updated: {progress.get('updated', 'never')}")
     print("=" * 60)
 
-    # System health
+    # System health (v2 = list of dicts; v1 = dict)
     print("\nSYSTEM HEALTH:")
-    health = progress.get("system_health", {})
-    for system, status in health.items():
-        icon = "✓" if status == "healthy" else "✗" if status in ["offline", "blocked"] else "?"
-        print(f"  {icon} {system}: {status}")
+    health = progress.get("system_health", [])
+    if isinstance(health, list):
+        for entry in health:
+            status = entry.get("status", "?")
+            icon = "✓" if status == "up" else "✗" if status in ("down", "offline", "blocked") else "?"
+            note = f"  ({entry.get('notes', '')})" if entry.get("notes") else ""
+            print(f"  {icon} {entry.get('component', '?')}: {status}{note}")
+    elif isinstance(health, dict):
+        for system, status in health.items():
+            icon = "✓" if status == "healthy" else "✗" if status in ["offline", "blocked"] else "?"
+            print(f"  {icon} {system}: {status}")
 
-    # Current blocker
+    # Current blocker (v1 only — v2 doesn't have this field)
     blocker = progress.get("current_blocker")
     if blocker:
         if isinstance(blocker, str):
@@ -85,13 +100,22 @@ def status():
             print(f"  {blocker.get('description', '')}")
             print(f"  Solution: {blocker.get('solution', 'unknown')}")
 
-    # Active tasks
-    print("\nACTIVE TASKS:")
-    for task in progress.get("active_tasks", []):
-        status_icon = {"blocked": "🔴", "pending": "⬚", "in_progress": "🔵", "done": "✓"}.get(task["status"], "?")
-        print(f"  {status_icon} [{task['id']}] {task['task']}")
+    # Active tasks (v2: empty by design; v1: list of dicts with id/task/status)
+    tasks = progress.get("active_tasks", [])
+    if tasks:
+        print("\nACTIVE TASKS (legacy v1 — TaskCreate is the source of truth in v2):")
+        for task in tasks:
+            if isinstance(task, dict) and "task" in task:
+                status_icon = {"blocked": "🔴", "pending": "⬚", "in_progress": "🔵", "done": "✓"}.get(task.get("status"), "?")
+                print(f"  {status_icon} [{task.get('id', '?')}] {task['task']}")
+            else:
+                print(f"  - {task}")
 
-    # Completed this session
+    # Recent milestones (v2 field)
+    for ms in progress.get("recent_milestones", []):
+        print(f"\nMILESTONE {ms.get('when', '?')}: {ms.get('what', '?')}")
+
+    # Completed this session (v1 field)
     completed = progress.get("completed_this_session", [])
     if completed:
         print(f"\nCOMPLETED THIS SESSION ({len(completed)}):")
@@ -282,27 +306,87 @@ def compact_sessions(days_to_keep: int = 14, quiet: bool = False):
 
 
 def validate():
-    """Check consistency."""
+    """Check consistency. Schema v2 aware (Session 205+). Returns True if clean.
+
+    Checks:
+      progress.json:
+        - schema_version == "2.0"
+        - required top-level keys present
+        - system_health is a list of {component, status, last_verified, notes}
+        - active_tasks is an empty list (TaskCreate owns that now)
+
+      memory hygiene (user memory):
+        - MEMORY.md exists and is ≤ 200 lines (truncation cap)
+        - each content line in MEMORY.md is ≤ 200 chars (truncation protection)
+        - every `*.md` reference in MEMORY.md resolves to a file
+        - each topic file begins with YAML frontmatter (--- block at top)
+    """
     issues = []
+
+    # --- progress.json schema v2 ---
     progress = load_progress()
-
-    # Check required fields
-    required = ["session", "agent_version", "system_health", "active_tasks"]
-    for field in required:
+    if progress.get("schema_version") != "2.0":
+        issues.append(
+            f'progress.json schema_version != "2.0" '
+            f'(got {progress.get("schema_version")!r}) — see .agent/archive/claude-progress.v1.json for v1'
+        )
+    required_v2 = ["session", "updated", "versions", "system_health", "active_tasks"]
+    for field in required_v2:
         if field not in progress:
-            issues.append(f"Missing required field: {field}")
+            issues.append(f"progress.json missing required field: {field}")
 
-    # Check version in CLAUDE.md matches
-    claude_md = PROJECT_ROOT / "CLAUDE.md"
-    if claude_md.exists():
-        with open(claude_md) as f:
-            content = f.read()
-            match = re.search(r'\*\*Agent Version:\*\*\s*v?([\d.]+)', content)
-            if match:
-                claude_version = match.group(1)
-                progress_version = progress.get("agent_version", "")
-                if claude_version != progress_version:
-                    issues.append(f"Version mismatch: CLAUDE.md={claude_version}, progress={progress_version}")
+    sh = progress.get("system_health")
+    if not isinstance(sh, list):
+        issues.append("progress.json system_health must be a list (v2 typed schema)")
+    else:
+        for i, entry in enumerate(sh):
+            if not isinstance(entry, dict):
+                issues.append(f"progress.json system_health[{i}] is not a dict")
+                continue
+            for key in ("component", "status", "last_verified"):
+                if key not in entry:
+                    issues.append(f"progress.json system_health[{i}] missing {key}")
+
+    if progress.get("active_tasks") != []:
+        issues.append(
+            "progress.json active_tasks must be []; TaskCreate is the source of truth now"
+        )
+
+    # --- memory hygiene ---
+    memory_root = Path.home() / ".claude/projects"
+    # Discover the project's memory dir by walking; skip if not a Claude Code env
+    memory_dir = None
+    if memory_root.exists():
+        for d in memory_root.iterdir():
+            if d.is_dir() and (d / "memory" / "MEMORY.md").exists():
+                # heuristic: dir name contains the repo basename
+                if PROJECT_ROOT.name.lower() in d.name.lower().replace("-", "_"):
+                    memory_dir = d / "memory"
+                    break
+    if memory_dir and memory_dir.exists():
+        memory_md = memory_dir / "MEMORY.md"
+        lines = memory_md.read_text().splitlines()
+        if len(lines) > 200:
+            issues.append(
+                f"memory/MEMORY.md has {len(lines)} lines; system truncates at 200. Move detail to topic files."
+            )
+        for lineno, ln in enumerate(lines, 1):
+            if len(ln) > 250:
+                issues.append(f"memory/MEMORY.md line {lineno} is {len(ln)} chars (>250)")
+
+        # Cross-ref resolution
+        referenced = set(re.findall(r"\(([a-z][a-z0-9_]*\.md)\)", memory_md.read_text()))
+        for ref in referenced:
+            if not (memory_dir / ref).exists():
+                issues.append(f"memory/MEMORY.md references missing file: {ref}")
+
+        # Topic-file frontmatter
+        for topic in memory_dir.glob("*.md"):
+            if topic.name == "MEMORY.md":
+                continue
+            head = topic.read_text(errors="replace").lstrip().splitlines()[:1]
+            if not head or not head[0].startswith("---"):
+                issues.append(f"memory/{topic.name} missing YAML frontmatter (starts with '---')")
 
     if issues:
         print("VALIDATION FAILED:")

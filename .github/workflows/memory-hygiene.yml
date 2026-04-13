@@ -1,0 +1,36 @@
+# Memory-hygiene CI gate. SAFE: this workflow uses zero github.event
+# inputs in run: commands, no untrusted strings interpolated. Only the
+# checked-out repo files are exercised.
+name: Memory hygiene
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.agent/**'
+      - '.github/workflows/memory-hygiene.yml'
+  pull_request:
+    paths:
+      - '.agent/**'
+      - '.github/workflows/memory-hygiene.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        run: pip install pytest==8.3.4
+
+      - name: Run context-manager pytest
+        run: python -m pytest .agent/scripts/test_context_manager.py -v --tb=short
+
+      - name: validate progress.json
+        run: python3 .agent/scripts/context-manager.py validate

@@ -2550,3 +2550,532 @@ Continued from Session 179. Validated that the v0.3.23 SSH handshake timeout fix
 [truncated...]
 
 ---
+
+## 2026-03-19-session-181-production-stability-checkin-fix-flywheel-audit-10-features-v0.3.24.md
+
+# Session 181 — Production Stability, Checkin Fix, Flywheel Audit, 10 Features, v0.3.24
+
+**Date:** 2026-03-19
+**Duration:** ~5 hours
+**Previous Session:** 180
+
+---
+
+## Goals
+- [x] Diagnose VM appliance "offline" on dashboard
+- [x] Fix checkin consistency
+- [x] Audit flywheel system
+- [x] Audit runbook system
+- [x] Run full unit tests
+- [x] Implement 10 production stability features
+- [x] Fix macOS scanning pipeline
+- [x] Deploy v0.3.24 to both appliances
+- [x] Clean up stale data
+
+---
+
+## Progress
+
+### Completed
+
+**Bugs Fixed (13 commits):**
+- Checkin heartbeats from device_sync + evidence submission
+- CSRF exemption for log ingestion
+- Gzip auth decompression for log shipper
+- Credential delivery always-on (removed has_local_credentials gate)
+- Linux/macOS scan timer race (don't burn interval on empty targets)
+- TLS TOFU pin auto-clear on cert rotation
+- Checkin resilience (client recreation after 3 failures)
+- Fleet order fallback endpoint
+- ARP MAC parser for correct device MACs
+- Wake-on-LAN for sleeping macOS targets
+- nix-collect-garbage safety (7d retention)
+
+**10 Production Features:**
+1. Offline alerting (partner email)
+2. Checkin resilience (Go)
+3. Flywheel validation (runbook check)
+4. Fleet order fallback (GET endpoint)
+5. Structured request logging
+6. Stale data reconciliation (5min job)
+7. Runbook category cleanup (migration 094)
+8. Rule signature enforcement (configurable)
+9. Prometheus metrics (/metrics)
+10. Flywheel rate limit (5/cycle)
+
+
+[truncated...]
+
+---
+
+## 2026-03-21-session-182-org-hardening-idor-perf-phi-boundary-partner-consolidation.md
+
+# Session 182 — Org Feature Hardening
+
+**Date:** 2026-03-21
+**Previous Session:** 181
+
+---
+
+## Goals
+
+- [x] Clear TLS TOFU pins, verify v0.3.24 deployment
+- [x] Audit org feature for security/perf/completeness gaps
+- [x] Fix IDOR vulnerabilities (org detail + org credentials)
+- [x] Eliminate N+1 query on org list, add pagination
+- [x] Add org-level consolidated health + incident endpoints
+- [x] PHI boundary enforcement for client portal evidence
+- [x] Partner portal org list + bulk drift config
+- [x] Schema prep for sub-partner model
+- [x] Frontend OrgDashboard health integration
+
+---
+
+## Progress
+
+### Completed
+
+- TLS pins cleared, both appliances on v0.3.24 and checking in
+- 12 commits: 2 security fixes, 1 perf fix, 6 new features, 1 migration, 2 frontend/test
+- 8 new tests passing (4 auth access control, 4 PHI boundary)
+- Frontend tsc + eslint clean
+
+### Blocked
+
+- EV SSL cert pending (ssl.com, 1-3 business days after phone verification)
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| backend/auth.py | Added `_check_org_access` helper |
+| backend/routes.py | IDOR fix, N+1 fix, pagination, health endpoint, incident endpoint |
+| backend/org_credentials.py | Added org_scope checks to all 3 endpoints |
+| backend/phi_boundary.py | NEW — evidence sanitization module |
+| backend/client_portal.py | Applied PHI sanitization to evidence endpoints |
+| backend/partners.py | Partner org list + bulk drift config endpoints |
+| backend/migrations/095_site_partner_override.sql | NEW — sub_partner_id column |
+| backend/tests/test_org_hardening.py | NEW — 8 tests |
+| frontend/src/utils/api.ts | OrgHealth type + API methods |
+| frontend/src/pages/OrgDashboard.tsx | Health data integration |
+
+[truncated...]
+
+---
+
+## 2026-03-22-session-183-Go agent push architecture, device API fix, site decommission, VM deprecation.md
+
+# Session 183 - Go Agent Push Architecture, Device API Fix, Site Decommission, VM Deprecation
+
+**Date:** 2026-03-22
+**Started:** 12:10
+**Previous Session:** 182
+**Go Daemon:** v0.3.26
+**Go Agents:** 3 deployed (NVDC01, NVWS01, iMac)
+
+---
+
+## Goals
+
+- [x] Fix Device API 500 errors (IPv4Address cast)
+- [x] Push-first scan architecture (daemon skips WinRM for Go agent hosts)
+- [x] Deploy Go agents to all lab machines
+- [x] Site decommission feature
+- [x] VM appliance deprecation
+- [x] Go agent compliance data across all portals
+- [x] Stale data cleanup
+
+---
+
+## Progress
+
+### Completed
+
+1. **Device API 500 fix** — cast asyncpg IPv4Address to str in device_sync.py (4 locations). Deployed via CI/CD.
+2. **Push-first scan priority** — driftscan.go skips WinRM for hosts with active Go agents, uses agent data instead.
+3. **Post-deploy gRPC verification** — 60s timeout + WinRM diagnostic on failure.
+4. **update_agent fleet order** — was a stub, now actually downloads binary.
+5. **NETLOGON UNC fallback** — when HTTP download blocked, copies via \\DC\NETLOGON share.
+6. **WinRM base64 chunked transfer** — 20KB chunks for large binaries.
+7. **configure_workstation_agent fleet order** — full agent lifecycle (download, install, configure, verify).
+8. **VM appliance deprecated** — test-appliance-lab-b3c40c set to inactive. Source of stale .247 data.
+9. **Go agent deployed to NVWS01** — push architecture proven on Windows 10.
+10. **Go agent deployed to NVDC01** — immediate heal commands flowing.
+11. **Go agent deployed to iMac** — launchd daemon on macOS 11.7 (Go 1.22 compat).
+12. **Agent check result sync** — checks_passed/checks_total from agents to go_agents table.
+13. **Site decommission feature** — GET /sites/{id}/export + POST /sites/{id}/decommission + DecommissionModal frontend.
+14. **macOS build compat** — Makefile uses Go 1.22 for darwin (Big Sur support).
+15. **Agent deployment docs** — agent/DEPLOY.md, deploy.sh script, systemd/launchd units.
+16. **L2 guardrails fix** — execute_runbook + configure_screen_lock added to allowlist.
+17. **Fleet sidebar** — hides inactive/decommissioned sites.
+18. **Stale workstation cleanup** — dedup IP-only entries, expire 7d/30d, Go agent sync.
+19. **All check results sent** — agents send pass+fail for accurate compliance percentage.
+20. **Go agent compliance across portals** — partner sites/orgs, client dashboard/sites, admin fleet/health.
+21. **Compliance scoring** — blends Go agent data with bundle data (weighted average).
+22. **Dynamic drift checks** — dashboard shows count from DB instead of hardcoded 6.
+23. **GlobalStats** — active_drift_checks + total_go_agents fields.
+24. **Stale incidents resolved** — for deprecated VM site.
+
+[truncated...]
+
+---
+
+## 2026-03-22-session-184-Auto-discovery + auto-deploy system — Phases 1-3 complete.md
+
+# Session 184 - Auto-Discovery + Auto-Deploy System — Phases 1-3 Complete
+
+**Date:** 2026-03-22 / 2026-03-23
+**Started:** ~21:00
+**Previous Session:** 183
+
+---
+
+## Goals
+
+- [x] Design auto-discovery + auto-deploy system (spec + plan)
+- [x] Phase 1: Core (11 tasks) — probing, auto-deploy, Take Over, rogue alerting, lifecycle
+- [x] Phase 2: Reliability (3 tasks) — self-healing, staggered deploy, pre-flight checks
+- [x] Phase 3: Polish (5 tasks) — SSSD detection, topology, coverage score, uninstall, credential encryption
+- [ ] Deploy and test on live appliance (next session)
+
+---
+
+## Progress — 23 commits, 67+ new tests
+
+### Phase 1 — Core
+- Migration 096, OS probing (SSH/WinRM), 3-min ARP + probe sweep, device sync probe fields
+- Checkin pending_deploys + deploy_results, SSH deploy (Linux/macOS), auto-deploy orchestrator
+- Take Over endpoint + frontend, rogue device alerting, device lifecycle state machine
+
+### Phase 2 — Reliability
+- Agent self-healing (3-strike L3 escalation), staggered deployment (batches of 3), pre-flight checks
+
+### Phase 3 — Polish
+- SSSD/AD-joined Linux detection (Kerberos port 88), network topology (multi-subnet), coverage score
+- Remote agent uninstall (remove_agent fleet order), credential encryption at rest (Fernet)
+
+### New Go Files
+probes.go, classify.go, deploy_ssh.go, lifecycle.go, selfheal.go, preflight.go, topology.go + tests
+
+---
+
+## Next Session
+
+1. Rebuild daemon with auto-discovery code, deploy to appliance
+2. Verify probe sweep discovers all lab devices
+3. Take Over northvalley-linux — first Linux agent deployment
+4. Test rogue device alerting
+5. First pilot client onboarding
+
+---
+
+## 2026-03-23-session-185-Production hardening — fake metrics, untested code, monitoring blindspots, Go architecture.md
+
+# Session 185 - Production Hardening + Dashboard UX + Legal + V1.0 Prep
+
+**Date:** 2026-03-23
+**Started:** 04:19
+**Previous Session:** 184
+
+---
+
+## Goals
+
+- [x] Audit entire system for fake/lying metrics
+- [x] Fix all Tier 1 fake metrics and broken features (17 fixes)
+- [x] Add tests for untested critical modules (190 new tests)
+- [x] Add missing Prometheus metrics and stuck queue alerting
+- [x] Refactor Go daemon architecture (StateManager + Services + CircuitBreaker)
+- [x] Build + deploy Go daemon v0.3.27 via fleet order
+- [x] Subsystem Services migration (4 files)
+- [x] CVE matching: proper CPE version-aware parsing
+- [x] V1.0 security audit — fix 6 blockers (daemon + agent)
+- [x] Dashboard UX overhaul — 5 industry-standard improvements
+- [x] Legal liability language cleanup — 12 fixes across portals + backend
+- [x] EV code signing setup (eSigner credentials, CodeSignTool on VPS)
+- [x] Client onboarding PDF guide
+
+---
+
+## Commits (5 total, 82 files changed)
+
+### 1. `60a1f60` — Production hardening (33 files)
+**Tier 1 (17 fake metric fixes):**
+- Promotion success rate, MFA coverage, backup rate, L1 rate, health score inflation, connectivity, healing/order rates, portal compliance, pattern sync, evidence WORM, review queue notifications, fleet CLI, magic links, email logging, OTS proofs, Go sensor stubs
+
+**Tier 2 (190 new tests):**
+- test_escalation_engine.py (57), test_cve_watch.py (74), test_device_sync.py (27), test_billing.py (32)
+
+**Tier 3 (monitoring):**
+- 8 new Prometheus metric families, stuck queue alerting in health_monitor.py
+
+**Tier 4 (Go architecture):**
+- interfaces.go, state_manager.go, circuit_breaker.go (7 tests), daemon.go slimmed
+
+### 2. `c45c184` — Subsystem Services migration + CPE fix (10 files)
+- All 4 subsystems receive *Services for interface-based access
+- CVE matching: proper CPE 2.3 parsing with version ranges
+
+### 3. `9f4f96e` — Hide decommissioned sites (1 file)
+- fleet.py query joins sites table, excludes status='inactive'
+
+### 4. `02dcb9e` — V1.0 security blockers (7 files)
+- SSH sudo password injection: POSIX escape
+
+[truncated...]
+
+---
+
+## 2026-03-26-session-187-enterprise-db-audit-scoring-agent-stability.md
+
+# Session 187 - Enterprise DB Audit, Scoring, Agent Stability
+
+**Date:** 2026-03-26
+**Duration:** ~6 hours | **Commits:** 18 | **Daemon:** v0.3.45→v0.3.49
+**Tests:** 1190 Python pass, 16 Go packages pass, 0 frontend errors
+
+## Summary
+Enterprise-grade production hardening. DB audit (28 FK indexes, 30 dupes dropped, 33 SERIAL→BIGINT, PG tuned). Unified HIPAA-weighted compliance scoring. State-based notification dedup (71→13). Bridge MAC device dedup. Stable agent IDs + selfheal guard (eliminated redeploy loop). Net_* separated from compliance. Monitoring-only checks skip remediation (L1 rate 71.8%→84%). N/A exception feature. Credential health endpoint. iMac agent deployed + remediated (3 checks flipped). 4 skills installed. Both agents stable 3+ hours.
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-28-session-188-L2 spend fix, production audit, dashboard redesign, CVE remediate, evidence verify.md
+
+# Session 188 - L2 Spend Fix, Production Audit, Dashboard Redesign, CVE Remediate, Evidence Verify
+
+**Date:** 2026-03-28
+**Previous Session:** 187
+
+---
+
+## Summary
+
+Massive session: diagnosed and fixed L2 LLM credit drain (1,251 calls/week → near-zero), ran full production audit (frontend + backend + all 11 background tasks + data accuracy), redesigned the dashboard per Apple PM / product PM review, built CVE remediate button, built evidence verification endpoint, and fixed structlog visibility across all background tasks.
+
+## L2 Spend Crisis
+
+**Root cause:** Duplicate `/api/agent/l2/plan` endpoint in main.py overrode the fixed version in agent_api.py. FastAPI registers main.py routes last. All monitoring-only guards, cache, and circuit breaker fixes were deployed but never reached by the daemon.
+
+**Fixes deployed:**
+- Monitoring-only guard (blocks device_unreachable, backup_not_configured, bitlocker, screen_lock, credential_stale)
+- L2 decision cache (24h TTL by pattern_signature)
+- Redis-backed daily circuit breaker (multi-worker safe)
+- Go budget tracker: Haiku → Sonnet 4 pricing
+- Flywheel incident_type bug: was hardcoded "unknown"
+- **CRITICAL: Deleted duplicate endpoint from main.py**
+
+**Status:** Fix deployed. Awaiting API credit reload to verify L2 calls drop to near-zero.
+
+## Production Audit
+
+### Background Tasks (11 total)
+- 9 HEALTHY, 1 BUG FIXED (fleet_order_expiry), 1 STALE FIXED (cve_watch logging)
+- Added evidence_chain_check (daily integrity monitor)
+
+### Security
+- 6 auth gaps fixed (4 unauthenticated sites.py endpoints)
+- SQL injection hardening (3 files)
+- CSRF gaps documented
+
+### Frontend
+- 0 TS errors, 0 ESLint, 90 vitest passing
+- 8 files: hardcoded thresholds → getScoreStatus()
+- Badge dark theme fix (bg-*-100 → color/15)
+- Dashboard redesign: hero compliance, merged attention, sidebar sections
+
+### Data Accuracy
+- All 13 KPI metrics match DB reality exactly
+- Evidence chain: 228,580 bundles, zero chain breaks
+- OTS: 127,529 anchored, avg 1.6h latency
+
+## New Features
+
+### CVE Remediate Button
+
+[truncated...]
+
+---
+
+## 2026-03-29-session-189-Healing pipeline audit - unblock MONITORING_ONLY, restore L2, fix L1 rules.md
+
+# Session 189 - Healing Pipeline Audit   Unblock Monitoring_Only, Restore L2, Fix L1 Rules
+
+**Date:** 2026-03-29
+**Started:** 22:56
+**Previous Session:** 188
+
+---
+
+## Goals
+
+- [ ]
+
+---
+
+## Progress
+
+### Completed
+
+
+### Blocked
+
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+---
+
+## Next Session
+
+1.
+
+---
+
+## 2026-03-30-session-189-Healing-pipeline-audit-unblock.md
+
+# Session 189 — Healing Pipeline Audit & Unblock
+
+**Date:** 2026-03-30
+**Duration:** ~30 min
+**Trigger:** Chaos lab daily report showing 50% healing rate ceiling
+
+## Problem
+
+Chaos lab healing rate stuck at 50% across all testing. 6 of 16 attack scenarios consistently failing to heal: firewall, defender, audit, credential_policy, registry_persistence, screenlock/bitlocker.
+
+## Root Causes Found (Production Audit)
+
+### 1. MONITORING_ONLY blocking remediable checks (~25-30% lost)
+`main.py` lines 126-149 blocked bitlocker, screen_lock, screen_lock_policy, bitlocker_status, backup_status from ever entering the L1/L2/L3 pipeline. `screen_lock_policy` had 100% L1 success rate (38/38) but was never tried.
+
+### 2. L2 endpoint dead — 404 in production (~10-15% lost)
+`/api/agent/l2/plan` defined in `agent_api.py` but router never registered in `main.py`. Daemon getting 404 every ~15 minutes. The old duplicate in main.py was removed (Session 188) but the agent_api router was never wired up.
+
+### 3. Keyword fallback map missing critical types
+`security_audit` (3 L3 escalations in 7 days) had no L1 rule match AND no keyword fallback. Same for `defender` and `registry` incident types.
+
+### 4. Broken L1 runbooks (0% success rates)
+- LIN-CRYPTO-001: 729 matches, 0 successes
+- LIN-PERM-001: 21 matches, 0 successes
+- LIN-NTP-001: 8 matches, 0 successes
+
+### 5. Null-pattern synced rules
+4 synced/promoted rules had `check_type` but no `incident_type` in their JSON pattern, making them unmatchable by the L1 query.
+
+## Fixes Applied
+
+1. **Removed 5 checks from MONITORING_ONLY** in both `main.py` and `agent_api.py`: bitlocker, bitlocker_status, screen_lock, screen_lock_policy, backup_status
+2. **Restored L2 endpoint**: `app.post("/api/agent/l2/plan")(agent_l2_plan_handler)` — delegates to agent_api.py canonical implementation
+3. **Added 5 keywords to fallback map**: audit→RB-WIN-SEC-002, defender→RB-WIN-AV-001, registry→RB-WIN-SEC-019, bitlocker→RB-WIN-SEC-005, screen_lock→RB-WIN-SEC-016
+4. **Disabled 3 dead rules** in production DB (0% success, 758 combined failures)
+5. **Fixed 4 null-pattern rules** in production DB (added incident_type to jsonb pattern)
+6. **Resolved 3 stale incidents** to unblock dedup for fresh pipeline flow
+
+## Production Verification
+
+- `bitlocker_status` → L1 healing, `success=True` in telemetry (was blocked)
+- `/api/agent/l2/plan` → 200 OK from daemon (was 404)
+- `backup_not_configured` → correctly stays monitoring-only
+- `device_unreachable` → correctly stays monitoring-only
+- Tests: 290 passed, 0 failures
+
+## Files Changed
+
+- `mcp-server/main.py` — MONITORING_ONLY, L2 route, keyword map
+- `mcp-server/central-command/backend/agent_api.py` — MONITORING_ONLY sync
+
+[truncated...]
+
+---
+
+## 2026-03-30-session-190-OpenClaw outage fix, optimization, cost audit.md
+
+# Session 190 — OpenClaw Outage + Healing Pipeline Fix
+
+**Date:** 2026-03-30 / 2026-03-31
+**Previous Session:** 189
+
+---
+
+## Goals
+- [x] Diagnose + fix OpenClaw 502 outage
+- [x] Security audit (compromise check)
+- [x] Optimize OpenClaw for 8GB VPS
+- [x] Audit healing pipeline end-to-end in production
+- [x] Fix L1 rule matching for 9 failing chaos categories
+- [x] Fix chaos lab parser + scoring
+- [ ] Run chaos test to 90%+ (pending — 6AM cron will produce first score)
+
+---
+
+## Progress
+
+### OpenClaw (178.156.243.221)
+- Gateway dead since 2026-03-23 (update button killed process, service not enabled)
+- No compromise — only owner SSH key, fail2ban active
+- Enabled service, updated 2026.3.22→2026.3.28, built UI
+- Optimized: NODE_COMPILE_CACHE, NO_RESPAWN, concurrency reduced, context pruning
+- Heartbeat+compaction → openai/gpt-4.1-nano (8x cheaper than Haiku)
+
+### Healing Pipeline (CRITICAL FIX)
+- **Root cause:** `/api/agent/l2/plan` had NO L1 rule lookup — bypassed all 112 L1 rules, went straight to LLM
+- **Fix:** Added L1 DB query + keyword fallback before LLM in agent_api.py
+- **Synced** keyword fallback map (added credential, smb to main.py)
+- **Verified on appliance:** 4/5 non-monitoring checks healing (bitlocker 2671ms, defender 2685ms)
+
+### Chaos Lab Fixes (iMac 192.168.88.50)
+- Parser v13 pattern added — was parsing 0 scenarios, now works
+- Morning/afternoon result split (separate score files)
+- end_of_day_report.py merges both runs
+- Added 1PM scenario regeneration cron based on mid-day gaps
+
+### iMac SSH Issue
+- Port 22 keeps closing after macOS updates (Big Sur known bug)
+- Remote Login is ON, firewall unblocked, but port still drops
+- Need LaunchDaemon plist installed locally (requires sudo at console)
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+
+[truncated...]
+
+---
