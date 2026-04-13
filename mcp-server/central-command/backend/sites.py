@@ -2137,7 +2137,20 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site
                 )
                 raise HTTPException(status_code=403, detail="Order does not belong to this appliance")
             async with admin_connection(pool) as conn:
-                await record_fleet_order_completion(conn, fleet_order_id, appliance_id, new_status)
+                # Phase 12.1 (Session 205): persist diagnostic output so
+                # signed fleet-order failures are remotely inspectable.
+                _duration_ms = None
+                if isinstance(result_data, dict) and "duration_ms" in result_data:
+                    try:
+                        _duration_ms = int(result_data["duration_ms"])
+                    except (TypeError, ValueError):
+                        _duration_ms = None
+                await record_fleet_order_completion(
+                    conn, fleet_order_id, appliance_id, new_status,
+                    output=result_data if result_data else None,
+                    error_message=request.error_message,
+                    duration_ms=_duration_ms,
+                )
                 return {
                     "status": new_status,
                     "order_id": order_id,

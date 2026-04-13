@@ -1431,15 +1431,58 @@ async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version:
     return orders
 
 
-async def record_fleet_order_completion(conn, fleet_order_id: str, appliance_id: str, status: str = "completed"):
-    """Record that an appliance completed a fleet order."""
+async def record_fleet_order_completion(
+    conn,
+    fleet_order_id: str,
+    appliance_id: str,
+    status: str = "completed",
+    output: Optional[dict] = None,
+    error_message: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+):
+    """Record that an appliance completed a fleet order.
+
+    Phase 12.1 (Session 205): accepts + persists diagnostic output,
+    error_message, and duration_ms so failures on signed fleet orders
+    are remotely diagnosable. Backward compat: existing callers that
+    only pass status continue to work; the new fields default to NULL.
+    """
     try:
+        # Truncate oversized output to 64 KB to prevent a misbehaving
+        # daemon from filling the DB with verbose error dumps.
+        if output is not None:
+            try:
+                serialized = json.dumps(output)
+                if len(serialized) > 65536:
+                    output = {
+                        "_truncated": True,
+                        "_original_bytes": len(serialized),
+                        "preview": serialized[:60000] + "...<truncated>",
+                    }
+            except Exception:
+                output = {"_unserializable": str(output)[:4000]}
+
+        if error_message and len(error_message) > 4096:
+            error_message = error_message[:4093] + "..."
+
         await conn.execute("""
-            INSERT INTO fleet_order_completions (fleet_order_id, appliance_id, status)
-            VALUES ($1, $2, $3)
+            INSERT INTO fleet_order_completions (
+                fleet_order_id, appliance_id, status,
+                output, error_message, duration_ms
+            )
+            VALUES ($1, $2, $3, $4::jsonb, $5, $6)
             ON CONFLICT (fleet_order_id, appliance_id) DO UPDATE SET
-                status = EXCLUDED.status, completed_at = NOW()
-        """, UUID(fleet_order_id), appliance_id, status)
+                status = EXCLUDED.status,
+                output = COALESCE(EXCLUDED.output, fleet_order_completions.output),
+                error_message = COALESCE(EXCLUDED.error_message, fleet_order_completions.error_message),
+                duration_ms = COALESCE(EXCLUDED.duration_ms, fleet_order_completions.duration_ms),
+                completed_at = NOW()
+        """,
+            UUID(fleet_order_id), appliance_id, status,
+            json.dumps(output) if output is not None else None,
+            error_message,
+            duration_ms,
+        )
     except Exception as e:
         logger.warning(f"Failed to record fleet order completion: {e}")
 

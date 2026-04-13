@@ -54,6 +54,7 @@ from dashboard_api.org_credentials import router as org_credentials_router
 from dashboard_api.provisioning import router as provisioning_router
 from dashboard_api.partners import router as partners_router, branding_public_router
 from dashboard_api.fleet_intelligence import router as fleet_intelligence_router
+from dashboard_api.diagnostic_api import router as diagnostic_api_router
 from dashboard_api.discovery import router as discovery_router
 from dashboard_api.runbook_config import router as runbook_config_router
 from dashboard_api.users import router as users_router
@@ -1697,6 +1698,7 @@ app.include_router(reconcile_admin_router)  # /api/admin/reconcile/events
 app.include_router(provisioning_router)
 app.include_router(partners_router)
 app.include_router(fleet_intelligence_router)
+app.include_router(diagnostic_api_router)
 app.include_router(branding_public_router)  # Public partner branding (no auth, for login pages)
 app.include_router(discovery_router)
 app.include_router(runbook_config_router)
