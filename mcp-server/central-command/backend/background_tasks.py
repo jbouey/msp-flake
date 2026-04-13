@@ -788,6 +788,7 @@ from .flywheel_math import (
     REGIME_DROP_THRESHOLD,
     REGIME_CRITICAL_THRESHOLD,
     classify_regime_delta,
+    classify_absolute_floor,
 )
 
 
@@ -818,6 +819,10 @@ async def regime_change_detector_loop():
 
             pool = await get_pool()
             async with admin_connection(pool) as conn:
+                # Phase 15 closing: include rule age (created_at) + drop the
+                # n7 >= 10 HAVING so the absolute-floor branch can catch
+                # rules with as few as 20 samples. The delta branch still
+                # checks n7 >= 10 inline.
                 rows = await conn.fetch("""
                     WITH recent AS (
                         SELECT et.runbook_id,
@@ -829,9 +834,10 @@ async def regime_change_detector_loop():
                         WHERE et.resolution_level = 'L1'
                           AND et.created_at > NOW() - INTERVAL '30 days'
                         GROUP BY et.runbook_id
-                        HAVING COUNT(*) FILTER (WHERE et.created_at > NOW() - INTERVAL '7 days') >= 10
+                        HAVING COUNT(*) FILTER (WHERE et.created_at > NOW() - INTERVAL '7 days') >= 1
                     )
-                    SELECT l.rule_id, l.runbook_id, r.n7, r.s7, r.n30, r.s30
+                    SELECT l.rule_id, l.runbook_id, r.n7, r.s7, r.n30, r.s30,
+                           EXTRACT(EPOCH FROM (NOW() - l.created_at)) / 3600.0 AS rule_age_hours
                     FROM l1_rules l
                     JOIN recent r ON r.runbook_id = l.runbook_id
                     WHERE l.promoted_from_l2 = true
@@ -841,13 +847,26 @@ async def regime_change_detector_loop():
                 detected = 0
                 for r in rows:
                     n7, s7, n30, s30 = r["n7"], r["s7"], r["n30"], r["s30"]
-                    if n7 == 0 or n30 == 0:
+                    if n7 == 0:
                         continue
                     rate_7 = float(s7) / n7
-                    rate_30 = float(s30) / n30
-                    severity = classify_regime_delta(rate_7, rate_30)
+
+                    # Branch A: delta-based regime change (works for rules
+                    # with comparable 30-day baseline; needs n7 >= 10)
+                    severity = None
+                    if n30 > 0 and n7 >= 10:
+                        rate_30 = float(s30) / n30
+                        severity = classify_regime_delta(rate_7, rate_30)
+
+                    # Branch B: absolute-floor (catches rules that were
+                    # bad from day 1; only fires after the 24h canary
+                    # window so we don't double-flag fresh promotions)
                     if severity is None:
-                        continue  # No significant drop
+                        rule_age_h = float(r["rule_age_hours"] or 0)
+                        severity = classify_absolute_floor(rate_7, n7, rule_age_h)
+
+                    if severity is None:
+                        continue  # No event to record
 
                     # Idempotency: skip if we already flagged this in the last 24h
                     existing = await conn.fetchval("""
@@ -860,6 +879,11 @@ async def regime_change_detector_loop():
                     if existing:
                         continue
 
+                    # rate_30 may be undefined if we entered via the
+                    # absolute-floor branch (n30 was 0 or n7 was < 10).
+                    # Compute defensively from the row data so the INSERT
+                    # always has a value.
+                    rate_30 = float(s30) / n30 if (n30 and n30 > 0) else 0.0
                     delta = rate_7 - rate_30
                     await conn.execute("""
                         INSERT INTO l1_rule_regime_events
@@ -867,7 +891,7 @@ async def regime_change_detector_loop():
                              delta, sample_size_7d, sample_size_30d, severity)
                         VALUES ($1, $2, $3, $4, $5, $6, $7)
                     """, r["rule_id"], round(rate_7, 3), round(rate_30, 3),
-                        round(delta, 3), n7, n30, severity)
+                        round(delta, 3), n7, n30 or 0, severity)
 
                     logger.warning(
                         "L1 regime change detected",
@@ -1348,6 +1372,36 @@ async def flywheel_promotion_loop():
                         for row in auto_disabled:
                             logger.warning(
                                 "Promoted rule auto-disabled (success rate < 70%)",
+                                rule_id=row[0],
+                            )
+
+                    # 5a-bis (Phase 15 closing): regime-driven LIFETIME
+                    # auto-disable. The 48h canary above only catches early
+                    # failures; rules promoted long ago that REGRESS or
+                    # were always-bad fall through. The regime detector now
+                    # emits 'critical' (delta) + 'absolute_low' (floor)
+                    # events. Disable any promoted_from_l2 rule with an
+                    # unacknowledged event of either severity in the last
+                    # 24h. Operator can re-enable + ack to suppress.
+                    lifetime_disabled = await db.execute(text("""
+                        UPDATE l1_rules SET enabled = false
+                        WHERE promoted_from_l2 = true
+                          AND enabled = true
+                          AND rule_id IN (
+                              SELECT DISTINCT rce.rule_id
+                              FROM l1_rule_regime_events rce
+                              WHERE rce.severity IN ('critical', 'absolute_low')
+                                AND rce.acknowledged_at IS NULL
+                                AND rce.detected_at > NOW() - INTERVAL '24 hours'
+                          )
+                        RETURNING rule_id
+                    """))
+                    lifetime_rows = lifetime_disabled.fetchall()
+                    await db.commit()
+                    if lifetime_rows:
+                        for row in lifetime_rows:
+                            logger.warning(
+                                "Promoted rule lifetime auto-disabled (regime event critical/absolute_low)",
                                 rule_id=row[0],
                             )
 

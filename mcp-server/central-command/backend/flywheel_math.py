@@ -47,6 +47,50 @@ def classify_regime_delta(rate_7: float, rate_30: float) -> str | None:
     return "warning"
 
 
+# ─── Phase 15 closing: absolute-floor regime detection ─────────────
+#
+# The delta-based regime detector misses rules that were BAD FROM
+# DAY 1 (the 48h canary's job) because rate_7 ≈ rate_30 means delta
+# ≈ 0, so classify_regime_delta returns None. This left rules like
+# L1-AUTO-SCREEN-LOCK-POLICY at 0%/31 still enabled because:
+#   - canary only watches the first 48h, this rule is older
+#   - regime detector skips zero-delta cases
+#
+# The fix: an ABSOLUTE-FLOOR check that flags regardless of delta.
+# Conservative thresholds so we don't fire on rules with low
+# sample sizes — N>=20 is a real-data minimum.
+ABSOLUTE_LOW_RATE_CEILING = 0.30
+ABSOLUTE_LOW_MIN_SAMPLES = 20
+ABSOLUTE_LOW_RULE_AGE_HOURS = 24  # let canary handle the first day
+
+
+def classify_absolute_floor(
+    rate_7: float, n_7: int, rule_age_hours: float,
+) -> str | None:
+    """Return 'absolute_low' if a rule's 7-day success rate is below
+    the absolute floor (regardless of delta vs baseline), else None.
+
+    Tuned to NOT overlap with the 48h canary — only fires if
+    rule_age_hours > 24, so canary owns days 0-1, this owns days 1+.
+
+    Args:
+      rate_7:           current 7-day rolling success rate
+      n_7:              number of executions in the last 7 days
+      rule_age_hours:   how long the rule has been active
+
+    Returns:
+      'absolute_low' — rule is bad and has been long enough to know
+      None           — within tolerance, or not enough data, or canary territory
+    """
+    if rule_age_hours <= ABSOLUTE_LOW_RULE_AGE_HOURS:
+        return None
+    if n_7 < ABSOLUTE_LOW_MIN_SAMPLES:
+        return None
+    if rate_7 >= ABSOLUTE_LOW_RATE_CEILING:
+        return None
+    return "absolute_low"
+
+
 # ─── Phase 8: promotion-threshold Bayesian drift cap ───────────────
 
 # Per-day upper bound on how much the per-incident-type promotion
