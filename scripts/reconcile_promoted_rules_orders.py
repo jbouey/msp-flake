@@ -40,6 +40,23 @@ sys.path.insert(0, "/app")
 sys.path.insert(0, "/app/dashboard_api")
 
 
+def _ensure_signing_key_loaded() -> None:
+    """The FastAPI lifespan is what normally populates main.signing_key.
+    One-off scripts don't run the lifespan, so signing_key is None and
+    sign_data() raises (previously: silently returned a bogus placeholder
+    that broke Ed25519 verification on the appliance). Load it manually."""
+    import main  # noqa: E402
+    if getattr(main, "signing_key", None) is not None:
+        return
+    main.load_or_create_signing_key()
+    if main.signing_key is None:
+        raise RuntimeError(
+            "signing_key still None after load_or_create_signing_key(); "
+            "check SIGNING_KEY_FILE env var and file permissions"
+        )
+    print(f"Loaded signing_key, pubkey[:16]={main.get_public_key_hex()[:16]}")
+
+
 async def find_orphan_promotions(conn: asyncpg.Connection) -> List[Tuple[str, str, str, str]]:
     """Return (rule_id, site_id, runbook_id, rule_yaml) for every
     promoted_rules row that needs a sync_promoted_rule order issued.
@@ -124,6 +141,9 @@ async def main():
     if not url:
         print("ERROR: DATABASE_URL or MIGRATION_DATABASE_URL must be set", file=sys.stderr)
         sys.exit(2)
+
+    if args.apply:
+        _ensure_signing_key_loaded()
 
     conn = await asyncpg.connect(url)
     try:

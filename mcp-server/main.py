@@ -263,9 +263,21 @@ def sign_data(data: str) -> str:
     """Sign data and return hex-encoded signature.
 
     Phase B: routes through signing_backend so shadow/vault mode is
-    a one-env-var flip. Byte-identical output in file mode."""
+    a one-env-var flip. Byte-identical output in file mode.
+
+    FAILS LOUDLY if signing_key isn't initialized — the prior
+    SHA256-doubled placeholder produced 128-char hex that PASSED
+    length validation but FAILED Ed25519 verification on the
+    appliance, silently dropping fleet orders. One-off scripts
+    must call load_or_create_signing_key() before signing.
+    """
     if signing_key is None:
-        return hashlib.sha256(data.encode()).hexdigest() * 2  # placeholder in test/dev
+        raise RuntimeError(
+            "sign_data called before signing_key initialized. "
+            "Call load_or_create_signing_key() first. "
+            "(Silent placeholder fallback removed after a reconcile "
+            "script produced invalid fleet-order signatures.)"
+        )
     from dashboard_api.signing_backend import get_signing_backend
     result = get_signing_backend().sign(data.encode())
     return result.signature.hex()
