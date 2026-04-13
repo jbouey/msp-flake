@@ -1546,6 +1546,7 @@ async def lifespan(app: FastAPI):
         threshold_tuner_loop,
         exemplar_miner_loop,
     )
+    from dashboard_api.privileged_access_notifier import privileged_notifier_loop
 
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
@@ -1557,6 +1558,7 @@ async def lifespan(app: FastAPI):
         ("regime_change_detector", regime_change_detector_loop),
         ("threshold_tuner", threshold_tuner_loop),
         ("exemplar_miner", exemplar_miner_loop),
+        ("privileged_notifier", privileged_notifier_loop),
         ("cve_watch", cve_sync_loop),
         ("cve_remediation", cve_remediation_loop),
         ("framework_sync", framework_sync_loop),

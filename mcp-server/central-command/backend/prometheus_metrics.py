@@ -793,6 +793,43 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: orphan runbooks query failed")
 
+            # Phase 14 T2: notifier queue depth. > 0 for more than a few
+            # minutes means email delivery is stuck — investigate SMTP.
+            try:
+                row = await conn.fetchrow("""
+                    SELECT COUNT(*) AS n FROM compliance_bundles
+                    WHERE check_type = 'privileged_access'
+                      AND notified_at IS NULL
+                      AND checked_at > NOW() - INTERVAL '1 day'
+                """)
+                sections.append(_gauge(
+                    "osiriscare_privileged_notifier_queue_depth",
+                    "Unnotified privileged-access bundles (last 24h)",
+                    [({}, float(row["n"] or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: privileged notifier queue failed")
+
+            # Phase 14 watchdog: chain-enforcement trigger installed?
+            # This is the cryptographic floor. If 0, the DB's enforcement
+            # layer is missing — PAGE immediately.
+            try:
+                row = await conn.fetchrow("""
+                    SELECT COUNT(*) AS n FROM pg_trigger
+                    WHERE tgname IN (
+                        'trg_enforce_privileged_chain',
+                        'trg_enforce_privileged_immutability'
+                    )
+                    AND NOT tgisinternal
+                """)
+                sections.append(_gauge(
+                    "osiriscare_privileged_chain_triggers_installed",
+                    "Count of privileged-chain enforcement triggers (should be 2)",
+                    [({}, float(row["n"] or 0))],
+                ))
+            except Exception:
+                logger.exception("metrics: chain trigger watchdog failed")
+
             # Phase 14: privileged-access event counts (7d + 24h-per-site)
             # Feeds anomaly detection: >10 fleet-wide/7d OR ≥2 per site/24h
             # are alert conditions. Source of truth = compliance_bundles

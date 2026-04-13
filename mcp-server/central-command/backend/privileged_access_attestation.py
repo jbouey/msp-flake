@@ -43,6 +43,20 @@ logger = logging.getLogger(__name__)
 SIGNING_KEY_PATH = os.getenv("SIGNING_KEY_FILE", "/app/secrets/signing.key")
 
 
+# ─── Privileged event catalog ─────────────────────────────────────
+# MUST stay in lockstep with:
+#   fleet_cli.PRIVILEGED_ORDER_TYPES
+#   migration 175 v_privileged_types
+# Enforced by scripts/check_privileged_chain_lockstep.py.
+# See CLAUDE.md § "Privileged-Access Chain of Custody".
+ALLOWED_EVENTS = {
+    "enable_emergency_access",
+    "disable_emergency_access",
+    "signing_key_rotation",
+    "bulk_remediation",
+}
+
+
 class PrivilegedAccessAttestationError(Exception):
     """Raised when an attestation cannot be written. The caller must
     refuse to proceed with the downstream privileged action."""
@@ -113,12 +127,6 @@ async def create_privileged_access_attestation(
       - reason ≥ 20 chars (no "testing" / "just doing it")
       - event_type in allowed set
     """
-    ALLOWED_EVENTS = {
-        "enable_emergency_access",
-        "disable_emergency_access",
-        "signing_key_rotation",
-        "bulk_remediation",
-    }
     if event_type not in ALLOWED_EVENTS:
         raise PrivilegedAccessAttestationError(
             f"event_type {event_type!r} not in allowed set {sorted(ALLOWED_EVENTS)}"
