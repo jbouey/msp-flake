@@ -425,6 +425,19 @@ async def issue_sync_promoted_rule_orders(
             from .order_signing import sign_fleet_order
         except ImportError:
             from order_signing import sign_fleet_order
+    try:
+        from dashboard_api.flywheel_math import normalize_rule_yaml_action
+    except ImportError:
+        try:
+            from .flywheel_math import normalize_rule_yaml_action
+        except ImportError:
+            from flywheel_math import normalize_rule_yaml_action
+
+    # Translate `action: execute_runbook` → daemon-whitelisted action.
+    # Fail loudly on unknown prefixes — better than shipping an order
+    # the daemon will reject. Historical rule_yaml may still contain
+    # execute_runbook; this rewrite happens only at order-issue time.
+    rule_yaml = normalize_rule_yaml_action(rule_yaml, runbook_id)
 
     if scope == "site":
         if not site_id:

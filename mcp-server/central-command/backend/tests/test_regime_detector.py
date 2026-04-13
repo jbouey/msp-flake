@@ -139,6 +139,85 @@ def test_absolute_floor_constants_exported():
     assert ABSOLUTE_LOW_RULE_AGE_HOURS == 24
 
 
+def test_normalize_rule_action_linux_prefixes():
+    """LIN-*, L1-LIN-*, NET-*, SUID-* all resolve to run_linux_runbook."""
+    from flywheel_math import normalize_rule_action
+    for rb in (
+        "LIN-SSH-001", "LIN-FW-001", "LIN-SVC-001",
+        "L1-LIN-SVC-001", "L1-LIN-USERS-001",
+        "L1-NET-DNS-001", "L1-NET-PORTS-001",
+        "L1-SUID-001",
+    ):
+        assert normalize_rule_action(rb) == "run_linux_runbook", rb
+
+
+def test_normalize_rule_action_windows_prefixes():
+    """RB-WIN-*, L1-WIN-*, WIN-* all resolve to run_windows_runbook."""
+    from flywheel_math import normalize_rule_action
+    for rb in (
+        "RB-WIN-SEC-002", "RB-WIN-SVC-001", "RB-WIN-STG-002",
+        "L1-WIN-SEC-SCREENLOCK", "L1-WIN-ROGUE-TASKS-001",
+        "WIN-SEC-001",
+    ):
+        assert normalize_rule_action(rb) == "run_windows_runbook", rb
+
+
+def test_normalize_rule_action_unknown_prefix_raises():
+    """Unknown prefix is a PROMOTION-TIME error — fail loudly rather
+    than ship an order the daemon will reject. 'general' is in prod
+    (15 rows) and must fail until the promoter classifies it."""
+    import pytest
+    from flywheel_math import normalize_rule_action
+    with pytest.raises(ValueError, match="no known platform prefix"):
+        normalize_rule_action("RB-DRIFT-001")
+    with pytest.raises(ValueError, match="no known platform prefix"):
+        normalize_rule_action("general")
+    with pytest.raises(ValueError, match="runbook_id required"):
+        normalize_rule_action("")
+
+
+def test_normalize_rule_yaml_action_rewrites_execute_runbook():
+    """Round-table bug: prod YAML has `action: execute_runbook` which
+    the daemon whitelist rejects. Rewrite based on runbook_id prefix."""
+    from flywheel_math import normalize_rule_yaml_action
+    yaml_in = (
+        "id: L1-AUTO-SCREEN-LOCK-POLICY\n"
+        "name: screen_lock_policy\n"
+        "action: execute_runbook\n"
+        "runbook_id: L1-WIN-SEC-SCREENLOCK\n"
+    )
+    yaml_out = normalize_rule_yaml_action(yaml_in, "L1-WIN-SEC-SCREENLOCK")
+    assert "action: run_windows_runbook" in yaml_out
+    assert "action: execute_runbook" not in yaml_out
+    # Preserves everything else byte-for-byte except the one line
+    assert yaml_out.endswith("\n")
+    assert "id: L1-AUTO-SCREEN-LOCK-POLICY" in yaml_out
+    assert "runbook_id: L1-WIN-SEC-SCREENLOCK" in yaml_out
+
+
+def test_normalize_rule_yaml_action_noop_when_already_correct():
+    """If YAML already has run_windows_runbook, don't touch it."""
+    from flywheel_math import normalize_rule_yaml_action
+    yaml_in = (
+        "id: L1-X\n"
+        "action: run_windows_runbook\n"
+        "runbook_id: RB-WIN-SEC-001\n"
+    )
+    yaml_out = normalize_rule_yaml_action(yaml_in, "RB-WIN-SEC-001")
+    assert yaml_out == yaml_in
+
+
+def test_normalize_rule_yaml_action_linux_path():
+    from flywheel_math import normalize_rule_yaml_action
+    yaml_in = (
+        "id: L1-AUTO-LINUX-FIREWALL\n"
+        "action: execute_runbook\n"
+        "runbook_id: LIN-FW-001\n"
+    )
+    yaml_out = normalize_rule_yaml_action(yaml_in, "LIN-FW-001")
+    assert "action: run_linux_runbook" in yaml_out
+
+
 def test_absolute_floor_screen_lock_scenario():
     """Reproduces the prod incident that motivated this:
     L1-AUTO-SCREEN-LOCK-POLICY at 0% over 31 calls, rule promoted

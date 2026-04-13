@@ -91,6 +91,78 @@ def classify_absolute_floor(
     return "absolute_low"
 
 
+# ─── Phase 15 closing: rule-yaml action normalization ──────────────
+#
+# Round-table audit discovered that every promoted_rules row in prod
+# had `action: execute_runbook` in its YAML — but the Go daemon's
+# allowedRuleActions whitelist (processor.go) only accepts
+# `run_windows_runbook`, `run_linux_runbook`, `escalate`, etc. Every
+# fleet_order shipping a promoted rule was rejected at the appliance
+# with "action X not in allowed actions", and deployment_count stayed
+# at 0 fleet-wide.
+#
+# This helper translates based on runbook_id prefix so the promotion
+# writers + reconcile script emit daemon-compatible YAML. Pure function
+# so it's trivially testable offline.
+
+def normalize_rule_action(runbook_id: str) -> str:
+    """Translate a runbook_id prefix into the daemon's whitelisted action.
+
+    Raises ValueError on unknown prefixes — we'd rather fail loudly at
+    promotion time than ship an order the daemon will reject.
+
+    Known prefixes (from inspection of prod promoted_rules + runbook
+    registry):
+      LIN-*, L1-LIN-*, L1-NET-*, L1-SUID-*  → run_linux_runbook
+      RB-WIN-*, L1-WIN-*, WIN-*              → run_windows_runbook
+      MAC-*, L1-MAC-*                        → run_macos_runbook (not in
+                                               daemon whitelist yet — raise)
+      RB-DRIFT-*, general, ''                → ValueError (must be
+                                               classified by promoter)
+    """
+    if not runbook_id:
+        raise ValueError("runbook_id required for action classification")
+    rb = runbook_id.strip().upper()
+    # Strip L1- prefix so both `L1-WIN-*` and `WIN-*` hit the same branch
+    if rb.startswith("L1-"):
+        rb = rb[3:]
+    if rb.startswith(("LIN-", "LINUX-", "NET-", "SUID-")):
+        return "run_linux_runbook"
+    if rb.startswith(("WIN-", "RB-WIN-", "WINDOWS-")):
+        return "run_windows_runbook"
+    raise ValueError(
+        f"runbook_id {runbook_id!r} has no known platform prefix; "
+        f"cannot classify as linux/windows. Add to flywheel_math.normalize_rule_action."
+    )
+
+
+def normalize_rule_yaml_action(rule_yaml: str, runbook_id: str) -> str:
+    """Rewrite `action: execute_runbook` → daemon-whitelisted action
+    based on runbook_id prefix. No-op if the YAML already has a
+    whitelisted action. Used by promotion writers + the backfill
+    reconcile script."""
+    target = normalize_rule_action(runbook_id)
+    lines = rule_yaml.splitlines()
+    out = []
+    replaced = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("action:"):
+            # Extract the current action and only rewrite if it's
+            # the legacy execute_runbook value.
+            current = stripped[len("action:"):].strip()
+            if current == "execute_runbook":
+                out.append(line.replace("execute_runbook", target))
+                replaced = True
+                continue
+        out.append(line)
+    # Preserve trailing newline if the input had one
+    result = "\n".join(out)
+    if rule_yaml.endswith("\n") and not result.endswith("\n"):
+        result += "\n"
+    return result
+
+
 # ─── Phase 8: promotion-threshold Bayesian drift cap ───────────────
 
 # Per-day upper bound on how much the per-incident-type promotion
