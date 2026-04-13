@@ -182,9 +182,46 @@ python3 .agent/scripts/context-manager.py status       # View state
 python3 .agent/scripts/context-manager.py new-session N description
 python3 .agent/scripts/context-manager.py end-session
 python3 .agent/scripts/context-manager.py compact      # Archive old sessions
+python3 .agent/scripts/context-manager.py validate     # Memory hygiene check
 ```
 
-Primary state: `.agent/claude-progress.json`
+Primary state: `.agent/claude-progress.json` (schema v2 — see `.agent/archive/claude-progress.v1.json` for legacy v1 dump).
+
+## Memory Hygiene (Session 205 cleanup, ENFORCED)
+
+- `~/.claude/projects/.../memory/MEMORY.md` is **truncated at ~200 lines** at session start. Keep it as a pure index of pointer-rows; put detail in topic files.
+- Every topic file under `memory/` must start with YAML frontmatter:
+  ```yaml
+  ---
+  name: short title
+  description: one-line — used when deciding to load
+  type: feedback | project | reference | user
+  decay_after_days: 30  # feedback default; project=60; reference=365
+  last_verified: YYYY-MM-DD
+  ---
+  ```
+- `decay_after_days` is a soft signal: a memory older than that should be re-verified or archived. Defaults: feedback=30, project=60, reference=365.
+- `active_tasks` field in `claude-progress.json` is **always empty** in v2 — Claude Code's TaskCreate is the authoritative task store. Do not regress to in-line tasks.
+- `python3 .agent/scripts/context-manager.py validate` runs all hygiene checks and is wired into `.github/workflows/memory-hygiene.yml` on every push that touches `.agent/`. Pytest cases at `.agent/scripts/test_context_manager.py`.
+
+## Privileged-Access Chain of Custody (Session 205, INVIOLABLE)
+
+**`client identity → policy approval → execution → attestation` is an unbroken cryptographically verifiable chain.** Any privileged action on a customer appliance (`enable_emergency_access`, `disable_emergency_access`, `bulk_remediation`, `signing_key_rotation`) MUST carry the chain end-to-end. Enforced at three layers — breaking any one is a **security incident**, not a cleanup task:
+
+- **CLI** (`backend/fleet_cli.py`): refuses privileged orders without `--actor-email` + `--reason ≥20ch` + successful `create_privileged_access_attestation()`. Rate-limited 3/site/week via `count_recent_privileged_events`.
+- **API** (`backend/privileged_access_api.py`): partner-initiated + client-approved request flow. Each state transition writes a chained attestation bundle. Per-site `privileged_access_consent_config` controls whether client approval is required.
+- **DB** (migration 175 `trg_enforce_privileged_chain`): REJECTS any `fleet_orders` INSERT of a privileged type unless `parameters->>'attestation_bundle_id'` matches a real `compliance_bundles WHERE check_type='privileged_access'` row for the same site.
+
+The attestation itself is Ed25519-signed by server, hash-chained to the site's prior evidence bundle (unified chain across drift + remediation + privileged events), OTS-anchored via the existing Merkle-batch worker, and published into `/api/evidence/sites/{id}/auditor-kit` ZIP + the client portal evidence view. Customers + auditors verify independently.
+
+**Three lists MUST stay in lockstep** (any gap = chain violation):
+- `fleet_cli.PRIVILEGED_ORDER_TYPES`
+- `privileged_access_attestation.ALLOWED_EVENTS`
+- `migration 175 v_privileged_types` in `enforce_privileged_order_attestation()`
+
+**Never** log actor as `system`/`fleet-cli`/`admin` — actor MUST be a named human email. **Never** flip `client_approval_required=false` without a consent-config attestation bundle. **Never** `ALTER TABLE fleet_orders DISABLE TRIGGER` for bulk ops. **Never** skip the OTS enqueue for `privileged_access` bundles.
+
+See `docs/security/emergency-access-policy.md` + `.claude/projects/-Users-dad-Documents-Msp-Flakes/memory/feedback_critical_architectural_principles.md` §8.
 
 ## Rules
 
@@ -300,3 +337,8 @@ Primary state: `.agent/claude-progress.json`
 - **HIPAA 7-year retention enforced (Session 204).** The 3-year (1095-day) automated DELETE from `admin_audit_log` in `alert_router.py` was removed. HIPAA §164.316(b)(2)(i) requires minimum 6–7 year retention. DELETE triggers now enforce immutability.
 - **Fleet order health check rollback bug (Session 204, updated Session 205).** ORIGINAL: in-process goroutine for health-check + rollback died when `systemctl restart` killed the old daemon. FIXED at commit 3a3f3e2 (Apr 2) — handler now uses `systemd-run --timer` external transient units that survive the restart. CURRENT BUG: the order's completion ACK fires BEFORE the 70s health check runs. `handleUpdateDaemon` returns success when the binary is installed and restart is scheduled. If the health check later rolls back, `fleet_order_completions.status='completed'` is a lie — backend thinks the upgrade succeeded but the appliance silently reverted. Symptom: `site_appliances.agent_version` lags the `fleet_orders.parameters->>'version'` despite `completed` status. Detection: on every checkin, if `agent_version != most_recent_fleet_order_completion.version for update_daemon`, mark completion as `rolled_back` and re-queue the order. Workaround today: manual WG swap for the straggler.
 - **Fleet CLI must include `--param site_id=<site>` for v0.3.82 compatibility.** The April 6 order that worked on the installer included `site_id` in parameters. Orders without it are silently dropped by v0.3.82 daemons (unconfirmed but correlates with observed behavior).
+- **Flywheel Spine (Session 206, migration 181).** `promoted_rules.lifecycle_state` is the authoritative state field — 9 states (`proposed`,`shadow`,`approved`,`rolling_out`,`active`,`regime_warning`,`auto_disabled`,`graduated`,`retired`). All transitions flow through `advance_lifecycle(rule_id, new_state, event_type, actor, stage, proof, reason, site_id, outcome)` — the ONLY sanctioned mutation path. A trigger blocks direct UPDATE of `lifecycle_state` (tamper-evident; DBA-only bypass via `SET LOCAL app.allow_lifecycle_bypass='true'`). Every transition writes an append-only row to `promoted_rule_events` (partitioned monthly, DELETE+UPDATE blocked). Three lists must stay in lockstep for any new event_type or state: CHECK on `promoted_rule_events.event_type`, CHECK on `promoted_rules.lifecycle_state`, seeds in `promoted_rule_lifecycle_transitions`.
+- **Flywheel orchestrator replaces fragmented Step-5 in flywheel_promotion_loop.** `flywheel_state.run_orchestrator_tick(conn, enforce=True|False)` runs 5 transitions (RolloutAcked, CanaryFailure, RegimeAbsoluteLow, Graduation, ZombieSite). Each transition has its own try/except with `logger.error(exc_info=True)` + Prom counter — one failure cannot mask another. Background loop `flywheel_orchestrator_loop` runs every 5 min. Mode controlled by `FLYWHEEL_ORCHESTRATOR_MODE=shadow|enforce` (default `shadow`). Cutover: env var + `docker compose restart mcp-server`.
+- **`safe_rollout_promoted_rule` is the single rollout entrypoint.** All 3 promotion writers (`promote_candidate`, `learning_api.bulk_promote`, `client_portal.approve`) delegate here. On success it calls `advance_lifecycle(approved→rolling_out)` so the ledger reflects the rollout. Illegal transitions log WARNING (not ERROR) — the fleet_order write itself is authoritative.
+- **Deploy bug (Session 206, fixed).** `docker compose up -d` alone is a no-op when compose config hasn't changed — Python code was bind-mounted but the running process kept old modules. 6h of silent "green" deploys today. Fix: workflow runs `docker compose restart mcp-server frontend` after `up -d`, PLUS `/api/version` verify step that asserts `runtime_sha == disk_sha == GITHUB_SHA`. Either mismatch → CI fails. RELEASE_SHA stamped inside `dashboard_api/` so atomic rsync carries it to `/app/dashboard_api/RELEASE_SHA` (bind-mounted path).
+- **pgbouncer DuplicatePreparedStatement on restart (OPEN WORKAROUND).** When mcp-server restarts through pgbouncer's transaction pool, asyncpg's deterministic `__asyncpg_stmt_N__` names collide with statements left by prior process. Container crash-loops at startup. Workaround: `cd /opt/mcp-server && docker compose down mcp-server pgbouncer && docker compose up -d`. Root fix pending: SQLAlchemy `connect` event running `DEALLOCATE ALL`, or asyncpg `prepared_statement_name_func` with UUID.
