@@ -24,8 +24,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .shared import get_db
-from .partners import require_partner_role
+try:
+    from .shared import get_db
+    from .partners import require_partner_role
+except ImportError:
+    # Bare-module test import path (pytest with backend/ on sys.path)
+    from shared import get_db
+    from partners import require_partner_role
 
 logger = logging.getLogger(__name__)
 
@@ -239,51 +244,13 @@ async def partner_fleet_intelligence_rules(
     return out
 
 
-def _build_rule_narrative(
-    rule_id: str,
-    runbook_name: Optional[str],
-    incident_type: Optional[str],
-    triggers_30d: int,
-    promoted_at: Optional[datetime],
-    deployment_count: int,
-    confidence: Optional[float],
-    hipaa_controls: Optional[List[str]],
-) -> str:
-    """One-paragraph human-readable explanation of a promoted rule.
-    Designed for auditor + partner display. Deterministic; no LLM."""
-    runbook_label = runbook_name or rule_id
-    incident_label = (incident_type or "an observed pattern").replace("_", " ")
-    age_days = 0
-    if promoted_at:
-        age_days = int(
-            (datetime.now(timezone.utc) - promoted_at).total_seconds() / 86400
-        )
-
-    conf_pct = int((confidence or 0.9) * 100)
-    hipaa_clause = ""
-    if hipaa_controls:
-        hipaa_clause = f" Aligned with HIPAA {', '.join(hipaa_controls[:3])}."
-
-    trigger_clause = (
-        f"Triggered {triggers_30d} time{'s' if triggers_30d != 1 else ''} "
-        f"in the last 30 days across your fleet."
-        if triggers_30d > 0
-        else "No triggers recorded in the last 30 days — the rule is on "
-             "standby in case the pattern recurs."
-    )
-    deploy_clause = (
-        f"Deployed to your appliances {deployment_count} time"
-        f"{'s' if deployment_count != 1 else ''}."
-        if deployment_count > 0 else
-        "Deployment pending next appliance check-in."
-    )
-
-    return (
-        f"OsirisCare auto-promoted this rule ({runbook_label}) {age_days} "
-        f"days ago after observing {incident_label} with ≥{conf_pct}% "
-        f"successful-resolution confidence across multiple customers. "
-        f"{trigger_clause} {deploy_clause}{hipaa_clause}"
-    )
+# Implementation moved to flywheel_math.build_rule_narrative so it's
+# unit-testable without dragging in the whole FastAPI/SQLAlchemy
+# import graph. This shim preserves the old import path.
+try:
+    from .flywheel_math import build_rule_narrative as _build_rule_narrative
+except ImportError:
+    from flywheel_math import build_rule_narrative as _build_rule_narrative
 
 
 @router.get("/regime-alerts")
@@ -299,6 +266,11 @@ async def partner_regime_alerts(
     if not sites:
         return []
 
+    # Severity ordering: ASCII 'critical' < 'warning' < 'info', so the
+    # naïve `ORDER BY severity DESC` ranks 'warning' ABOVE 'critical' —
+    # exactly backwards. Use a CASE rank so critical reliably surfaces
+    # first regardless of severity alphabet. Caught by Phase 15 closing
+    # test test_regime_alerts_orders_critical_first.
     rows = (await db.execute(text("""
         SELECT rce.rule_id, rce.detected_at, rce.window_7d_rate,
                rce.baseline_30d_rate, rce.delta, rce.severity,
@@ -307,7 +279,14 @@ async def partner_regime_alerts(
         JOIN l1_rules l ON l.rule_id = rce.rule_id
         WHERE rce.detected_at > NOW() - make_interval(days => :d)
           AND rce.acknowledged_at IS NULL
-        ORDER BY rce.severity DESC, rce.detected_at DESC
+        ORDER BY
+          CASE rce.severity
+            WHEN 'critical' THEN 0
+            WHEN 'warning'  THEN 1
+            WHEN 'info'     THEN 2
+            ELSE 3
+          END,
+          rce.detected_at DESC
         LIMIT 100
     """), {"d": days})).fetchall()
 

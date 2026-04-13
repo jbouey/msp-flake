@@ -13,6 +13,9 @@ conversation, and the test file enforces that by failing loud.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import List, Optional
+
 
 # ─── Phase 6: regime-change detector ───────────────────────────────
 
@@ -138,3 +141,56 @@ def shadow_agreement_ratio(
     if total < 10:
         return None
     return agreements / total
+
+
+# ─── Flywheel narrative builder ────────────────────────────────────
+
+
+def build_rule_narrative(
+    rule_id: str,
+    runbook_name: Optional[str],
+    incident_type: Optional[str],
+    triggers_30d: int,
+    promoted_at: Optional[datetime],
+    deployment_count: int,
+    confidence: Optional[float],
+    hipaa_controls: Optional[List[str]],
+) -> str:
+    """One-paragraph human-readable explanation of a promoted rule.
+    Designed for auditor + partner display. Deterministic; no LLM.
+    Lives here (not in fleet_intelligence.py) so it's testable in
+    isolation without dragging in the whole FastAPI/SQLAlchemy
+    import graph."""
+    runbook_label = runbook_name or rule_id
+    incident_label = (incident_type or "an observed pattern").replace("_", " ")
+    age_days = 0
+    if promoted_at:
+        age_days = int(
+            (datetime.now(timezone.utc) - promoted_at).total_seconds() / 86400
+        )
+
+    conf_pct = int((confidence or 0.9) * 100)
+    hipaa_clause = ""
+    if hipaa_controls:
+        hipaa_clause = f" Aligned with HIPAA {', '.join(hipaa_controls[:3])}."
+
+    trigger_clause = (
+        f"Triggered {triggers_30d} time{'s' if triggers_30d != 1 else ''} "
+        f"in the last 30 days across your fleet."
+        if triggers_30d > 0
+        else "No triggers recorded in the last 30 days — the rule is on "
+             "standby in case the pattern recurs."
+    )
+    deploy_clause = (
+        f"Deployed to your appliances {deployment_count} time"
+        f"{'s' if deployment_count != 1 else ''}."
+        if deployment_count > 0 else
+        "Deployment pending next appliance check-in."
+    )
+
+    return (
+        f"OsirisCare auto-promoted this rule ({runbook_label}) {age_days} "
+        f"days ago after observing {incident_label} with ≥{conf_pct}% "
+        f"successful-resolution confidence across multiple customers. "
+        f"{trigger_clause} {deploy_clause}{hipaa_clause}"
+    )

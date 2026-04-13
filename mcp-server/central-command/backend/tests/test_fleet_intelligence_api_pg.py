@@ -311,7 +311,14 @@ REGIME_SQL = """
     JOIN l1_rules l ON l.rule_id = rce.rule_id
     WHERE rce.detected_at > NOW() - make_interval(days => $1)
       AND rce.acknowledged_at IS NULL
-    ORDER BY rce.severity DESC, rce.detected_at DESC
+    ORDER BY
+      CASE rce.severity
+        WHEN 'critical' THEN 0
+        WHEN 'warning'  THEN 1
+        WHEN 'info'     THEN 2
+        ELSE 3
+      END,
+      rce.detected_at DESC
     LIMIT 100
 """
 
@@ -420,7 +427,7 @@ async def test_ack_is_idempotent_on_already_acked(conn):
 
 
 def test_build_rule_narrative_handles_zero_triggers():
-    from fleet_intelligence import _build_rule_narrative
+    from flywheel_math import build_rule_narrative as _build_rule_narrative
     text = _build_rule_narrative(
         rule_id="rule-x",
         runbook_name="Disk cleanup",
@@ -437,7 +444,7 @@ def test_build_rule_narrative_handles_zero_triggers():
 
 
 def test_build_rule_narrative_handles_singular_vs_plural():
-    from fleet_intelligence import _build_rule_narrative
+    from flywheel_math import build_rule_narrative as _build_rule_narrative
     text_one = _build_rule_narrative(
         rule_id="r", runbook_name="X", incident_type="y",
         triggers_30d=1, promoted_at=None, deployment_count=1,
@@ -456,7 +463,7 @@ def test_build_rule_narrative_handles_singular_vs_plural():
 
 
 def test_build_rule_narrative_no_hipaa_no_clause():
-    from fleet_intelligence import _build_rule_narrative
+    from flywheel_math import build_rule_narrative as _build_rule_narrative
     text = _build_rule_narrative(
         rule_id="r", runbook_name="X", incident_type="y",
         triggers_30d=2, promoted_at=None, deployment_count=1,
