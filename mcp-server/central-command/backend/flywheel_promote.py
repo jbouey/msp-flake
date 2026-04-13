@@ -415,6 +415,41 @@ async def safe_rollout_promoted_rule(
             f"safe_rollout_promoted_rule: caller={caller} rule_id={rule_id} "
             f"site_id={site_id} orders_created={n}"
         )
+        # R6 — advance lifecycle + write ledger event so the spine
+        # reflects the rollout. Wrapped in try/except so a missing
+        # promoted_rules row (possible for fleet-wide rollouts) doesn't
+        # undo the fleet_order write.
+        if n > 0:
+            try:
+                from dashboard_api.flywheel_state import advance
+            except ImportError:
+                try:
+                    from .flywheel_state import advance
+                except ImportError:
+                    from flywheel_state import advance
+            try:
+                await advance(
+                    conn,
+                    rule_id=rule_id,
+                    new_state="rolling_out",
+                    event_type="rollout_issued",
+                    actor=f"system:{caller}",
+                    stage="rollout",
+                    site_id=site_id,
+                    proof={
+                        "orders_created": int(n),
+                        "runbook_id": runbook_id,
+                    },
+                    reason=f"{caller} issued {n} sync_promoted_rule order(s)",
+                )
+            except Exception as e:
+                # Illegal transitions (e.g. rule already graduated) are
+                # NOT fatal — the fleet_order is issued regardless, and
+                # the ledger will reflect state via a later transition.
+                logger.warning(
+                    f"safe_rollout_promoted_rule: ledger advance failed for "
+                    f"{rule_id}: {e}"
+                )
         return int(n)
     except Exception as e:
         logger.error(

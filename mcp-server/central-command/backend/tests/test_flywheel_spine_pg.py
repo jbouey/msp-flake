@@ -537,6 +537,148 @@ async def test_orchestrator_idempotent(conn):
 
 
 @pytest.mark.asyncio
+async def test_canary_failure_auto_disables(conn):
+    """Rule promoted < 48h ago with < 70% success AND >= 3 executions
+    → auto_disabled by CanaryFailureTransition."""
+    from flywheel_state import advance, CanaryFailureTransition
+    # Need execution_telemetry table in the test schema
+    await conn.execute("""
+        DROP TABLE IF EXISTS execution_telemetry;
+        CREATE TABLE execution_telemetry (
+            id BIGSERIAL PRIMARY KEY,
+            runbook_id TEXT,
+            success BOOLEAN,
+            resolution_level TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+    await conn.execute(
+        "INSERT INTO promoted_rules (rule_id, site_id) VALUES ('r-can', 's1')"
+    )
+    await conn.execute(
+        "INSERT INTO l1_rules (rule_id, runbook_id, promoted_from_l2, enabled, created_at) "
+        "VALUES ('r-can', 'RB-C', true, true, NOW() - INTERVAL '24 hours')"
+    )
+    await advance(conn, rule_id="r-can", new_state="approved",
+                  event_type="promotion_approved", actor="system:test",
+                  stage="promotion")
+    await advance(conn, rule_id="r-can", new_state="rolling_out",
+                  event_type="rollout_issued", actor="system:test",
+                  stage="rollout")
+    await advance(conn, rule_id="r-can", new_state="active",
+                  event_type="rollout_acked", actor="system:test",
+                  stage="rollout")
+    # 5 executions, 1 success = 20% rate — under 70%
+    for i in range(4):
+        await conn.execute(
+            "INSERT INTO execution_telemetry (runbook_id, success) "
+            "VALUES ('RB-C', false)"
+        )
+    await conn.execute(
+        "INSERT INTO execution_telemetry (runbook_id, success) "
+        "VALUES ('RB-C', true)"
+    )
+    tr = CanaryFailureTransition()
+    cands = await tr.find_candidates(conn)
+    assert len(cands) == 1
+    r = await tr.apply(conn, cands[0])
+    assert r.success and r.to_state == "auto_disabled"
+    state = await conn.fetchval(
+        "SELECT lifecycle_state FROM promoted_rules WHERE rule_id='r-can'"
+    )
+    assert state == "auto_disabled"
+
+
+@pytest.mark.asyncio
+async def test_graduation_transition(conn):
+    """Rule > 72h old with >= 70% success → graduated."""
+    from flywheel_state import advance, GraduationTransition
+    await conn.execute("""
+        DROP TABLE IF EXISTS execution_telemetry;
+        CREATE TABLE execution_telemetry (
+            id BIGSERIAL PRIMARY KEY, runbook_id TEXT, success BOOLEAN,
+            resolution_level TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+    await conn.execute(
+        "INSERT INTO promoted_rules (rule_id, site_id) VALUES ('r-grad', 's1')"
+    )
+    await conn.execute(
+        "INSERT INTO l1_rules "
+        "(rule_id, runbook_id, promoted_from_l2, enabled, created_at) "
+        "VALUES ('r-grad', 'RB-G', true, true, NOW() - INTERVAL '96 hours')"
+    )
+    await advance(conn, rule_id="r-grad", new_state="approved",
+                  event_type="promotion_approved", actor="system:test",
+                  stage="promotion")
+    await advance(conn, rule_id="r-grad", new_state="rolling_out",
+                  event_type="rollout_issued", actor="system:test",
+                  stage="rollout")
+    await advance(conn, rule_id="r-grad", new_state="active",
+                  event_type="rollout_acked", actor="system:test",
+                  stage="rollout")
+    # 10 executions, 9 success = 90%
+    for _ in range(9):
+        await conn.execute(
+            "INSERT INTO execution_telemetry (runbook_id, success) "
+            "VALUES ('RB-G', true)"
+        )
+    await conn.execute(
+        "INSERT INTO execution_telemetry (runbook_id, success) "
+        "VALUES ('RB-G', false)"
+    )
+    tr = GraduationTransition()
+    cands = await tr.find_candidates(conn)
+    assert len(cands) == 1
+    r = await tr.apply(conn, cands[0])
+    assert r.success and r.to_state == "graduated"
+    state, source = await conn.fetchrow(
+        "SELECT lifecycle_state, (SELECT source FROM l1_rules WHERE rule_id='r-grad')::text "
+        "FROM promoted_rules WHERE rule_id='r-grad'"
+    )
+    assert state == "graduated"
+    assert source == "synced"
+
+
+@pytest.mark.asyncio
+async def test_graduation_does_not_fire_before_72h(conn):
+    """Young rule (<72h) with high success is NOT graduated."""
+    from flywheel_state import advance, GraduationTransition
+    await conn.execute("""
+        DROP TABLE IF EXISTS execution_telemetry;
+        CREATE TABLE execution_telemetry (
+            id BIGSERIAL PRIMARY KEY, runbook_id TEXT, success BOOLEAN,
+            resolution_level TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+    await conn.execute(
+        "INSERT INTO promoted_rules (rule_id, site_id) VALUES ('r-young', 's1')"
+    )
+    await conn.execute(
+        "INSERT INTO l1_rules "
+        "(rule_id, runbook_id, promoted_from_l2, enabled, created_at) "
+        "VALUES ('r-young', 'RB-Y', true, true, NOW() - INTERVAL '24 hours')"
+    )
+    await advance(conn, rule_id="r-young", new_state="approved",
+                  event_type="promotion_approved", actor="system:test",
+                  stage="promotion")
+    await advance(conn, rule_id="r-young", new_state="rolling_out",
+                  event_type="rollout_issued", actor="system:test",
+                  stage="rollout")
+    await advance(conn, rule_id="r-young", new_state="active",
+                  event_type="rollout_acked", actor="system:test",
+                  stage="rollout")
+    for _ in range(5):
+        await conn.execute(
+            "INSERT INTO execution_telemetry (runbook_id, success) "
+            "VALUES ('RB-Y', true)"
+        )
+    tr = GraduationTransition()
+    cands = await tr.find_candidates(conn)
+    assert not any(c["rule_id"] == "r-young" for c in cands)
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_shadow_mode_does_not_mutate(conn):
     """enforce=False: log intent, change nothing. Safety net for cutover."""
     from flywheel_state import advance, run_orchestrator_tick

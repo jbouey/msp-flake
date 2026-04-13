@@ -319,6 +319,187 @@ class RolloutAckedTransition(Transition):
             )
 
 
+class CanaryFailureTransition(Transition):
+    """active → auto_disabled when a newly-promoted rule fails its canary.
+
+    Rules that were promoted within the last 48 hours, have at least 3
+    executions against their runbook, and whose success rate is below
+    70% — disable. Replaces the old Step 5a in flywheel_promotion_loop
+    that silently swallowed errors in the same shared try/except that
+    hid today's absolute_low bug.
+
+    Distinct from RegimeAbsoluteLowTransition:
+      * Canary = first-48h policy; doesn't need a regime event
+      * Absolute-low / critical = lifetime policy; consumes regime events
+    Both can fire on the same rule; whichever hits first transitions it.
+    """
+    name = "canary_failure_auto_disable"
+    description = "active → auto_disabled: <70% success in first 48h canary"
+    stage = "monitoring"
+
+    async def find_candidates(
+        self, conn: asyncpg.Connection
+    ) -> Sequence[Dict[str, Any]]:
+        rows = await conn.fetch(
+            """
+            SELECT l.rule_id, pr.site_id, pr.lifecycle_state,
+                   COUNT(et.id) AS n,
+                   SUM(CASE WHEN et.success THEN 1 ELSE 0 END) AS s,
+                   AVG(CASE WHEN et.success THEN 1.0 ELSE 0.0 END) AS rate
+            FROM l1_rules l
+            JOIN promoted_rules pr ON pr.rule_id = l.rule_id
+            JOIN execution_telemetry et
+              ON et.runbook_id = l.runbook_id
+             AND et.created_at > l.created_at
+            WHERE l.promoted_from_l2 = true
+              AND l.enabled = true
+              AND pr.lifecycle_state = 'active'
+              AND l.created_at > NOW() - INTERVAL '48 hours'
+            GROUP BY l.rule_id, pr.site_id, pr.lifecycle_state
+            HAVING COUNT(et.id) >= 3
+               AND AVG(CASE WHEN et.success THEN 1.0 ELSE 0.0 END) < 0.70
+            """
+        )
+        return [dict(r) for r in rows]
+
+    async def apply(
+        self, conn: asyncpg.Connection, candidate: Dict[str, Any]
+    ) -> TransitionResult:
+        rule_id = candidate["rule_id"]
+        try:
+            rate = float(candidate["rate"] or 0)
+            n = int(candidate["n"] or 0)
+            s = int(candidate["s"] or 0)
+            await advance(
+                conn,
+                rule_id=rule_id,
+                new_state="auto_disabled",
+                event_type="auto_disabled",
+                actor="system:orchestrator",
+                stage=self.stage,
+                site_id=candidate["site_id"],
+                proof={
+                    "policy": "canary_failure",
+                    "window": "48h",
+                    "threshold": 0.70,
+                    "observed_rate": rate,
+                    "successes": s,
+                    "samples": n,
+                },
+                reason=(
+                    f"Canary failure: {rate:.1%} success rate "
+                    f"({s}/{n}) under 70% threshold in first 48h"
+                ),
+            )
+            await conn.execute(
+                "UPDATE l1_rules SET enabled = false WHERE rule_id = $1",
+                rule_id,
+            )
+            await conn.execute(
+                "UPDATE promoted_rules SET operator_ack_required = true "
+                "WHERE rule_id = $1",
+                rule_id,
+            )
+            return TransitionResult(
+                rule_id=rule_id, from_state="active",
+                to_state="auto_disabled", event_type="auto_disabled",
+                success=True,
+            )
+        except Exception as e:
+            return TransitionResult(
+                rule_id=rule_id, from_state="active",
+                to_state="auto_disabled", event_type="auto_disabled",
+                success=False, error=str(e),
+            )
+
+
+class GraduationTransition(Transition):
+    """active → graduated when a rule has proven itself past the canary
+    window.
+
+    Criteria:
+      * promoted_from_l2 = true
+      * lifecycle_state = 'active'
+      * l1_rules.created_at > 72h ago (canary window over)
+      * >=3 executions at >=70% success rate
+
+    Side effects:
+      * lifecycle_state → graduated
+      * l1_rules.source → 'synced' (fleet-wide promotion from site-scoped)
+    """
+    name = "graduation"
+    description = "active → graduated: 72h+ canary passed"
+    stage = "governance"
+
+    async def find_candidates(
+        self, conn: asyncpg.Connection
+    ) -> Sequence[Dict[str, Any]]:
+        rows = await conn.fetch(
+            """
+            SELECT l.rule_id, pr.site_id, pr.lifecycle_state,
+                   COUNT(et.id) AS n,
+                   AVG(CASE WHEN et.success THEN 1.0 ELSE 0.0 END) AS rate
+            FROM l1_rules l
+            JOIN promoted_rules pr ON pr.rule_id = l.rule_id
+            JOIN execution_telemetry et
+              ON et.runbook_id = l.runbook_id
+             AND et.created_at > l.created_at
+            WHERE l.promoted_from_l2 = true
+              AND l.enabled = true
+              AND l.source = 'promoted'
+              AND pr.lifecycle_state = 'active'
+              AND l.created_at < NOW() - INTERVAL '72 hours'
+            GROUP BY l.rule_id, pr.site_id, pr.lifecycle_state
+            HAVING COUNT(et.id) >= 3
+               AND AVG(CASE WHEN et.success THEN 1.0 ELSE 0.0 END) >= 0.70
+            """
+        )
+        return [dict(r) for r in rows]
+
+    async def apply(
+        self, conn: asyncpg.Connection, candidate: Dict[str, Any]
+    ) -> TransitionResult:
+        rule_id = candidate["rule_id"]
+        try:
+            rate = float(candidate["rate"] or 0)
+            n = int(candidate["n"] or 0)
+            await advance(
+                conn,
+                rule_id=rule_id,
+                new_state="graduated",
+                event_type="graduated",
+                actor="system:orchestrator",
+                stage=self.stage,
+                site_id=candidate["site_id"],
+                proof={
+                    "policy": "72h_canary_passed",
+                    "threshold": 0.70,
+                    "observed_rate": rate,
+                    "samples": n,
+                },
+                reason=(
+                    f"Graduated: {rate:.1%} over {n} executions, "
+                    f"past 72h canary"
+                ),
+            )
+            # Promote source to 'synced' so appliances everywhere sync it
+            await conn.execute(
+                "UPDATE l1_rules SET source = 'synced' WHERE rule_id = $1",
+                rule_id,
+            )
+            return TransitionResult(
+                rule_id=rule_id, from_state="active",
+                to_state="graduated", event_type="graduated",
+                success=True,
+            )
+        except Exception as e:
+            return TransitionResult(
+                rule_id=rule_id, from_state="active",
+                to_state="graduated", event_type="graduated",
+                success=False, error=str(e),
+            )
+
+
 class ZombieSiteTransition(Transition):
     """active / approved / rolling_out → retired when the site's
     last_checkin is > 30 days old. Keeps metrics clean; ops can't see a
@@ -390,7 +571,9 @@ class ZombieSiteTransition(Transition):
 # first so quick wins land before expensive ones.
 DEFAULT_TRANSITIONS: List[Transition] = [
     RolloutAckedTransition(),
+    CanaryFailureTransition(),
     RegimeAbsoluteLowTransition(),
+    GraduationTransition(),
     ZombieSiteTransition(),
 ]
 
