@@ -162,6 +162,49 @@ async def chain_tamper_detector_loop():
                             },
                         )
 
+                        # Phase 15 alert wiring — chain tampering is the
+                        # one event that should wake someone up. Email
+                        # the security distribution immediately. Failure
+                        # to send the alert must not stop the audit_log
+                        # write from the block below — they're independent.
+                        try:
+                            from .email_alerts import send_critical_alert
+                            send_critical_alert(
+                                title=f"CHAIN_TAMPER_DETECTED on {sid}",
+                                message=(
+                                    f"The chain-tamper detector found "
+                                    f"{len(broken)} broken bundle(s) on "
+                                    f"site {sid} during the periodic walk "
+                                    f"of the most-recent {CHAIN_TAMPER_WINDOW} "
+                                    f"bundles.\n\n"
+                                    f"This means a compliance_bundles row "
+                                    f"was MUTATED after write — the "
+                                    f"DELETE/UPDATE triggers (migrations "
+                                    f"151, 161) are supposed to make this "
+                                    f"impossible. Investigate immediately:\n\n"
+                                    f"  1. Check admin_audit_log for the "
+                                    f"correlated CHAIN_TAMPER_DETECTED row.\n"
+                                    f"  2. Run the auditor kit for site "
+                                    f"{sid} to confirm scope.\n"
+                                    f"  3. Inspect first_broken below.\n\n"
+                                    f"first_broken: {broken[0]}\n"
+                                    f"verified_in_window: {verified}"
+                                ),
+                                site_id=sid,
+                                category="security_chain_integrity",
+                                metadata={
+                                    "verified": verified,
+                                    "broken_count": len(broken),
+                                    "first_broken": broken[0],
+                                },
+                            )
+                        except Exception as e:
+                            logger.error(
+                                "chain_tamper_detector alert dispatch failed",
+                                extra={"site_id": sid, "error": str(e)},
+                                exc_info=True,
+                            )
+
                         # Persist to admin_audit_log so the next operator
                         # session sees it without needing to be tailing
                         # logs at the moment of detection.
