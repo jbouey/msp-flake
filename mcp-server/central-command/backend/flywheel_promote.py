@@ -421,7 +421,10 @@ async def issue_sync_promoted_rule_orders(
     try:
         from dashboard_api.order_signing import sign_fleet_order
     except ImportError:
-        from .order_signing import sign_fleet_order
+        try:
+            from .order_signing import sign_fleet_order
+        except ImportError:
+            from order_signing import sign_fleet_order
 
     if scope == "site":
         if not site_id:
