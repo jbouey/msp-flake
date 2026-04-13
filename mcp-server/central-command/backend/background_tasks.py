@@ -7,6 +7,7 @@ server lifespan. Imported and started by main.py's lifespan() function.
 
 import asyncio
 import json
+import os
 import re
 
 import structlog
