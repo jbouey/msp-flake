@@ -260,11 +260,15 @@ def load_or_create_signing_key():
     verify_key = signing_key.verify_key
 
 def sign_data(data: str) -> str:
-    """Sign data and return hex-encoded signature."""
+    """Sign data and return hex-encoded signature.
+
+    Phase B: routes through signing_backend so shadow/vault mode is
+    a one-env-var flip. Byte-identical output in file mode."""
     if signing_key is None:
         return hashlib.sha256(data.encode()).hexdigest() * 2  # placeholder in test/dev
-    signed = signing_key.sign(data.encode())
-    return signed.signature.hex()
+    from dashboard_api.signing_backend import get_signing_backend
+    result = get_signing_backend().sign(data.encode())
+    return result.signature.hex()
 
 def get_public_key_hex() -> str:
     """Get hex-encoded public key."""

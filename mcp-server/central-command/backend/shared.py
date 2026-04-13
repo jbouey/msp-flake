@@ -212,9 +212,13 @@ def load_or_create_signing_key():
 
 
 def sign_data(data: str) -> str:
-    """Sign data and return hex-encoded signature."""
-    signed = signing_key.sign(data.encode())
-    return signed.signature.hex()
+    """Sign data and return hex-encoded signature.
+
+    Phase B: routes through signing_backend so shadow/vault mode is
+    a one-env-var flip. Byte-identical output in file mode."""
+    from .signing_backend import get_signing_backend
+    result = get_signing_backend().sign(data.encode())
+    return result.signature.hex()
 
 
 def get_public_key_hex() -> str:

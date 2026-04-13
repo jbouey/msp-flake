@@ -140,7 +140,15 @@ async def create_privileged_access_attestation(
             "reason required (min 20 chars — describe the incident or change)"
         )
 
-    sk = _load_signing_key()  # fail-fast if key unavailable
+    # Phase B: signing_backend abstraction. In file/shadow mode the
+    # signature is byte-identical to the old sk.sign() path (same key,
+    # same data). In vault mode it comes from Transit. Failure here
+    # must abort — callers check for PrivilegedAccessAttestationError.
+    from .signing_backend import get_signing_backend, SigningBackendError
+    try:
+        _signer = get_signing_backend()
+    except SigningBackendError as e:
+        raise PrivilegedAccessAttestationError(f"signing backend unavailable: {e}")
     now = datetime.now(timezone.utc)
 
     # Build canonical event record
@@ -192,8 +200,13 @@ async def create_privileged_access_attestation(
         (prev_hash + bundle_hash).encode("utf-8")
     ).hexdigest()
 
-    # Sign the bundle_hash with server's Ed25519 key
-    signature_bytes = sk.sign(bundle_hash.encode("utf-8")).signature
+    # Sign the bundle_hash with server's Ed25519 key (file or Vault
+    # per SIGNING_BACKEND env).
+    try:
+        sig_result = _signer.sign(bundle_hash.encode("utf-8"))
+    except SigningBackendError as e:
+        raise PrivilegedAccessAttestationError(f"signing failed: {e}")
+    signature_bytes = sig_result.signature
     signature_hex = signature_bytes.hex()  # 128 hex chars
 
     bundle_id = f"PA-{now.strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}"

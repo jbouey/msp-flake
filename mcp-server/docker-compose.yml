@@ -107,6 +107,14 @@ services:
       SESSION_TOKEN_SECRET: ${SESSION_TOKEN_SECRET:-}
       API_KEY_SECRET: ${API_KEY_SECRET:-}
       SIGNING_KEY_FILE: /app/secrets/signing.key
+      # Phase B signing backend abstraction — file (default) | vault | shadow
+      SIGNING_BACKEND: ${SIGNING_BACKEND:-file}
+      SIGNING_BACKEND_PRIMARY: ${SIGNING_BACKEND_PRIMARY:-file}
+      VAULT_ADDR: ${VAULT_ADDR:-}
+      VAULT_APPROLE_ROLE_ID: ${VAULT_APPROLE_ROLE_ID:-}
+      VAULT_APPROLE_SECRET_ID: ${VAULT_APPROLE_SECRET_ID:-}
+      VAULT_SIGNING_KEY_NAME: ${VAULT_SIGNING_KEY_NAME:-osiriscare-signing}
+      VAULT_SKIP_VERIFY: ${VAULT_SKIP_VERIFY:-true}
       RUNBOOK_DIR: /app/runbooks
       RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-10}
       RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-300}
