@@ -129,9 +129,18 @@ PROBE_CATALOG: Dict[str, Dict[str, Any]] = {
 # Explicit allowlist for substring protections. Even though the daemon
 # has its own command handler, we belt-and-suspenders reject anything
 # that smells like a shell escape when validated at the backend.
+#
+# Allow: 2>&1 stderr redirect, 2>/dev/null, | head|tail|grep pipes.
+# Block: file-destination redirects ('> /tmp/...', '>> file'), write
+# ops (rm/mv/cp/dd), curl uploads, shell-bomb patterns.
 _DANGEROUS_SUBSTR_RE = re.compile(
-    r"(>|<|\brm\b|\bmv\b|\bcp\b|\bdd\b|/dev/sd[a-z]\s*=|"
-    r"\bcurl\s+[^|]*--upload-file|:\s*\(\)\s*\{)",
+    # Redirection to a real file destination (but allow 2>&1 / 2>/dev/null)
+    r"(?<!&)>\s*[^&/d]|"            # '> <not-device>'
+    r">>|"                            # append redirect
+    r"\brm\s|\bmv\s|\bcp\s|\bdd\s|"   # disk-modifying commands
+    r"/dev/sd[a-z]\s*=|"              # explicit block-device assignment
+    r"\bcurl\s+[^|;]*--upload-file|"  # uploads
+    r":\s*\(\)\s*\{",                 # fork-bomb signature
 )
 
 
