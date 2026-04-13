@@ -101,7 +101,8 @@ async def _seed_request(c) -> str:
         "(site_id, event_type, initiator_email, initiator_role, reason, expires_at) "
         "VALUES ($1, 'enable_emergency_access', 'tech@partner.example', "
         "'partner_tech', 'integration test', NOW() + INTERVAL '1 hour') "
-        "RETURNING id::text"
+        "RETURNING id::text",
+        site_id,
     )
     return rid
 
