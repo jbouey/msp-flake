@@ -426,18 +426,46 @@ async def issue_sync_promoted_rule_orders(
         except ImportError:
             from order_signing import sign_fleet_order
     try:
-        from dashboard_api.flywheel_math import normalize_rule_yaml_action
+        from dashboard_api.flywheel_math import build_daemon_valid_rule_yaml
     except ImportError:
         try:
-            from .flywheel_math import normalize_rule_yaml_action
+            from .flywheel_math import build_daemon_valid_rule_yaml
         except ImportError:
-            from flywheel_math import normalize_rule_yaml_action
+            from flywheel_math import build_daemon_valid_rule_yaml
 
-    # Translate `action: execute_runbook` → daemon-whitelisted action.
-    # Fail loudly on unknown prefixes — better than shipping an order
-    # the daemon will reject. Historical rule_yaml may still contain
-    # execute_runbook; this rewrite happens only at order-issue time.
-    rule_yaml = normalize_rule_yaml_action(rule_yaml, runbook_id)
+    # Pull incident_type from l1_rules — the appliance daemon's L1
+    # engine matches a rule by `field: incident_type, operator: eq,
+    # value: <type>`, so we MUST emit a conditions block. The
+    # historical promoted_rules.rule_yaml stub had only id/name/action/
+    # runbook_id and got rejected at the daemon's
+    # `len(rule.Conditions) > 0` check. Build a complete, valid YAML
+    # from scratch using metadata we already know.
+    pattern_row = await conn.fetchrow(
+        "SELECT incident_pattern, COALESCE(description, '') AS description "
+        "FROM l1_rules WHERE rule_id = $1",
+        rule_id,
+    )
+    if not pattern_row:
+        raise ValueError(
+            f"l1_rules has no row for rule_id={rule_id!r} — cannot synthesize "
+            f"daemon-valid YAML without the incident_pattern"
+        )
+    import json as _json
+    pat = pattern_row["incident_pattern"]
+    if isinstance(pat, str):
+        pat = _json.loads(pat)
+    incident_type = (pat or {}).get("incident_type")
+    if not incident_type:
+        raise ValueError(
+            f"l1_rules.incident_pattern for {rule_id!r} has no incident_type "
+            f"key — promotion writers must always set this"
+        )
+    rule_yaml = build_daemon_valid_rule_yaml(
+        rule_id=rule_id,
+        runbook_id=runbook_id,
+        incident_type=incident_type,
+        description=pattern_row["description"] or None,
+    )
 
     if scope == "site":
         if not site_id:

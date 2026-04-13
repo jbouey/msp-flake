@@ -207,6 +207,57 @@ def test_normalize_rule_yaml_action_noop_when_already_correct():
     assert yaml_out == yaml_in
 
 
+def test_build_daemon_valid_rule_yaml_windows():
+    """Synthesized YAML must satisfy the Go daemon's order processor:
+       - action in allowedRuleActions whitelist (run_windows_runbook)
+       - conditions array with len >= 1
+       - id matches /^[A-Za-z0-9_-]{3,64}$/"""
+    from flywheel_math import build_daemon_valid_rule_yaml
+    yaml = build_daemon_valid_rule_yaml(
+        rule_id="L1-AUTO-RANSOMWARE-INDICATOR",
+        runbook_id="RB-WIN-STG-002",
+        incident_type="ransomware_indicator",
+    )
+    assert "id: L1-AUTO-RANSOMWARE-INDICATOR" in yaml
+    assert "action: run_windows_runbook" in yaml
+    assert "conditions:" in yaml
+    assert "field: incident_type" in yaml
+    assert "operator: eq" in yaml
+    assert "value: ransomware_indicator" in yaml
+    assert "runbook_id: RB-WIN-STG-002" in yaml
+    assert "enabled: true" in yaml
+
+
+def test_build_daemon_valid_rule_yaml_linux():
+    from flywheel_math import build_daemon_valid_rule_yaml
+    yaml = build_daemon_valid_rule_yaml(
+        rule_id="L1-AUTO-LINUX-FIREWALL",
+        runbook_id="LIN-FW-001",
+        incident_type="linux_firewall_drift",
+    )
+    assert "action: run_linux_runbook" in yaml
+
+
+def test_build_daemon_valid_rule_yaml_requires_incident_type():
+    """incident_type is non-optional — promotion writers must always
+    set it. Failing loudly catches drift in the writer side."""
+    import pytest
+    from flywheel_math import build_daemon_valid_rule_yaml
+    with pytest.raises(ValueError, match="incident_type"):
+        build_daemon_valid_rule_yaml(
+            rule_id="L1-X", runbook_id="RB-WIN-001", incident_type="",
+        )
+
+
+def test_build_daemon_valid_rule_yaml_unknown_runbook_raises():
+    import pytest
+    from flywheel_math import build_daemon_valid_rule_yaml
+    with pytest.raises(ValueError, match="no known platform prefix"):
+        build_daemon_valid_rule_yaml(
+            rule_id="L1-X", runbook_id="general", incident_type="x",
+        )
+
+
 def test_normalize_rule_yaml_action_linux_path():
     from flywheel_math import normalize_rule_yaml_action
     yaml_in = (

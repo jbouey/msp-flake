@@ -45,12 +45,21 @@ PREREQ_SCHEMA = """
 DROP TABLE IF EXISTS fleet_order_completions CASCADE;
 DROP TABLE IF EXISTS fleet_orders CASCADE;
 DROP TABLE IF EXISTS promoted_rules CASCADE;
+DROP TABLE IF EXISTS l1_rules CASCADE;
 DROP TABLE IF EXISTS sites CASCADE;
 DROP FUNCTION IF EXISTS track_promoted_rule_deployment() CASCADE;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE sites (site_id TEXT PRIMARY KEY);
+
+CREATE TABLE l1_rules (
+    rule_id VARCHAR(100) PRIMARY KEY,
+    incident_pattern JSONB NOT NULL,
+    runbook_id VARCHAR(100) NOT NULL,
+    description TEXT,
+    enabled BOOLEAN DEFAULT true
+);
 
 CREATE TABLE promoted_rules (
     rule_id TEXT PRIMARY KEY,
@@ -141,6 +150,7 @@ async def conn(setup_signing):
             DROP TABLE IF EXISTS fleet_order_completions CASCADE;
             DROP TABLE IF EXISTS fleet_orders CASCADE;
             DROP TABLE IF EXISTS promoted_rules CASCADE;
+            DROP TABLE IF EXISTS l1_rules CASCADE;
             DROP TABLE IF EXISTS sites CASCADE;
         """)
         await c.close()
@@ -159,6 +169,12 @@ async def test_full_rollout_loop(conn):
     await conn.execute(
         "INSERT INTO promoted_rules (rule_id, site_id, rule_yaml) "
         "VALUES ('rule-test-1', 'site-1', 'id: rule-test-1\nrunbook_id: RB-WIN-TEST-001')"
+    )
+    # The order issuer pulls incident_pattern from l1_rules to build a
+    # daemon-valid YAML — seed the matching row.
+    await conn.execute(
+        "INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id) "
+        "VALUES ('rule-test-1', '{\"incident_type\": \"test_incident\"}'::jsonb, 'RB-WIN-TEST-001')"
     )
 
     # Step 1: issue the rollout order
@@ -218,6 +234,10 @@ async def test_failed_completion_does_not_increment(conn):
         "INSERT INTO promoted_rules (rule_id, site_id, rule_yaml) "
         "VALUES ('rule-fail', 's2', 'yaml')"
     )
+    await conn.execute(
+        "INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id) "
+        "VALUES ('rule-fail', '{\"incident_type\": \"x\"}'::jsonb, 'RB-WIN-TEST-002')"
+    )
     await issue_sync_promoted_rule_orders(
         conn, rule_id="rule-fail", runbook_id="RB-WIN-TEST-002",
         rule_yaml="yaml", site_id="s2", scope="site",
@@ -269,6 +289,10 @@ async def test_multiple_completions_each_increment(conn):
     await conn.execute(
         "INSERT INTO promoted_rules (rule_id, site_id, rule_yaml) "
         "VALUES ('rule-multi', 's4', 'y')"
+    )
+    await conn.execute(
+        "INSERT INTO l1_rules (rule_id, incident_pattern, runbook_id) "
+        "VALUES ('rule-multi', '{\"incident_type\": \"y\"}'::jsonb, 'RB-WIN-TEST-003')"
     )
     await issue_sync_promoted_rule_orders(
         conn, rule_id="rule-multi", runbook_id="RB-WIN-TEST-003",

@@ -163,6 +163,56 @@ def normalize_rule_yaml_action(rule_yaml: str, runbook_id: str) -> str:
     return result
 
 
+def build_daemon_valid_rule_yaml(
+    rule_id: str,
+    runbook_id: str,
+    incident_type: str,
+    name: str | None = None,
+    description: str | None = None,
+) -> str:
+    """Build a complete daemon-valid rule YAML from the L1 rule's
+    metadata.
+
+    The Go daemon's order processor (appliance/internal/orders/processor.go)
+    requires:
+      - `action` in allowedRuleActions whitelist
+      - `conditions` array with len >= 1
+      - `id` matching ^[A-Za-z0-9_-]{3,64}$
+
+    The historical promoted_rules table stored stub YAML with
+    `action: execute_runbook` and NO conditions block, so every
+    sync_promoted_rule order was rejected. This builder synthesizes
+    a proper rule body that the daemon accepts.
+
+    The condition matches on incident_type — same predicate the L2
+    planner uses to identify which rule should fire on a given
+    incident. Mirrors the format of the standard rules in
+    agent_api.py:agent_sync_rules.
+    """
+    action = normalize_rule_action(runbook_id)
+    if not incident_type:
+        raise ValueError("incident_type is required to build a valid rule")
+    name = name or rule_id.lower().replace("l1-auto-", "").replace("-", "_")
+    description = description or f"Auto-promoted L1 rule for {incident_type}"
+
+    # Hand-format YAML to keep the output stable and grep-friendly
+    # (no PyYAML dependency, deterministic key order).
+    yaml = (
+        f"id: {rule_id}\n"
+        f"name: {name}\n"
+        f"description: {description}\n"
+        f"conditions:\n"
+        f"  - field: incident_type\n"
+        f"    operator: eq\n"
+        f"    value: {incident_type}\n"
+        f"action: {action}\n"
+        f"action_params:\n"
+        f"  runbook_id: {runbook_id}\n"
+        f"enabled: true\n"
+    )
+    return yaml
+
+
 # ─── Phase 8: promotion-threshold Bayesian drift cap ───────────────
 
 # Per-day upper bound on how much the per-incident-type promotion
