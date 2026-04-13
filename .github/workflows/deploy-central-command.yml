@@ -68,8 +68,54 @@ jobs:
         working-directory: mcp-server/central-command/frontend
         run: npx vitest run
 
+  privileged-chain-trigger-test:
+    # Phase 15 A-spec hygiene: end-to-end test of the privileged-chain
+    # enforcement triggers (migrations 175 + 176) against a real
+    # Postgres. Exercises the trigger by INSERTing/UPDATEing privileged
+    # fleet_orders rows and asserting the expected pass/fail behavior.
+    #
+    # Why this exists: the Session 205 migration 175/176 %% RAISE bug
+    # passed a syntax check (plpgsql function bodies are stored as
+    # text), but failed at trigger-fire time with "too many parameters
+    # specified for RAISE". A static migrations-up smoke test wouldn't
+    # have caught it — only an INSERT/UPDATE test that fires the
+    # trigger does.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: mcp
+          POSTGRES_PASSWORD: mcp
+          POSTGRES_DB: mcp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mcp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install asyncpg + pytest
+        run: pip install asyncpg==0.30.0 pytest==8.3.4 pytest-asyncio==0.24.0
+
+      - name: Run chain-trigger integration test
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_privileged_chain_triggers_pg.py -v --tb=short
+
   deploy:
-    needs: test
+    needs: [test, privileged-chain-trigger-test]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
