@@ -80,6 +80,7 @@ CREATE TABLE l1_rules (
     incident_pattern JSONB DEFAULT '{}'::jsonb,
     enabled BOOLEAN DEFAULT true,
     promoted_from_l2 BOOLEAN DEFAULT false,
+    source TEXT DEFAULT 'promoted',
     match_count INTEGER DEFAULT 0,
     success_count INTEGER DEFAULT 0,
     failure_count INTEGER DEFAULT 0,
@@ -632,9 +633,11 @@ async def test_graduation_transition(conn):
     assert len(cands) == 1
     r = await tr.apply(conn, cands[0])
     assert r.success and r.to_state == "graduated"
-    state, source = await conn.fetchrow(
-        "SELECT lifecycle_state, (SELECT source FROM l1_rules WHERE rule_id='r-grad')::text "
-        "FROM promoted_rules WHERE rule_id='r-grad'"
+    state = await conn.fetchval(
+        "SELECT lifecycle_state FROM promoted_rules WHERE rule_id='r-grad'"
+    )
+    source = await conn.fetchval(
+        "SELECT source FROM l1_rules WHERE rule_id='r-grad'"
     )
     assert state == "graduated"
     assert source == "synced"
