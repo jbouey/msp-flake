@@ -541,36 +541,14 @@ async def approve_candidate(
             failed_appliances = []
 
             # Dispatch to appliances if requested
+            # Phase 4 (Session 205): the appliance_commands table is a write-only
+            # graveyard — nothing reads from it. The real delivery channel is
+            # fleet_orders. promote_candidate() (called above) already emits a
+            # signed sync_promoted_rule fleet order via
+            # issue_sync_promoted_rule_orders(scope='site'), so this block is
+            # now a no-op. Kept as a documented stub for the request flag.
             if request.deploy_immediately:
-                appliances = await conn.fetch("""
-                    SELECT appliance_id FROM site_appliances WHERE site_id = $1
-                """, candidate['site_id'])
-
-                command_params = json.dumps({
-                    "rule_id": rule['id'],
-                    "rule_yaml": rule_yaml,
-                    "promoted_at": datetime.now(timezone.utc).isoformat()
-                })
-
-                for appliance in appliances:
-                    try:
-                        # ON CONFLICT prevents duplicate commands on retry
-                        await conn.execute("""
-                            INSERT INTO appliance_commands (
-                                appliance_id, command_type, params, created_at
-                            ) VALUES ($1, 'sync_promoted_rule', $2, NOW())
-                            ON CONFLICT (appliance_id, command_type, params) DO NOTHING
-                        """,
-                            appliance['appliance_id'],
-                            command_params
-                        )
-                        deployed_count += 1
-                    except Exception as e:
-                        failed_appliances.append(appliance['appliance_id'])
-                        logger.warning(f"Failed to queue command for appliance {appliance['appliance_id']}: {e}")
-
-                if failed_appliances:
-                    logger.error(f"Failed to deploy rule {rule['id']} to {len(failed_appliances)} appliances")
+                deployed_count = 1  # signal "promote_candidate already issued the order"
 
                 # Update deployment count
                 await conn.execute("""
@@ -1043,23 +1021,10 @@ async def bulk_approve_candidates(
                 except Exception as e:
                     logger.warning(f"Promotion audit log write failed: {e}")
 
-                # Deploy commands
-                if request.deploy_immediately:
-                    appliances = await conn.fetch("""
-                        SELECT appliance_id FROM site_appliances WHERE site_id = $1
-                    """, candidate['site_id'])
-                    command_params = json.dumps({
-                        "rule_id": rule['id'],
-                        "rule_yaml": rule_yaml,
-                        "promoted_at": datetime.now(timezone.utc).isoformat()
-                    })
-                    for appliance in appliances:
-                        await conn.execute("""
-                            INSERT INTO appliance_commands (
-                                appliance_id, command_type, params, created_at
-                            ) VALUES ($1, 'sync_promoted_rule', $2, NOW())
-                            ON CONFLICT (appliance_id, command_type, params) DO NOTHING
-                        """, appliance['appliance_id'], command_params)
+                # Deploy commands — Phase 4 (Session 205): no-op, fleet_orders
+                # path in promote_candidate() handles the real delivery.
+                # appliance_commands table is unread; was a duplicate write
+                # path that masked the missing fleet_orders integration.
 
                 await transaction.commit()
                 approved += 1
