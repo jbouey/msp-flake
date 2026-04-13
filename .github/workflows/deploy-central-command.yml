@@ -426,7 +426,34 @@ jobs:
           fi
           echo "Deploy verified: process running ${EXPECTED:0:7}"
 
-      - name: Rollback on failure
+      - name: Retention — prune old releases + compose backups
+        # Session 206 deploy-cleanup: without retention, releases/
+        # grows unbounded (each ~10MB) and docker-compose.yml.bak.*
+        # accumulates one per deploy. Keep the last 10 releases (for
+        # rollback) and last 3 compose backups. Never touches the
+        # release `current` symlink points at.
+        run: |
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} bash -s <<'EOF'
+            set -e
+            CURRENT=$(readlink -f /opt/mcp-server/current 2>/dev/null || echo "")
+            cd /opt/mcp-server/releases
+            # Keep newest 10, prune older (skip `current` target for safety).
+            ls -1dt */ 2>/dev/null | tail -n +11 | while read d; do
+              full="/opt/mcp-server/releases/${d%/}"
+              if [ "$full" = "$CURRENT" ]; then
+                echo "SKIP (current): $full"; continue
+              fi
+              echo "prune release: $full"
+              rm -rf "$full"
+            done
+            # Keep newest 3 compose backups, prune older.
+            cd /opt/mcp-server
+            ls -1t docker-compose.yml.bak.* 2>/dev/null | tail -n +4 | while read f; do
+              echo "prune compose bak: $f"
+              rm -f "/opt/mcp-server/$f"
+            done
+            echo "Retention complete."
+          EOF
         if: failure()
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
