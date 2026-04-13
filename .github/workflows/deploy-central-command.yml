@@ -172,6 +172,20 @@ jobs:
         run: |
           python3 -m pytest tests/test_retention_verifier_pg.py -v --tb=short
 
+      - name: Sig-verify fingerprint divergence test
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_sig_verify_fingerprint_pg.py -v --tb=short
+
+      - name: Fleet-intelligence API surface test
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_fleet_intelligence_api_pg.py -v --tb=short
+
   deploy:
     needs: [test, privileged-chain-pg-tests]
     runs-on: ubuntu-latest
