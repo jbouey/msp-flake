@@ -441,8 +441,7 @@ async def issue_sync_promoted_rule_orders(
     # `len(rule.Conditions) > 0` check. Build a complete, valid YAML
     # from scratch using metadata we already know.
     pattern_row = await conn.fetchrow(
-        "SELECT incident_pattern, COALESCE(description, '') AS description "
-        "FROM l1_rules WHERE rule_id = $1",
+        "SELECT incident_pattern FROM l1_rules WHERE rule_id = $1",
         rule_id,
     )
     if not pattern_row:
@@ -464,7 +463,6 @@ async def issue_sync_promoted_rule_orders(
         rule_id=rule_id,
         runbook_id=runbook_id,
         incident_type=incident_type,
-        description=pattern_row["description"] or None,
     )
 
     if scope == "site":
