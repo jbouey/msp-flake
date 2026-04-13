@@ -17,6 +17,20 @@ from .shared import async_session
 logger = structlog.get_logger()
 
 
+def _hb(name: str) -> None:
+    """Swallow-any-error heartbeat call (Phase 15 broader instrumentation).
+
+    Each background loop calls _hb('name') at the top of every iteration
+    so /api/admin/health/loops can distinguish 'stuck loop' from 'idle
+    loop'. A bad heartbeat import must never break the loop itself, so
+    all errors are swallowed."""
+    try:
+        from .bg_heartbeat import record_heartbeat
+        record_heartbeat(name)
+    except Exception:
+        pass
+
+
 async def ots_repair_block_heights():
     """One-time repair: re-extract bitcoin_block from stored proof data."""
     try:
@@ -224,6 +238,7 @@ async def ots_reverify_sample_loop():
     """
     await asyncio.sleep(600)  # Wait 10 min after startup
     while True:
+        _hb("ots_reverify")
         try:
             import base64
             import aiohttp
@@ -325,6 +340,7 @@ async def flywheel_reconciliation_loop():
     """
     await asyncio.sleep(400)  # Wait 6.6 min after startup
     while True:
+        _hb("flywheel_reconciliation")
         try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
@@ -470,6 +486,7 @@ async def temporal_decay_loop():
     """
     await asyncio.sleep(300)  # Wait 5 min after startup
     while True:
+        _hb("temporal_decay")
         try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
@@ -562,6 +579,7 @@ async def exemplar_miner_loop():
     """
     await asyncio.sleep(1200)  # Wait 20 min after startup
     while True:
+        _hb("exemplar_miner")
         try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
@@ -663,6 +681,7 @@ async def threshold_tuner_loop():
     """
     await asyncio.sleep(900)  # Wait 15 min after startup
     while True:
+        _hb("threshold_tuner")
         try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
@@ -782,6 +801,7 @@ async def regime_change_detector_loop():
     """
     await asyncio.sleep(600)  # Wait 10 min after startup
     while True:
+        _hb("regime_change_detector")
         try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
@@ -877,6 +897,7 @@ async def mesh_consistency_check_loop():
     """
     await asyncio.sleep(300)  # Wait 5 min after startup
     while True:
+        _hb("mesh_consistency")
         try:
             async with async_session() as db:
                 # Multi-appliance sites with recent checkins
@@ -1452,6 +1473,7 @@ async def l2_auto_candidate_loop():
     """
     await asyncio.sleep(600)  # Wait for startup
     while True:
+        _hb("l2_auto_candidate")
         try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
@@ -1722,6 +1744,7 @@ async def recurrence_velocity_loop():
     """
     await asyncio.sleep(300)  # Wait for startup
     while True:
+        _hb("recurrence_velocity")
         try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
@@ -1787,6 +1810,7 @@ async def recurrence_auto_promotion_loop():
     """
     await asyncio.sleep(900)  # Wait for startup + first velocity computation
     while True:
+        _hb("recurrence_auto_promotion")
         try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
@@ -1883,6 +1907,7 @@ async def cross_incident_correlation_loop():
     """
     await asyncio.sleep(1200)  # Wait for startup
     while True:
+        _hb("cross_incident_correlation")
         try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
