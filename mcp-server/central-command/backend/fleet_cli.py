@@ -244,6 +244,19 @@ async def cmd_create(args: argparse.Namespace) -> None:
                     f"This is a HARD STOP. The order is not signed or inserted."
                 )
 
+            # Phase 14/Migration 175 chain enforcement: the attestation
+            # bundle_id is embedded in the order parameters AND covered
+            # by the signed_payload. The DB trigger enforce_privileged_
+            # order_attestation() will REJECT the INSERT if this is not
+            # linked to a real privileged_access bundle for the same site.
+            params["attestation_bundle_id"] = attestation["bundle_id"]
+            params["attestation_chain_position"] = attestation["chain_position"]
+            params["attestation_actor"] = args.actor_email.strip()
+            # Re-sign now that params include the attestation linkage
+            nonce, signature, signed_payload = sign_order(
+                signing_key, order_type, params, now, expires_at,
+            )
+
         row = await conn.fetchrow(
             """
             INSERT INTO fleet_orders
