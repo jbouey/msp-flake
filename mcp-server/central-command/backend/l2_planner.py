@@ -727,6 +727,7 @@ def build_system_prompt(
     all_runbooks: Optional[Dict[str, Dict[str, Any]]] = None,
     incident_type: Optional[str] = None,
     check_type: Optional[str] = None,
+    neighbors: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Build the system prompt for L2 analysis.
 
@@ -737,6 +738,10 @@ def build_system_prompt(
     to hallucinate a runbook ID when the catalog is small and on-topic.
     The validator (line 1060) is the final guard, but a tighter prompt
     means fewer hallucinations to nullify, fewer wasted LLM tokens.
+
+    Phase 7: `neighbors` is a list of nearest historical patterns
+    (from pattern_embeddings). When present, they're appended as few-shot
+    exemplars so the LLM can pattern-match instead of choosing cold.
     """
     runbooks = all_runbooks or _get_all_runbooks_sync()
 
@@ -765,6 +770,32 @@ def build_system_prompt(
     if len(filtered) > 60:
         valid_id_list += f", ... ({len(filtered) - 60} more)"
 
+    # Phase 7: neighbor-based few-shot block. If we have historical patterns
+    # similar to this incident, show them as exemplars the LLM can pattern-
+    # match against. Filter to neighbors that actually resolved with a known
+    # runbook_id; a neighbor with runbook_id=NULL or low occurrences is noise.
+    neighbor_block = ""
+    if neighbors:
+        useful = [
+            n for n in neighbors
+            if n.get("runbook_id") and n.get("source_occurrences", 0) >= 3
+        ][:5]
+        if useful:
+            lines = []
+            for i, n in enumerate(useful, 1):
+                sim = float(n.get("similarity") or 0)
+                lines.append(
+                    f"  {i}. incident={n['incident_type']!r} "
+                    f"check={n.get('check_type')!r} → {n['runbook_id']} "
+                    f"(n={n.get('source_occurrences', 0)}, "
+                    f"similarity={sim:.2f})"
+                )
+            neighbor_block = (
+                "\n\nSIMILAR HISTORICAL PATTERNS (for reference — these were resolved by the "
+                "listed runbook_id; use them as priors, not rigid rules):\n"
+                + "\n".join(lines)
+            )
+
     return f"""You are an expert IT operations analyst for a HIPAA-compliant healthcare MSP.
 Your job is to analyze incidents and select the most appropriate automated runbook for remediation.
 
@@ -774,7 +805,7 @@ AVAILABLE RUNBOOKS (these are the ONLY valid runbook_id values you may return):
 {runbook_list}
 
 VALID runbook_id VALUES (you MUST pick one of these or return null — DO NOT invent new IDs):
-{valid_id_list}
+{valid_id_list}{neighbor_block}
 
 DECISION GUIDELINES:
 1. Select the runbook that best matches the incident type and symptoms.
@@ -1143,12 +1174,34 @@ async def analyze_incident(
     # Load all runbooks (static + DB-backed)
     all_runbooks = await _load_dynamic_runbooks()
 
+    # Phase 7: look up nearest-neighbor historical patterns via cosine
+    # similarity on pattern_embeddings. Gives the LLM 3-5 exemplar
+    # "we saw X before → we picked Y → it worked Z%" rows. Warm-starts
+    # novel incidents from their statistical cousins.
+    neighbors: List[Dict[str, Any]] = []
+    try:
+        from .fleet import get_pool
+        from .tenant_middleware import admin_connection
+        from .pattern_embeddings import find_neighbors_for_incident
+        pool = await get_pool()
+        async with admin_connection(pool) as _conn:
+            neighbors = await find_neighbors_for_incident(
+                _conn,
+                incident_type=incident_type,
+                check_type=check_type,
+                k=5,
+                min_similarity=0.3,
+            )
+    except Exception as _e:
+        logger.debug("pattern-embedding lookup skipped", error=str(_e))
+
     # Phase 1 grounding: pre-filter the catalog to runbooks relevant to this
     # incident_type / check_type. Smaller catalog → less hallucination.
     system_prompt = build_system_prompt(
         all_runbooks,
         incident_type=incident_type,
         check_type=check_type,
+        neighbors=neighbors,
     )
     user_prompt = build_incident_prompt(
         incident_type, severity, check_type, details, pre_state, hipaa_controls,

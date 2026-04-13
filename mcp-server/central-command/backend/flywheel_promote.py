@@ -193,6 +193,23 @@ async def promote_candidate(
         f"actor={actor} ({actor_type}) confidence={confidence:.2f}"
     )
 
+    # Phase 7: upsert pattern embedding so this promotion contributes to
+    # the warm-start corpus for future novel incidents.
+    try:
+        from .pattern_embeddings import upsert_pattern_embedding
+        await upsert_pattern_embedding(
+            conn,
+            pattern_key=pattern_sig or f"{incident_type}:{runbook_id}",
+            incident_type=incident_type,
+            check_type=check_type or incident_type,
+            runbook_id=runbook_id,
+            reasoning=(notes or custom_name or ""),
+            source_occurrences=int(candidate.get("total_occurrences") or 0),
+            source_sites=1,
+        )
+    except Exception as _e:
+        logger.warning(f"pattern embedding upsert failed for {rule_id}: {_e}")
+
     # Step 8: emit fleet order so appliances actually receive the rule.
     # This was missing prior to Session 205 — promoted_rules accumulated
     # but deployment_count stayed 0 forever. Site-local scope: only the
