@@ -200,6 +200,16 @@ jobs:
         run: |
           python3 -m pytest tests/test_appliance_offline_detection_pg.py -v --tb=short
 
+      - name: Cross-language YAML validator (Go daemon compat)
+        # Mirrors processor.go::validatePromotedRule in Python so we
+        # catch synthesizer regressions BEFORE deploy. Today's session
+        # hit two daemon-compat bugs sequentially because no Python
+        # test was checking against the Go validator. Lockstep test at
+        # the bottom of the file catches whitelist drift.
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_yaml_daemon_compat.py -v --tb=short
+
   deploy:
     needs: [test, privileged-chain-pg-tests]
     runs-on: ubuntu-latest
@@ -273,6 +283,15 @@ jobs:
             mcp-server/docker-compose.yml \
             ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/docker-compose.yml
 
+      - name: Stamp RELEASE_SHA marker
+        # P0-fix (Session 206 round-table): write the commit SHA into a
+        # file the running app can read at /api/version. Post-deploy
+        # verify asserts the SHA the process reports matches GITHUB_SHA.
+        # If they diverge, the deploy didn't actually restart Python —
+        # the bug we hit on 2026-04-13 12:12-18:03 UTC.
+        run: |
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} bash -c "echo '${{ github.sha }}' > ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/RELEASE_SHA"
+
       - name: Atomic switch — symlink to new release
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << EOF
@@ -286,6 +305,9 @@ jobs:
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/app/ /opt/mcp-server/app/
             rsync -a --delete ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/ /opt/mcp-server/frontend_dist/
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend/nginx.conf /opt/mcp-server/frontend/nginx.conf
+            # Copy RELEASE_SHA into both runtime mounts so /api/version reads it
+            cp ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/RELEASE_SHA /opt/mcp-server/dashboard_api_mount/RELEASE_SHA
+            cp ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/RELEASE_SHA /opt/mcp-server/app/RELEASE_SHA
 
             # Sync docker-compose.yml — tracked in git so env changes
             # (like MIGRATION_DATABASE_URL) aren't tribal knowledge.
@@ -357,11 +379,40 @@ jobs:
           EOF
 
       - name: Verify deployment
+        # Two-tier verification:
+        #   1. /health returns 200 — process is up and routing.
+        #   2. /api/version asserts the running process's SHA matches
+        #      this workflow's GITHUB_SHA. This catches the silent-no-op
+        #      deploy bug we hit on 2026-04-13: code on disk but the
+        #      Python process kept running stale modules. matches=true
+        #      means the restart actually replaced the interpreter.
         run: |
           sleep 15
           HEALTH=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "curl -sf http://localhost:8000/health")
-          echo "$HEALTH"
+          echo "Health: $HEALTH"
           echo "$HEALTH" | grep -q '"status":"ok"' || exit 1
+
+          VERSION=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "curl -sf http://localhost:8000/api/version")
+          echo "Version: $VERSION"
+          RUNTIME_SHA=$(echo "$VERSION" | python3 -c "import json,sys; print(json.load(sys.stdin).get('runtime_sha',''))")
+          DISK_SHA=$(echo "$VERSION" | python3 -c "import json,sys; print(json.load(sys.stdin).get('disk_sha',''))")
+          EXPECTED="${{ github.sha }}"
+
+          echo "expected=$EXPECTED"
+          echo "runtime= $RUNTIME_SHA"
+          echo "disk=    $DISK_SHA"
+
+          if [ "$DISK_SHA" != "$EXPECTED" ]; then
+            echo "FATAL: disk SHA != GITHUB_SHA — rsync did not write RELEASE_SHA"
+            exit 1
+          fi
+          if [ "$RUNTIME_SHA" != "$EXPECTED" ]; then
+            echo "FATAL: runtime SHA != GITHUB_SHA — container did NOT pick up new code."
+            echo "This is the silent-no-op bug. The 'docker compose restart' step"
+            echo "above must have failed. Check service logs."
+            exit 1
+          fi
+          echo "Deploy verified: process running ${EXPECTED:0:7}"
 
       - name: Rollback on failure
         if: failure()

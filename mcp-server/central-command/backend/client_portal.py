@@ -2595,32 +2595,19 @@ async def approve_promotion_candidate(
                 candidate["pattern_signature"], body.custom_name, body.notes
             )
 
-            # Phase 15 closing pass: client-portal promotion previously
-            # bypassed the fleet_orders rollout — rule went into
-            # promoted_rules but no sync_promoted_rule order was issued, so
-            # appliances never received the rule and the migration-163
-            # trigger that bumps deployment_count never fired. Wire it
-            # before commit so all 3 promotion paths agree on the same
-            # rollout contract.
-            try:
-                from .flywheel_promote import issue_sync_promoted_rule_orders
-                order_count = await issue_sync_promoted_rule_orders(
-                    conn,
-                    rule_id=rule["id"],
-                    runbook_id=rule.get("action_params", {}).get("runbook_id", "general"),
-                    rule_yaml=rule_yaml,
-                    site_id=candidate["site_id"],
-                    scope="site",
-                )
-                logger.info(
-                    f"client-promote: issued {order_count} sync_promoted_rule "
-                    f"orders for {rule['id']} (site={candidate['site_id']})"
-                )
-            except Exception as e:
-                logger.error(
-                    f"client-promote: rollout-order issuance failed for {rule['id']}: {e}",
-                    exc_info=True,
-                )
+            # Single shared rollout entrypoint — see
+            # flywheel_promote.safe_rollout_promoted_rule. All 3 promotion
+            # writers delegate here so behavior + logging stay identical
+            # (round-table P1, Session 206).
+            from .flywheel_promote import safe_rollout_promoted_rule
+            await safe_rollout_promoted_rule(
+                conn,
+                rule_id=rule["id"],
+                runbook_id=rule.get("action_params", {}).get("runbook_id", "general"),
+                site_id=candidate["site_id"],
+                rule_yaml=rule_yaml,
+                caller="client_portal.approve",
+            )
 
             await transaction.commit()
 

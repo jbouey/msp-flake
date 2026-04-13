@@ -1021,35 +1021,20 @@ async def bulk_approve_candidates(
                 except Exception as e:
                     logger.warning(f"Promotion audit log write failed: {e}")
 
-                # Phase 15 closing pass: bulk-promote previously bypassed the
-                # fleet_orders rollout — promoted_rules accumulated but
-                # appliances never received them, so deployment_count stayed
-                # 0 and the trigger from migration 163 never fired. Wire it
-                # here so all 3 promotion paths (orchestrator, this admin
-                # bulk endpoint, and client_portal) issue the rollout order.
-                try:
-                    from .flywheel_promote import issue_sync_promoted_rule_orders
-                    order_count = await issue_sync_promoted_rule_orders(
-                        conn,
-                        rule_id=rule["id"],
-                        runbook_id=rule["action_params"].get("runbook_id", "general"),
-                        rule_yaml=rule_yaml,
-                        site_id=candidate["site_id"],
-                        scope="site",
-                    )
-                    logger.info(
-                        f"bulk-promote: issued {order_count} sync_promoted_rule "
-                        f"orders for {rule['id']} (site={candidate['site_id']})"
-                    )
-                except Exception as e:
-                    # Order issuance failure must NOT roll back the promotion —
-                    # rule is in promoted_rules + l1_rules. The reconciliation
-                    # script (scripts/reconcile_promoted_rules_orders.py) can
-                    # re-issue from history. But log loud so we notice.
-                    logger.error(
-                        f"bulk-promote: failed to issue rollout order for {rule['id']}: {e}",
-                        exc_info=True,
-                    )
+                # Single shared rollout entrypoint — see
+                # flywheel_promote.safe_rollout_promoted_rule. All 3
+                # promotion writers (this bulk admin path, client_portal
+                # approve, and promote_candidate) delegate here so
+                # behavior + logging stay identical (round-table P1).
+                from .flywheel_promote import safe_rollout_promoted_rule
+                await safe_rollout_promoted_rule(
+                    conn,
+                    rule_id=rule["id"],
+                    runbook_id=rule["action_params"].get("runbook_id", "general"),
+                    site_id=candidate["site_id"],
+                    rule_yaml=rule_yaml,
+                    caller="learning_api.bulk_promote",
+                )
 
                 await transaction.commit()
                 approved += 1

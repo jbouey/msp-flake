@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from typing import List, Tuple
@@ -124,6 +125,13 @@ async def issue_one(conn: asyncpg.Connection, rule_id: str, site_id: str,
         return False
 
 
+# Hard ceiling — refuses to issue more than this many orders in a
+# single run regardless of --limit. Protects against a runaway scan
+# (eg. mass MAC re-provisioning event surfacing dormant rules) from
+# overloading the appliance check-in delivery pipeline.
+MAX_ORDERS_PER_RUN = 25
+
+
 async def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
@@ -132,7 +140,17 @@ async def main():
     )
     parser.add_argument(
         "--limit", type=int, default=None,
-        help="Cap orders issued in one run (safety net for first apply).",
+        help=f"Cap orders issued in one run. Hard ceiling: {MAX_ORDERS_PER_RUN}.",
+    )
+    parser.add_argument(
+        "--actor-email", type=str, default=None,
+        help="Required with --apply: human email accountable for this run "
+             "(written to admin_audit_log for chain-of-custody).",
+    )
+    parser.add_argument(
+        "--reason", type=str, default=None,
+        help="Required with --apply: free-text reason ≥ 20 chars "
+             "describing why this backfill is being run.",
     )
     args = parser.parse_args()
 
@@ -143,6 +161,20 @@ async def main():
         sys.exit(2)
 
     if args.apply:
+        # P0 audit gate: every --apply run is bound to a named human +
+        # a reason, written to admin_audit_log (immutable, append-only).
+        actor = (args.actor_email or "").strip()
+        reason = (args.reason or "").strip()
+        if not actor or "@" not in actor:
+            sys.exit(
+                "--apply requires --actor-email <you@yourdomain.com> "
+                "(named human, no service accounts)"
+            )
+        if len(reason) < 20:
+            sys.exit(
+                "--apply requires --reason '<≥20 chars describing why>' "
+                "for audit/HIPAA accountability"
+            )
         _ensure_signing_key_loaded()
 
     conn = await asyncpg.connect(url)
@@ -153,14 +185,50 @@ async def main():
             print("Nothing to do.")
             return
 
-        if args.limit:
-            orphans = orphans[: args.limit]
-            print(f"--limit {args.limit} → processing first {len(orphans)} only.")
+        # Apply --limit, then enforce hard ceiling.
+        original_count = len(orphans)
+        effective_limit = args.limit if args.limit else MAX_ORDERS_PER_RUN
+        effective_limit = min(effective_limit, MAX_ORDERS_PER_RUN)
+        if len(orphans) > effective_limit:
+            orphans = orphans[:effective_limit]
+            print(
+                f"--limit {effective_limit} (hard ceiling {MAX_ORDERS_PER_RUN}) → "
+                f"processing first {len(orphans)} of {original_count}. Re-run "
+                f"after this batch settles to continue."
+            )
 
         if not args.apply:
             print()
-            print("DRY RUN. Pass --apply to actually issue orders.")
+            print("DRY RUN. Pass --apply --actor-email <e> --reason '<r>' to issue orders.")
             print()
+
+        # P0 audit: write an admin_audit_log entry BEFORE we issue anything
+        # so the audit trail exists even if the script crashes mid-run.
+        audit_entry_id = None
+        if args.apply:
+            try:
+                audit_entry_id = await conn.fetchval(
+                    """
+                    INSERT INTO admin_audit_log (username, action, target, details)
+                    VALUES ($1, 'reconcile_promoted_rules_orders.start',
+                            'fleet', $2::jsonb)
+                    RETURNING id
+                    """,
+                    actor,
+                    json.dumps({
+                        "actor_email": actor,
+                        "reason": reason,
+                        "orphans_total": original_count,
+                        "orphans_to_process": len(orphans),
+                        "limit": args.limit,
+                        "hard_ceiling": MAX_ORDERS_PER_RUN,
+                    }),
+                )
+                print(f"[AUDIT] Logged start as admin_audit_log id={audit_entry_id}")
+            except Exception as e:
+                # Audit log write must succeed — refuse to proceed without it.
+                print(f"ERROR: could not write admin_audit_log entry: {e}", file=sys.stderr)
+                sys.exit(3)
 
         ok = 0
         fail = 0
@@ -173,6 +241,28 @@ async def main():
 
         print()
         print(f"Summary: ok={ok}  fail={fail}  apply={args.apply}")
+
+        if args.apply:
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO admin_audit_log (username, action, target, details)
+                    VALUES ($1, 'reconcile_promoted_rules_orders.complete',
+                            'fleet', $2::jsonb)
+                    """,
+                    actor,
+                    json.dumps({
+                        "actor_email": actor,
+                        "reason": reason,
+                        "ok": ok, "fail": fail,
+                        "start_audit_id": audit_entry_id,
+                    }),
+                )
+            except Exception as e:
+                # Don't fail the run for the close-bracket audit write,
+                # but flag loudly.
+                print(f"WARNING: could not write completion audit row: {e}", file=sys.stderr)
+
         if not args.apply:
             print(f"Would have issued {ok} orders. Re-run with --apply to do it.")
     finally:

@@ -218,30 +218,16 @@ async def promote_candidate(
         logger.warning(f"pattern embedding upsert failed for {rule_id}: {_e}")
 
     # Step 8: emit fleet order so appliances actually receive the rule.
-    # This was missing prior to Session 205 — promoted_rules accumulated
-    # but deployment_count stayed 0 forever. Site-local scope: only the
-    # originating site's appliances get the rule. Fleet-wide rules
-    # (SYNC-L1-*) require partner approval (separate path, not yet wired).
-    try:
-        order_count = await issue_sync_promoted_rule_orders(
-            conn,
-            rule_id=rule_id,
-            runbook_id=runbook_id,
-            rule_yaml=effective_yaml,
-            site_id=site_id,
-            scope="site",
-        )
-        logger.info(
-            f"Promotion fleet orders issued: rule_id={rule_id} count={order_count}"
-        )
-    except Exception as e:
-        # Order issuance failure must not block the promotion record. The
-        # rule is in promoted_rules and l1_rules; a follow-up reconciliation
-        # job can re-issue if needed. But log loudly.
-        logger.error(
-            f"Failed to issue sync_promoted_rule fleet order for {rule_id}: {e}",
-            exc_info=True,
-        )
+    # Centralized in safe_rollout_promoted_rule so all 3 promotion writers
+    # share identical behavior + logging (round-table P1, Session 206).
+    await safe_rollout_promoted_rule(
+        conn,
+        rule_id=rule_id,
+        runbook_id=runbook_id,
+        site_id=site_id,
+        rule_yaml=effective_yaml,
+        caller="promote_candidate",
+    )
 
     return {
         "rule_id": rule_id,
@@ -386,6 +372,57 @@ async def evaluate_shadow_agreement(
         "hold_reason": hold_reason,
         "shadow_record_id": record_id,
     }
+
+
+async def safe_rollout_promoted_rule(
+    conn: asyncpg.Connection,
+    *,
+    rule_id: str,
+    runbook_id: str,
+    site_id: str,
+    rule_yaml: Optional[str] = None,
+    caller: str = "unknown",
+) -> int:
+    """Idempotent + try/except-wrapped wrapper around issue_sync_promoted_rule_orders.
+
+    Round-table P1 (Session 206): three promotion writers
+    (promote_candidate, learning_api bulk-promote, client_portal
+    client-approve) used to inline a try/except around the issue call,
+    drift between them was the root cause of bugs #1+#2. The fourth
+    writer added would inevitably miss the call. This helper centralizes:
+
+      * the issue call with daemon-valid YAML synthesis (rule_yaml is
+        a hint; the issuer rebuilds from l1_rules.incident_pattern)
+      * standardized success/failure logging (so dashboards + alerting
+        can grep one line)
+      * exception swallowing (rollout failure must NOT roll back the
+        promotion record — the reconciliation script can re-issue)
+
+    `rule_yaml` is now informational — the issuer always synthesizes
+    a fresh body from the l1_rules row. Kept for call-site clarity.
+
+    Returns the number of orders created (0 on failure)."""
+    try:
+        n = await issue_sync_promoted_rule_orders(
+            conn,
+            rule_id=rule_id,
+            runbook_id=runbook_id,
+            rule_yaml=rule_yaml or "",
+            site_id=site_id,
+            scope="site",
+        )
+        logger.info(
+            f"safe_rollout_promoted_rule: caller={caller} rule_id={rule_id} "
+            f"site_id={site_id} orders_created={n}"
+        )
+        return int(n)
+    except Exception as e:
+        logger.error(
+            f"safe_rollout_promoted_rule FAILED: caller={caller} rule_id={rule_id} "
+            f"site_id={site_id}: {e}",
+            exc_info=True,
+        )
+        return 0
 
 
 async def issue_sync_promoted_rule_orders(

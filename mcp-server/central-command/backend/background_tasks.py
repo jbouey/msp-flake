@@ -2109,11 +2109,16 @@ async def mark_stale_appliances_loop():
                 )
                 # Only send email on the FIRST detection — debounced
                 # via offline_notified flag (reset on recovery).
+                # P2-fix (round-table): send_critical_alert returns False
+                # when SMTP is unconfigured/failed — must NOT mark notified
+                # in that case, or we'd silently miss the alert and never
+                # re-arm. Only stamp the flag after a CONFIRMED send.
                 if not row["offline_notified"]:
+                    sent_ok = False
                     try:
                         from dashboard_api.email_alerts import send_critical_alert
                         label = row["display_name"] or row["hostname"] or row["appliance_id"]
-                        send_critical_alert(
+                        sent_ok = bool(send_critical_alert(
                             title=f"Appliance offline: {label}",
                             message=(
                                 f"Appliance {label} at site {row['site_id']} "
@@ -2129,19 +2134,33 @@ async def mark_stale_appliances_loop():
                                 "last_checkin": str(row["last_checkin"]),
                                 "event": "appliance_offline",
                             },
-                        )
-                        async with pool.acquire() as c2:
-                            async with c2.transaction():
-                                await c2.execute(
-                                    "UPDATE site_appliances SET offline_notified = true "
-                                    "WHERE appliance_id = $1",
-                                    row["appliance_id"],
-                                )
-                    except Exception as e:
+                        ))
+                    except Exception:
                         logger.error(
                             "Failed to send appliance_offline alert",
                             appliance_id=row["appliance_id"],
                             exc_info=True,
+                        )
+                    if sent_ok:
+                        try:
+                            async with pool.acquire() as c2:
+                                async with c2.transaction():
+                                    await c2.execute(
+                                        "UPDATE site_appliances SET offline_notified = true "
+                                        "WHERE appliance_id = $1",
+                                        row["appliance_id"],
+                                    )
+                        except Exception:
+                            logger.error(
+                                "Failed to set offline_notified flag",
+                                appliance_id=row["appliance_id"],
+                                exc_info=True,
+                            )
+                    else:
+                        logger.warning(
+                            "appliance_offline alert NOT sent — leaving "
+                            "offline_notified=false so we retry next pass",
+                            appliance_id=row["appliance_id"],
                         )
         except asyncio.CancelledError:
             break

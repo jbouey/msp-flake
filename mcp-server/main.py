@@ -1909,6 +1909,79 @@ async def health():
     return JSONResponse(content={"status": "ok"})
 
 
+# P0-fix (Session 206 round-table): the deploy workflow used to leave
+# new code on disk while the container kept running old bytecode.
+# /api/version exposes both the SHA of the current/ symlink target
+# (what was deployed) AND the SHA the running process was born with
+# (cached on import). CI asserts they match post-deploy; if they
+# diverge we know the restart didn't take effect.
+import subprocess as _subprocess
+import pathlib as _pathlib
+
+_PROCESS_GIT_SHA: str = "unknown"
+
+
+def _read_runtime_git_sha() -> str:
+    """Return the git SHA the current Python process was started with.
+    Cached on first call (process startup) so it never changes mid-run.
+    """
+    global _PROCESS_GIT_SHA
+    if _PROCESS_GIT_SHA != "unknown":
+        return _PROCESS_GIT_SHA
+    # Try the deploy workflow's release stamp first
+    for cand in ("/app/RELEASE_SHA", "/app/dashboard_api/RELEASE_SHA",
+                 "/opt/mcp-server/current/RELEASE_SHA"):
+        try:
+            p = _pathlib.Path(cand)
+            if p.exists():
+                _PROCESS_GIT_SHA = p.read_text().strip()[:40]
+                return _PROCESS_GIT_SHA
+        except Exception:
+            pass
+    # Fall back to git directly (only works in dev where .git is present)
+    try:
+        out = _subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=2, check=False,
+        )
+        if out.returncode == 0:
+            _PROCESS_GIT_SHA = out.stdout.strip()[:40]
+            return _PROCESS_GIT_SHA
+    except Exception:
+        pass
+    return _PROCESS_GIT_SHA
+
+
+def _read_disk_git_sha() -> str:
+    """SHA stamped on disk by the most recent deploy (or current symlink)."""
+    for cand in ("/app/RELEASE_SHA", "/opt/mcp-server/current/RELEASE_SHA"):
+        try:
+            p = _pathlib.Path(cand)
+            if p.exists():
+                return p.read_text().strip()[:40]
+        except Exception:
+            pass
+    return "unknown"
+
+
+@app.api_route("/api/version", methods=["GET", "HEAD"])
+async def app_version():
+    """Public version endpoint. CI's post-deploy verify step asserts
+    the running process's SHA matches the SHA of the commit that
+    triggered the workflow. A mismatch means the deploy didn't
+    actually restart the Python process — the bug we hit on
+    2026-04-13 (12:12-18:03 UTC silent-no-op deploy window).
+
+    Public so monitors can scrape it without auth."""
+    runtime = _read_runtime_git_sha()
+    disk = _read_disk_git_sha()
+    return JSONResponse(content={
+        "runtime_sha": runtime,
+        "disk_sha": disk,
+        "matches": runtime == disk and runtime != "unknown",
+    })
+
+
 @app.get("/api/admin/health")
 async def admin_health(user: dict = Depends(require_auth)):
     """Detailed health check — Redis, MinIO, DB, background tasks (admin only)."""
