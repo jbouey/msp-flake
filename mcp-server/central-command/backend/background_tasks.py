@@ -448,6 +448,205 @@ async def flywheel_reconciliation_loop():
         await asyncio.sleep(1800)  # 30 minutes
 
 
+async def temporal_decay_loop():
+    """Phase 6: exponentially decay evidence in platform_pattern_stats.
+
+    Runs once per 6h. For every row, decay success_count and
+    total_occurrences by a factor computed from the per-incident-type
+    half-life (default 90d) and time since last_seen. Skips rows whose
+    counts are already below the configured floor (min_count_floor)
+    so very old patterns with genuinely useful cardinality don't vanish.
+
+    Why this matters: Windows 10 EoL, patch Tuesdays, CVE events, and
+    firmware updates all change the success rate of remediation runbooks
+    abruptly. Equally-weighted historical evidence produces misleading
+    promotion candidates (e.g., a 100% success rate from 6 months ago
+    that no longer reflects reality). The flywheel *forgets* proportional
+    to time.
+
+    Decay formula:
+      factor = 0.5 ** (days_since_last_seen / half_life_days)
+      new_count = MAX(old_count * factor, min_count_floor)
+    """
+    await asyncio.sleep(300)  # Wait 5 min after startup
+    while True:
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Load per-type config + default
+                cfg_rows = await conn.fetch(
+                    "SELECT incident_type, half_life_days, decay_enabled, min_count_floor "
+                    "FROM pattern_decay_config"
+                )
+                cfg_map = {r["incident_type"]: r for r in cfg_rows}
+                default_cfg = cfg_map.get("__default__") or {
+                    "half_life_days": 90,
+                    "decay_enabled": True,
+                    "min_count_floor": 5,
+                }
+
+                # Process platform_pattern_stats in one pass
+                # (scale: 25 rows today, ~1000 in the future; single query OK)
+                rows = await conn.fetch(
+                    "SELECT pattern_key, incident_type, success_count, "
+                    "total_occurrences, last_seen FROM platform_pattern_stats"
+                )
+                decayed = 0
+                skipped = 0
+                for r in rows:
+                    itype = r["incident_type"] or "__default__"
+                    cfg = cfg_map.get(itype, default_cfg)
+                    if not cfg.get("decay_enabled", True):
+                        continue
+
+                    half_life = float(cfg.get("half_life_days", 90))
+                    floor = int(cfg.get("min_count_floor", 5))
+
+                    if r["last_seen"] is None:
+                        continue
+                    age_days = (datetime.now(timezone.utc) - r["last_seen"]).total_seconds() / 86400.0
+                    if age_days < 1:
+                        skipped += 1
+                        continue  # too fresh to decay
+
+                    factor = 0.5 ** (age_days / half_life)
+                    new_success = max(int((r["success_count"] or 0) * factor), floor)
+                    new_total = max(int((r["total_occurrences"] or 0) * factor), floor)
+
+                    await conn.execute(
+                        "UPDATE platform_pattern_stats "
+                        "SET success_count = $1, total_occurrences = $2, "
+                        "    success_rate = $1::float / NULLIF($2, 0) "
+                        "WHERE pattern_key = $3",
+                        new_success, new_total, r["pattern_key"],
+                    )
+                    decayed += 1
+
+                # Mark config rows as applied
+                await conn.execute(
+                    "UPDATE pattern_decay_config SET last_applied_at = NOW()"
+                )
+
+                logger.info(
+                    "temporal_decay cycle complete",
+                    decayed=decayed,
+                    skipped=skipped,
+                    total_rows=len(rows),
+                )
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"Temporal decay error: {e}")
+
+        await asyncio.sleep(21600)  # 6 hours
+
+
+async def regime_change_detector_loop():
+    """Phase 6: detect sudden success-rate drops on active L1 rules.
+
+    Runs every 30 min. For each promoted_from_l2 L1 rule with ≥10 recent
+    executions, compares the 7-day rolling success rate to the 30-day
+    baseline. If the 7-day rate drops >15% and the sample size is
+    significant (7d n ≥ 10), record an l1_rule_regime_events row and
+    log a WARNING.
+
+    Does NOT auto-disable. The existing 48h <70% gate in
+    flywheel_promotion_loop already disables degraded rules. Regime
+    events are a LEADING signal — they fire faster than the 48h gate
+    and flag rules that are drifting but not yet below the disable
+    threshold.
+
+    Idempotency: if an unacknowledged regime event exists for the same
+    rule in the last 24h, we skip re-recording (avoids flapping).
+    """
+    await asyncio.sleep(600)  # Wait 10 min after startup
+    while True:
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                rows = await conn.fetch("""
+                    WITH recent AS (
+                        SELECT et.runbook_id,
+                               COUNT(*) FILTER (WHERE et.created_at > NOW() - INTERVAL '7 days') AS n7,
+                               SUM(CASE WHEN et.success AND et.created_at > NOW() - INTERVAL '7 days' THEN 1 ELSE 0 END) AS s7,
+                               COUNT(*) FILTER (WHERE et.created_at > NOW() - INTERVAL '30 days') AS n30,
+                               SUM(CASE WHEN et.success AND et.created_at > NOW() - INTERVAL '30 days' THEN 1 ELSE 0 END) AS s30
+                        FROM execution_telemetry et
+                        WHERE et.resolution_level = 'L1'
+                          AND et.created_at > NOW() - INTERVAL '30 days'
+                        GROUP BY et.runbook_id
+                        HAVING COUNT(*) FILTER (WHERE et.created_at > NOW() - INTERVAL '7 days') >= 10
+                    )
+                    SELECT l.rule_id, l.runbook_id, r.n7, r.s7, r.n30, r.s30
+                    FROM l1_rules l
+                    JOIN recent r ON r.runbook_id = l.runbook_id
+                    WHERE l.promoted_from_l2 = true
+                      AND l.enabled = true
+                """)
+
+                detected = 0
+                for r in rows:
+                    n7, s7, n30, s30 = r["n7"], r["s7"], r["n30"], r["s30"]
+                    if n7 == 0 or n30 == 0:
+                        continue
+                    rate_7 = float(s7) / n7
+                    rate_30 = float(s30) / n30
+                    delta = rate_7 - rate_30
+                    if delta >= -0.15:
+                        continue  # No significant drop
+
+                    # Idempotency: skip if we already flagged this in the last 24h
+                    existing = await conn.fetchval("""
+                        SELECT 1 FROM l1_rule_regime_events
+                        WHERE rule_id = $1
+                          AND detected_at > NOW() - INTERVAL '24 hours'
+                          AND acknowledged_at IS NULL
+                        LIMIT 1
+                    """, r["rule_id"])
+                    if existing:
+                        continue
+
+                    severity = "critical" if delta <= -0.30 else "warning"
+                    await conn.execute("""
+                        INSERT INTO l1_rule_regime_events
+                            (rule_id, window_7d_rate, baseline_30d_rate,
+                             delta, sample_size_7d, sample_size_30d, severity)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """, r["rule_id"], round(rate_7, 3), round(rate_30, 3),
+                        round(delta, 3), n7, n30, severity)
+
+                    logger.warning(
+                        "L1 regime change detected",
+                        rule_id=r["rule_id"],
+                        runbook_id=r["runbook_id"],
+                        rate_7d=round(rate_7, 3),
+                        rate_30d=round(rate_30, 3),
+                        delta=round(delta, 3),
+                        severity=severity,
+                    )
+                    detected += 1
+
+                if detected > 0:
+                    logger.info(
+                        "regime_change_detector cycle complete",
+                        detected=detected,
+                    )
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.exception(f"Regime detector error: {e}")
+
+        await asyncio.sleep(1800)  # 30 minutes
+
+
 async def mesh_consistency_check_loop():
     """Periodically validate mesh ring state and target assignment coverage.
 

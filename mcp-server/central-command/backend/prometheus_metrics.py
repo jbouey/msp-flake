@@ -793,6 +793,27 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: orphan runbooks query failed")
 
+            # Phase 6: regime change events in the last 7 days (unacknowledged)
+            try:
+                row = await conn.fetchrow("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE severity = 'warning')  AS warnings,
+                        COUNT(*) FILTER (WHERE severity = 'critical') AS criticals
+                    FROM l1_rule_regime_events
+                    WHERE detected_at > NOW() - INTERVAL '7 days'
+                      AND acknowledged_at IS NULL
+                """)
+                sections.append(_gauge(
+                    "osiriscare_flywheel_regime_changes_7d",
+                    "L1 rule regime-change events (7d, unacknowledged) by severity",
+                    [
+                        ({"severity": "warning"},  float(row["warnings"] or 0)),
+                        ({"severity": "critical"}, float(row["criticals"] or 0)),
+                    ],
+                ))
+            except Exception:
+                logger.exception("metrics: regime change query failed")
+
     except Exception:
         logger.exception("metrics: database connection failed")
         return PlainTextResponse(
