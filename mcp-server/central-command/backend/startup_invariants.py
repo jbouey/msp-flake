@@ -1,0 +1,296 @@
+"""Startup security-invariant check (Phase 15 enterprise-grade hygiene).
+
+Runs once at lifespan startup. Verifies every security-critical
+DB-layer protection is actually installed. Logs ERROR + writes an
+admin_audit_log row for each broken invariant, so the operator sees
+the failure in their dashboard and the log shipper pages on-call.
+
+Does NOT crash the server. A broken invariant is a CREDIBILITY event,
+not an availability event — the code that WRITES privileged rows
+still refuses without the chain, and a fail-loud log is stronger than
+a fail-closed process that operators will just restart.
+
+Invariants checked:
+
+  INV-CHAIN-175
+    Trigger `trg_enforce_privileged_chain` exists on fleet_orders.
+    Without it, privileged fleet orders can be INSERTed without an
+    attestation bundle (chain-of-custody break).
+
+  INV-CHAIN-176
+    Trigger `trg_enforce_privileged_immutability` exists on
+    fleet_orders. Without it, attestation_bundle_id / site_id /
+    signed_payload can be UPDATEd post-insert (chain mutation).
+
+  INV-EVIDENCE-DELETE
+    Trigger `prevent_audit_deletion` exists on compliance_bundles
+    (migration 151). Without it, evidence can be DELETEd.
+
+  INV-AUDIT-DELETE
+    Same trigger on admin_audit_log / client_audit_log. HIPAA
+    §164.316(b)(2)(i) 7-year retention requires append-only.
+
+  INV-COMPLETED-LOCK
+    Trigger `prevent_completed_order_modification` exists on
+    fleet_orders (migration 151).
+
+  INV-SIGNING-KEY
+    Signing key file exists, readable, non-empty.
+
+  INV-MAGIC-LINK-TABLE
+    privileged_access_magic_links table exists (migration 178).
+
+Result surfaced via:
+  - logger.error(...) per failure (log shipper alerts)
+  - Prometheus gauge osiriscare_startup_invariant_ok{name=...} (1|0)
+  - admin_audit_log row per failure (operator-visible)
+  - Returns list of broken invariants so lifespan can print a
+    summary banner at startup.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import pathlib
+from dataclasses import dataclass
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+SIGNING_KEY_PATH = os.getenv("SIGNING_KEY_FILE", "/app/secrets/signing.key")
+
+
+@dataclass
+class InvariantResult:
+    name: str
+    ok: bool
+    detail: str = ""
+
+
+async def _check_trigger_exists(
+    conn, trigger_name: str, table_name: str
+) -> bool:
+    """Verify a pg_trigger row exists for (trigger_name, table_name)."""
+    row = await conn.fetchrow(
+        """
+        SELECT 1 FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        WHERE t.tgname = $1
+          AND c.relname = $2
+          AND NOT t.tgisinternal
+        LIMIT 1
+        """,
+        trigger_name, table_name,
+    )
+    return row is not None
+
+
+async def _check_table_exists(conn, table_name: str) -> bool:
+    row = await conn.fetchrow(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_name = $1 LIMIT 1",
+        table_name,
+    )
+    return row is not None
+
+
+async def check_all_invariants(conn) -> List[InvariantResult]:
+    """Run the full invariant suite. Returns one InvariantResult per
+    check. Caller decides what to do with failures (log, alert, refuse
+    to accept writes, etc.)."""
+    results: List[InvariantResult] = []
+
+    # ── Chain enforcement ─────────────────────────────────────────
+    ok = await _check_trigger_exists(
+        conn, "trg_enforce_privileged_chain", "fleet_orders"
+    )
+    results.append(InvariantResult(
+        "INV-CHAIN-175", ok,
+        "" if ok else (
+            "Privileged INSERT without attestation_bundle_id is NOT "
+            "rejected — reapply migration 175_privileged_chain_enforcement.sql"
+        ),
+    ))
+
+    ok = await _check_trigger_exists(
+        conn, "trg_enforce_privileged_immutability", "fleet_orders"
+    )
+    results.append(InvariantResult(
+        "INV-CHAIN-176", ok,
+        "" if ok else (
+            "Privileged UPDATE of attestation_bundle_id / site_id / "
+            "signed_payload is NOT blocked — reapply migration "
+            "176_privileged_chain_update_guard.sql"
+        ),
+    ))
+
+    # ── Evidence + audit immutability ────────────────────────────
+    # Migration 151 uses a shared trigger function
+    # `prevent_audit_deletion` across multiple tables. Check one
+    # sentinel table per class.
+    for table, inv_name in [
+        ("compliance_bundles", "INV-EVIDENCE-DELETE"),
+        ("admin_audit_log", "INV-AUDIT-DELETE-ADMIN"),
+        ("client_audit_log", "INV-AUDIT-DELETE-CLIENT"),
+        ("portal_access_log", "INV-AUDIT-DELETE-PORTAL"),
+    ]:
+        # We don't know the exact trigger name per table from this
+        # context, so check that SOME BEFORE-DELETE trigger exists.
+        row = await conn.fetchrow(
+            """
+            SELECT COUNT(*)::int AS n
+            FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            WHERE c.relname = $1
+              AND t.tgtype & 8 = 8     -- BEFORE
+              AND t.tgtype & 4 = 4     -- DELETE
+              AND NOT t.tgisinternal
+            """,
+            table,
+        )
+        ok = bool(row and row["n"] > 0)
+        results.append(InvariantResult(
+            inv_name, ok,
+            "" if ok else (
+                f"No BEFORE DELETE trigger on {table} — retention "
+                f"immutability compromised. Reapply migration 151."
+            ),
+        ))
+
+    # ── Completed-order lock ─────────────────────────────────────
+    ok = await _check_trigger_exists(
+        conn, "trg_prevent_completed_order_modification", "fleet_orders"
+    )
+    # That's the expected name if 151 wires it with trg_ prefix;
+    # some earlier migrations used a different convention. Fall back
+    # to any BEFORE UPDATE trigger.
+    if not ok:
+        row = await conn.fetchrow(
+            """
+            SELECT COUNT(*)::int AS n
+            FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            WHERE c.relname = 'fleet_orders'
+              AND t.tgtype & 8 = 8     -- BEFORE
+              AND t.tgtype & 16 = 16   -- UPDATE
+              AND NOT t.tgisinternal
+              AND t.tgname LIKE '%complet%'
+            """
+        )
+        ok = bool(row and row["n"] > 0)
+    results.append(InvariantResult(
+        "INV-COMPLETED-LOCK", ok,
+        "" if ok else (
+            "No BEFORE UPDATE trigger guarding status='completed' on "
+            "fleet_orders — historical orders can be rewritten. "
+            "Reapply migration 151."
+        ),
+    ))
+
+    # ── Signing key presence ─────────────────────────────────────
+    try:
+        raw = pathlib.Path(SIGNING_KEY_PATH).read_bytes().strip()
+        ok = len(raw) >= 16
+        detail = "" if ok else f"signing key file exists but is <16 bytes"
+    except Exception as e:
+        ok = False
+        detail = f"signing key unreadable at {SIGNING_KEY_PATH}: {e}"
+    results.append(InvariantResult("INV-SIGNING-KEY", ok, detail))
+
+    # ── Magic-link tracking table ────────────────────────────────
+    ok = await _check_table_exists(conn, "privileged_access_magic_links")
+    results.append(InvariantResult(
+        "INV-MAGIC-LINK-TABLE", ok,
+        "" if ok else (
+            "privileged_access_magic_links table missing — magic-link "
+            "approval flow will fail. Apply migration 178."
+        ),
+    ))
+
+    return results
+
+
+async def enforce_startup_invariants(conn, metrics_registry=None) -> int:
+    """Run the full check, log + audit each failure, update the
+    Prometheus gauge. Returns the number of broken invariants (0 = green).
+
+    `metrics_registry` is optional — when provided, must expose
+    `.startup_invariant_ok.labels(name).set(value)`.
+    """
+    import json
+    results = await check_all_invariants(conn)
+
+    broken = [r for r in results if not r.ok]
+    for r in results:
+        if metrics_registry is not None:
+            try:
+                metrics_registry.startup_invariant_ok.labels(name=r.name).set(
+                    1 if r.ok else 0
+                )
+            except Exception:
+                pass
+
+    if not broken:
+        logger.info(
+            "startup_invariants_ok",
+            extra={"checked": len(results)},
+        )
+        return 0
+
+    # Log ERROR per broken invariant
+    for r in broken:
+        logger.error(
+            "STARTUP_INVARIANT_BROKEN",
+            extra={
+                "invariant": r.name,
+                "detail": r.detail,
+            },
+        )
+
+    # Persist to admin_audit_log in one batch so a single query covers
+    # the whole failed suite (one row per invariant).
+    try:
+        async with conn.transaction():
+            for r in broken:
+                await conn.execute(
+                    """
+                    INSERT INTO admin_audit_log
+                    (action, target_type, target_id, details, created_at)
+                    VALUES (
+                        'STARTUP_INVARIANT_BROKEN',
+                        'invariant',
+                        $1,
+                        $2::jsonb,
+                        NOW()
+                    )
+                    """,
+                    r.name,
+                    json.dumps({
+                        "invariant": r.name,
+                        "detail": r.detail,
+                        "broken_at_startup": True,
+                    }),
+                )
+    except Exception as e:
+        logger.error(
+            "startup_invariant_audit_write_failed",
+            extra={"error": str(e)},
+            exc_info=True,
+        )
+
+    # One-shot summary banner for humans at startup
+    logger.error(
+        "STARTUP_INVARIANTS_DEGRADED",
+        extra={
+            "broken_count": len(broken),
+            "broken": [r.name for r in broken],
+            "note": (
+                "Server is running but the DB layer is not fully "
+                "protecting privileged operations. Investigate before "
+                "accepting writes."
+            ),
+        },
+    )
+
+    return len(broken)

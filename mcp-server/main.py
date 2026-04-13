@@ -500,6 +500,11 @@ async def _ots_upgrade_loop():
 
     while True:
         try:
+            from dashboard_api.bg_heartbeat import record_heartbeat
+            record_heartbeat("ots_upgrade")
+        except Exception:
+            pass
+        try:
             from dashboard_api.evidence_chain import upgrade_pending_proofs
             async with async_session() as db:
                 result = await upgrade_pending_proofs(db, limit=500)
@@ -526,6 +531,11 @@ async def _ots_resubmit_expired_loop():
     consecutive_zero = 0
 
     while True:
+        try:
+            from dashboard_api.bg_heartbeat import record_heartbeat
+            record_heartbeat("ots_resubmit")
+        except Exception:
+            pass
         try:
             from dashboard_api.evidence_chain import submit_hash_to_ots
             async with async_session() as db:
@@ -667,6 +677,11 @@ async def _flywheel_promotion_loop():
     """
     await asyncio.sleep(120)  # Wait 2 min after startup
     while True:
+        try:
+            from dashboard_api.bg_heartbeat import record_heartbeat
+            record_heartbeat("flywheel")
+        except Exception:
+            pass
         try:
             promotions_this_cycle = 0
             async with async_session() as db:
@@ -1159,6 +1174,33 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Check registry load failed (using hardcoded fallback): {e}")
 
+    # Phase 15 enterprise hygiene — verify DB-layer security invariants
+    # are intact on every startup. A missing trigger = a chain-of-custody
+    # vulnerability that must be surfaced loud, not quietly depended on.
+    # Does NOT crash on failure — a fail-loud log + audit row is
+    # stronger than a fail-closed process operators just restart.
+    try:
+        from dashboard_api.startup_invariants import enforce_startup_invariants
+        from dashboard_api.fleet import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            broken_count = await enforce_startup_invariants(conn)
+        if broken_count:
+            logger.error(
+                f"STARTUP_INVARIANTS_DEGRADED count={broken_count} — "
+                f"see individual STARTUP_INVARIANT_BROKEN entries + "
+                f"admin_audit_log. Server continues but DB protections "
+                f"are partial."
+            )
+        else:
+            logger.info("startup_invariants_ok — all security triggers installed")
+    except Exception as e:
+        logger.error(
+            f"startup_invariant_check_failed: {e} — "
+            f"CANNOT CONFIRM DB PROTECTIONS. Continuing in degraded mode.",
+            exc_info=True,
+        )
+
     # Create exceptions tables if needed
     try:
         from dashboard_api.exceptions_api import create_exceptions_tables
@@ -1241,9 +1283,19 @@ async def lifespan(app: FastAPI):
 
     from dashboard_api.companion import companion_alert_check_loop
 
+    def _hb(name: str) -> None:
+        """Swallow-any-error heartbeat call. A bad heartbeat must
+        never break the loop it's trying to monitor — Phase 15 A-spec."""
+        try:
+            from dashboard_api.bg_heartbeat import record_heartbeat
+            record_heartbeat(name)
+        except Exception:
+            pass
+
     async def expire_fleet_orders_loop():
         """Background task to mark expired fleet orders."""
         while True:
+            _hb("fleet_order_expiry")
             try:
                 from dashboard_api.fleet import get_pool
                 pool = await get_pool()
@@ -1264,6 +1316,7 @@ async def lifespan(app: FastAPI):
         """Periodically sync site_appliances from appliances when diverged (every 5 min)."""
         await asyncio.sleep(180)  # Wait 3 min after startup
         while True:
+            _hb("reconciliation")
             try:
                 pool = await get_pool()
                 async with pool.acquire() as conn:
@@ -1323,6 +1376,7 @@ async def lifespan(app: FastAPI):
                 yield y, m
 
         while True:
+            _hb("compliance_packets")
             try:
                 now = datetime.now(timezone.utc)
                 pool = await get_pool()
@@ -1440,6 +1494,7 @@ async def lifespan(app: FastAPI):
         """Daily verification of evidence hash chain integrity per site."""
         await asyncio.sleep(600)  # 10-minute startup delay
         while True:
+            _hb("evidence_chain_check")
             try:
                 pool = await get_pool()
                 async with pool.acquire() as conn:
@@ -1495,6 +1550,7 @@ async def lifespan(app: FastAPI):
         """Hourly Merkle batching of evidence bundles for OTS."""
         await asyncio.sleep(300)  # 5 min after startup
         while True:
+            _hb("merkle_batch")
             try:
                 pool = await get_pool()
                 async with pool.acquire() as conn:
@@ -1516,6 +1572,7 @@ async def lifespan(app: FastAPI):
         """Daily cleanup of audit logs older than 7 years (HIPAA: 6-year minimum)."""
         await asyncio.sleep(7200)  # 2 hours after startup
         while True:
+            _hb("audit_log_retention")
             try:
                 pool = await get_pool()
                 async with pool.acquire() as conn:
