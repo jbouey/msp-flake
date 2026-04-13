@@ -2340,6 +2340,41 @@ async def get_flywheel_intelligence(db: AsyncSession = Depends(get_db), user: di
         except Exception:
             l2_recurrence = None
 
+        # Unhealthy promoted rules — operator visibility for rules
+        # below 50% 7d success rate (warning band BEFORE auto-disable
+        # at 30%). Surfacing these gives operators a chance to retire
+        # or fix a runbook before the regime detector pulls the trigger.
+        try:
+            unhealthy = await conn.fetch("""
+                WITH recent AS (
+                    SELECT et.runbook_id,
+                           COUNT(*) FILTER (WHERE et.created_at > NOW() - INTERVAL '7 days') AS n7,
+                           COUNT(*) FILTER (
+                               WHERE et.created_at > NOW() - INTERVAL '7 days'
+                                 AND et.success = true
+                           ) AS s7
+                    FROM execution_telemetry et
+                    WHERE et.resolution_level = 'L1'
+                      AND et.created_at > NOW() - INTERVAL '7 days'
+                    GROUP BY et.runbook_id
+                    HAVING COUNT(*) FILTER (WHERE et.created_at > NOW() - INTERVAL '7 days') >= 5
+                )
+                SELECT l.rule_id, l.runbook_id, l.description,
+                       r.n7, r.s7,
+                       (r.s7::float / r.n7) AS success_rate,
+                       l.created_at,
+                       EXTRACT(EPOCH FROM (NOW() - l.created_at)) / 86400.0 AS rule_age_days
+                FROM l1_rules l
+                JOIN recent r ON r.runbook_id = l.runbook_id
+                WHERE l.promoted_from_l2 = true
+                  AND l.enabled = true
+                  AND (r.s7::float / r.n7) < 0.50
+                ORDER BY (r.s7::float / r.n7) ASC, r.n7 DESC
+                LIMIT 10
+            """)
+        except Exception:
+            unhealthy = []
+
     recurrence_rate = 0.0
     if recurrence_row and recurrence_row["total_resolved_7d"] and recurrence_row["total_resolved_7d"] > 0:
         recurrence_rate = round(
@@ -2360,6 +2395,19 @@ async def get_flywheel_intelligence(db: AsyncSession = Depends(get_db), user: di
             "total": l2_recurrence["total_recurrence_decisions"] if l2_recurrence else 0,
             "actionable": l2_recurrence["actionable"] if l2_recurrence else 0,
         },
+        "unhealthy_promoted_rules": [
+            {
+                "rule_id": r["rule_id"],
+                "runbook_id": r["runbook_id"],
+                "description": r["description"],
+                "n7": r["n7"],
+                "s7": r["s7"],
+                "success_rate": round(float(r["success_rate"]), 3),
+                "rule_age_days": round(float(r["rule_age_days"]), 1),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in unhealthy
+        ],
         "computed_at": datetime.now(timezone.utc).isoformat(),
     }
 

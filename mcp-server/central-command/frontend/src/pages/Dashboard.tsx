@@ -609,6 +609,24 @@ export const Dashboard: React.FC = () => {
                   ))}
                 </div>
               )}
+              {!flywheelLoading && flywheel?.unhealthy_promoted_rules && flywheel.unhealthy_promoted_rules.length > 0 && (
+                <div className="pt-2 mt-2 border-t border-glass-border">
+                  <p className="text-[10px] text-label-tertiary mb-1">
+                    Promoted rules underperforming (7d, &lt;50%):
+                    <InfoTip text="Promoted L2→L1 rules whose 7-day success rate has fallen below 50%. The regime detector auto-disables at 30%; this band is your early-warning window to review or retire a runbook before that triggers." />
+                  </p>
+                  {flywheel.unhealthy_promoted_rules.slice(0, 5).map((r) => (
+                    <div key={r.rule_id} className="flex justify-between text-xs py-0.5">
+                      <span className="text-label-secondary truncate mr-2" title={`${r.rule_id} (${r.runbook_id})`}>
+                        {r.runbook_id}
+                      </span>
+                      <span className="text-health-warning tabular-nums whitespace-nowrap">
+                        {Math.round(r.success_rate * 100)}% · {r.s7}/{r.n7}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </GlassCard>
 

@@ -216,6 +216,16 @@ interface FlywheelIntelligence {
     total: number;
     actionable: number;
   };
+  unhealthy_promoted_rules: Array<{
+    rule_id: string;
+    runbook_id: string;
+    description: string | null;
+    n7: number;
+    s7: number;
+    success_rate: number;
+    rule_age_days: number;
+    created_at: string | null;
+  }>;
   computed_at: string;
 }
 
