@@ -4682,8 +4682,12 @@ async def get_status_rollup(
     sql = f"""
         SELECT
             appliance_id, site_id, hostname, display_name, mac_address,
-            ip_addresses, agent_version, live_status, last_checkin,
-            stale_seconds, checkin_count_24h, online_count_24h,
+            ip_addresses, agent_version, live_status,
+            cached_last_checkin AS last_checkin,
+            last_heartbeat_at,
+            stale_seconds,
+            liveness_drift_seconds,
+            checkin_count_24h, online_count_24h,
             uptime_ratio_24h
         FROM appliance_status_rollup
         {where_clause}
@@ -4706,6 +4710,8 @@ async def get_status_rollup(
                 d['ip_addresses'] = []
         if d.get('last_checkin'):
             d['last_checkin'] = d['last_checkin'].isoformat()
+        if d.get('last_heartbeat_at'):
+            d['last_heartbeat_at'] = d['last_heartbeat_at'].isoformat()
         counts[d['live_status']] = counts.get(d['live_status'], 0) + 1
         out.append(d)
     return {

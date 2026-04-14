@@ -98,16 +98,28 @@ export const FleetStatusPanel: React.FC<FleetStatusPanelProps> = ({ worstLimit =
                 <th className="py-1.5 text-left font-medium">Appliance</th>
                 <th className="py-1.5 text-left font-medium">Site</th>
                 <th className="py-1.5 text-left font-medium">Status</th>
-                <th className="py-1.5 text-right font-medium">Last seen</th>
+                <th className="py-1.5 text-right font-medium" title="Last heartbeat (ground truth)">Last heartbeat</th>
                 <th className="py-1.5 text-right font-medium">24h uptime</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-glass-border/40">
-              {worst.map((a) => (
+              {worst.map((a) => {
+                const hasDrift = Math.abs(a.liveness_drift_seconds || 0) > 60;
+                return (
                 <tr key={a.appliance_id}>
                   <td className="py-1.5 text-label-primary">
-                    <div className="font-medium">
-                      {a.display_name || a.hostname || a.appliance_id}
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium">
+                        {a.display_name || a.hostname || a.appliance_id}
+                      </div>
+                      {hasDrift && (
+                        <span
+                          className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                          title={`last_checkin disagrees with heartbeats by ${a.liveness_drift_seconds}s — investigate`}
+                        >
+                          drift
+                        </span>
+                      )}
                     </div>
                     <div className="text-[10px] font-mono text-label-tertiary">
                       {a.mac_address || '-'}
@@ -127,8 +139,8 @@ export const FleetStatusPanel: React.FC<FleetStatusPanelProps> = ({ worstLimit =
                       {a.live_status}
                     </span>
                   </td>
-                  <td className="py-1.5 text-right tabular-nums text-label-secondary">
-                    {formatTimeAgo(a.last_checkin)}
+                  <td className="py-1.5 text-right tabular-nums text-label-secondary" title="Ground truth from appliance_heartbeats">
+                    {formatTimeAgo(a.last_heartbeat_at || a.last_checkin)}
                   </td>
                   <td className="py-1.5 text-right tabular-nums text-label-secondary">
                     {a.checkin_count_24h > 0
@@ -136,7 +148,8 @@ export const FleetStatusPanel: React.FC<FleetStatusPanelProps> = ({ worstLimit =
                       : '—'}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

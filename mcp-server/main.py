@@ -1625,6 +1625,7 @@ async def lifespan(app: FastAPI):
         expire_consent_request_tokens_loop,
         heartbeat_rollup_loop,
         heartbeat_partition_maintainer_loop,
+        phantom_detector_loop,
     )
     from dashboard_api.privileged_access_notifier import privileged_notifier_loop
     from dashboard_api.chain_tamper_detector import chain_tamper_detector_loop
@@ -1669,6 +1670,7 @@ async def lifespan(app: FastAPI):
         ("expire_consent_request_tokens", expire_consent_request_tokens_loop),
         ("heartbeat_rollup", heartbeat_rollup_loop),
         ("heartbeat_partition_maintainer", heartbeat_partition_maintainer_loop),
+        ("phantom_detector", phantom_detector_loop),
     ]
 
     for name, fn in task_defs:

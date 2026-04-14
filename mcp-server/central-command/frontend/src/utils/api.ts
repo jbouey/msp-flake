@@ -1040,8 +1040,10 @@ export interface ApplianceRollupRow {
   ip_addresses: string[];
   agent_version: string | null;
   live_status: 'online' | 'stale' | 'offline';
-  last_checkin: string | null;
+  last_checkin: string | null;       // Cached site_appliances.last_checkin
+  last_heartbeat_at: string | null;  // Ground truth from appliance_heartbeats
   stale_seconds: number;
+  liveness_drift_seconds: number;    // cached - heartbeat; >0 means drift
   checkin_count_24h: number;
   online_count_24h: number;
   uptime_ratio_24h: number;

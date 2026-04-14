@@ -2616,3 +2616,151 @@ async def heartbeat_partition_maintainer_loop():
                 exc_info=True,
             )
         await asyncio.sleep(HEARTBEAT_PARTITION_CHECK_SECONDS)
+
+
+# =============================================================================
+# phantom_detector (Session 206 H4) — orthogonal verification of liveness
+# =============================================================================
+# The premise: site_appliances.last_checkin can lie (and did — three bugs
+# of that shape shipped before we caught them). appliance_heartbeats is the
+# new ground truth (INSERT-only, DELETE-blocked, per-appliance attribution).
+#
+# This loop compares the two. If `last_checkin` claims an appliance is fresh
+# but `heartbeats` shows nothing for > 2 checkin cycles, the liveness signal
+# is lying. Raise an APPLIANCE_LIVENESS_LIE incident so operators see it
+# even if every other guardrail has failed.
+#
+# Runs every 5 min. Fires once per stale delta — suppressed for 1 hour after
+# firing so we don't alert-storm on a persistent discrepancy.
+
+PHANTOM_DETECTOR_INTERVAL_SECONDS = 300
+PHANTOM_STALE_THRESHOLD_SECONDS = 180  # ~3 checkin cycles (60s each)
+PHANTOM_ALERT_SUPPRESSION_HOURS = 1
+
+
+async def phantom_detector_loop():
+    """Orthogonal verification: detect when last_checkin claims freshness
+    but heartbeats disagree. Catches future site-wide UPDATE bugs even if
+    both the CI grep + DB trigger somehow fail.
+
+    Invariant: for every non-deleted appliance with a fresh last_checkin,
+    at least one heartbeat must exist in the same window. If not, the
+    last_checkin is a lie.
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    await asyncio.sleep(300)  # let heartbeat_rollup warm up first
+    while True:
+        _hb("phantom_detector")
+        try:
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Appliances whose last_checkin is recent BUT heartbeats
+                # are stale (or missing entirely). These are lies by one
+                # of the two signals.
+                suspects = await conn.fetch("""
+                    SELECT
+                        sa.site_id,
+                        sa.appliance_id,
+                        sa.hostname,
+                        sa.display_name,
+                        sa.mac_address,
+                        sa.last_checkin,
+                        EXTRACT(EPOCH FROM (NOW() - sa.last_checkin))::int AS claimed_stale_sec,
+                        hb.max_observed_at,
+                        EXTRACT(EPOCH FROM (NOW() - COALESCE(hb.max_observed_at, sa.last_checkin - INTERVAL '1 year')))::int AS heartbeat_stale_sec
+                    FROM site_appliances sa
+                    LEFT JOIN LATERAL (
+                        SELECT MAX(observed_at) AS max_observed_at
+                        FROM appliance_heartbeats
+                        WHERE appliance_id = sa.appliance_id
+                    ) hb ON true
+                    WHERE sa.deleted_at IS NULL
+                      AND sa.last_checkin > NOW() - INTERVAL '5 minutes'
+                      AND (
+                          hb.max_observed_at IS NULL
+                          OR hb.max_observed_at < NOW() - make_interval(secs := $1)
+                      )
+                """, PHANTOM_STALE_THRESHOLD_SECONDS)
+
+                for row in suspects:
+                    await _raise_liveness_lie_if_not_suppressed(conn, row)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(
+                f"phantom_detector iteration failed: {e}",
+                exc_info=True,
+            )
+        await asyncio.sleep(PHANTOM_DETECTOR_INTERVAL_SECONDS)
+
+
+async def _raise_liveness_lie_if_not_suppressed(conn, row):
+    """Emit an APPLIANCE_LIVENESS_LIE incident, suppressed if we've already
+    fired one for this appliance in the last PHANTOM_ALERT_SUPPRESSION_HOURS."""
+    suppression_key = f"liveness_lie:{row['appliance_id']}"
+    recent = await conn.fetchval("""
+        SELECT created_at FROM admin_audit_log
+        WHERE action = 'APPLIANCE_LIVENESS_LIE'
+          AND target = $1
+          AND created_at > NOW() - make_interval(hours := $2)
+        ORDER BY created_at DESC
+        LIMIT 1
+    """, row['appliance_id'], PHANTOM_ALERT_SUPPRESSION_HOURS)
+    if recent:
+        return
+
+    label = row['display_name'] or row['hostname'] or row['appliance_id']
+    details = {
+        "appliance_id": row['appliance_id'],
+        "site_id": row['site_id'],
+        "mac_address": row['mac_address'],
+        "claimed_last_checkin": (
+            row['last_checkin'].isoformat() if row['last_checkin'] else None
+        ),
+        "claimed_stale_sec": row['claimed_stale_sec'],
+        "heartbeat_last_observed": (
+            row['max_observed_at'].isoformat() if row['max_observed_at'] else None
+        ),
+        "heartbeat_stale_sec": row['heartbeat_stale_sec'],
+        "threshold_sec": PHANTOM_STALE_THRESHOLD_SECONDS,
+    }
+
+    import json as _json
+    await conn.execute("""
+        INSERT INTO admin_audit_log (username, action, target, details, success)
+        VALUES ('system:phantom_detector', 'APPLIANCE_LIVENESS_LIE', $1, $2::jsonb, true)
+    """, row['appliance_id'], _json.dumps(details))
+
+    logger.error(
+        f"APPLIANCE_LIVENESS_LIE appliance={row['appliance_id']} "
+        f"site={row['site_id']} label={label} "
+        f"claimed_fresh_sec={row['claimed_stale_sec']} "
+        f"heartbeat_stale_sec={row['heartbeat_stale_sec']} "
+        f"heartbeat_last={row['max_observed_at']}"
+    )
+
+    # Fire an email alert too — this is a credibility event, not just noise.
+    try:
+        from dashboard_api.email_alerts import send_critical_alert
+        send_critical_alert(
+            title=f"Liveness lie detected: {label}",
+            message=(
+                f"Appliance {label} at site {row['site_id']} shows "
+                f"last_checkin fresh ({row['claimed_stale_sec']}s ago) but "
+                f"no heartbeat for {row['heartbeat_stale_sec']}s. "
+                f"The dashboard liveness signal is not matching ground truth. "
+                f"Investigate possible site-wide UPDATE regression or "
+                f"heartbeat insert failure."
+            ),
+            site_id=row['site_id'],
+            category="appliance_health",
+            severity="high",
+            metadata=details,
+        )
+    except Exception:
+        logger.error(
+            f"Failed to send liveness-lie alert for {row['appliance_id']}",
+            exc_info=True,
+        )
