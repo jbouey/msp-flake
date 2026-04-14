@@ -3054,7 +3054,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         first_seen, last_seen, checkin_count, install_stage, expires_at
                     ) VALUES (
                         $1, $2, $3, $4, $5::jsonb, $6, $7, 'live_usb',
-                        $8, $8, 1, 'live_usb', $8 + INTERVAL '24 hours'
+                        $8::timestamptz, $8::timestamptz, 1, 'live_usb',
+                        $8::timestamptz + INTERVAL '24 hours'
                     )
                     ON CONFLICT (session_id) DO UPDATE SET
                         hostname = EXCLUDED.hostname,
