@@ -222,6 +222,18 @@ func (m *Mesh) ApplyTargetAssignment(targets []string, ringMembers []string, epo
 		len(targets), epoch, m.ring.NodeCount())
 }
 
+// CurrentTargets returns a snapshot of the server-authoritative target list
+// the appliance is currently responsible for. Used by the M3 mesh-ACK path
+// (daemon re-ACKs each target on every checkin so the server's TTL stays
+// fresh and phantom appliances' targets get reassigned).
+func (m *Mesh) CurrentTargets() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]string, len(m.serverTargets))
+	copy(out, m.serverTargets)
+	return out
+}
+
 // PeerCount returns the number of peers (excluding self).
 func (m *Mesh) PeerCount() int {
 	n := m.ring.NodeCount() - 1

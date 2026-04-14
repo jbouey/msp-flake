@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -775,7 +776,24 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 
 	var req CheckinRequest
 	if d.agentPublicKey != "" {
-		req = SystemInfoWithKey(d.config, Version, d.agentPublicKey)
+		// D1 (Session 206): if we have a signing key via the evidence
+		// submitter, sign the heartbeat too. Server records the signature
+		// in appliance_heartbeats.agent_signature and auditors can verify
+		// that liveness claims came from the legitimate appliance key.
+		// Gracefully falls back to unsigned if the submitter/key is nil.
+		var signFn func([]byte) ([]byte, error)
+		if d.evidenceSubmitter != nil {
+			if key := d.evidenceSubmitter.SigningKey(); key != nil {
+				signFn = func(msg []byte) ([]byte, error) {
+					return ed25519.Sign(key, msg), nil
+				}
+			}
+		}
+		if signFn != nil {
+			req = SystemInfoSigned(d.config, Version, d.agentPublicKey, signFn)
+		} else {
+			req = SystemInfoWithKey(d.config, Version, d.agentPublicKey)
+		}
 	} else {
 		req = SystemInfo(d.config, Version)
 	}
@@ -922,6 +940,43 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 	if d.evidenceSubmitter != nil {
 		if n := d.evidenceSubmitter.DrainCache(ctx); n > 0 {
 			log.Printf("[daemon] Drained %d cached evidence bundles", n)
+		}
+	}
+
+	// M3 (Session 206): ACK our currently-held mesh targets so the server's
+	// mesh_reassignment_loop can reassign unACKed targets to live
+	// appliances. If the server reports reassignments happened, our local
+	// view is out of sync — log a hint for the next refresh cycle.
+	// Non-fatal: failure just means targets rely on TTL-based reassignment.
+	if d.mesh != nil && d.orderProc != nil && d.orderProc.ApplianceID() != "" {
+		targets := d.mesh.CurrentTargets()
+		if len(targets) > 0 {
+			ackEntries := make([]MeshTargetAckEntry, 0, len(targets))
+			for _, t := range targets {
+				ackEntries = append(ackEntries, MeshTargetAckEntry{
+					TargetKey:  t,
+					TargetType: "device",
+				})
+			}
+			if ackResp, ackErr := PostMeshAck(
+				ctx,
+				d.config.APIEndpoint,
+				d.config.APIKey,
+				d.config.SiteID,
+				d.orderProc.ApplianceID(),
+				ackEntries,
+				nil, // default httpClient
+			); ackErr != nil {
+				slog.Warn("mesh ack failed",
+					"component", "daemon",
+					"error", ackErr)
+			} else if ackResp != nil && ackResp.Reassigned > 0 {
+				slog.Info("mesh ack reported reassignment — targets may be stale",
+					"component", "daemon",
+					"reassigned", ackResp.Reassigned,
+					"acked", ackResp.Acked,
+					"total", ackResp.TotalAssigned)
+			}
 		}
 	}
 
