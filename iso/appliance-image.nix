@@ -158,29 +158,47 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v13";
+    installer_version = "v16";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
 
-  # Boot with serial console for debugging
-  # nosoftlockup: prevent false watchdog alarms during heavy dd I/O
-  # audit=0: disable kernel audit on live ISO (configuration.nix enables auditd
-  # with execve logging which causes kauditd hold queue overflow during boot)
-  # v15 (Session 206): minimal GPU hardening. v14 stacked 7 framebuffer
-  # disables (nomodeset + efifb:off + vesafb:off + fbcon=map:1 +
-  # amdgpu.dc=0 + sysfb_init blacklist + iommu=pt) which killed ALL
-  # video output after kernel load — the HP t640 user saw a blank
-  # screen after selecting "NixOS Installer" from GRUB.
-  # `nomodeset` alone falls back to VESA/simplefb and is the standard
-  # workaround for the AMDGPU-on-Ryzen-Embedded framebuffer crash
-  # (see Ubuntu launchpad bug 2003524). Serial console fallback kept
-  # for operators with IPMI. Don't over-engineer.
+  # Boot with serial console for debugging.
+  #
+  # nosoftlockup: prevent false watchdog alarms during heavy dd I/O.
+  # audit=0: disable kernel audit on live ISO (configuration.nix enables
+  # auditd with execve logging which causes kauditd hold queue overflow
+  # during boot).
+  #
+  # v16 (Session 206): visibility-first + AMDGPU-specific fix.
+  #
+  # The v15 approach (single `nomodeset` flag) failed on HP t640 Ryzen
+  # Embedded: nomodeset drops into no-KMS mode that expects efifb to
+  # take over, but t640 efifb handoff is known-brittle → blank screen
+  # post-kernel-load. Combined with quiet+loglevel=1 the operator saw
+  # NOTHING — no way to diagnose.
+  #
+  # v16 fixes both the root cause + the visibility:
+  #
+  # 1. `amdgpu.dc=0` — the AMDGPU-specific fix for Ryzen Embedded
+  #    display-core crashes. Lets KMS load but skips DC init. This is
+  #    the documented workaround for Raven Ridge Display Core errata.
+  # 2. Drop `quiet`, `loglevel=1`, `systemd.show_status=false` — enterprise
+  #    installers must be diagnosable. Operators should SEE what's
+  #    happening during boot.
+  # 3. Keep `console=tty0 console=ttyS0,115200` — dual console means
+  #    IPMI/serial-console recovery works even if video is dead.
+  # 4. Keep `loglevel=4` (INFO) rather than full debug — enough signal
+  #    without drowning in kernel spam.
+  #
+  # If amdgpu.dc=0 still fails on some HP hardware revision, the next
+  # fallback to try is `radeon.modeset=0 amdgpu.modeset=0` (forces pure
+  # VESA, no GPU acceleration).
   boot.kernelParams = [
-    "quiet" "loglevel=1" "systemd.show_status=false"
-    "console=tty1" "console=ttyS0,115200"
+    "console=tty0" "console=ttyS0,115200"
+    "loglevel=4"                          # INFO — visible but not flooded
     "nosoftlockup" "audit=0"
-    "nomodeset"                           # VESA/simplefb fallback for AMDGPU early-init crash
+    "amdgpu.dc=0"                          # disable AMDGPU Display Core (Ryzen Embedded fix)
   ];
   # Blacklist noisy Logitech HID++ driver — spams battery protocol errors on tty
   boot.blacklistedKernelModules = [ "hid_logitech_hidpp" ];
