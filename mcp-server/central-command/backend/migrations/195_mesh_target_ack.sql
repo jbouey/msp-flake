@@ -23,12 +23,26 @@ CREATE TABLE IF NOT EXISTS mesh_target_assignments (
     last_ack_at     TIMESTAMPTZ,      -- Most recent ACK from the assignee
     ack_count       INTEGER NOT NULL DEFAULT 0,
     ttl_seconds     INTEGER NOT NULL DEFAULT 900,  -- 15 min default
-    expires_at      TIMESTAMPTZ GENERATED ALWAYS AS (
-        COALESCE(last_ack_at, assigned_at) + make_interval(secs => ttl_seconds)
-    ) STORED,
+    -- Postgres refuses GENERATED columns mixing column refs + make_interval
+    -- ("not immutable"), so we maintain expires_at via trigger instead.
+    expires_at      TIMESTAMPTZ NOT NULL,
     reassigned_from TEXT,             -- Previous owner if reassigned
     reassigned_at   TIMESTAMPTZ
 );
+
+CREATE OR REPLACE FUNCTION compute_mesh_assignment_expires_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.expires_at = COALESCE(NEW.last_ack_at, NEW.assigned_at)
+        + (NEW.ttl_seconds || ' seconds')::interval;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_mesh_assignment_expires ON mesh_target_assignments;
+CREATE TRIGGER trg_mesh_assignment_expires
+    BEFORE INSERT OR UPDATE ON mesh_target_assignments
+    FOR EACH ROW EXECUTE FUNCTION compute_mesh_assignment_expires_at();
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mesh_targets_site_key
     ON mesh_target_assignments(site_id, target_key, target_type);
