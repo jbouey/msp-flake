@@ -435,10 +435,12 @@ export const Sites: React.FC = () => {
   }, [sites]);
 
   // Unclaimed appliances (drop-ship provisioning)
+  // Refetch every 60s — unclaimed appliances are provisioning-time events,
+  // not real-time state. 15s polling was jitter without benefit.
   const { data: unclaimedData } = useQuery({
     queryKey: ['appliances', 'unclaimed'],
     queryFn: appliancesApi.getUnclaimed,
-    refetchInterval: 15000,
+    refetchInterval: 60_000,
   });
   const unclaimed = unclaimedData?.unclaimed || [];
   const [claimingSite, setClaimingSite] = useState<Record<string, string>>({});
@@ -543,7 +545,7 @@ export const Sites: React.FC = () => {
       {unclaimed.length > 0 && (
         <GlassCard className="p-4 border border-accent-primary/30 bg-accent-primary/5">
           <div className="flex items-center gap-2 mb-3">
-            <div className="w-2 h-2 rounded-full bg-accent-primary animate-pulse" />
+            <div className="w-2 h-2 rounded-full bg-accent-primary" />
             <h3 className="text-sm font-semibold text-accent-primary">
               {unclaimed.length} Unclaimed Appliance{unclaimed.length > 1 ? 's' : ''} — Ready to Assign
             </h3>

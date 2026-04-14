@@ -123,7 +123,7 @@ export const ApplianceCard: React.FC<ApplianceCardProps> = ({ appliance, latestV
         </div>
         <div className="flex items-center gap-2">
           {appliance.boot_source === 'live_usb' && (
-            <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-amber-100 text-amber-700 animate-pulse">
+            <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-amber-100 text-amber-700">
               Installing
             </span>
           )}
@@ -147,7 +147,7 @@ export const ApplianceCard: React.FC<ApplianceCardProps> = ({ appliance, latestV
           <p className="text-label-secondary">{appliance.agent_version || '-'}</p>
         </div>
         <div>
-          <p className="text-label-tertiary">NixOS Version</p>
+          <p className="text-label-tertiary">System Version</p>
           <p className="text-label-secondary">{appliance.nixos_version || '-'}</p>
         </div>
         <div>
