@@ -1623,6 +1623,8 @@ async def lifespan(app: FastAPI):
         weekly_rollup_refresh_loop,
         partner_weekly_digest_loop,
         expire_consent_request_tokens_loop,
+        heartbeat_rollup_loop,
+        heartbeat_partition_maintainer_loop,
     )
     from dashboard_api.privileged_access_notifier import privileged_notifier_loop
     from dashboard_api.chain_tamper_detector import chain_tamper_detector_loop
@@ -1665,6 +1667,8 @@ async def lifespan(app: FastAPI):
         ("weekly_rollup_refresh", weekly_rollup_refresh_loop),
         ("partner_weekly_digest", partner_weekly_digest_loop),
         ("expire_consent_request_tokens", expire_consent_request_tokens_loop),
+        ("heartbeat_rollup", heartbeat_rollup_loop),
+        ("heartbeat_partition_maintainer", heartbeat_partition_maintainer_loop),
     ]
 
     for name, fn in task_defs:

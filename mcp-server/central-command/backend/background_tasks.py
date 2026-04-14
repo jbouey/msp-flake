@@ -2515,3 +2515,94 @@ async def expire_consent_request_tokens_loop():
                 exc_info=True,
             )
         await asyncio.sleep(CONSENT_TOKEN_EXPIRY_CHECK_SECONDS)
+
+
+# =============================================================================
+# appliance_heartbeats / appliance_status_rollup maintenance (Migration 191)
+# =============================================================================
+
+HEARTBEAT_ROLLUP_REFRESH_SECONDS = 60
+HEARTBEAT_PARTITION_CHECK_SECONDS = 3600  # hourly — partition creation is cheap
+HEARTBEAT_PARTITION_LOOKAHEAD_MONTHS = 2
+
+
+async def heartbeat_rollup_loop():
+    """Refresh the appliance_status_rollup materialized view every 60s.
+
+    Using REFRESH MATERIALIZED VIEW CONCURRENTLY so dashboard readers
+    never block on the refresh. Requires the unique index on
+    appliance_id (created by Migration 191).
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    # Seed the view shortly after startup so dashboards have data.
+    await asyncio.sleep(30)
+    while True:
+        _hb("heartbeat_rollup")
+        try:
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                await conn.execute(
+                    "REFRESH MATERIALIZED VIEW CONCURRENTLY appliance_status_rollup"
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            # CONCURRENTLY fails on first run if the view has no rows yet.
+            # Fall back to a plain refresh to seed it.
+            try:
+                async with admin_connection(pool) as conn:
+                    await conn.execute("REFRESH MATERIALIZED VIEW appliance_status_rollup")
+            except Exception as e2:
+                logger.error(
+                    f"heartbeat_rollup refresh failed: concurrent={e} plain={e2}",
+                    exc_info=True,
+                )
+        await asyncio.sleep(HEARTBEAT_ROLLUP_REFRESH_SECONDS)
+
+
+async def heartbeat_partition_maintainer_loop():
+    """Ensure next N months of appliance_heartbeats partitions exist.
+
+    Runs hourly. Creates missing partitions for today + lookahead
+    months ahead. Idempotent — CREATE TABLE IF NOT EXISTS.
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    await asyncio.sleep(120)
+    while True:
+        _hb("heartbeat_partition_maintainer")
+        try:
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # Compute the month ranges we need and ensure partitions.
+                await conn.execute(f"""
+                    DO $$
+                    DECLARE
+                        i INTEGER;
+                        cur_start DATE;
+                        next_start DATE;
+                        part_name TEXT;
+                    BEGIN
+                        FOR i IN 0..{HEARTBEAT_PARTITION_LOOKAHEAD_MONTHS} LOOP
+                            cur_start := (date_trunc('month', NOW()) + (i || ' month')::interval)::date;
+                            next_start := (date_trunc('month', NOW()) + ((i+1) || ' month')::interval)::date;
+                            part_name := 'appliance_heartbeats_y' || to_char(cur_start, 'YYYYmm');
+                            EXECUTE format(
+                                'CREATE TABLE IF NOT EXISTS %I PARTITION OF appliance_heartbeats FOR VALUES FROM (%L) TO (%L)',
+                                part_name, cur_start, next_start
+                            );
+                        END LOOP;
+                    END
+                    $$;
+                """)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(
+                f"heartbeat_partition_maintainer iteration failed: {e}",
+                exc_info=True,
+            )
+        await asyncio.sleep(HEARTBEAT_PARTITION_CHECK_SECONDS)

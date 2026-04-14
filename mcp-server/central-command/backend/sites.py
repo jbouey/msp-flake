@@ -3320,6 +3320,36 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 _health_json,
             )
 
+        # === STEP 3.0: Append heartbeat row (Migration 191) ===
+        # One row per checkin. Append-only. Used for cadence detection,
+        # uptime SLA, and dashboard rollup. Savepoint-isolated so an
+        # insert failure (e.g., partition missing) cannot abort the
+        # parent checkin transaction.
+        if not _ghost_detected:
+            try:
+                async with conn.transaction():
+                    _hb_subnet = _primary_subnet(checkin.ip_addresses or [])
+                    _hb_has_anycast = ANYCAST_LINK_LOCAL in (checkin.ip_addresses or [])
+                    await conn.execute("""
+                        INSERT INTO appliance_heartbeats
+                            (site_id, appliance_id, observed_at, status,
+                             agent_version, boot_source, primary_subnet, has_anycast)
+                        VALUES ($1, $2, $3, 'online', $4, $5, $6, $7)
+                    """,
+                        checkin.site_id,
+                        canonical_id,
+                        now,
+                        checkin.agent_version,
+                        _boot_source,
+                        _hb_subnet,
+                        _hb_has_anycast,
+                    )
+            except Exception:
+                logger.error(
+                    f"heartbeat insert failed for {canonical_id}",
+                    exc_info=True,
+                )
+
         # STEP 3.0a: detect + announce offline→online recovery.
         # We rely on `offline_since IS NOT NULL BEFORE the UPSERT` which is
         # captured via `recovered_at` being set by the UPDATE above. A
@@ -4599,6 +4629,77 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # Time-travel reconciliation plan (Session 205 Phase 2). Null unless
         # daemon reported ≥2 detection signals AND validation accepted them.
         "reconcile_plan": reconcile_plan_payload,
+    }
+
+
+# =============================================================================
+# STATUS ROLLUP — fleet-wide appliance status (Migration 191)
+# =============================================================================
+
+@appliances_router.get("/status-rollup")
+async def get_status_rollup(
+    site_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = Query(500, ge=1, le=5000),
+    user: dict = Depends(require_auth),
+):
+    """Fleet-wide appliance status from the appliance_status_rollup MV.
+
+    Reads the materialized view (refreshed every 60s by
+    heartbeat_rollup_loop) instead of site_appliances. The MV pre-computes
+    live_status, stale_seconds, and 24h uptime ratios, so the dashboard
+    doesn't have to recompute them per viewer.
+
+    Query params:
+      site_id — restrict to one site
+      status — filter by live_status (online | stale | offline)
+      limit — cap returned rows (1..5000)
+    """
+    pool = await get_pool()
+    where_parts: List[str] = []
+    args: List[Any] = []
+    if site_id:
+        args.append(site_id)
+        where_parts.append(f"site_id = ${len(args)}")
+    if status:
+        args.append(status)
+        where_parts.append(f"live_status = ${len(args)}")
+    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    args.append(limit)
+    sql = f"""
+        SELECT
+            appliance_id, site_id, hostname, display_name, mac_address,
+            ip_addresses, agent_version, live_status, last_checkin,
+            stale_seconds, checkin_count_24h, online_count_24h,
+            uptime_ratio_24h
+        FROM appliance_status_rollup
+        {where_clause}
+        ORDER BY
+            CASE live_status WHEN 'offline' THEN 0 WHEN 'stale' THEN 1 ELSE 2 END,
+            stale_seconds DESC
+        LIMIT ${len(args)}
+    """
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch(sql, *args)
+    counts: Dict[str, int] = {'online': 0, 'stale': 0, 'offline': 0}
+    out = []
+    for r in rows:
+        d = dict(r)
+        # asyncpg returns ip_addresses as str (jsonb) — normalize to list
+        if isinstance(d.get('ip_addresses'), str):
+            try:
+                d['ip_addresses'] = json.loads(d['ip_addresses'])
+            except Exception:
+                d['ip_addresses'] = []
+        if d.get('last_checkin'):
+            d['last_checkin'] = d['last_checkin'].isoformat()
+        counts[d['live_status']] = counts.get(d['live_status'], 0) + 1
+        out.append(d)
+    return {
+        'appliances': out,
+        'count': len(out),
+        'totals': counts,
+        'generated_at': datetime.now(timezone.utc).isoformat(),
     }
 
 
