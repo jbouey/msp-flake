@@ -50,6 +50,7 @@ from dashboard_api.public_status import public_status_router, admin_status_route
 from dashboard_api.mesh_targets import mesh_targets_router
 from dashboard_api.rescue import rescue_router
 from dashboard_api.audit_package_api import audit_package_router
+from dashboard_api.appliance_trace import appliance_trace_router
 from dashboard_api.reconcile import (
     router as reconcile_router,
     admin_router as reconcile_admin_router,
@@ -1804,6 +1805,7 @@ app.include_router(admin_status_router)
 app.include_router(mesh_targets_router)
 app.include_router(rescue_router)
 app.include_router(audit_package_router)
+app.include_router(appliance_trace_router)
 app.include_router(reconcile_router)
 app.include_router(reconcile_admin_router)  # /api/admin/reconcile/events
 app.include_router(provisioning_router)
