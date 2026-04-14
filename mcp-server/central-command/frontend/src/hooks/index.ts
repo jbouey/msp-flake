@@ -25,6 +25,7 @@ export {
   // Sites hooks
   useSites,
   useSite,
+  useApplianceRollup,
   useCreateSite,
   useUpdateSite,
   useAddCredential,

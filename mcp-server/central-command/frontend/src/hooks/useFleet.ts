@@ -3,7 +3,7 @@
  */
 
 import { useQuery, useQueryClient, useMutation, keepPreviousData } from '@tanstack/react-query';
-import { fleetApi, incidentApi, statsApi, learningApi, flywheelApi, installReportsApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi, evidenceApi, l1RulesApi } from '../utils/api';
+import { fleetApi, incidentApi, statsApi, learningApi, flywheelApi, installReportsApi, runbookApi, onboardingApi, sitesApi, ordersApi, notificationsApi, runbookConfigApi, workstationsApi, goAgentsApi, devicesApi, cveApi, frameworkSyncApi, commandCenterApi, vpnApi, evidenceApi, l1RulesApi, appliancesApi } from '../utils/api';
 import type { Site, SiteDetail, OrderType, OrderStatus, OrderResponse, RunbookCatalogItem, SiteRunbookConfig, SiteWorkstationsResponse, SiteGoAgentsResponse, SiteDevicesResponse, SiteDeviceSummary, DiscoveredDevice, VPNStatus, EvidenceBundleListResponse, BundleVerifyResult, BatchVerifyResult, BlockchainStatus, L1Rule, IncidentTypeOption } from '../utils/api';
 import type { ClientOverview, ClientDetail, Incident, ComplianceEvent, GlobalStats, StatsDeltas, LearningStatus, PromotionCandidate, PromotionHistory, CoverageGap, Runbook, RunbookDetail, RunbookExecution, OnboardingClient, OnboardingMetrics, Notification, NotificationSummary, CVESummary, CVEEntry, CVEDetail, CVEWatchConfig, RunbookSummary, FrameworkSyncStatus, FrameworkControl, CoverageAnalysis, FrameworkCategory, FleetPostureSite, IncidentTrendsResponse, IncidentBreakdownResponse, AttentionRequiredResponse } from '../types';
 import { useWebSocketStatus } from './useWebSocket';
@@ -495,6 +495,25 @@ export function useSite(siteId: string | null) {
     queryFn: () => sitesApi.getSite(siteId!),
     enabled: !!siteId,
     ...defaults,
+  });
+}
+
+/**
+ * Fleet status rollup. Reads from appliance_status_rollup MV (Migration 191)
+ * which is refreshed every 60s. Polling at 30s gives ~30s freshness without
+ * hammering the wide site_appliances table per viewer.
+ *
+ * At 1000 appliances + 10 viewers, this is ~30KB×10 = 300KB/30s → trivial.
+ * Same workload reading site_appliances directly was ~500KB×10/15s = 3.3MB/min.
+ */
+export function useApplianceRollup(params?: { site_id?: string; status?: string }) {
+  const { connected } = useWebSocketStatus();
+  return useQuery({
+    queryKey: ['appliance-rollup', params],
+    queryFn: () => appliancesApi.getStatusRollup(params),
+    refetchInterval: connected ? 60_000 : 30_000,
+    staleTime: 20_000,
+    placeholderData: keepPreviousData,
   });
 }
 

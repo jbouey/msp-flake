@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { GlassCard, InfoTip, Spinner, DashboardErrorBoundary } from '../components/shared';
-import { MetricCard, FloatingActionButton, Sparkline, type FloatingAction } from '../components/composed';
+import { MetricCard, FloatingActionButton, Sparkline, FleetStatusPanel, type FloatingAction } from '../components/composed';
 import { HealthGauge } from '../components/fleet';
 import {
   IncidentTrendChart,
@@ -395,6 +395,11 @@ export const Dashboard: React.FC = () => {
           </button>
         </div>
       )}
+
+      {/* Fleet status — narrow rollup MV. Read at 30s, no per-viewer
+          polling of the wide site_appliances table. Shows real
+          online/stale/offline counts + worst-N appliances. */}
+      {!showEmptyState && <FleetStatusPanel worstLimit={10} />}
 
       {/* Hero compliance score + 3 secondary KPIs */}
       {!showEmptyState && (

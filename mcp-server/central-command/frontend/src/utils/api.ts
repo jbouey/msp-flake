@@ -1031,6 +1031,29 @@ export interface OrgHealth {
   };
 }
 
+export interface ApplianceRollupRow {
+  appliance_id: string;
+  site_id: string;
+  hostname: string | null;
+  display_name: string | null;
+  mac_address: string | null;
+  ip_addresses: string[];
+  agent_version: string | null;
+  live_status: 'online' | 'stale' | 'offline';
+  last_checkin: string | null;
+  stale_seconds: number;
+  checkin_count_24h: number;
+  online_count_24h: number;
+  uptime_ratio_24h: number;
+}
+
+export interface ApplianceRollupResponse {
+  appliances: ApplianceRollupRow[];
+  count: number;
+  totals: { online: number; stale: number; offline: number };
+  generated_at: string;
+}
+
 export const appliancesApi = {
   getUnclaimed: () =>
     fetchApi<{ unclaimed: Array<{ id: number; mac_address: string; notes: string; registered_at: string | null }>; count: number }>('/appliances/unclaimed'),
@@ -1040,6 +1063,18 @@ export const appliancesApi = {
       method: 'POST',
       body: JSON.stringify({ mac_address, site_id }),
     }),
+
+  // Reads from appliance_status_rollup MV (Migration 191). The MV is
+  // refreshed every 60s by heartbeat_rollup_loop; this hook should poll
+  // at 30s. Replaces per-viewer reads of the wide site_appliances table.
+  getStatusRollup: (params?: { site_id?: string; status?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.site_id) q.set('site_id', params.site_id);
+    if (params?.status) q.set('status', params.status);
+    if (params?.limit) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return fetchApi<ApplianceRollupResponse>(`/appliances/status-rollup${qs ? '?' + qs : ''}`);
+  },
 };
 
 export const organizationsApi = {
