@@ -2183,21 +2183,20 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
     
     client_ip = request.client.host if request.client else None
     
-    # Check if appliance exists
+    # Check if appliance exists (scoped to host_id — Session 206).
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
-        {"site_id": req.site_id}
+        text("SELECT id FROM appliances WHERE site_id = :site_id AND host_id = :host_id"),
+        {"site_id": req.site_id, "host_id": req.host_id}
     )
     existing = result.fetchone()
     
     now = datetime.now(timezone.utc)
     
     if existing:
-        # Update existing appliance
+        # Update existing appliance (Session 206: per-host, not per-site).
         await db.execute(
             text("""
                 UPDATE appliances SET
-                    host_id = :host_id,
                     deployment_mode = :deployment_mode,
                     reseller_id = :reseller_id,
                     policy_version = :policy_version,
@@ -2208,6 +2207,7 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
                     last_checkin = :last_checkin,
                     updated_at = :updated_at
                 WHERE site_id = :site_id
+                  AND host_id = :host_id
             """),
             {
                 "site_id": req.site_id,

@@ -143,10 +143,20 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                 report.site_id, len(report.devices), device_ids_sample)
 
     async with admin_connection(pool) as conn:
-        # Look up appliance by site_id (unique constraint)
+        # Look up appliance by site_id + host_id. Multi-appliance sites can
+        # have multiple rows; we must target the reporting appliance exactly,
+        # not a random site-mate (Session 206 audit — the site-wide lookup
+        # was part of what made phantom appliances look online).
         appliance_row = await conn.fetchrow(
-            "SELECT id FROM appliances WHERE site_id = $1",
+            """
+            SELECT id FROM appliances
+            WHERE site_id = $1
+              AND (host_id = $2 OR $2 IS NULL)
+            ORDER BY (host_id = $2) DESC, last_checkin DESC NULLS LAST
+            LIMIT 1
+            """,
             report.site_id,
+            report.appliance_id,
         )
 
         if not appliance_row:
@@ -490,7 +500,11 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
         )
 
         # Also update site_appliances so dashboard status stays accurate
-        # even when the dedicated checkin endpoint fails
+        # even when the dedicated checkin endpoint fails.
+        # CRITICAL (Session 206): target ONLY the reporting appliance — the
+        # old site-wide UPDATE was marking every appliance at the site as
+        # online whenever any single appliance reported devices, which
+        # masked genuinely-offline appliances. Skip soft-deleted rows.
         await conn.execute(
             """
             UPDATE site_appliances SET
@@ -499,8 +513,11 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                 offline_since = NULL,
                 offline_notified = false
             WHERE site_id = $1
+              AND appliance_id = $2
+              AND deleted_at IS NULL
             """,
             report.site_id,
+            report.appliance_id,
         )
 
     # Deduplicate: when bridge MAC filtering switches device_id from MAC to IP,

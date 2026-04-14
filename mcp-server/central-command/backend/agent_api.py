@@ -296,8 +296,8 @@ async def checkin(
     client_ip = request.client.host if request.client else None
 
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
-        {"site_id": req.site_id}
+        text("SELECT id FROM appliances WHERE site_id = :site_id AND host_id = :host_id"),
+        {"site_id": req.site_id, "host_id": req.host_id}
     )
     existing = result.fetchone()
 
@@ -307,7 +307,6 @@ async def checkin(
         await db.execute(
             text("""
                 UPDATE appliances SET
-                    host_id = :host_id,
                     deployment_mode = :deployment_mode,
                     reseller_id = :reseller_id,
                     policy_version = :policy_version,
@@ -318,6 +317,7 @@ async def checkin(
                     last_checkin = :last_checkin,
                     updated_at = :updated_at
                 WHERE site_id = :site_id
+                  AND host_id = :host_id
             """),
             {
                 "site_id": req.site_id,
