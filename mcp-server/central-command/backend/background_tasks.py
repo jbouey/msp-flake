@@ -2777,6 +2777,34 @@ async def _raise_liveness_lie_if_not_suppressed(conn, row):
         VALUES ('system:phantom_detector', 'APPLIANCE_LIVENESS_LIE', $1, $2::jsonb, true)
     """, row['appliance_id'], _json.dumps(details))
 
+    # D3 claim ledger: cite the (missing) heartbeat that should have existed.
+    # Look up the most recent heartbeat we DO have — its hash becomes the
+    # claim's reference, so the auditor can verify "this is the last one
+    # we saw, and here's the gap."
+    last_hb = await conn.fetchrow(
+        """
+        SELECT id, heartbeat_hash FROM appliance_heartbeats
+        WHERE appliance_id = $1
+        ORDER BY observed_at DESC
+        LIMIT 1
+        """,
+        row['appliance_id'],
+    )
+    await conn.execute(
+        """
+        INSERT INTO liveness_claims
+            (site_id, appliance_id, claim_type,
+             cited_heartbeat_id, cited_heartbeat_hash,
+             details, published_to)
+        VALUES ($1, $2, 'liveness_lie', $3, $4, $5::jsonb, ARRAY['email','dashboard'])
+        """,
+        row['site_id'],
+        row['appliance_id'],
+        last_hb['id'] if last_hb else None,
+        last_hb['heartbeat_hash'] if last_hb else None,
+        _json.dumps(details),
+    )
+
     logger.error(
         f"APPLIANCE_LIVENESS_LIE appliance={row['appliance_id']} "
         f"site={row['site_id']} label={label} "
