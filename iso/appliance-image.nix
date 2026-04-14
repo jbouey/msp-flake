@@ -158,7 +158,7 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v23";
+    installer_version = "v24";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
@@ -398,7 +398,7 @@ EOF
       exec 2> >(tee -a "$LOG_FILE" >&2)
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v23"
+      INSTALLER_VERSION="v24"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
@@ -792,9 +792,19 @@ JSONEND
       # instead of blockdev --getsize64 or similar ioctls that can
       # block on misbehaving hardware.
       sysfs_read() {
+        # ALWAYS succeeds. Echos the default if the path is unreadable.
+        # Previously returned 1 on missing path, which under
+        # set -euo pipefail killed callers like
+        # VAR=$(sysfs_read ... | tr ...) — observed on eMMC drives
+        # (HP t740) where /sys/block/mmcblk0/device/{model,vendor}
+        # don't exist.
         local path="$1" default="''${2:-0}"
-        [ -r "$path" ] || { echo "$default"; return 1; }
-        cat "$path" 2>/dev/null || echo "$default"
+        if [ -r "$path" ]; then
+          cat "$path" 2>/dev/null || echo "$default"
+        else
+          echo "$default"
+        fi
+        return 0
       }
 
       start_heartbeat_daemon() {
@@ -2153,13 +2163,11 @@ ISSUE
       if [ -f "$CONFIG_PATH" ]; then
         SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
         if [ -n "$SITE_ID" ]; then
-          # NixOS rejects `hostnamectl set-hostname` ("Changing system
-          # settings via systemd is not supported on NixOS"). Use the
-          # kernel hostname() syscall via the bare `hostname` command
-          # instead, which sets the runtime hostname without trying
-          # to persist to /etc/hostname. Service unit is idempotent
-          # and survives this path on subsequent boots.
-          hostname "$SITE_ID" || true
+          # NixOS rejects `hostnamectl set-hostname` AND the `hostname`
+          # command is not in the unit's PATH. Write directly to
+          # /proc/sys/kernel/hostname — this invokes sethostname(2)
+          # without needing any external binary or /etc/hostname write.
+          echo "$SITE_ID" > /proc/sys/kernel/hostname 2>/dev/null || true
           echo "Hostname set to: $SITE_ID"
         fi
 
@@ -2177,7 +2185,9 @@ ISSUE
 
       # Update MOTD with access info
       IP_ADDR=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -1)
-      cat > /etc/motd << MOTD
+      # /etc on NixOS is mostly read-only (populated via activation).
+      # Write motd best-effort; skip if the FS rejects it — non-critical.
+      cat > /etc/motd 2>/dev/null << MOTD || true
 
     ╔═══════════════════════════════════════════════════════════╗
     ║           OsirisCare Compliance Appliance                 ║
