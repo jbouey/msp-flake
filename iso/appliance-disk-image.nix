@@ -633,6 +633,12 @@ EOF
     compliance-agent appliance-daemon-go network-scanner local-portal
     jq yq
     sbctl  # UEFI Secure Boot key management
+    # Session 206 fix: msp-auto-provision's signature-verify script imports
+    # `from nacl.signing import VerifyKey`. Previously pynacl wasn't in the
+    # installed system's python path → import failed silently → script
+    # looped forever on /api/provision polls. Ship python3 with pynacl so
+    # /run/current-system/sw/bin/python3 has nacl available.
+    (python3.withPackages (ps: [ ps.pynacl ]))
   ];
 
   # ============================================================================

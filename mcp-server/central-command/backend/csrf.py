@@ -102,6 +102,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     EXEMPT_PREFIXES = (
         # --- Public (unauthenticated) endpoints ---
         "/api/public/",          # Public status page (GET-only, slug-protected)
+        "/rescue/",              # Appliance rescue bash script (MAC-gated, Session 206)
         # --- Machine-to-machine / API-key auth (no browser session) ---
         "/api/appliances/",
         "/api/agent/",           # Agent sync endpoints use API-key auth
