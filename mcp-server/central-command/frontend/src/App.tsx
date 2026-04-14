@@ -103,6 +103,7 @@ const PortalScorecard = lazy(() => import('./portal/PortalScorecard').then(m => 
 const PrivilegedAccessAct = lazy(() => import('./portal/PrivilegedAccessAct').then(m => ({ default: m.PrivilegedAccessAct })));
 const PortalConsentPage = lazy(() => import('./portal/PortalConsentPage').then(m => ({ default: m.PortalConsentPage })));
 const ConsentApprovePage = lazy(() => import('./portal/ConsentApprovePage').then(m => ({ default: m.ConsentApprovePage })));
+const AdminConsentRollout = lazy(() => import('./pages/AdminConsentRollout').then(m => ({ default: m.AdminConsentRollout })));
 
 // Partner module - lazy loaded with provider
 const PartnerRoutes = lazy(() => import('./partner').then(m => ({
@@ -365,6 +366,7 @@ const AppLayout: React.FC = () => {
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/partners" element={<Partners />} />
               <Route path="/admin/partners/pending" element={<Navigate to="/partners" replace />} />
+              <Route path="/admin/consent-rollout" element={<AdminConsentRollout />} />
               <Route path="/users" element={<Users />} />
               <Route path="/runbooks" element={<Runbooks />} />
               <Route path="/runbook-config" element={<RunbookConfig />} />

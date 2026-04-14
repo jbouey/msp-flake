@@ -2595,6 +2595,135 @@ async def acknowledge_auto_disabled_rule(
     return {"ok": True, "rule_id": rule_id, "decision": decision}
 
 
+@router.get("/consent/rollout")
+async def get_consent_rollout_dashboard(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Migration 184 Phase 4 follow-up #6 — operator rollout dashboard.
+
+    Read-only view of class-level consent status across the fleet:
+      * enforce_classes — current env-configured enforcement list
+      * classes[] — per-class coverage (active consents / total active sites)
+      * recent_events[] — last 30 runbook.* ledger entries
+      * totals — 7d grants/revokes/executed + pending/expired tokens
+
+    No mutation path. Toggling RUNBOOK_CONSENT_ENFORCE_CLASSES is an
+    infra/ops change (env var + container restart) done outside this UI.
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.runbook_consent import get_enforce_classes, CONSENT_COPY_VERSION
+
+    pool = await get_pool()
+    enforce_set = get_enforce_classes()
+    # sentinel '*' means "all classes enforced"
+    enforce_all = "*" in enforce_set
+
+    async with admin_connection(pool) as conn:
+        total_active_sites = await conn.fetchval(
+            "SELECT COUNT(*) FROM sites WHERE status != 'inactive'"
+        ) or 0
+
+        class_rows = await conn.fetch("""
+            SELECT rc.class_id, rc.display_name, rc.risk_level, rc.hipaa_controls,
+                   COALESCE(active_counts.n, 0) AS active_consent_count
+            FROM runbook_classes rc
+            LEFT JOIN (
+                SELECT class_id, COUNT(*) AS n
+                FROM runbook_class_consent
+                WHERE revoked_at IS NULL
+                  AND (consented_at + (consent_ttl_days || ' days')::INTERVAL) > NOW()
+                GROUP BY class_id
+            ) active_counts ON active_counts.class_id = rc.class_id
+            ORDER BY
+              CASE rc.risk_level WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+              rc.class_id
+        """)
+
+        event_rows = await conn.fetch("""
+            SELECT rule_id, event_type, actor, stage, outcome, reason,
+                   proof, created_at
+            FROM promoted_rule_events
+            WHERE event_type LIKE 'runbook.%'
+            ORDER BY created_at DESC
+            LIMIT 30
+        """)
+
+        # 7d totals by event_type
+        totals_rows = await conn.fetch("""
+            SELECT event_type, COUNT(*) AS n
+            FROM promoted_rule_events
+            WHERE event_type LIKE 'runbook.%'
+              AND created_at > NOW() - INTERVAL '7 days'
+            GROUP BY event_type
+        """)
+        totals_map = {r["event_type"]: int(r["n"]) for r in totals_rows}
+
+        try:
+            tokens_pending = await conn.fetchval("""
+                SELECT COUNT(*) FROM consent_request_tokens
+                WHERE consumed_at IS NULL AND expires_at > NOW()
+            """) or 0
+            tokens_expired_7d = await conn.fetchval("""
+                SELECT COUNT(*) FROM consent_request_tokens
+                WHERE consumed_at IS NULL
+                  AND expires_at < NOW()
+                  AND expires_at > NOW() - INTERVAL '7 days'
+            """) or 0
+        except Exception:
+            # pre-migration-189 fallback
+            tokens_pending = 0
+            tokens_expired_7d = 0
+
+    classes = [
+        {
+            "class_id": r["class_id"],
+            "display_name": r["display_name"],
+            "risk_level": r["risk_level"],
+            "hipaa_controls": list(r["hipaa_controls"] or []),
+            "enforced": enforce_all or r["class_id"] in enforce_set,
+            "active_consent_count": int(r["active_consent_count"]),
+            "total_sites": int(total_active_sites),
+            "coverage_pct": (
+                round(100.0 * int(r["active_consent_count"]) / int(total_active_sites), 1)
+                if total_active_sites else 0.0
+            ),
+        }
+        for r in class_rows
+    ]
+
+    recent_events = [
+        {
+            "rule_id": e["rule_id"],
+            "event_type": e["event_type"],
+            "actor": e["actor"],
+            "stage": e["stage"],
+            "outcome": e["outcome"],
+            "reason": e["reason"],
+            "created_at": e["created_at"].isoformat() if e["created_at"] else None,
+        }
+        for e in event_rows
+    ]
+
+    return {
+        "enforce_classes": sorted(enforce_set) if enforce_set else [],
+        "enforce_all": enforce_all,
+        "consent_copy_version": CONSENT_COPY_VERSION,
+        "classes": classes,
+        "recent_events": recent_events,
+        "totals_7d": {
+            "grants": totals_map.get("runbook.consented", 0),
+            "revokes": totals_map.get("runbook.revoked", 0),
+            "executed_with_consent": totals_map.get("runbook.executed_with_consent", 0),
+            "amended": totals_map.get("runbook.amended", 0),
+        },
+        "tokens_pending": int(tokens_pending),
+        "tokens_expired_7d": int(tokens_expired_7d),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/fleet-version-distribution")
 async def get_fleet_version_distribution(
     db: AsyncSession = Depends(get_db),
