@@ -72,6 +72,20 @@ const ITEMS: QA[] = [
       </>
     ),
   },
+  {
+    q: 'What\u00a0is a consent request from my partner?',
+    a: (
+      <>
+        Your IT partner may ask for explicit authorization before running certain categories of
+        automated remediation — things like patching, firewall changes, or disabling accounts.
+        You\u2019ll get a short email with a single-use link. Clicking it shows you exactly what
+        category is being requested, its risk level, and a plain-language description. You can
+        approve for any duration between 90 days and 2 years, and revoke at any time from
+        <b> Email preferences → Authorizations</b>. A cryptographic record is created both on
+        grant and on revoke — auditors can verify the chain end-to-end.
+      </>
+    ),
+  },
 ];
 
 export const ClientHelpFAQ: React.FC = () => {

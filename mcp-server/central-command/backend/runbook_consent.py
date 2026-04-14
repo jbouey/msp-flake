@@ -200,6 +200,38 @@ from dataclasses import dataclass as _dataclass
 CONSENT_MODE_ENV = "RUNBOOK_CONSENT_MODE"
 CONSENT_ENFORCE_CLASSES_ENV = "RUNBOOK_CONSENT_ENFORCE_CLASSES"
 
+# Phase 4 hardening — version-stamped legal copy
+#
+# Every consent bundle records the exact version of the consent
+# language that was presented to the customer, plus the text itself.
+# The UI's grant modal MUST render the same text — keep these in
+# lockstep with `PortalConsentPage.GrantConsentModal` +
+# `ConsentApprovePage`.
+#
+# When the copy changes: add a new entry, bump CONSENT_COPY_VERSION,
+# and update the UI. Historical bundles retain their original
+# version tag so auditors can look up the as-of-then text.
+CONSENT_COPY_VERSION = "2026-04-14_v1"
+CONSENT_COPY_TEXT: dict[str, str] = {
+    "2026-04-14_v1": (
+        "By granting, you authorize OsirisCare-verified runbooks in this "
+        "category to run on your site for up to the selected TTL. This "
+        "consent is revocable instantly from your portal. A cryptographic "
+        "record is created now and stored in your compliance packet chain "
+        "for 7 years per HIPAA §164.316(b)(2)(i)."
+    ),
+}
+
+
+def get_consent_copy(version: str | None = None) -> tuple[str, str]:
+    """Return `(version, text)` for the given version — or current default."""
+    v = version or CONSENT_COPY_VERSION
+    text = CONSENT_COPY_TEXT.get(v)
+    if text is None:
+        # Fallback to current default; log so we notice
+        return CONSENT_COPY_VERSION, CONSENT_COPY_TEXT[CONSENT_COPY_VERSION]
+    return v, text
+
 
 def get_consent_mode() -> str:
     """Legacy global mode — kept for log tags only.
@@ -483,6 +515,11 @@ async def create_consent(
 
     # Write the signed + hash-chained bundle FIRST. If this fails, we
     # never reach the consent row insert → no orphan consent.
+    #
+    # Phase 4 hardening — version-stamp the rendered consent copy into
+    # the bundle payload. Auditors asking "what did the customer see?"
+    # can read the exact text from this bundle's checks JSON.
+    copy_version, copy_text = get_consent_copy()
     bundle_id, bundle_hash = await _write_consent_bundle(
         db,
         site_id=site_id,
@@ -494,6 +531,8 @@ async def create_consent(
             "consented_at": now_utc.isoformat(),
             "ttl_days": ttl_days,
             "pubkey_fingerprint": hashlib.sha256(kp.public_key_bytes).hexdigest()[:16],
+            "consent_copy_version": copy_version,
+            "consent_copy_text": copy_text,
         },
         actor_email=consented_by_email,
     )

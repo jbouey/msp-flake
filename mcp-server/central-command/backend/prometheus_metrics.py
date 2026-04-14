@@ -207,6 +207,82 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
             except Exception:
                 logger.exception("metrics: flywheel events gauge query failed")
 
+            # --- Migration 184 Phase 4 consent metrics ---
+            # Grants, revokes, executed-with-consent events, and expired
+            # request tokens — all labeled by class_id so the SRE
+            # dashboard can spot per-class trends.
+            try:
+                consent_events = await conn.fetch("""
+                    SELECT
+                        COALESCE(SUBSTR(rule_id, 9, POSITION('@' IN rule_id) - 9), '?') AS class_id,
+                        event_type,
+                        COUNT(*) AS n
+                    FROM promoted_rule_events
+                    WHERE event_type LIKE 'runbook.%'
+                      AND created_at > NOW() - INTERVAL '7 days'
+                    GROUP BY 1, 2
+                """)
+                if consent_events:
+                    grants = [
+                        ({"class_id": r["class_id"]}, float(r["n"]))
+                        for r in consent_events if r["event_type"] == "runbook.consented"
+                    ]
+                    revokes = [
+                        ({"class_id": r["class_id"]}, float(r["n"]))
+                        for r in consent_events if r["event_type"] == "runbook.revoked"
+                    ]
+                    executed_with = [
+                        ({"class_id": r["class_id"], "outcome": "with_consent"},
+                         float(r["n"]))
+                        for r in consent_events
+                        if r["event_type"] == "runbook.executed_with_consent"
+                    ]
+                    if grants:
+                        sections.append(_gauge(
+                            "osiriscare_consent_grants_7d",
+                            "Class-level consent grants in last 7d by class_id",
+                            grants,
+                        ))
+                    if revokes:
+                        sections.append(_gauge(
+                            "osiriscare_consent_revokes_7d",
+                            "Class-level consent revokes in last 7d by class_id",
+                            revokes,
+                        ))
+                    if executed_with:
+                        sections.append(_gauge(
+                            "osiriscare_consent_executed_7d",
+                            "runbook.executed_with_consent events in last 7d",
+                            executed_with,
+                        ))
+            except Exception:
+                logger.exception("metrics: consent events query failed")
+
+            try:
+                # Tokens that expired unconsumed — delivery health signal
+                expired_tokens = await conn.fetchval("""
+                    SELECT COUNT(*) FROM consent_request_tokens
+                    WHERE consumed_at IS NULL AND expires_at < NOW()
+                      AND expires_at > NOW() - INTERVAL '7 days'
+                """)
+                pending_tokens = await conn.fetchval("""
+                    SELECT COUNT(*) FROM consent_request_tokens
+                    WHERE consumed_at IS NULL AND expires_at > NOW()
+                """)
+                sections.append(_gauge(
+                    "osiriscare_consent_token_expired_7d",
+                    "Consent request tokens that expired unconsumed in last 7d",
+                    [({}, float(expired_tokens or 0))],
+                ))
+                sections.append(_gauge(
+                    "osiriscare_consent_token_pending",
+                    "Consent request tokens currently pending approval",
+                    [({}, float(pending_tokens or 0))],
+                ))
+            except Exception:
+                # Table missing pre-189 → silent skip
+                pass
+
             # --- Flywheel Spine: stuck rules + operator_ack_required ---
             try:
                 stuck = await conn.fetchval("""

@@ -165,3 +165,48 @@ groups:
             windows; sustained divergence means some appliances are
             decommissioned or unable to rotate. Follow key-rotation
             runbook step "Wait for ACKs".
+
+  # ───────────────────────────────────────────────────────────────────
+  # Migration 184 Phase 4 — consent request delivery health
+  # ───────────────────────────────────────────────────────────────────
+  - name: osiriscare_consent_delivery
+    interval: 300s
+    rules:
+      - alert: ConsentRequestExpirySpike
+        expr: osiriscare_consent_token_expired_7d > 10
+        for: 1h
+        labels:
+          severity: warning
+          category: consent_delivery
+        annotations:
+          summary: "More than 10 consent-request tokens expired unconsumed in 7d"
+          description: |
+            {{ $value }} magic-link consent tokens expired without being
+            approved in the last 7 days. This usually means the email
+            delivery path is broken OR partners are requesting consent
+            the client isn't expecting (education/UX issue).
+
+            Diagnose:
+              1. Check SMTP health (send a test via /api/admin/health)
+              2. Review recent consent_request_tokens rows by partner
+                 to spot a single spammy partner
+              3. Check DNS / SPF / DKIM for the sending domain
+
+            Runbook: docs/phase-4-consent-ui-brief.md §"Pitfalls"
+
+      - alert: ConsentRequestQueueStuck
+        expr: osiriscare_consent_token_pending > 50
+        for: 2h
+        labels:
+          severity: warning
+          category: consent_delivery
+        annotations:
+          summary: "Consent request queue larger than 50 for > 2h"
+          description: |
+            {{ $value }} consent requests are currently awaiting
+            customer approval. If this grows unbounded, something is
+            wrong with the email path — customers can't click the
+            link if they never received it.
+
+            Thresholds calibrated for <10 active partners; revisit
+            when partner count > 20.
