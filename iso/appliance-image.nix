@@ -158,7 +158,7 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v16";
+    installer_version = "v17";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
@@ -383,9 +383,23 @@ EOF
       LOG_FILE="/tmp/msp-install.log"
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v13"
+      INSTALLER_VERSION="v17"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
+      # v17 (Session 206): enterprise install flow — NEVER blocks on network.
+      # All telemetry calls run in the background via this helper. If the
+      # backgrounded call stalls forever, the install still completes.
+      # The backgrounded PID gets reaped at install halt by systemd cleanup.
+      run_bg_telemetry() {
+        # $@ is the command to run. We fork twice (subshell + &) so the
+        # backgrounded process is fully detached from the install shell.
+        ( "$@" >> "$LOG_FILE" 2>&1 & ) >/dev/null 2>&1 || true
+      }
+      # v17: State directory for install phase transitions — readable by
+      # future separate telemetry service, preserved across reboots on
+      # the live ISO (tmpfs). Currently unused but structured for Phase 2
+      # refactor where telemetry moves fully out of install.sh.
+      mkdir -p /run/installer-state 2>/dev/null || true
 
       IMAGE="/etc/installer/osiriscare-system.raw.zst"
       DECOMPRESSED_SIZE_FILE="/etc/installer/decompressed-size"
@@ -467,8 +481,11 @@ EOF
         echo -e "  ''${DIM}Full log:      cat /tmp/msp-install.log''${RESET}"
         echo ""
         log "FATAL: $msg (step=$step)"
-        # Fire install_complete report with failure — last chance before halting
-        post_complete_report "false" "$step" "$msg" || true
+        # v17: Fire failure report in background so die() never stalls
+        # on curl. If the curl hangs, the backgrounded subshell is
+        # orphaned when sleep 86400 is finally SIGKILL'd by systemd.
+        ( post_complete_report "false" "$step" "$msg" ) >> "$LOG_FILE" 2>&1 &
+        disown 2>/dev/null || true
         # Halt — keep error visible, then exit
         sleep 86400
         exit 1
@@ -591,7 +608,10 @@ EOF
 JSONEND
 )
         echo "$body" > /tmp/msp-install-start.json
-        curl -sS -m 15 -X POST \
+        # v17: tighter timeouts — connect 5s, total 10s. No retries.
+        # curl failures are benign (install runs offline); we don't want
+        # the backgrounded subshell to linger on bad networks.
+        curl -sS --connect-timeout 5 -m 10 -X POST \
           -H "Content-Type: application/json" \
           -H "X-Install-Token: ''${INSTALL_TOKEN}" \
           --data @/tmp/msp-install-start.json \
@@ -629,7 +649,8 @@ JSONEND
 JSONEND
 )
         echo "$body" > /tmp/msp-install-complete.json
-        curl -sS -m 15 -X POST \
+        # v17: tighter timeouts matching post_start_report.
+        curl -sS --connect-timeout 5 -m 10 -X POST \
           -H "Content-Type: application/json" \
           -H "X-Install-Token: ''${INSTALL_TOKEN}" \
           --data @/tmp/msp-install-complete.json \
@@ -896,37 +917,27 @@ JSONEND
       # v10: Collect hardware fingerprint EARLY, before any install work.
       collect_hw_info || true
 
-      # v10: Network readiness gate. Checks DHCP/NTP/API reachability.
-      # Self-bounded: ntpdate(15s) + curl(10s).
-      set_step 3 "''${WHITE}Checking network readiness...''${RESET}"
-
-      # v14 (Session 206): DHCP wait gate. Observed 2026-04-13:
-      # check_network ran at T+0 when USB-ethernet had LINK but DHCP was
-      # still negotiating. Probe logged dhcp=false; the lease came up 3s
-      # later. Fix: before running the network probe, wait up to 30s for
-      # ANY interface to get a default route + IP. Proceed regardless
-      # on timeout — check_network is non-fatal and will log the state
-      # we ended up with.
-      log "DHCP wait gate: waiting up to 30s for a usable default route..."
-      _net_start=$(date +%s)
-      _net_deadline=$(( _net_start + 30 ))
-      while [ "$(date +%s)" -lt "$_net_deadline" ]; do
-        _net_iface=$(ip -o -4 route show default 2>/dev/null | awk '{print $5; exit}')
-        _net_ip=""
-        if [ -n "$_net_iface" ]; then
-          _net_ip=$(ip -o -4 addr show "$_net_iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
-        fi
-        if [ -n "$_net_iface" ] && [ -n "$_net_ip" ]; then
-          log "DHCP wait gate: network ready after $(( $(date +%s) - _net_start ))s (iface=$_net_iface ip=$_net_ip)"
-          break
-        fi
-        sleep 2
-      done
-      if [ -z "''${_net_iface:-}" ] || [ -z "''${_net_ip:-}" ]; then
-        log "DHCP wait gate: timed out after 30s — no default route found. Install will proceed; telemetry will be skipped."
-      fi
-
-      check_network || true
+      # v17 (Session 206): enterprise install flow — network is 100%
+      # OPTIONAL for install. The raw image is embedded in the ISO;
+      # install completes fully offline. Telemetry is best-effort and
+      # runs in the background.
+      #
+      # Old flow (v10-v16):
+      #   DHCP wait gate (30s) → check_network (10s) → post_start_report (15s)
+      #   = up to 55s in the hot path even on a successful install, and an
+      #   UNBOUNDED stall if any curl retried past its timeout. Observed
+      #   2026-04-14 on HP t640 where install appeared frozen at STEP 3
+      #   even though v15 was "working."
+      #
+      # New flow:
+      #   Network probe + start-report run DETACHED in background via a
+      #   subshell (which inherits function definitions from this bash
+      #   shell). Disk wipe + dd image write proceeds immediately.
+      #   Install duration becomes independent of network state.
+      set_step 3 "''${WHITE}Starting background network probe...''${RESET}"
+      log "v17: network probe + start-report dispatched to background — install flow continues"
+      ( check_network; post_start_report ) >> "$LOG_FILE" 2>&1 &
+      disown 2>/dev/null || true
 
       # Check if we're running from live ISO
       if ! grep -q "squashfs" /proc/mounts; then
@@ -1022,10 +1033,10 @@ JSONEND
         die "Target drive is only ''${DRIVE_SIZE_GB}GB. Minimum 20GB required." "hw_probe"
       fi
 
-      # v10: POST the install-start report BEFORE starting the write.
-      # Shell function; self-bounded by curl -m 15.
-      set_step 4 "''${WHITE}Registering install with Central Command...''${RESET}"
-      post_start_report || true
+      # v17: Registration moved to the background subshell kicked off
+      # in STEP 3. Install proceeds immediately into disk prep. If the
+      # backgrounded post_start_report fails or stalls, install still
+      # completes normally.
 
       # ── Check for existing installation ─────────────────────────
       # NO MOUNT PROBE. mount(2) on a corrupt FS can enter uninterruptible
@@ -1385,9 +1396,18 @@ JSONEND
 
       log "Installation complete. Halting."
 
-      # v10: Fire the install-complete success report. Best-effort — the halt
-      # continues regardless. Duration includes network setup + write + resize.
-      post_complete_report "true" "complete" "" "" "$VERIFY_SHA" || true
+      # v17: Fire install-complete report in the background + give it a
+      # brief window (10s) to complete before halting. The install halt
+      # is NOT gated on this — if the curl stalls, we still halt after
+      # the window. Prior behavior blocked the entire halt on curl.
+      ( post_complete_report "true" "complete" "" "" "$VERIFY_SHA" ) >> "$LOG_FILE" 2>&1 &
+      _telemetry_pid=$!
+      _telemetry_deadline=$(( $(date +%s) + 10 ))
+      while [ "$(date +%s)" -lt "$_telemetry_deadline" ] && kill -0 "$_telemetry_pid" 2>/dev/null; do
+        sleep 1
+      done
+      kill "$_telemetry_pid" 2>/dev/null || true
+      log "v17: post_complete_report finished or timed out after 10s — proceeding to halt"
 
       # Halt — NOT reboot, NOT poweroff with countdown.
       # User removes USB, then presses power button.
