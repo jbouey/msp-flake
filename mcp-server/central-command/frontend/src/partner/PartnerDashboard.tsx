@@ -12,6 +12,8 @@ import { PartnerHomeDashboard } from './PartnerHomeDashboard';
 import { PartnerDriftConfig } from './PartnerDriftConfig';
 import { PartnerOnboarding } from './PartnerOnboarding';
 import { PartnerSSOConfig } from './PartnerSSOConfig';
+import { PartnerSearchOmnibox } from './PartnerSearchOmnibox';
+import { PartnerWeeklyRollup } from './PartnerWeeklyRollup';
 import { InfoTip, WelcomeModal } from '../components/shared';
 import { formatTimeAgo } from '../constants';
 
@@ -225,6 +227,8 @@ export const PartnerDashboard: React.FC = () => {
         }}
         portalType="partner"
       />
+      {/* Global Cmd-K search — attaches keydown listener globally */}
+      <PartnerSearchOmnibox />
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-slate-200/60" style={{ background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' }}>
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
@@ -272,6 +276,9 @@ export const PartnerDashboard: React.FC = () => {
 
       {/* Partner hero dashboard (Session 206 round-table P0) */}
       <PartnerHomeDashboard />
+
+      {/* P2: weekly rollup table — entire book-of-business in one view */}
+      <PartnerWeeklyRollup />
 
       {/* Stats */}
       <div className="max-w-7xl mx-auto px-6 py-6">

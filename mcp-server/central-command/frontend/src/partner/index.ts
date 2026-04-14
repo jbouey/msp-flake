@@ -7,3 +7,4 @@ export { PartnerAuditLog } from './PartnerAuditLog';
 export { PartnerOnboarding } from './PartnerOnboarding';
 export { PartnerDriftConfig } from './PartnerDriftConfig';
 export { PartnerSSOConfig } from './PartnerSSOConfig';
+export { PartnerMeshTopology } from './PartnerMeshTopology';

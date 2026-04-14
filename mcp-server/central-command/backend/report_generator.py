@@ -580,3 +580,178 @@ def save_report_to_file(
 def is_pdf_generation_available() -> bool:
     """Check if PDF generation is available."""
     return WEASYPRINT_AVAILABLE
+
+
+# ─── Session 206 round-table P2: Partner QBR PDF ───────────────────
+
+def _qbr_html(
+    *,
+    partner_brand: str,
+    partner_logo_url: Optional[str],
+    primary_color: str,
+    client_name: str,
+    site_id: str,
+    quarter_label: str,
+    kpis: Dict[str, Any],
+    incidents_summary: List[Dict[str, Any]],
+    value_summary: Dict[str, Any],
+) -> str:
+    """Render the Quarterly Business Review HTML.
+
+    Deliberately narrative — partner brings this to the QBR meeting and
+    reads it aloud. Not a compliance attestation; for that see the
+    monthly compliance packet.
+    """
+    safe_brand = (partner_brand or "OsirisCare").replace("<", "&lt;").replace(">", "&gt;")
+    safe_client = (client_name or site_id).replace("<", "&lt;").replace(">", "&gt;")
+    logo_html = (
+        f'<img src="{partner_logo_url}" alt="{safe_brand}" style="height: 40px;" />'
+        if partner_logo_url else f'<div class="brand">{safe_brand}</div>'
+    )
+    incidents_rows = "".join(
+        f"<tr><td>{i.get('type', '')}</td>"
+        f"<td class='num'>{i.get('count', 0)}</td>"
+        f"<td>{i.get('outcome', '')}</td></tr>"
+        for i in incidents_summary[:15]
+    ) or "<tr><td colspan='3'>No qualifying incidents this quarter.</td></tr>"
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>QBR — {safe_client} — {quarter_label}</title>
+<style>
+  @page {{ size: letter; margin: 0.75in; }}
+  body {{ font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif;
+         color: #1e293b; line-height: 1.5; }}
+  .header {{ display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 3px solid {primary_color}; padding-bottom: 12px; margin-bottom: 18px; }}
+  .brand {{ font-size: 20px; font-weight: 700; color: {primary_color}; }}
+  .title {{ font-size: 14px; color: #64748b; text-align: right; }}
+  h1 {{ font-size: 22px; margin: 0 0 6px 0; color: #0f172a; }}
+  h2 {{ font-size: 14px; margin: 18px 0 8px 0; color: {primary_color};
+        border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;
+        text-transform: uppercase; letter-spacing: 0.05em; }}
+  .hero {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+          padding: 18px; margin-bottom: 16px; }}
+  .hero .num {{ font-size: 40px; font-weight: 700; color: {primary_color}; }}
+  .hero .sub {{ font-size: 12px; color: #64748b; }}
+  .grid {{ display: flex; gap: 12px; margin: 12px 0; }}
+  .grid .cell {{ flex: 1; background: #f8fafc; border: 1px solid #e2e8f0;
+                border-radius: 6px; padding: 12px; }}
+  .cell .label {{ font-size: 10px; color: #64748b; text-transform: uppercase;
+                 letter-spacing: 0.05em; }}
+  .cell .val {{ font-size: 22px; font-weight: 700; color: #0f172a; margin-top: 4px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }}
+  th {{ background: #f1f5f9; text-align: left; padding: 8px; border-bottom: 1px solid #cbd5e1;
+        text-transform: uppercase; font-size: 10px; color: #475569; letter-spacing: 0.05em; }}
+  td {{ padding: 8px; border-bottom: 1px solid #e2e8f0; }}
+  td.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .value {{ background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px;
+           padding: 12px; margin: 10px 0; color: #065f46; }}
+  .value .big {{ font-size: 28px; font-weight: 700; color: #047857; }}
+  footer {{ margin-top: 28px; padding-top: 12px; border-top: 1px solid #e2e8f0;
+           font-size: 10px; color: #64748b; }}
+  .disclaimer {{ font-size: 9px; color: #94a3b8; margin-top: 8px; }}
+</style></head><body>
+
+<div class="header">
+  <div>{logo_html}</div>
+  <div class="title">
+    Quarterly Business Review<br/>
+    <b>{quarter_label}</b>
+  </div>
+</div>
+
+<h1>{safe_client}</h1>
+<div style="color:#64748b; font-size:12px;">Site: {site_id}</div>
+
+<h2>Executive summary</h2>
+<div class="hero">
+  <div class="num">{kpis.get('self_heal_pct', 0):.1f}%</div>
+  <div class="sub">of all compliance issues this quarter resolved automatically, without your intervention.</div>
+</div>
+
+<div class="grid">
+  <div class="cell">
+    <div class="label">Issues detected</div>
+    <div class="val">{kpis.get('incidents_total', 0):,}</div>
+  </div>
+  <div class="cell">
+    <div class="label">Auto-healed (L1)</div>
+    <div class="val">{kpis.get('l1_count', 0):,}</div>
+  </div>
+  <div class="cell">
+    <div class="label">Assisted (L2)</div>
+    <div class="val">{kpis.get('l2_count', 0):,}</div>
+  </div>
+  <div class="cell">
+    <div class="label">Required you (L3)</div>
+    <div class="val">{kpis.get('l3_count', 0):,}</div>
+  </div>
+</div>
+
+<h2>Top incident categories</h2>
+<table>
+  <thead><tr><th>Type</th><th class="num">Count</th><th>Outcome</th></tr></thead>
+  <tbody>{incidents_rows}</tbody>
+</table>
+
+<h2>Estimated billable hours saved</h2>
+<div class="value">
+  <div class="big">{value_summary.get('auto_heals', 0):,} auto-heals × {value_summary.get('minutes_per_issue', 20)} min each</div>
+  ≈ <b>{value_summary.get('hours_saved', 0):.1f} hours</b> of tech time your team did NOT have to spend on these tickets.
+  <div class="disclaimer">
+    Based on MSP industry average of {value_summary.get('minutes_per_issue', 20)} min per manually-triaged compliance ticket.
+    Actual time varies by site, skill level, and ticket type.
+  </div>
+</div>
+
+<h2>Chronic patterns broken this quarter</h2>
+<div style="font-size:12px; color:#334155;">
+  {kpis.get('chronic_broken', 0)} recurring issue pattern(s) were auto-promoted from runbooks and have stopped recurring.
+  This means {kpis.get('chronic_broken', 0) * 10} fewer tickets per month going forward (conservative estimate).
+</div>
+
+<footer>
+  Prepared by {safe_brand} · Quarter: {quarter_label} · Site: {site_id}<br/>
+  <div class="disclaimer">
+    This review summarizes observed monitoring outcomes and is not itself a HIPAA compliance
+    attestation. Monthly compliance packets (signed + OTS-anchored) are the authoritative record.
+  </div>
+</footer>
+
+</body></html>"""
+
+
+def generate_qbr_pdf(
+    *,
+    partner_brand: str,
+    partner_logo_url: Optional[str],
+    primary_color: str,
+    client_name: str,
+    site_id: str,
+    quarter_label: str,
+    kpis: Dict[str, Any],
+    incidents_summary: List[Dict[str, Any]],
+    value_summary: Dict[str, Any],
+) -> Optional[bytes]:
+    """Generate a Quarterly Business Review PDF for a partner/client."""
+    if not WEASYPRINT_AVAILABLE:
+        logger.error("WeasyPrint not available - cannot generate QBR PDF")
+        return None
+    try:
+        html_content = _qbr_html(
+            partner_brand=partner_brand,
+            partner_logo_url=partner_logo_url,
+            primary_color=primary_color,
+            client_name=client_name,
+            site_id=site_id,
+            quarter_label=quarter_label,
+            kpis=kpis,
+            incidents_summary=incidents_summary,
+            value_summary=value_summary,
+        )
+        pdf_bytes = HTML(string=html_content).write_pdf()
+        logger.info(f"Generated QBR PDF for {site_id} ({quarter_label}): {len(pdf_bytes)} bytes")
+        return pdf_bytes
+    except Exception as e:
+        logger.error(f"Failed to generate QBR PDF: {e}", exc_info=True)
+        return None

@@ -2226,3 +2226,245 @@ async def mark_stale_appliances_loop():
             logger.error(f"mark_stale_appliances_loop iteration failed: {e}", exc_info=True)
 
         await asyncio.sleep(APPLIANCE_OFFLINE_SCAN_SECONDS)
+
+
+# ─── Session 206 round-table P2: partner weekly rollup refresh ─────
+
+WEEKLY_ROLLUP_REFRESH_SECONDS = 30 * 60  # every 30 min
+
+
+async def weekly_rollup_refresh_loop():
+    """Refresh the partner_site_weekly_rollup materialized view.
+
+    The view aggregates last-7-day + last-24h incidents + self-heal %
+    per (partner_id, site_id). Used by /api/partners/me/rollup/weekly.
+    CONCURRENTLY lets readers keep querying during the refresh.
+
+    If the view doesn't exist yet (migration 185 not applied), the
+    first pg_matviews check short-circuits and we try again next tick.
+    """
+    await asyncio.sleep(120)  # let migrations complete on cold starts
+    while True:
+        _hb("weekly_rollup_refresh")
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                exists = await conn.fetchval(
+                    "SELECT 1 FROM pg_matviews WHERE matviewname = 'partner_site_weekly_rollup'"
+                )
+                if exists:
+                    # CONCURRENTLY requires the UNIQUE index set up in migration 185.
+                    await conn.execute(
+                        "REFRESH MATERIALIZED VIEW CONCURRENTLY partner_site_weekly_rollup"
+                    )
+                    logger.info("weekly_rollup_refresh_complete")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(
+                f"weekly_rollup_refresh_loop iteration failed: {e}",
+                exc_info=True,
+            )
+        await asyncio.sleep(WEEKLY_ROLLUP_REFRESH_SECONDS)
+
+
+# ─── Session 206 round-table P2: partner weekly digest loop ────────
+
+PARTNER_DIGEST_CHECK_SECONDS = 15 * 60  # wake up every 15 min
+PARTNER_DIGEST_DAY = int(os.getenv("PARTNER_DIGEST_DAY_OF_WEEK", "4"))  # Friday
+PARTNER_DIGEST_HOUR = int(os.getenv("PARTNER_DIGEST_HOUR_UTC", "13"))   # 13:00 UTC = 9am EDT
+
+
+async def _gather_partner_digest_data(conn, partner_id: str) -> dict:
+    """Assemble the data payload for a partner's weekly digest."""
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+    week_start = now - timedelta(days=7)
+    week_label = f"{week_start.strftime('%b %d')} – {now.strftime('%b %d, %Y')}"
+
+    totals = await conn.fetchrow(
+        """
+        SELECT COUNT(DISTINCT s.site_id) AS clients,
+               COUNT(i.id) AS incidents,
+               COUNT(i.id) FILTER (WHERE i.resolution_tier = 'L1') AS l1_count,
+               COUNT(i.id) FILTER (WHERE i.resolution_tier = 'L3') AS l3_count
+        FROM sites s
+        LEFT JOIN incidents i ON i.site_id = s.site_id
+                             AND i.created_at > NOW() - INTERVAL '7 days'
+        WHERE s.partner_id = $1 AND s.status != 'inactive'
+        """,
+        partner_id,
+    )
+    total = int(totals["incidents"] or 0)
+    l1 = int(totals["l1_count"] or 0)
+    self_heal_pct = (100.0 * l1 / total) if total > 0 else 100.0
+
+    chronic_broken = await conn.fetchval(
+        """
+        SELECT COUNT(*) FROM incident_recurrence_velocity v
+        JOIN sites s ON s.site_id = v.site_id
+        WHERE s.partner_id = $1
+          AND v.recurrence_broken_at IS NOT NULL
+          AND v.recurrence_broken_at > NOW() - INTERVAL '7 days'
+        """,
+        partner_id,
+    ) or 0
+
+    attention_rows = await conn.fetch(
+        """
+        WITH site_scope AS (
+            SELECT site_id, clinic_name FROM sites
+            WHERE partner_id = $1 AND status != 'inactive'
+        )
+        SELECT ss.site_id, ss.clinic_name,
+               COALESCE((SELECT COUNT(*) FROM incident_recurrence_velocity
+                         WHERE site_id = ss.site_id AND is_chronic), 0) * 3
+             + COALESCE((SELECT COUNT(*) FROM incidents
+                         WHERE site_id = ss.site_id AND status NOT IN ('resolved','closed')
+                           AND resolution_tier = 'L3'), 0) * 5
+             AS risk_score,
+             COALESCE((SELECT COUNT(*) FROM incident_recurrence_velocity
+                       WHERE site_id = ss.site_id AND is_chronic), 0) AS chronic,
+             COALESCE((SELECT COUNT(*) FROM incidents
+                       WHERE site_id = ss.site_id AND status NOT IN ('resolved','closed')
+                         AND resolution_tier = 'L3'), 0) AS open_l3
+        FROM site_scope ss
+        ORDER BY risk_score DESC
+        LIMIT 5
+        """,
+        partner_id,
+    )
+    attention_sites = []
+    for r in attention_rows:
+        if int(r["risk_score"] or 0) == 0:
+            continue
+        reason_bits = []
+        if r["chronic"]:
+            reason_bits.append(f"{r['chronic']} chronic")
+        if r["open_l3"]:
+            reason_bits.append(f"{r['open_l3']} open L3")
+        attention_sites.append({
+            "site_id": r["site_id"],
+            "clinic_name": r["clinic_name"],
+            "risk_score": int(r["risk_score"]),
+            "reason": ", ".join(reason_bits) or "attention needed",
+        })
+
+    activity_rows = await conn.fetch(
+        """
+        SELECT i.created_at, i.incident_type, i.resolution_tier,
+               s.clinic_name, s.site_id
+        FROM incidents i
+        JOIN sites s ON s.site_id = i.site_id
+        WHERE s.partner_id = $1
+          AND i.created_at > NOW() - INTERVAL '7 days'
+          AND i.resolution_tier IN ('L2', 'L3')
+        ORDER BY i.created_at DESC
+        LIMIT 5
+        """,
+        partner_id,
+    )
+    activity_highlights = [
+        {
+            "when": r["created_at"].strftime("%a %H:%M") if r["created_at"] else "",
+            "site_id": r["site_id"],
+            "clinic_name": r["clinic_name"],
+            "incident_type": r["incident_type"],
+            "outcome": {"L2": "L2 assisted", "L3": "L3 escalated"}.get(r["resolution_tier"], "—"),
+        }
+        for r in activity_rows
+    ]
+
+    return {
+        "week_label": week_label,
+        "stats": {
+            "clients": int(totals["clients"] or 0),
+            "incidents": total,
+            "l1_count": l1,
+            "l3_count": int(totals["l3_count"] or 0),
+            "self_heal_pct": self_heal_pct,
+            "chronic_broken": int(chronic_broken),
+        },
+        "attention_sites": attention_sites,
+        "activity_highlights": activity_highlights,
+    }
+
+
+async def _send_partner_weekly_digests():
+    """Iterate all active partners with a primary_contact_email and send."""
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.email_alerts import send_partner_weekly_digest
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        partners = await conn.fetch(
+            """
+            SELECT id,
+                   COALESCE(NULLIF(brand_name, ''), name, 'OsirisCare') AS brand_name,
+                   logo_url,
+                   COALESCE(primary_color, '#4F46E5') AS primary_color,
+                   contact_email,
+                   COALESCE(digest_enabled, TRUE) AS digest_enabled
+            FROM partners
+            WHERE COALESCE(digest_enabled, TRUE) = TRUE
+              AND contact_email IS NOT NULL
+              AND contact_email != ''
+              AND status = 'active'
+            """
+        )
+        sent = 0
+        failed = 0
+        for p in partners:
+            try:
+                payload = await _gather_partner_digest_data(conn, p["id"])
+                ok = send_partner_weekly_digest(
+                    to_email=p["contact_email"],
+                    partner_brand=p["brand_name"],
+                    partner_logo_url=p["logo_url"],
+                    primary_color=p["primary_color"],
+                    **payload,
+                )
+                if ok:
+                    sent += 1
+                else:
+                    failed += 1
+            except Exception:
+                logger.error(f"partner_weekly_digest send failed for partner {p['id']}", exc_info=True)
+                failed += 1
+        logger.info(f"partner_weekly_digest_batch_complete sent={sent} failed={failed}")
+
+
+async def partner_weekly_digest_loop():
+    """Fire the partner digest once per week (default: Fridays at 13:00 UTC).
+
+    Strategy: check every 15 min. When `now.weekday() == PARTNER_DIGEST_DAY
+    and now.hour == PARTNER_DIGEST_HOUR and last_sent_date < today`, send.
+    Lock is per-process (single-writer); if mcp-server has replicas we
+    need a DB-backed lock (TODO — not blocking P2 rollout).
+    """
+    from datetime import datetime, timezone, date
+
+    await asyncio.sleep(180)
+    last_sent_date: date | None = None
+    while True:
+        _hb("partner_weekly_digest")
+        try:
+            now = datetime.now(timezone.utc)
+            is_send_window = (
+                now.weekday() == PARTNER_DIGEST_DAY and now.hour == PARTNER_DIGEST_HOUR
+            )
+            if is_send_window and last_sent_date != now.date():
+                await _send_partner_weekly_digests()
+                last_sent_date = now.date()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(
+                f"partner_weekly_digest_loop iteration failed: {e}",
+                exc_info=True,
+            )
+        await asyncio.sleep(PARTNER_DIGEST_CHECK_SECONDS)

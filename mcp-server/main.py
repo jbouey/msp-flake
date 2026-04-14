@@ -1620,6 +1620,8 @@ async def lifespan(app: FastAPI):
         exemplar_miner_loop,
         mark_stale_appliances_loop,
         flywheel_orchestrator_loop,
+        weekly_rollup_refresh_loop,
+        partner_weekly_digest_loop,
     )
     from dashboard_api.privileged_access_notifier import privileged_notifier_loop
     from dashboard_api.chain_tamper_detector import chain_tamper_detector_loop
@@ -1659,6 +1661,8 @@ async def lifespan(app: FastAPI):
         ("audit_log_retention", _audit_log_retention_loop),
         ("mark_stale_appliances", mark_stale_appliances_loop),
         ("flywheel_orchestrator", flywheel_orchestrator_loop),
+        ("weekly_rollup_refresh", weekly_rollup_refresh_loop),
+        ("partner_weekly_digest", partner_weekly_digest_loop),
     ]
 
     for name, fn in task_defs:

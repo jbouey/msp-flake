@@ -105,7 +105,7 @@ const PrivilegedAccessAct = lazy(() => import('./portal/PrivilegedAccessAct').th
 // Partner module - lazy loaded with provider
 const PartnerRoutes = lazy(() => import('./partner').then(m => ({
   default: () => {
-    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity, PartnerAuditLog } = m;
+    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity, PartnerAuditLog, PartnerMeshTopology } = m;
     return (
       <PartnerProvider>
         <Routes>
@@ -113,6 +113,7 @@ const PartnerRoutes = lazy(() => import('./partner').then(m => ({
           <Route path="dashboard" element={<PartnerDashboard />} />
           <Route path="security" element={<PartnerSecurity />} />
           <Route path="audit-log" element={<PartnerAuditLog />} />
+          <Route path="site/:siteId/topology" element={<PartnerMeshTopology />} />
           <Route path="*" element={<PartnerLogin />} />
         </Routes>
       </PartnerProvider>

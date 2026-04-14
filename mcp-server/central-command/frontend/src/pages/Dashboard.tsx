@@ -11,6 +11,7 @@ import {
   ResolutionBreakdown,
   TopIncidentTypes,
   DashboardSLAStrip,
+  OperatorAckPanel,
 } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
 import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFlywheelIntelligence, useInstallReports } from '../hooks';
@@ -528,6 +529,9 @@ export const Dashboard: React.FC = () => {
 
       {/* Hero metric — self-heal rate (Session 206 round-table P0) */}
       {!showEmptyState && <FlywheelSpineHero />}
+
+      {/* R5 — operator acknowledgment panel (renders only when pending) */}
+      {!showEmptyState && <OperatorAckPanel />}
 
       {/* Attention + Incident trend */}
       {!showEmptyState && (

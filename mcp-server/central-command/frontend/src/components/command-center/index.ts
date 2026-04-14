@@ -4,3 +4,4 @@ export { AttentionPanel } from './AttentionPanel';
 export { ResolutionBreakdown } from './ResolutionBreakdown';
 export { TopIncidentTypes } from './TopIncidentTypes';
 export { DashboardSLAStrip } from './DashboardSLAStrip';
+export { OperatorAckPanel } from './OperatorAckPanel';

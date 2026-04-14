@@ -696,3 +696,163 @@ Please update the remediation plans in your Security Risk Assessment or mark the
     msg.attach(MIMEText(html, "html"))
 
     return _send_smtp_with_retry(msg, [to_email], f"SRA overdue reminder to {to_email} ({count} items)")
+
+
+# ─── Session 206 round-table P2: partner weekly digest ─────────────
+
+def send_partner_weekly_digest(
+    *,
+    to_email: str,
+    partner_brand: str,
+    partner_logo_url: Optional[str],
+    primary_color: str,
+    week_label: str,
+    stats: dict,
+    attention_sites: list[dict],
+    activity_highlights: list[dict],
+) -> bool:
+    """Friday morning partner digest — week in review.
+
+    `stats`: {clients, self_heal_pct, incidents, chronic_broken, l3_count}
+    `attention_sites`: top 5 sites needing attention next week (dicts w/
+                       clinic_name, risk_score, reason)
+    `activity_highlights`: up to 5 notable events this week
+                           (dicts with when, clinic_name, incident_type, outcome)
+    """
+    if not is_email_configured():
+        logger.warning("SMTP not configured — skipping partner weekly digest")
+        return False
+
+    safe_brand = html.escape(partner_brand or "OsirisCare")
+    logo_html = (
+        f'<img src="{html.escape(partner_logo_url)}" alt="{safe_brand}" style="height:32px;" />'
+        if partner_logo_url else f'<span style="font-weight:700;font-size:18px;color:{primary_color};">{safe_brand}</span>'
+    )
+
+    def _attn_row(s: dict) -> str:
+        return (
+            f'<tr>'
+            f'<td style="padding:8px 12px;">{html.escape(s.get("clinic_name") or s.get("site_id") or "")}</td>'
+            f'<td style="padding:8px 12px;text-align:right;font-variant-numeric:tabular-nums;">{int(s.get("risk_score", 0))}</td>'
+            f'<td style="padding:8px 12px;color:#64748b;font-size:12px;">{html.escape(str(s.get("reason") or ""))}</td>'
+            f'</tr>'
+        )
+
+    def _activity_row(a: dict) -> str:
+        return (
+            f'<tr>'
+            f'<td style="padding:6px 12px;color:#64748b;white-space:nowrap;">{html.escape(str(a.get("when") or ""))}</td>'
+            f'<td style="padding:6px 12px;">{html.escape(a.get("clinic_name") or a.get("site_id") or "")}</td>'
+            f'<td style="padding:6px 12px;color:#334155;">{html.escape(str(a.get("incident_type") or ""))}</td>'
+            f'<td style="padding:6px 12px;color:#10b981;">{html.escape(str(a.get("outcome") or ""))}</td>'
+            f'</tr>'
+        )
+
+    attention_rows = "".join(_attn_row(s) for s in attention_sites[:5]) or (
+        '<tr><td colspan="3" style="padding:12px;color:#64748b;text-align:center;">'
+        '✓ No sites need urgent attention this week.</td></tr>'
+    )
+    activity_rows = "".join(_activity_row(a) for a in activity_highlights[:5]) or (
+        '<tr><td colspan="4" style="padding:12px;color:#64748b;text-align:center;">'
+        'Quiet week — no notable events.</td></tr>'
+    )
+
+    self_heal = float(stats.get("self_heal_pct") or 0)
+    heal_tone = "#047857" if self_heal >= 95 else "#b45309" if self_heal >= 85 else "#b91c1c"
+
+    html_body = f"""
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{safe_brand} · Week in review · {html.escape(week_label)}</title></head>
+<body style="font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;background:#f8fafc;margin:0;padding:20px;">
+<div style="max-width:640px;margin:0 auto;background:white;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+
+<div style="padding:18px 24px;border-bottom:3px solid {primary_color};display:flex;align-items:center;justify-content:space-between;">
+  <div>{logo_html}</div>
+  <div style="font-size:13px;color:#64748b;text-align:right;">Week in review<br/><b>{html.escape(week_label)}</b></div>
+</div>
+
+<div style="padding:24px;">
+  <h1 style="margin:0 0 4px 0;font-size:20px;color:#0f172a;">Your book-of-business this week</h1>
+  <p style="margin:0 0 18px 0;font-size:13px;color:#64748b;">
+    A summary of what the platform did on your behalf across all your clients.
+  </p>
+
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:18px;margin-bottom:16px;">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Self-heal rate</div>
+    <div style="font-size:40px;font-weight:700;color:{heal_tone};">{self_heal:.1f}%</div>
+    <div style="font-size:12px;color:#64748b;">
+      {stats.get('incidents', 0):,} issues detected across {stats.get('clients', 0)} clients · {stats.get('l1_count', 0):,} auto-healed without your touch
+    </div>
+  </div>
+
+  <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:0.05em;color:{primary_color};margin:18px 0 8px 0;border-bottom:1px solid #e2e8f0;padding-bottom:4px;">
+    Needs attention next week
+  </h2>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;">
+    <thead>
+      <tr style="background:#f1f5f9;font-size:11px;text-transform:uppercase;color:#475569;">
+        <th style="padding:8px 12px;text-align:left;">Client</th>
+        <th style="padding:8px 12px;text-align:right;">Risk</th>
+        <th style="padding:8px 12px;text-align:left;">Why</th>
+      </tr>
+    </thead>
+    <tbody>{attention_rows}</tbody>
+  </table>
+
+  <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:0.05em;color:{primary_color};margin:18px 0 8px 0;border-bottom:1px solid #e2e8f0;padding-bottom:4px;">
+    Activity highlights
+  </h2>
+  <table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <thead>
+      <tr style="background:#f1f5f9;font-size:11px;text-transform:uppercase;color:#475569;">
+        <th style="padding:6px 12px;text-align:left;">When</th>
+        <th style="padding:6px 12px;text-align:left;">Client</th>
+        <th style="padding:6px 12px;text-align:left;">Event</th>
+        <th style="padding:6px 12px;text-align:left;">Outcome</th>
+      </tr>
+    </thead>
+    <tbody>{activity_rows}</tbody>
+  </table>
+
+  <div style="margin-top:22px;padding:14px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:6px;font-size:13px;color:#065f46;">
+    <b>{stats.get('chronic_broken', 0)}</b> recurring pattern(s) were permanently broken this week.
+    <b>{stats.get('l3_count', 0)}</b> incidents needed your hands-on attention.
+  </div>
+
+  <p style="margin-top:20px;font-size:11px;color:#94a3b8;">
+    This digest summarizes monitoring and remediation activity only. It is not a HIPAA compliance
+    attestation. Monthly compliance packets (signed + OTS-anchored) remain the authoritative record.
+  </p>
+</div>
+
+<div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;">
+  Delivered by {safe_brand} · Powered by OsirisCare.
+</div>
+
+</div>
+</body></html>"""
+
+    text_body = (
+        f"{partner_brand or 'OsirisCare'} — Week in review — {week_label}\n\n"
+        f"Self-heal rate: {self_heal:.1f}%\n"
+        f"Clients: {stats.get('clients', 0)} | "
+        f"Issues: {stats.get('incidents', 0)} | "
+        f"Auto-healed: {stats.get('l1_count', 0)} | "
+        f"Needed you: {stats.get('l3_count', 0)}\n\n"
+        f"Top attention for next week:\n"
+        + "\n".join(
+            f"  - {s.get('clinic_name') or s.get('site_id')}: risk {int(s.get('risk_score', 0))} ({s.get('reason') or ''})"
+            for s in attention_sites[:5]
+        )
+        + "\n\n"
+        f"This digest summarizes activity only; not a HIPAA attestation.\n"
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"{partner_brand or 'OsirisCare'} · Week in review · {week_label}"
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    return _send_smtp_with_retry(msg, [to_email], f"partner weekly digest to {to_email}")

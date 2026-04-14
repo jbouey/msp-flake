@@ -725,6 +725,525 @@ async def get_partner_dashboard(
     }
 
 
+@router.get("/me/search")
+async def partner_global_search(
+    q: str,
+    limit: int = 12,
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Cmd-K omnibox — fuzzy search across the partner's book of business.
+
+    Scopes to sites owned by this partner (partner_id isolation — same
+    contract as /me/dashboard; see test_partner_dashboard_isolation).
+
+    Searches:
+      * sites (site_id, clinic_name)
+      * incidents (incident_type, severity) — limited to last 7d for speed
+      * promoted_rules (rule_id) — partner's sites only
+
+    Returns a flat list of hits, each with `kind`, `title`, `subtitle`,
+    and a frontend-navigable `href`.
+    """
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"hits": [], "query": q}
+    limit = max(1, min(limit, 25))
+    pattern = f"%{q.lower()}%"
+    partner_id = partner["id"]
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        site_rows = await conn.fetch(
+            """
+            SELECT site_id, clinic_name
+            FROM sites
+            WHERE partner_id = $1
+              AND status != 'inactive'
+              AND (LOWER(site_id) LIKE $2 OR LOWER(COALESCE(clinic_name, '')) LIKE $2)
+            ORDER BY clinic_name ASC NULLS LAST, site_id ASC
+            LIMIT $3
+            """,
+            partner_id, pattern, limit,
+        )
+        incident_rows = await conn.fetch(
+            """
+            SELECT i.id, i.incident_type, i.severity, i.status,
+                   i.site_id, s.clinic_name, i.created_at
+            FROM incidents i
+            JOIN sites s ON s.site_id = i.site_id
+            WHERE s.partner_id = $1
+              AND i.created_at > NOW() - INTERVAL '7 days'
+              AND (LOWER(i.incident_type) LIKE $2 OR LOWER(COALESCE(i.severity, '')) LIKE $2)
+            ORDER BY i.created_at DESC
+            LIMIT $3
+            """,
+            partner_id, pattern, limit,
+        )
+        rule_rows = await conn.fetch(
+            """
+            SELECT pr.rule_id, pr.site_id, pr.lifecycle_state, s.clinic_name
+            FROM promoted_rules pr
+            JOIN sites s ON s.site_id = pr.site_id
+            WHERE s.partner_id = $1
+              AND LOWER(pr.rule_id) LIKE $2
+            ORDER BY pr.created_at DESC NULLS LAST
+            LIMIT $3
+            """,
+            partner_id, pattern, limit,
+        )
+
+    hits = []
+    for r in site_rows:
+        hits.append({
+            "kind": "site",
+            "title": r["clinic_name"] or r["site_id"],
+            "subtitle": r["site_id"],
+            "href": f"/partner/site/{r['site_id']}",
+        })
+    for r in incident_rows:
+        hits.append({
+            "kind": "incident",
+            "title": r["incident_type"] or "incident",
+            "subtitle": (
+                f"{r['clinic_name'] or r['site_id']} · {r['severity'] or 'n/a'} · "
+                f"{r['status']} · {r['created_at'].strftime('%Y-%m-%d %H:%M') if r['created_at'] else ''}"
+            ),
+            "href": f"/partner/site/{r['site_id']}?incident={r['id']}",
+        })
+    for r in rule_rows:
+        hits.append({
+            "kind": "rule",
+            "title": r["rule_id"],
+            "subtitle": f"{r['clinic_name'] or r['site_id']} · {r['lifecycle_state'] or 'n/a'}",
+            "href": f"/partner/site/{r['site_id']}?rule={r['rule_id']}",
+        })
+
+    return {"hits": hits[: limit * 3], "query": q}
+
+
+@router.get("/me/rollup/weekly")
+async def get_partner_weekly_rollup(
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Session 206 round-table P2 — precomputed weekly rollup per site.
+
+    Reads from the `partner_site_weekly_rollup` materialized view
+    (migration 185, refreshed every 30 min by weekly_rollup_refresh_loop).
+    Filters server-side by partner_id. Single indexed read vs. 7
+    aggregate queries in /me/dashboard.
+
+    Returns {sites: [...], computed_at: ts, total_sites: N}.
+    Empty sites[] if the view doesn't exist yet (pre-migration).
+    """
+    pool = await get_pool()
+    partner_id = partner["id"]
+
+    async with admin_connection(pool) as conn:
+        # Guard against pre-migration deploys — endpoint shouldn't 500 if
+        # the view hasn't been created yet. Pick the latest computed_at
+        # across partner's sites as the rollup's logical timestamp.
+        exists = await conn.fetchval(
+            "SELECT 1 FROM pg_matviews WHERE matviewname = 'partner_site_weekly_rollup'"
+        )
+        if not exists:
+            return {"sites": [], "computed_at": None, "total_sites": 0, "stale": True}
+
+        rows = await conn.fetch(
+            """
+            SELECT site_id, clinic_name,
+                   incidents_7d, l1_7d, l2_7d, l3_7d,
+                   incidents_24h, l1_24h,
+                   self_heal_rate_7d_pct, computed_at
+            FROM partner_site_weekly_rollup
+            WHERE partner_id = $1
+            ORDER BY self_heal_rate_7d_pct ASC NULLS LAST, incidents_7d DESC
+            """,
+            partner_id,
+        )
+
+    sites = [
+        {
+            "site_id": r["site_id"],
+            "clinic_name": r["clinic_name"],
+            "incidents_7d": int(r["incidents_7d"] or 0),
+            "l1_7d": int(r["l1_7d"] or 0),
+            "l2_7d": int(r["l2_7d"] or 0),
+            "l3_7d": int(r["l3_7d"] or 0),
+            "incidents_24h": int(r["incidents_24h"] or 0),
+            "l1_24h": int(r["l1_24h"] or 0),
+            "self_heal_rate_7d_pct": float(r["self_heal_rate_7d_pct"] or 100.0),
+        }
+        for r in rows
+    ]
+    computed_at = rows[0]["computed_at"].isoformat() if rows and rows[0]["computed_at"] else None
+    return {"sites": sites, "computed_at": computed_at, "total_sites": len(sites), "stale": False}
+
+
+@router.get("/me/sites/{site_id}/topology")
+async def get_partner_site_topology(
+    site_id: str,
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Session 206 round-table P3 — mesh topology for one site.
+
+    Returns site + all appliances (with status/last_checkin/display_name)
+    + discovered devices (targets) + a per-appliance target-count
+    computed by replaying the hash ring the same way the checkin flow
+    does. Frontend renders this as a grid/radial visualization.
+
+    Scope: partner_id enforced on sites row (same contract as
+    /me/dashboard + /me/search).
+    """
+    pool = await get_pool()
+    partner_id = partner["id"]
+
+    async with admin_connection(pool) as conn:
+        site = await conn.fetchrow(
+            """
+            SELECT s.site_id, s.clinic_name
+            FROM sites s
+            WHERE s.site_id = $1 AND s.partner_id = $2 AND s.status != 'inactive'
+            """,
+            site_id, partner_id,
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not in your book of business")
+
+        appliances = await conn.fetch(
+            """
+            SELECT appliance_id, hostname, display_name, mac_address, status,
+                   last_checkin, agent_version
+            FROM site_appliances
+            WHERE site_id = $1 AND deleted_at IS NULL
+            ORDER BY hostname NULLS LAST, appliance_id
+            """,
+            site_id,
+        )
+        devices = await conn.fetch(
+            """
+            SELECT id, hostname, ip_address, device_type, last_seen,
+                   device_status, owner_appliance_id
+            FROM discovered_devices
+            WHERE site_id = $1
+            ORDER BY ip_address, hostname
+            LIMIT 200
+            """,
+            site_id,
+        )
+
+    # Replay the hash ring across currently-online appliances. If only one
+    # appliance is online it scans everything; if multiple, the ring splits
+    # the target set deterministically.
+    try:
+        from dashboard_api.hash_ring import HashRing, normalize_mac_for_ring
+    except Exception:  # pragma: no cover — import guard only
+        HashRing = None
+        normalize_mac_for_ring = None
+
+    online_macs = [
+        normalize_mac_for_ring(a["mac_address"])
+        for a in appliances
+        if a["status"] == "online" and a["mac_address"] and normalize_mac_for_ring
+    ]
+    target_ips = sorted(
+        d["ip_address"] for d in devices if d["ip_address"]
+    )
+    mac_to_targets: dict = {}
+    if HashRing and online_macs:
+        ring = HashRing(online_macs)
+        for mac in online_macs:
+            mac_to_targets[mac] = set(ring.targets_for_node(mac, target_ips))
+
+    appliance_view = []
+    for a in appliances:
+        norm = normalize_mac_for_ring(a["mac_address"]) if a["mac_address"] and normalize_mac_for_ring else ""
+        scan_count = len(mac_to_targets.get(norm, ())) if a["status"] == "online" else 0
+        appliance_view.append({
+            "appliance_id": a["appliance_id"],
+            "hostname": a["hostname"],
+            "display_name": a["display_name"] or a["hostname"],
+            "mac_address": a["mac_address"],
+            "status": a["status"],
+            "agent_version": a["agent_version"],
+            "last_checkin": a["last_checkin"].isoformat() if a["last_checkin"] else None,
+            "scan_target_count": scan_count,
+        })
+
+    # Group devices by the appliance they're assigned to (hash ring result).
+    # If no online appliances, `assigned_to` is None.
+    ip_to_mac = {}
+    for mac, targets in mac_to_targets.items():
+        for t in targets:
+            ip_to_mac[t] = mac
+
+    device_view = []
+    for d in devices:
+        assigned_mac = ip_to_mac.get(d["ip_address"]) if d["ip_address"] else None
+        device_view.append({
+            "id": d["id"],
+            "hostname": d["hostname"],
+            "ip_address": d["ip_address"],
+            "device_type": d["device_type"],
+            "device_status": d["device_status"],
+            "last_seen": d["last_seen"].isoformat() if d["last_seen"] else None,
+            "assigned_mac": assigned_mac,
+            "owner_appliance_id": str(d["owner_appliance_id"]) if d["owner_appliance_id"] else None,
+        })
+
+    return {
+        "site_id": site["site_id"],
+        "clinic_name": site["clinic_name"],
+        "appliances": appliance_view,
+        "devices": device_view,
+        "online_appliance_count": len(online_macs),
+        "total_appliance_count": len(appliances),
+        "total_devices": len(devices),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/me/digest-prefs")
+async def get_partner_digest_prefs(
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Return whether the partner is opted into the weekly digest."""
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow(
+            "SELECT COALESCE(digest_enabled, TRUE) AS digest_enabled, "
+            "contact_email FROM partners WHERE id = $1",
+            partner["id"],
+        )
+    return {
+        "digest_enabled": bool(row["digest_enabled"]) if row else True,
+        "contact_email": row["contact_email"] if row else None,
+    }
+
+
+@router.put("/me/digest-prefs")
+async def set_partner_digest_prefs(
+    body: dict,
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Toggle the weekly digest on/off for this partner."""
+    enabled = bool(body.get("enabled", True))
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE partners SET digest_enabled = $1 WHERE id = $2",
+                enabled, partner["id"],
+            )
+    return {"ok": True, "digest_enabled": enabled}
+
+
+@router.get("/me/digest/preview")
+async def preview_partner_digest(
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Render a preview of this week's digest (HTML, for a partner to
+    see what their Friday email will look like). Doesn't send mail.
+    """
+    from fastapi.responses import HTMLResponse
+    from dashboard_api.background_tasks import _gather_partner_digest_data
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        payload = await _gather_partner_digest_data(conn, partner["id"])
+        p = await conn.fetchrow(
+            """SELECT COALESCE(NULLIF(brand_name, ''), name, 'OsirisCare') AS brand_name,
+                      logo_url,
+                      COALESCE(primary_color, '#4F46E5') AS primary_color
+               FROM partners WHERE id = $1""",
+            partner["id"],
+        )
+
+    # Render the same HTML body the digest emailer builds by calling
+    # into email_alerts' helper via a shim — or rebuild inline. For
+    # the preview we just format a simple HTML payload that matches
+    # the content of the email.
+    from dashboard_api.email_alerts import send_partner_weekly_digest  # noqa: F401
+    # Import the html body by copying the same template. To avoid
+    # code duplication, we call the public send function in dry-run
+    # style isn't possible — instead expose a helper. For now,
+    # return the raw payload as JSON so the UI can render it; HTML
+    # preview is deferred.
+    return {
+        "partner": {
+            "brand_name": p["brand_name"] if p else "OsirisCare",
+            "primary_color": p["primary_color"] if p else "#4F46E5",
+            "logo_url": p["logo_url"] if p else None,
+        },
+        **payload,
+    }
+
+
+@router.get("/me/sites/{site_id}/qbr")
+async def get_partner_qbr_pdf(
+    site_id: str,
+    quarter: Optional[str] = None,
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Session 206 round-table P2 — Quarterly Business Review PDF.
+
+    `quarter` format: 'YYYY-Qn' (e.g. '2026-Q1'). Defaults to the
+    most-recently-completed quarter so a partner kicking off a QBR
+    meeting gets the right period by default.
+
+    Scopes by partner_id at SQL layer. Partner's brand + logo + color
+    get rendered at the top of the PDF.
+    """
+    from fastapi.responses import Response
+    from dashboard_api.report_generator import generate_qbr_pdf, is_pdf_generation_available
+
+    if not is_pdf_generation_available():
+        raise HTTPException(status_code=501, detail="PDF generation unavailable on this server")
+
+    pool = await get_pool()
+    partner_id = partner["id"]
+
+    # Resolve quarter window. If caller passes "2026-Q1", use that; else
+    # default to the most-recently-completed quarter relative to NOW().
+    now = datetime.now(timezone.utc)
+    if quarter:
+        try:
+            year_str, q_str = quarter.split("-Q", 1)
+            year = int(year_str)
+            q_num = int(q_str)
+            if q_num not in (1, 2, 3, 4):
+                raise ValueError("quarter must be 1..4")
+        except Exception:
+            raise HTTPException(status_code=400, detail="quarter must be 'YYYY-Qn' (1..4)")
+    else:
+        # Most-recently-completed quarter
+        q_now = (now.month - 1) // 3 + 1
+        if q_now == 1:
+            year, q_num = now.year - 1, 4
+        else:
+            year, q_num = now.year, q_now - 1
+
+    q_start_month = (q_num - 1) * 3 + 1
+    quarter_start = datetime(year, q_start_month, 1, tzinfo=timezone.utc)
+    # Exclusive upper bound — start of next quarter
+    if q_num == 4:
+        quarter_end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        quarter_end = datetime(year, q_start_month + 3, 1, tzinfo=timezone.utc)
+    quarter_label = f"{year}-Q{q_num}"
+
+    async with admin_connection(pool) as conn:
+        # Verify partner owns this site (cross-partner isolation — same
+        # contract as /me/dashboard, /me/search).
+        site = await conn.fetchrow(
+            """
+            SELECT s.site_id, s.clinic_name
+            FROM sites s
+            WHERE s.site_id = $1 AND s.partner_id = $2 AND s.status != 'inactive'
+            """,
+            site_id, partner_id,
+        )
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found in your book of business")
+
+        # KPIs across the quarter
+        kpi_row = await conn.fetchrow(
+            """
+            SELECT COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE resolution_tier = 'L1') AS l1,
+                   COUNT(*) FILTER (WHERE resolution_tier = 'L2') AS l2,
+                   COUNT(*) FILTER (WHERE resolution_tier = 'L3') AS l3
+            FROM incidents
+            WHERE site_id = $1
+              AND created_at >= $2
+              AND created_at < $3
+            """,
+            site_id, quarter_start, quarter_end,
+        )
+        total = int(kpi_row["total"] or 0)
+        l1 = int(kpi_row["l1"] or 0)
+        l2 = int(kpi_row["l2"] or 0)
+        l3 = int(kpi_row["l3"] or 0)
+        self_heal_pct = (100.0 * l1 / total) if total > 0 else 100.0
+
+        # Top incident categories
+        top_rows = await conn.fetch(
+            """
+            SELECT incident_type,
+                   COUNT(*) AS n,
+                   MODE() WITHIN GROUP (ORDER BY resolution_tier) AS tier
+            FROM incidents
+            WHERE site_id = $1
+              AND created_at >= $2
+              AND created_at < $3
+              AND incident_type IS NOT NULL
+            GROUP BY incident_type
+            ORDER BY n DESC
+            LIMIT 15
+            """,
+            site_id, quarter_start, quarter_end,
+        )
+        incidents_summary = [
+            {
+                "type": r["incident_type"],
+                "count": int(r["n"]),
+                "outcome": (
+                    "auto-healed" if r["tier"] == "L1"
+                    else "assisted" if r["tier"] == "L2"
+                    else "escalated" if r["tier"] == "L3"
+                    else "pending"
+                ),
+            }
+            for r in top_rows
+        ]
+
+        # Chronic patterns broken (recurrence_broken_at inside quarter)
+        chronic_broken = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM incident_recurrence_velocity
+            WHERE site_id = $1
+              AND recurrence_broken_at IS NOT NULL
+              AND recurrence_broken_at >= $2
+              AND recurrence_broken_at < $3
+            """,
+            site_id, quarter_start, quarter_end,
+        ) or 0
+
+    minutes_per_issue = 20
+    value_summary = {
+        "auto_heals": l1,
+        "minutes_per_issue": minutes_per_issue,
+        "hours_saved": round(l1 * minutes_per_issue / 60.0, 1),
+    }
+    kpis = {
+        "incidents_total": total,
+        "l1_count": l1,
+        "l2_count": l2,
+        "l3_count": l3,
+        "self_heal_pct": self_heal_pct,
+        "chronic_broken": int(chronic_broken),
+    }
+
+    pdf_bytes = generate_qbr_pdf(
+        partner_brand=partner.get("brand_name") or partner.get("display_name") or "OsirisCare",
+        partner_logo_url=partner.get("logo_url"),
+        primary_color=partner.get("primary_color") or "#4F46E5",
+        client_name=site["clinic_name"] or site_id,
+        site_id=site_id,
+        quarter_label=quarter_label,
+        kpis=kpis,
+        incidents_summary=incidents_summary,
+        value_summary=value_summary,
+    )
+    if not pdf_bytes:
+        raise HTTPException(status_code=500, detail="PDF generation failed")
+
+    filename = f"QBR-{site_id}-{quarter_label}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 @router.get("/me/orgs")
 async def get_my_orgs(request: Request, partner: dict = require_partner_role("admin", "tech", "billing")):
