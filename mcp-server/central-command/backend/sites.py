@@ -3030,13 +3030,6 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     # pollute the fleet. Return the minimum shape needed to keep the daemon
     # alive until install completes.
     boot_source_early = getattr(checkin, 'boot_source', None) or ''
-    # DEBUG (transient): probe boot_source with f-string. Remove once
-    # install_sessions has its first real row.
-    logger.info(
-        f"checkin_probe site={checkin.site_id} mac={mac_normalized} "
-        f"hostname={checkin.hostname} boot_source_repr={boot_source_early!r} "
-        f"raw={getattr(checkin, 'boot_source', '<missing>')!r}"
-    )
     if boot_source_early == 'live_usb':
         async with tenant_connection(pool, site_id=checkin.site_id) as conn:
             async with conn.transaction():
@@ -3471,6 +3464,11 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 logger.debug(f"Subnet change check skipped: {e}")
 
         # === STEP 3.5: Also update appliances table for Fleet Updates ===
+        # CRITICAL: filter by host_id (= appliance_id), not just site_id.
+        # The old version pushed every checkin's last_checkin onto every
+        # row in `appliances` for the site, which then propagated through
+        # reconciliation_loop into site_appliances and made offline
+        # appliances look online (Session 206 audit).
         try:
             async with conn.transaction():
                 await conn.execute("""
@@ -3482,12 +3480,14 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         status = 'active',
                         updated_at = $2
                     WHERE site_id = $1
+                      AND host_id = $6
                 """,
                     checkin.site_id,
                     now,
                     checkin.agent_version,
                     checkin.nixos_version,
-                    checkin.ip_addresses[0] if checkin.ip_addresses else None
+                    checkin.ip_addresses[0] if checkin.ip_addresses else None,
+                    canonical_id,
                 )
         except Exception as e:
             # Session 205: transactional step failures escalated from warning to

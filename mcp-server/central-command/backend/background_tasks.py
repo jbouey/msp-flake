@@ -1774,7 +1774,15 @@ async def reconciliation_loop():
                     if inserted:
                         logger.info(f"Reconciliation: created {len(inserted)} missing site_appliances rows from appliances table")
 
-                    # Update existing site_appliances rows from appliances when diverged
+                    # Update existing site_appliances rows from appliances when diverged.
+                    #
+                    # CRITICAL: join on (site_id, host_id == appliance_id) NOT just site_id.
+                    # The old version pushed a single appliance's last_checkin onto every
+                    # site_appliances row at that site, including soft-deleted phantoms.
+                    # That made offline appliances look online and masked the user's actual
+                    # "0 checkins are not working" complaint (Session 206 audit).
+                    #
+                    # Also skip soft-deleted rows entirely — once retired, do not resurrect.
                     synced = await conn.fetch("""
                         UPDATE site_appliances sa SET
                             last_checkin = a.last_checkin,
@@ -1782,8 +1790,10 @@ async def reconciliation_loop():
                             status = CASE WHEN a.last_checkin > NOW() - INTERVAL '15 minutes' THEN 'online' ELSE sa.status END
                         FROM appliances a
                         WHERE sa.site_id = a.site_id
-                        AND a.last_checkin > sa.last_checkin + INTERVAL '5 minutes'
-                        RETURNING sa.site_id
+                          AND sa.appliance_id = a.host_id
+                          AND sa.deleted_at IS NULL
+                          AND a.last_checkin > sa.last_checkin + INTERVAL '5 minutes'
+                        RETURNING sa.site_id, sa.appliance_id
                     """)
                     if synced:
                         logger.info(f"Reconciliation: synced {len(synced)} stale site_appliances rows")
