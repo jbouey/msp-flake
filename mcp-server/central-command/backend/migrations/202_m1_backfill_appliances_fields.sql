@@ -65,7 +65,13 @@ CREATE INDEX IF NOT EXISTS idx_site_appliances_legacy_uuid
 
 -- Expand the compatibility view now that these fields exist on
 -- site_appliances — no more NULL projections for the 7 fields.
-CREATE OR REPLACE VIEW v_appliances_current AS
+--
+-- CREATE OR REPLACE VIEW can't change column types across revisions
+-- (Migration 200 projected NULL::text for these; now they're
+-- varchar(50)). DROP + recreate is the only way.
+DROP VIEW IF EXISTS v_appliances_current;
+
+CREATE VIEW v_appliances_current AS
 SELECT
     sa.appliance_id                             AS host_id,
     sa.site_id,
@@ -81,11 +87,11 @@ SELECT
     sa.deleted_at,
     sa.agent_public_key                         AS public_key,
     sa.legacy_uuid                              AS id,
-    sa.deployment_mode,
-    sa.reseller_id,
-    sa.policy_version,
-    sa.current_version,
-    sa.previous_version,
+    sa.deployment_mode::text                    AS deployment_mode,
+    sa.reseller_id::text                        AS reseller_id,
+    sa.policy_version::text                     AS policy_version,
+    sa.current_version::text                    AS current_version,
+    sa.previous_version::text                   AS previous_version,
     sa.last_update_at
 FROM site_appliances sa
 WHERE sa.deleted_at IS NULL;
