@@ -825,8 +825,12 @@ EOF
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = lib.mkForce "prohibit-password";  # Key-only — no password login
-      PasswordAuthentication = lib.mkForce false;  # Disabled for security
+      # v22 (Session 206 close): operator recovery access.
+      # When msp-auto-provision fails (pynacl, sig, net), the console may
+      # be unstable or inputs ignored. SSH stays reachable → we can fix
+      # from the MSP operator's Mac without reflashing.
+      PermitRootLogin = lib.mkForce "yes";
+      PasswordAuthentication = lib.mkForce true;
       KbdInteractiveAuthentication = lib.mkForce false;
     };
   };
@@ -835,9 +839,12 @@ EOF
   # Password: osiris2024 | Lab-only — production MUST override via SOPS
   users.users.root.hashedPassword = lib.mkDefault "$6$w8KL8dUxFMVF4DmE$NQX0TULi8a8pSytrYP83Xu4vz6sydv0PdtZpSe5Dd7henertz6cpJHmMgTtdQ67ijLgiHkaMuhsNDn//CS8eV1";
 
-  # Remove hardcoded keys — provisioned from Central Command only
-  # SSH access is written by msp-auto-provision after successful provisioning
-  users.users.root.openssh.authorizedKeys.keys = lib.mkForce [];
+  # v22: operator key baked in so SSH works from day 1, independent of
+  # msp-auto-provision success. This is the recovery substrate — without
+  # it, a stuck appliance is physically unrecoverable short of reflash.
+  users.users.root.openssh.authorizedKeys.keys = lib.mkForce [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
+  ];
 
   # ============================================================================
   # Reduce image size
