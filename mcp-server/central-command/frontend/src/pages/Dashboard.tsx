@@ -12,6 +12,10 @@ import {
   TopIncidentTypes,
   DashboardSLAStrip,
   OperatorAckPanel,
+  FleetVersionWidget,
+  FlywheelEventStream,
+  StuckRulesPanel,
+  BgTaskHealthPanel,
 } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
 import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFlywheelIntelligence, useInstallReports } from '../hooks';
@@ -532,6 +536,20 @@ export const Dashboard: React.FC = () => {
 
       {/* R5 — operator acknowledgment panel (renders only when pending) */}
       {!showEmptyState && <OperatorAckPanel />}
+
+      {/* Stuck-rules inspector — shows rules stuck in non-ack states */}
+      {!showEmptyState && <StuckRulesPanel />}
+
+      {/* Fleet + event stream — operator bird's-eye (P2) */}
+      {!showEmptyState && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <FleetVersionWidget />
+          <FlywheelEventStream />
+        </div>
+      )}
+
+      {/* Background task health — collapsed by default (P1) */}
+      {!showEmptyState && <BgTaskHealthPanel />}
 
       {/* Attention + Incident trend */}
       {!showEmptyState && (

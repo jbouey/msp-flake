@@ -5,3 +5,7 @@ export { ResolutionBreakdown } from './ResolutionBreakdown';
 export { TopIncidentTypes } from './TopIncidentTypes';
 export { DashboardSLAStrip } from './DashboardSLAStrip';
 export { OperatorAckPanel } from './OperatorAckPanel';
+export { FleetVersionWidget } from './FleetVersionWidget';
+export { FlywheelEventStream } from './FlywheelEventStream';
+export { StuckRulesPanel } from './StuckRulesPanel';
+export { BgTaskHealthPanel } from './BgTaskHealthPanel';

@@ -4,6 +4,12 @@ import { KPICard, ControlGrid, IncidentList, EvidenceDownloads } from './compone
 import { AddDeviceModal } from '../components/shared/AddDeviceModal';
 import { DISCLAIMERS, BRANDING } from '../constants';
 import { PracticeHomeCard } from './PracticeHomeCard';
+import { ClientPacketsCard } from './ClientPacketsCard';
+import { ClientNotificationPrefs } from './ClientNotificationPrefs';
+import { ClientQuarterlyCoverage } from './ClientQuarterlyCoverage';
+import { ClientPartnerCTA } from './ClientPartnerCTA';
+import { ClientHelpFAQ } from './ClientHelpFAQ';
+import { ClientIncidentGlossary } from './ClientIncidentGlossary';
 
 interface PortalSite {
   site_id: string;
@@ -472,6 +478,13 @@ interface HomeApiData {
   partner: { name: string | null; email: string | null; last_reviewed_at: string | null };
   devices: { appliances: number; workstations: number };
   coverage_30d: Array<{ date: string; covered: boolean; incidents: number }>;
+  coverage_90d?: Array<{ week_start: string; incidents: number; pct_covered: number }>;
+  packets?: Array<{
+    year: number; month: number; framework: string;
+    compliance_score: number | null; critical_issues: number; auto_fixes: number;
+    generated_at: string | null; download_url: string;
+  }>;
+  notification_prefs?: { email_digest: boolean; critical_alerts: boolean; weekly_summary: boolean };
   auditor_kit_url: string;
 }
 
@@ -493,8 +506,30 @@ const PracticeHomeCardWrapper: React.FC<{
   }, [siteId, token]);
 
   return (
-    <div className="mb-8">
+    <div className="mb-8 space-y-4">
       <PracticeHomeCard data={data} practiceName={practiceName} isLoading={loading} />
+      {data && (
+        <>
+          <ClientPartnerCTA
+            partnerName={data.partner.name}
+            partnerEmail={data.partner.email}
+            lastReviewedAt={data.partner.last_reviewed_at}
+          />
+          <ClientQuarterlyCoverage weeks={data.coverage_90d} />
+          <ClientPacketsCard packets={data.packets} />
+          <ClientIncidentGlossary />
+          <ClientNotificationPrefs
+            siteId={siteId}
+            token={token}
+            initial={data.notification_prefs ?? {
+              email_digest: true,
+              critical_alerts: true,
+              weekly_summary: false,
+            }}
+          />
+          <ClientHelpFAQ />
+        </>
+      )}
     </div>
   );
 };

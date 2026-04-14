@@ -1242,6 +1242,81 @@ async def get_portal_home(
     except Exception:
         pass
 
+    # ─── 90-day coverage trend (Session 206 round-table P2) ───────
+    # Weekly buckets over the last 13 weeks so we get a longer-horizon
+    # view than the 30-day timeline. Each bucket = { week_start,
+    # incidents, pct_covered }.
+    coverage_90d = []
+    try:
+        cov90_rows = await execute_with_retry(db, text("""
+            SELECT DATE_TRUNC('week', reported_at) AS week,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE status IN ('resolved','closed')) AS closed
+            FROM incidents
+            WHERE site_id = :sid
+              AND reported_at > NOW() - INTERVAL '90 days'
+            GROUP BY 1 ORDER BY 1 ASC
+        """), {"sid": site_id})
+        for row in cov90_rows.mappings():
+            if not row["week"]:
+                continue
+            total = int(row["total"] or 0)
+            closed = int(row["closed"] or 0)
+            pct = 100 if total == 0 else round(100.0 * closed / total, 1)
+            coverage_90d.append({
+                "week_start": row["week"].date().isoformat(),
+                "incidents": total,
+                "pct_covered": pct,
+            })
+    except Exception:
+        pass
+
+    # ─── Available monthly compliance packets (P1) ────────────────
+    packets = []
+    try:
+        pkt_rows = await execute_with_retry(db, text("""
+            SELECT year, month, framework, compliance_score,
+                   critical_issues, auto_fixes, generated_at
+            FROM compliance_packets
+            WHERE site_id = :sid
+            ORDER BY year DESC, month DESC
+            LIMIT 12
+        """), {"sid": site_id})
+        packets = [
+            {
+                "year": int(r["year"]),
+                "month": int(r["month"]),
+                "framework": r["framework"] or "hipaa",
+                "compliance_score": float(r["compliance_score"]) if r["compliance_score"] is not None else None,
+                "critical_issues": int(r["critical_issues"] or 0),
+                "auto_fixes": int(r["auto_fixes"] or 0),
+                "generated_at": r["generated_at"].isoformat() if r["generated_at"] else None,
+                "download_url": f"/api/portal/site/{site_id}/packets/{int(r['year'])}-{int(r['month']):02d}",
+            }
+            for r in pkt_rows.mappings()
+        ]
+    except Exception:
+        pass
+
+    # ─── Notification preferences (P2) ────────────────────────────
+    notification_prefs = {"email_digest": True, "critical_alerts": True, "weekly_summary": False}
+    try:
+        np_row = await execute_with_retry(db, text("""
+            SELECT email_digest, critical_alerts, weekly_summary
+            FROM client_notification_prefs
+            WHERE site_id = :sid
+        """), {"sid": site_id})
+        np = np_row.mappings().first()
+        if np:
+            notification_prefs = {
+                "email_digest": bool(np["email_digest"]),
+                "critical_alerts": bool(np["critical_alerts"]),
+                "weekly_summary": bool(np["weekly_summary"]),
+            }
+    except Exception:
+        # table may not exist yet on pre-migration deploys
+        pass
+
     return {
         "site_id": site_id,
         "protected": protected,
@@ -1255,8 +1330,131 @@ async def get_portal_home(
         "partner": partner,
         "devices": devices,
         "coverage_30d": coverage,
+        "coverage_90d": coverage_90d,
+        "packets": packets,
+        "notification_prefs": notification_prefs,
         "auditor_kit_url": f"/api/evidence/sites/{site_id}/auditor-kit",
     }
+
+
+@router.get("/site/{site_id}/packets/{year_month}")
+async def download_monthly_packet(
+    site_id: str,
+    year_month: str,
+    token: str = Query(None),
+    portal_session: Optional[str] = Cookie(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Session 206 round-table P1 — download a specific month's compliance packet.
+
+    `year_month` format: YYYY-MM (e.g. '2026-03'). Returns the packet
+    markdown as `text/markdown`. Client browsers render it or save it
+    as-is — we don't convert to PDF here because the monthly packet's
+    markdown form is what's hash-chained into the evidence bundles.
+    """
+    await validate_session(site_id, portal_session, token)
+    try:
+        year_str, month_str = year_month.split("-", 1)
+        year = int(year_str)
+        month = int(month_str)
+        if month < 1 or month > 12:
+            raise ValueError
+    except Exception:
+        raise HTTPException(status_code=400, detail="year_month must be YYYY-MM")
+
+    row = await execute_with_retry(db, text("""
+        SELECT markdown_content, packet_id, generated_at
+        FROM compliance_packets
+        WHERE site_id = :sid AND year = :y AND month = :m
+        ORDER BY generated_at DESC LIMIT 1
+    """), {"sid": site_id, "y": year, "m": month})
+    packet = row.mappings().first()
+    if not packet or not packet["markdown_content"]:
+        raise HTTPException(status_code=404, detail="packet not available for this month")
+
+    from fastapi.responses import Response
+    return Response(
+        content=packet["markdown_content"],
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f'attachment; filename="packet-{site_id}-{year_month}.md"',
+            "X-Packet-Id": packet["packet_id"] or "",
+        },
+    )
+
+
+@router.get("/site/{site_id}/notification-prefs")
+async def get_notification_prefs(
+    site_id: str,
+    token: str = Query(None),
+    portal_session: Optional[str] = Cookie(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """P2 — read current notification preferences for a site."""
+    await validate_session(site_id, portal_session, token)
+    try:
+        row = await execute_with_retry(db, text("""
+            SELECT email_digest, critical_alerts, weekly_summary, notify_email
+            FROM client_notification_prefs
+            WHERE site_id = :sid
+        """), {"sid": site_id})
+        r = row.mappings().first()
+        if r:
+            return {
+                "email_digest": bool(r["email_digest"]),
+                "critical_alerts": bool(r["critical_alerts"]),
+                "weekly_summary": bool(r["weekly_summary"]),
+                "notify_email": r["notify_email"],
+            }
+    except Exception:
+        pass
+    # defaults when row doesn't exist or table missing
+    return {
+        "email_digest": True,
+        "critical_alerts": True,
+        "weekly_summary": False,
+        "notify_email": None,
+    }
+
+
+@router.put("/site/{site_id}/notification-prefs")
+async def set_notification_prefs(
+    site_id: str,
+    body: dict,
+    token: str = Query(None),
+    portal_session: Optional[str] = Cookie(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """P2 — upsert notification preferences for a site."""
+    await validate_session(site_id, portal_session, token)
+
+    email_digest = bool(body.get("email_digest", True))
+    critical_alerts = bool(body.get("critical_alerts", True))
+    weekly_summary = bool(body.get("weekly_summary", False))
+    notify_email = (body.get("notify_email") or "").strip() or None
+    if notify_email and "@" not in notify_email:
+        raise HTTPException(status_code=400, detail="notify_email must be a valid email")
+
+    try:
+        await execute_with_retry(db, text("""
+            INSERT INTO client_notification_prefs
+                (site_id, email_digest, critical_alerts, weekly_summary, notify_email, updated_at)
+            VALUES (:sid, :ed, :ca, :ws, :em, NOW())
+            ON CONFLICT (site_id) DO UPDATE SET
+                email_digest = EXCLUDED.email_digest,
+                critical_alerts = EXCLUDED.critical_alerts,
+                weekly_summary = EXCLUDED.weekly_summary,
+                notify_email = EXCLUDED.notify_email,
+                updated_at = NOW()
+        """), {
+            "sid": site_id, "ed": email_digest, "ca": critical_alerts,
+            "ws": weekly_summary, "em": notify_email,
+        })
+        await db.commit()
+    except Exception as e:
+        logger.error(f"notification prefs save failed for {site_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="failed to save preferences")
+    return {"ok": True}
 
 
 @router.get("/site/{site_id}", response_model=PortalData)

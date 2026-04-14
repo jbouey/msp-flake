@@ -2595,6 +2595,113 @@ async def acknowledge_auto_disabled_rule(
     return {"ok": True, "rule_id": rule_id, "decision": decision}
 
 
+@router.get("/fleet-version-distribution")
+async def get_fleet_version_distribution(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Session 206 round-table P2 — agent_version distribution across fleet.
+
+    Useful for operators to see fleet drift ("why are 3 boxes still
+    on v0.3.82 when we've shipped v0.4.0?"). Ordered newest-first by
+    version string lex order, with count + most-recent-checkin per
+    version.
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT COALESCE(agent_version, 'unknown') AS version,
+                   COUNT(*) AS count,
+                   COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '15 minutes') AS online,
+                   MAX(last_checkin) AS most_recent
+            FROM site_appliances
+            WHERE deleted_at IS NULL
+            GROUP BY 1
+            ORDER BY version DESC
+            """,
+        )
+    return {
+        "versions": [
+            {
+                "version": r["version"],
+                "count": int(r["count"] or 0),
+                "online": int(r["online"] or 0),
+                "most_recent_checkin": r["most_recent"].isoformat() if r["most_recent"] else None,
+            }
+            for r in rows
+        ],
+        "total_appliances": sum(int(r["count"] or 0) for r in rows),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/flywheel-events")
+async def get_flywheel_events(
+    limit: int = 30,
+    rule_id: str = None,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Session 206 round-table P2 — stream of flywheel spine events.
+
+    Reads the append-only `promoted_rule_events` ledger ordered newest-first.
+    Used by the operator dashboard's live event feed. Optional `rule_id`
+    filter for drill-down.
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    limit = max(1, min(int(limit), 200))
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        if rule_id:
+            rows = await conn.fetch(
+                """
+                SELECT event_id, rule_id, event_type, from_state, to_state,
+                       actor, stage, outcome, reason, created_at, proof
+                FROM promoted_rule_events
+                WHERE rule_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                """,
+                rule_id, limit,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT event_id, rule_id, event_type, from_state, to_state,
+                       actor, stage, outcome, reason, created_at, proof
+                FROM promoted_rule_events
+                ORDER BY created_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+    return {
+        "events": [
+            {
+                "event_id": str(r["event_id"]),
+                "rule_id": r["rule_id"],
+                "event_type": r["event_type"],
+                "from_state": r["from_state"],
+                "to_state": r["to_state"],
+                "actor": r["actor"],
+                "stage": r["stage"],
+                "outcome": r["outcome"],
+                "reason": r["reason"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/flywheel-intelligence")
 async def get_flywheel_intelligence(db: AsyncSession = Depends(get_db), user: dict = Depends(auth_module.require_auth)):
     """Flywheel intelligence dashboard: recurrence velocity, auto-promotions,
