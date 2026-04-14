@@ -104,6 +104,7 @@ const PortalVerify = lazy(() => import('./portal/PortalVerify').then(m => ({ def
 const PortalScorecard = lazy(() => import('./portal/PortalScorecard').then(m => ({ default: m.PortalScorecard })));
 const PrivilegedAccessAct = lazy(() => import('./portal/PrivilegedAccessAct').then(m => ({ default: m.PrivilegedAccessAct })));
 const PortalConsentPage = lazy(() => import('./portal/PortalConsentPage').then(m => ({ default: m.PortalConsentPage })));
+const PortalAuditPackage = lazy(() => import('./portal/PortalAuditPackage'));
 const ConsentApprovePage = lazy(() => import('./portal/ConsentApprovePage').then(m => ({ default: m.ConsentApprovePage })));
 const AdminConsentRollout = lazy(() => import('./pages/AdminConsentRollout').then(m => ({ default: m.AdminConsentRollout })));
 
@@ -457,6 +458,7 @@ const App: React.FC = () => {
                 <Route path="/portal/site/:siteId/scorecard" element={<PortalScorecard />} />
                 <Route path="/portal/site/:siteId/login" element={<PortalLogin />} />
                 <Route path="/portal/site/:siteId/consent" element={<PortalConsentPage />} />
+                <Route path="/portal/site/:siteId/audit-package" element={<PortalAuditPackage />} />
                 <Route path="/consent/approve/:token" element={<ConsentApprovePage />} />
 
                 {/* Privileged-access magic-link landing (Phase 14 T2.1).
