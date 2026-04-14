@@ -64,7 +64,7 @@ function healthColor(score: number): string {
 }
 
 const CHECK_TYPE_LABELS: Record<string, string> = {
-  nixos_generation: 'NixOS Patching', windows_update: 'Windows Updates', linux_patching: 'Linux Patching',
+  nixos_generation: 'System Patching', windows_update: 'Windows Updates', linux_patching: 'Linux Patching',
   windows_defender: 'Windows Defender', windows_defender_exclusions: 'Defender Exclusions',
   backup_status: 'Backup Status', windows_backup_status: 'Windows Backup',
   audit_logging: 'Audit Logging', windows_audit_policy: 'Audit Policy', linux_audit: 'Linux Audit', linux_logging: 'Linux Logging',

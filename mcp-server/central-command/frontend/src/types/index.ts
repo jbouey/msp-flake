@@ -834,7 +834,7 @@ export const CHECK_TYPE_LABELS: Record<string, string> = {
   audit_policy: 'Audit Policy',
   service_wuauserv: 'Win Update',
   critical_services: 'Services',
-  nixos_generation: 'NixOS Gen',
+  nixos_generation: 'System Patching',
   winrm: 'WinRM',
   security_audit: 'Security Audit',
   service_status: 'Service Status',

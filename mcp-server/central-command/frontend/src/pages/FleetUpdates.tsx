@@ -53,7 +53,7 @@ const formatRelativeTime = formatTimeAgo;
 
 const ORDER_TYPE_LABELS: Record<string, string> = {
   update_daemon: 'Daemon Update',
-  nixos_rebuild: 'NixOS Rebuild',
+  nixos_rebuild: 'System Rebuild',
   sync_rules: 'Rule Sync',
   run_command: 'Run Command',
   update_iso: 'ISO Update',
