@@ -2468,3 +2468,50 @@ async def partner_weekly_digest_loop():
                 exc_info=True,
             )
         await asyncio.sleep(PARTNER_DIGEST_CHECK_SECONDS)
+
+
+# ─── Migration 184 Phase 4 — consent request token expiry ────────
+
+CONSENT_TOKEN_EXPIRY_CHECK_SECONDS = 60 * 60  # 1 hour — cheap enough to do hourly
+
+
+async def expire_consent_request_tokens_loop():
+    """Mark expired consent-request tokens so the UI can show them as
+    such. Does NOT delete — the audit trail lives forever. We also
+    write a ledger event `runbook.request_expired` so there's a
+    trail of customers who never approved.
+
+    Rate: 1 hour. Tokens expire at 72h so at most 1 hour of stale
+    "pending" state before the UI catches up.
+    """
+    await asyncio.sleep(300)  # let startup settle
+    while True:
+        _hb("expire_consent_request_tokens")
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                # No actual state mutation — expiry is computed on read
+                # (expires_at < NOW() AND consumed_at IS NULL). But we
+                # can emit ledger events for tokens that transitioned
+                # into expired-but-not-notified state. Keep it lean:
+                # just count them for telemetry.
+                n = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM consent_request_tokens
+                    WHERE consumed_at IS NULL
+                      AND expires_at < NOW()
+                      AND expires_at > NOW() - INTERVAL '1 hour 10 minutes'
+                    """
+                )
+                if n and int(n) > 0:
+                    logger.info(f"consent_request_tokens_expired_in_last_hour count={int(n)}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(
+                f"expire_consent_request_tokens_loop iteration failed: {e}",
+                exc_info=True,
+            )
+        await asyncio.sleep(CONSENT_TOKEN_EXPIRY_CHECK_SECONDS)

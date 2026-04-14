@@ -856,3 +856,125 @@ def send_partner_weekly_digest(
     msg.attach(MIMEText(html_body, "html"))
 
     return _send_smtp_with_retry(msg, [to_email], f"partner weekly digest to {to_email}")
+
+
+# ─── Migration 184 Phase 4 — consent-request magic-link email ────
+
+def send_consent_request_email(
+    *,
+    to_email: str,
+    raw_token: str,
+    site_id: str,
+    class_display_name: str,
+    class_description: str,
+    class_risk_level: str,
+    partner_brand: str,
+    partner_logo_url: Optional[str],
+    primary_color: str,
+    partner_contact_email: str,
+    ttl_days: int,
+) -> bool:
+    """Send the magic-link consent-approval email to the practice manager.
+
+    The raw token is NEVER persisted server-side (only the SHA256 is).
+    This is the one and only place it appears in cleartext.
+    """
+    if not is_email_configured():
+        logger.warning("SMTP not configured — skipping consent request email")
+        return False
+
+    safe_brand = html.escape(partner_brand or "OsirisCare")
+    safe_class = html.escape(class_display_name)
+    safe_desc = html.escape(class_description)
+    safe_site = html.escape(site_id)
+    portal_origin = os.getenv("PORTAL_ORIGIN", "https://app.osiriscare.net")
+    # URL path the frontend routes: /consent/approve/{token}
+    magic_link = f"{portal_origin}/consent/approve/{raw_token}"
+    risk_color = {"low": "#047857", "medium": "#b45309", "high": "#b91c1c"}.get(
+        class_risk_level, "#475569"
+    )
+    logo_html = (
+        f'<img src="{html.escape(partner_logo_url)}" alt="{safe_brand}" style="height:32px;" />'
+        if partner_logo_url else f'<b style="color:{primary_color};font-size:18px;">{safe_brand}</b>'
+    )
+
+    html_body = f"""<!DOCTYPE html>
+<html><body style="font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;background:#f8fafc;margin:0;padding:20px;">
+<div style="max-width:600px;margin:0 auto;background:white;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+
+<div style="padding:18px 24px;border-bottom:3px solid {primary_color};">
+  {logo_html}
+</div>
+
+<div style="padding:24px;">
+  <h1 style="font-size:20px;margin:0 0 4px 0;color:#0f172a;">Authorization requested</h1>
+  <p style="margin:0 0 16px 0;font-size:13px;color:#64748b;">
+    Your IT partner <b>{safe_brand}</b> is asking for your authorization to run automated
+    remediation in the following category on <b>{safe_site}</b>.
+  </p>
+
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:16px;">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Category</div>
+    <div style="font-size:18px;font-weight:600;color:#0f172a;margin-top:4px;">{safe_class}</div>
+    <div style="font-size:12px;color:#475569;margin-top:6px;">{safe_desc}</div>
+    <div style="margin-top:10px;font-size:11px;">
+      <span style="background:{risk_color};color:white;padding:2px 8px;border-radius:10px;">
+        Risk: {html.escape(class_risk_level)}
+      </span>
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:#334155;margin:0 0 20px 0;">
+    <b>By approving, you authorize</b> {safe_brand} to run OsirisCare-verified
+    remediations in this specific category for up to <b>{ttl_days} days</b>. You can revoke
+    this consent at any time from your portal — revocation takes effect at the next
+    check-in (≤15 min) and cancels any pending remediation.
+  </p>
+
+  <div style="text-align:center;margin:28px 0;">
+    <a href="{magic_link}"
+       style="display:inline-block;background:{primary_color};color:white;font-weight:600;font-size:14px;
+              padding:12px 28px;border-radius:8px;text-decoration:none;">
+      Review and approve
+    </a>
+  </div>
+
+  <div style="font-size:11px;color:#64748b;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:10px;">
+    <b>Security note:</b> this link is single-use and expires in 72 hours. It authenticates
+    via the link itself — we also verify that the approval email matches this address
+    ({html.escape(to_email)}). If you didn't expect this request, ignore the email or
+    contact <a href="mailto:{html.escape(partner_contact_email)}">{html.escape(partner_contact_email)}</a>.
+  </div>
+
+  <p style="margin-top:16px;font-size:11px;color:#94a3b8;">
+    A cryptographic record of this consent is created when you approve and stored
+    in your compliance packet chain for 7 years per HIPAA §164.316(b)(2)(i).
+  </p>
+</div>
+
+<div style="padding:12px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;">
+  Delivered by {safe_brand} · Powered by OsirisCare.
+</div>
+
+</div>
+</body></html>"""
+
+    text_body = (
+        f"{partner_brand or 'OsirisCare'} is requesting your authorization to run "
+        f"automated remediation in the '{class_display_name}' category "
+        f"on site {site_id}.\n\n"
+        f"Risk level: {class_risk_level}\n"
+        f"TTL: {ttl_days} days (revocable at any time)\n\n"
+        f"Review and approve: {magic_link}\n\n"
+        f"This link is single-use and expires in 72 hours.\n"
+        f"Questions: {partner_contact_email}\n"
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"{partner_brand or 'OsirisCare'} · Consent requested for {class_display_name}"
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    return _send_smtp_with_retry(msg, [to_email], f"consent request to {to_email}")

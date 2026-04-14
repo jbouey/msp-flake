@@ -963,6 +963,127 @@ async def get_partner_site_consents(
     }
 
 
+@router.post("/me/sites/{site_id}/consent/request")
+async def partner_consent_request(
+    site_id: str,
+    body: dict,
+    request: Request,
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Phase 4 — partner asks the client to approve a class-level consent.
+
+    Generates a single-use token (raw → SHA256 at rest), inserts a row
+    in `consent_request_tokens` with 72h expiry, and emails the raw
+    token to the specified customer email. The client visits the portal
+    via a magic-link URL with the token and approves.
+
+    Body: `{class_id, requested_for_email, ttl_days?}`.
+
+    Partners CANNOT grant consent themselves — only request it.
+    """
+    class_id = (body.get("class_id") or "").strip()
+    for_email = (body.get("requested_for_email") or "").strip()
+    ttl_days = int(body.get("ttl_days") or 365)
+    partner_id = partner["id"]
+    partner_email = (partner.get("email") or partner.get("contact_email") or "").strip()
+
+    if not class_id:
+        raise HTTPException(status_code=400, detail="class_id required")
+    if "@" not in for_email:
+        raise HTTPException(status_code=400, detail="requested_for_email must be valid")
+    if ttl_days < 30 or ttl_days > 3650:
+        raise HTTPException(status_code=400, detail="ttl_days must be 30..3650")
+    if not partner_email or "@" not in partner_email:
+        raise HTTPException(status_code=400, detail="partner contact_email must be set to request consent")
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Site ownership — same contract as the rest of /me/sites/{id}
+        own = await conn.fetchval(
+            "SELECT 1 FROM sites WHERE site_id = $1 AND partner_id = $2",
+            site_id, partner_id,
+        )
+        if not own:
+            raise HTTPException(status_code=404, detail="Site not in your book of business")
+
+        klass = await conn.fetchrow(
+            """SELECT class_id, display_name, description, risk_level
+               FROM runbook_classes WHERE class_id = $1""",
+            class_id,
+        )
+        if not klass:
+            raise HTTPException(status_code=400, detail=f"Unknown class_id {class_id!r}")
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=72)
+
+        # Reject duplicate active (unconsumed, non-expired) requests for
+        # the same (site_id, class_id, for_email) triple — prevents
+        # a partner from spamming the customer.
+        dup = await conn.fetchval(
+            """
+            SELECT 1 FROM consent_request_tokens
+            WHERE site_id = $1 AND class_id = $2 AND requested_for_email = $3
+              AND consumed_at IS NULL AND expires_at > NOW()
+            """,
+            site_id, class_id, for_email,
+        )
+        if dup:
+            raise HTTPException(
+                status_code=409,
+                detail="An active consent request already exists for this site+class+email — wait for expiry or cancel",
+            )
+
+        await conn.execute(
+            """
+            INSERT INTO consent_request_tokens
+                (token_hash, site_id, class_id,
+                 requested_by_email, requested_for_email,
+                 requested_ttl_days, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            token_hash, site_id, class_id,
+            partner_email, for_email, ttl_days, expires_at,
+        )
+
+        # Fetch partner branding for the email body
+        p_brand = await conn.fetchrow(
+            """SELECT COALESCE(NULLIF(brand_name,''), name, 'OsirisCare') AS brand_name,
+                      logo_url, COALESCE(primary_color, '#4F46E5') AS primary_color
+               FROM partners WHERE id = $1""",
+            partner_id,
+        )
+
+    # Send the email (best-effort — don't fail the API if SMTP is down;
+    # the token is persisted and the partner can resend).
+    try:
+        from dashboard_api.email_alerts import send_consent_request_email
+        send_consent_request_email(
+            to_email=for_email,
+            raw_token=raw_token,
+            site_id=site_id,
+            class_display_name=klass["display_name"],
+            class_description=klass["description"],
+            class_risk_level=klass["risk_level"],
+            partner_brand=p_brand["brand_name"] if p_brand else "OsirisCare",
+            partner_logo_url=p_brand["logo_url"] if p_brand else None,
+            primary_color=p_brand["primary_color"] if p_brand else "#4F46E5",
+            partner_contact_email=partner_email,
+            ttl_days=ttl_days,
+        )
+    except Exception:
+        logger.exception(f"consent request email send failed for {for_email} / {site_id}/{class_id}")
+
+    return {
+        "ok": True,
+        "site_id": site_id,
+        "class_id": class_id,
+        "expires_at": expires_at.isoformat(),
+        "requested_for_email": for_email,
+    }
+
+
 @router.get("/me/sites/{site_id}/topology")
 async def get_partner_site_topology(
     site_id: str,

@@ -164,6 +164,13 @@ export const PartnerWeeklyRollup: React.FC = () => {
                         Mesh
                       </button>
                       <button
+                        onClick={() => navigate(`/partner/site/${s.site_id}/consent`)}
+                        className="text-slate-500 hover:text-slate-800 hover:underline text-xs mr-3"
+                        title="Manage class-level consent"
+                      >
+                        Consent
+                      </button>
+                      <button
                         className="text-blue-600 hover:text-blue-800 hover:underline text-sm"
                         onClick={() => navigate(`/partner/site/${s.site_id}`)}
                       >

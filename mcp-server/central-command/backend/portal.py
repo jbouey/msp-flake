@@ -11,6 +11,8 @@ Features:
 """
 
 import asyncio
+import hashlib
+import hmac
 import os
 import secrets
 import logging
@@ -1593,6 +1595,172 @@ async def grant_site_consent(
         logger.error(f"consent grant failed for {site_id}/{class_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="failed to record consent")
     return {"ok": True, "consent_id": consent_id, "class_id": class_id}
+
+
+@router.get("/consent/approve/{token}")
+async def get_consent_approve_details(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 4 — render page data for a magic-link consent approval.
+
+    Public-ish endpoint: auth is the token itself. Looks up the
+    request, returns the class description + partner brand so the UI
+    can show a grant modal before the client clicks approve.
+
+    Token is hashed (sha256) before lookup — the raw never persists.
+    Returns 404 if token is unknown OR expired OR already consumed.
+    """
+    if not token or len(token) < 20:
+        raise HTTPException(status_code=400, detail="token required")
+
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    row = await execute_with_retry(db, text("""
+        SELECT crt.token_hash, crt.site_id, crt.class_id,
+               crt.requested_by_email, crt.requested_for_email,
+               crt.requested_ttl_days, crt.expires_at, crt.consumed_at,
+               crt.created_at,
+               rc.display_name, rc.description, rc.risk_level, rc.hipaa_controls,
+               rc.example_actions,
+               s.clinic_name,
+               (SELECT COALESCE(NULLIF(brand_name, ''), name, 'OsirisCare')
+                FROM partners p
+                JOIN sites s2 ON s2.partner_id = p.id
+                WHERE s2.site_id = crt.site_id LIMIT 1) AS partner_brand,
+               (SELECT COALESCE(primary_color, '#4F46E5') FROM partners p
+                JOIN sites s2 ON s2.partner_id = p.id
+                WHERE s2.site_id = crt.site_id LIMIT 1) AS primary_color
+        FROM consent_request_tokens crt
+        JOIN runbook_classes rc ON rc.class_id = crt.class_id
+        LEFT JOIN sites s ON s.site_id = crt.site_id
+        WHERE crt.token_hash = :th
+    """), {"th": token_hash})
+    r = row.mappings().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if r["consumed_at"] is not None:
+        raise HTTPException(status_code=410, detail="Token already consumed")
+    if r["expires_at"] and r["expires_at"] < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="Token expired")
+
+    return {
+        "site_id": r["site_id"],
+        "clinic_name": r["clinic_name"],
+        "class_id": r["class_id"],
+        "class_display_name": r["display_name"],
+        "class_description": r["description"],
+        "class_risk_level": r["risk_level"],
+        "class_hipaa_controls": list(r["hipaa_controls"] or []),
+        "class_example_actions": r["example_actions"] or [],
+        "requested_by_email": r["requested_by_email"],
+        "requested_for_email": r["requested_for_email"],
+        "requested_ttl_days": int(r["requested_ttl_days"] or 365),
+        "partner_brand": r["partner_brand"] or "OsirisCare",
+        "primary_color": r["primary_color"] or "#4F46E5",
+        "expires_at": r["expires_at"].isoformat() if r["expires_at"] else None,
+    }
+
+
+@router.post("/consent/approve/{token}")
+async def approve_consent_via_token(
+    token: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 4 — client consumes the magic-link token and grants consent.
+
+    Body: `{consented_by_email}`. The email MUST match the token's
+    `requested_for_email` — prevents someone forwarding the link to
+    a third party.
+
+    On success: writes a consent row (via `create_consent` — which
+    also writes the signed bundle + ledger event), marks the token
+    consumed, returns the consent_id.
+    """
+    if not token or len(token) < 20:
+        raise HTTPException(status_code=400, detail="token required")
+    consented_by_email = (body.get("consented_by_email") or "").strip().lower()
+    if "@" not in consented_by_email:
+        raise HTTPException(status_code=400, detail="consented_by_email must be valid")
+
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    row = await execute_with_retry(db, text("""
+        SELECT site_id, class_id, requested_for_email,
+               requested_ttl_days, expires_at, consumed_at
+        FROM consent_request_tokens
+        WHERE token_hash = :th
+        FOR UPDATE
+    """), {"th": token_hash})
+    r = row.mappings().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if r["consumed_at"] is not None:
+        raise HTTPException(status_code=410, detail="Token already consumed")
+    if r["expires_at"] and r["expires_at"] < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="Token expired")
+
+    # The email entered must match the email the partner asked to
+    # notify. Case-insensitive AND timing-safe — use hmac.compare_digest
+    # so the response time doesn't leak byte-wise match info.
+    expected_email = (r["requested_for_email"] or "").lower()
+    if not hmac.compare_digest(consented_by_email.encode("utf-8"),
+                                expected_email.encode("utf-8")):
+        raise HTTPException(
+            status_code=403,
+            detail="This link was issued to a different email address",
+        )
+
+    # Duplicate-active guard — shouldn't happen if the normal flow is
+    # followed, but if it does, give a clean 409 instead of DB error.
+    existing = await execute_with_retry(db, text("""
+        SELECT consent_id FROM runbook_class_consent
+        WHERE site_id = :sid AND class_id = :cls AND revoked_at IS NULL
+    """), {"sid": r["site_id"], "cls": r["class_id"]})
+    if existing.scalar() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Active consent already exists for this class — revoke it first",
+        )
+
+    from dashboard_api.runbook_consent import create_consent as _create_consent
+    from sqlalchemy.exc import IntegrityError as _IntegrityError
+    try:
+        consent_id = await _create_consent(
+            db,
+            site_id=r["site_id"],
+            class_id=r["class_id"],
+            consented_by_email=consented_by_email,
+            ttl_days=int(r["requested_ttl_days"] or 365),
+        )
+        await execute_with_retry(db, text("""
+            UPDATE consent_request_tokens
+            SET consumed_at = NOW(),
+                consumed_consent_id = :cid
+            WHERE token_hash = :th
+        """), {"th": token_hash, "cid": consent_id})
+        await db.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except _IntegrityError:
+        # Race: another approver created the active consent in parallel.
+        # Surface as a clean 409 instead of 500.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Another approval raced this one — active consent already exists",
+        )
+    except Exception as e:
+        logger.error(f"consent approve failed for token {token_hash[:12]}…: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="approve failed")
+
+    return {
+        "ok": True,
+        "consent_id": consent_id,
+        "site_id": r["site_id"],
+        "class_id": r["class_id"],
+    }
 
 
 @router.put("/site/{site_id}/consent/{consent_id}/revoke")

@@ -8,3 +8,4 @@ export { PartnerOnboarding } from './PartnerOnboarding';
 export { PartnerDriftConfig } from './PartnerDriftConfig';
 export { PartnerSSOConfig } from './PartnerSSOConfig';
 export { PartnerMeshTopology } from './PartnerMeshTopology';
+export { PartnerConsentPage } from './PartnerConsentPage';

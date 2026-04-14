@@ -101,11 +101,13 @@ const PortalLogin = lazy(() => import('./portal/PortalLogin').then(m => ({ defau
 const PortalVerify = lazy(() => import('./portal/PortalVerify').then(m => ({ default: m.PortalVerify })));
 const PortalScorecard = lazy(() => import('./portal/PortalScorecard').then(m => ({ default: m.PortalScorecard })));
 const PrivilegedAccessAct = lazy(() => import('./portal/PrivilegedAccessAct').then(m => ({ default: m.PrivilegedAccessAct })));
+const PortalConsentPage = lazy(() => import('./portal/PortalConsentPage').then(m => ({ default: m.PortalConsentPage })));
+const ConsentApprovePage = lazy(() => import('./portal/ConsentApprovePage').then(m => ({ default: m.ConsentApprovePage })));
 
 // Partner module - lazy loaded with provider
 const PartnerRoutes = lazy(() => import('./partner').then(m => ({
   default: () => {
-    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity, PartnerAuditLog, PartnerMeshTopology } = m;
+    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity, PartnerAuditLog, PartnerMeshTopology, PartnerConsentPage } = m;
     return (
       <PartnerProvider>
         <Routes>
@@ -114,6 +116,7 @@ const PartnerRoutes = lazy(() => import('./partner').then(m => ({
           <Route path="security" element={<PartnerSecurity />} />
           <Route path="audit-log" element={<PartnerAuditLog />} />
           <Route path="site/:siteId/topology" element={<PartnerMeshTopology />} />
+          <Route path="site/:siteId/consent" element={<PartnerConsentPage />} />
           <Route path="*" element={<PartnerLogin />} />
         </Routes>
       </PartnerProvider>
@@ -448,6 +451,8 @@ const App: React.FC = () => {
                 <Route path="/portal/site/:siteId/verify" element={<PortalVerify />} />
                 <Route path="/portal/site/:siteId/scorecard" element={<PortalScorecard />} />
                 <Route path="/portal/site/:siteId/login" element={<PortalLogin />} />
+                <Route path="/portal/site/:siteId/consent" element={<PortalConsentPage />} />
+                <Route path="/consent/approve/:token" element={<ConsentApprovePage />} />
 
                 {/* Privileged-access magic-link landing (Phase 14 T2.1).
                     Reads ?t=<token>&action=approve|reject&rid=<request_id>
