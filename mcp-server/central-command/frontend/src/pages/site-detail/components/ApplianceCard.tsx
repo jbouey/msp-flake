@@ -127,6 +127,14 @@ export const ApplianceCard: React.FC<ApplianceCardProps> = ({ appliance, latestV
               Installing
             </span>
           )}
+          {appliance.network_anomaly && (appliance.network_anomaly.subnet_drift || appliance.network_anomaly.missing_anycast) && (
+            <span
+              className="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-500/15 text-amber-700 border border-amber-500/30"
+              title={appliance.network_anomaly.notes.join(' · ')}
+            >
+              Network
+            </span>
+          )}
           <StatusBadge status={appliance.live_status} />
         </div>
       </div>

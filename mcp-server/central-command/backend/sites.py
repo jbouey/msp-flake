@@ -1326,6 +1326,60 @@ async def add_network_device(site_id: str, device: NetworkDeviceAdd, user: dict 
 
 
 @router.get("/{site_id}/appliances")
+def _primary_subnet(ips: list) -> Optional[str]:
+    """Extract the /24 subnet an appliance is on, ignoring link-local (169.254)
+    and WireGuard (10.100.0) — those are well-known non-routable addresses,
+    not the LAN subnet we care about for drift detection."""
+    for ip in ips or []:
+        if not ip or ip.startswith('169.254') or ip.startswith('10.100.0'):
+            continue
+        parts = ip.split('.')
+        if len(parts) == 4:
+            return f"{parts[0]}.{parts[1]}.{parts[2]}"
+    return None
+
+
+ANYCAST_LINK_LOCAL = "169.254.88.1"
+
+
+def _compute_network_anomaly(
+    ips: list,
+    live_status: str,
+    site_subnet_majority: Optional[str],
+) -> dict:
+    """Detect APPLIANCE_NETWORK_ANOMALY conditions:
+      - subnet_drift: this appliance's LAN subnet doesn't match site majority
+      - missing_anycast: 169.254.88.1 not assigned (mesh discovery fallback)
+
+    Only flags on online appliances — offline appliances often have stale
+    ip_addresses and shouldn't trigger false positives.
+    """
+    ip_list = ips or []
+    subnet = _primary_subnet(ip_list)
+    missing_anycast = (
+        live_status == 'online'
+        and ANYCAST_LINK_LOCAL not in ip_list
+    )
+    subnet_drift = bool(
+        live_status == 'online'
+        and subnet
+        and site_subnet_majority
+        and subnet != site_subnet_majority
+    )
+    notes: list = []
+    if subnet_drift:
+        notes.append(f"On {subnet}.x, site majority is {site_subnet_majority}.x")
+    if missing_anycast:
+        notes.append("Link-local anycast 169.254.88.1 not assigned — mesh discovery degraded")
+    return {
+        'subnet_drift': subnet_drift,
+        'missing_anycast': missing_anycast,
+        'observed_subnet': subnet,
+        'expected_subnet': site_subnet_majority,
+        'notes': notes,
+    }
+
+
 async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
     """Get all appliances for a site. Requires authentication."""
     pool = await get_pool()
@@ -1343,14 +1397,31 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 assigned_targets
             FROM site_appliances
             WHERE site_id = $1
+              AND deleted_at IS NULL
             ORDER BY first_checkin, appliance_id
         """, site_id)
+
+        # Pre-compute site subnet majority for drift detection.
+        # Look at online appliances only so a single offline outlier doesn't
+        # skew the majority on small fleets.
+        _subnet_votes: Dict[str, int] = {}
+        for _r in rows:
+            if calculate_live_status(_r['last_checkin'], _r.get('auth_failure_count', 0)) != 'online':
+                continue
+            _ip_list = parse_ip_addresses(_r['ip_addresses'])
+            _s = _primary_subnet(_ip_list)
+            if _s:
+                _subnet_votes[_s] = _subnet_votes.get(_s, 0) + 1
+        _site_subnet_majority = (
+            max(_subnet_votes.items(), key=lambda x: x[1])[0]
+            if _subnet_votes else None
+        )
 
         appliances = []
         for row in rows:
             last_checkin = row['last_checkin']
             live_status = calculate_live_status(last_checkin, row.get('auth_failure_count', 0))
-            
+
             # Extract mesh stats from daemon_health JSONB
             dh = row.get('daemon_health')
             if isinstance(dh, str):
@@ -1361,6 +1432,9 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
             mesh_peer_count = dh.get('mesh_peer_count', 0) if dh else 0
             mesh_ring_size = dh.get('mesh_ring_size', 0) if dh else 0
             mesh_peer_macs = dh.get('mesh_peer_macs', []) if dh else []
+
+            _ips = parse_ip_addresses(row['ip_addresses'])
+            network_anomaly = _compute_network_anomaly(_ips, live_status, _site_subnet_majority)
 
             appliances.append({
                 'appliance_id': row['appliance_id'],
@@ -1387,12 +1461,14 @@ async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
                 'mesh_ring_size': mesh_ring_size,
                 'mesh_peer_macs': mesh_peer_macs,
                 'assigned_target_count': len(json.loads(row['assigned_targets'])) if row.get('assigned_targets') else 0,
+                'network_anomaly': network_anomaly,
             })
-        
+
         return {
             'site_id': site_id,
             'appliances': appliances,
-            'count': len(appliances)
+            'count': len(appliances),
+            'site_subnet_majority': _site_subnet_majority,
         }
 
 

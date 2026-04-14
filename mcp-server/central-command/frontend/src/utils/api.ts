@@ -732,6 +732,13 @@ export interface SiteAppliance {
   mesh_peer_macs: string[];
   assigned_target_count: number;
   boot_source?: string | null;  // "live_usb", "installed_disk", or null
+  network_anomaly?: {
+    subnet_drift: boolean;
+    missing_anycast: boolean;
+    observed_subnet: string | null;
+    expected_subnet: string | null;
+    notes: string[];
+  } | null;
 }
 
 export interface SiteCredential {
