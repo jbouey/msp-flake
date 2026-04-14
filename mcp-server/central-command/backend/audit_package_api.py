@@ -189,6 +189,53 @@ async def download_audit_package(
             row["package_id"],
         )
 
+        # Look up site contact email + generator info for the notification.
+        site_meta = await conn.fetchrow(
+            """
+            SELECT s.clinic_name, s.client_contact_email,
+                   ap.period_start, ap.period_end, ap.generated_by
+            FROM audit_packages ap
+            JOIN sites s ON s.site_id = ap.site_id
+            WHERE ap.package_id = $1
+            """,
+            row["package_id"],
+        )
+
+    # Fire a notification email to the site's client contact. Psychology:
+    # the client SEES exactly when the auditor fetched their package —
+    # zero ambiguity. Wrapped in try/except so a mail outage cannot block
+    # the download itself.
+    if site_meta and site_meta["client_contact_email"]:
+        try:
+            from dashboard_api.email_alerts import send_critical_alert
+            downloader = user.get("email") or user.get("username") or "an operator"
+            period_label = (
+                f"{site_meta['period_start']} → {site_meta['period_end']}"
+            )
+            send_critical_alert(
+                title=f"Audit package downloaded — {site_meta['clinic_name']}",
+                message=(
+                    f"Your audit package for {period_label} was just downloaded "
+                    f"by {downloader} at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}.\n\n"
+                    f"If this was your auditor, nothing to do. If you didn't "
+                    f"expect this download, reply to this email or contact "
+                    f"audit-team@osiriscare.net."
+                ),
+                site_id=row["site_id"],
+                category="audit_package",
+                severity="info",
+                metadata={
+                    "package_id": str(row["package_id"]),
+                    "downloader": downloader,
+                    "ip": request.client.host if request.client else None,
+                },
+            )
+        except Exception:
+            logger.error(
+                f"Audit-package download notification failed for {row['package_id']}",
+                exc_info=True,
+            )
+
     # Stream the file.
     filename = zip_path.name
     headers = {

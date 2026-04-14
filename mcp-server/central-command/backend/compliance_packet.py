@@ -289,22 +289,94 @@ class CompliancePacket:
             "approval_log": await self._get_approval_log(),
         }
 
-        # Render markdown
+        # Render markdown (the canonical source)
         markdown = self._render_markdown(data)
 
         md_path = self.output_dir / f"{self.packet_id}.md"
         with open(md_path, "w") as f:
             f.write(markdown)
 
-        logger.info(f"Compliance packet saved: {md_path}")
+        # #150 wave 2: also emit HTML + PDF so the audit-package ZIP can
+        # ship auditor-friendly rendered copies alongside the source markdown.
+        html_path = self.output_dir / f"{self.packet_id}.html"
+        pdf_path = self.output_dir / f"{self.packet_id}.pdf"
+        html_body = self._render_html(markdown, data)
+        with open(html_path, "w") as f:
+            f.write(html_body)
+        pdf_ok = self._render_pdf_from_html(html_body, pdf_path)
+
+        logger.info(
+            f"Compliance packet saved: md={md_path} html={html_path} "
+            f"pdf={'OK' if pdf_ok else 'skipped'}"
+        )
 
         return {
             "packet_id": self.packet_id,
             "site_id": self.site_id,
             "period": f"{self._period_start.strftime('%B %Y')}",
             "markdown_path": str(md_path),
+            "html_path": str(html_path),
+            "pdf_path": str(pdf_path) if pdf_ok else None,
             "data": data,
         }
+
+    def _render_html(self, markdown: str, data: Dict[str, Any]) -> str:
+        """Render the markdown packet to a self-contained HTML document.
+        No JS, no external CSS — so the HTML is a valid audit artifact on
+        its own (no network dependencies when the auditor opens it)."""
+        try:
+            import markdown as md_lib  # type: ignore
+            body = md_lib.markdown(
+                markdown,
+                extensions=["tables", "fenced_code", "toc"],
+            )
+        except ImportError:
+            # Fallback: wrap raw markdown in <pre> so at least the content is legible.
+            body = f"<pre>{_html_escape(markdown)}</pre>"
+        title = (
+            f"{data.get('clinic_name', 'Site')} — "
+            f"Compliance Packet {self._period_start.strftime('%B %Y')}"
+        )
+        return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/>
+<title>{_html_escape(title)}</title>
+<style>
+  body{{font-family:system-ui,-apple-system,sans-serif;max-width:900px;margin:32px auto;padding:0 24px;color:#111;line-height:1.55}}
+  h1{{font-size:22px;margin-bottom:4px}} h2{{font-size:18px;margin-top:28px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}}
+  h3{{font-size:15px;margin-top:18px}} table{{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}}
+  th,td{{padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:left}}
+  th{{background:#f9fafb;font-size:12px;text-transform:uppercase;color:#6b7280}}
+  code{{font-family:ui-monospace,monospace;font-size:13px;background:#f3f4f6;padding:1px 4px;border-radius:3px}}
+  pre{{background:#f9fafb;border:1px solid #e5e7eb;padding:12px;border-radius:6px;overflow-x:auto;font-size:13px}}
+  blockquote{{border-left:3px solid #3b82f6;padding-left:14px;margin-left:0;color:#4b5563}}
+  .muted{{color:#6b7280;font-size:12px}} @page{{size:letter;margin:1in}}
+</style></head><body>
+{body}
+<hr><p class="muted">Packet ID: {self.packet_id} &middot; Generated {self._period_end.isoformat()} &middot; OsirisCare compliance substrate</p>
+</body></html>"""
+
+    def _render_pdf_from_html(self, html: str, pdf_path: Path) -> bool:
+        """WeasyPrint HTML→PDF. Returns True if PDF written, False if
+        WeasyPrint not installed or render failed (still ship HTML)."""
+        try:
+            from weasyprint import HTML  # type: ignore
+        except Exception:
+            logger.warning("WeasyPrint not available — compliance packet PDF skipped")
+            return False
+        try:
+            HTML(string=html).write_pdf(str(pdf_path))
+            return True
+        except Exception as e:
+            logger.warning(f"Compliance packet PDF render failed: {e}")
+            return False
+
+
+def _html_escape(s: Any) -> str:
+    if s is None:
+        return ""
+    return (
+        str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
 
     async def _get_site_name(self) -> str:
         result = await self.db.execute(

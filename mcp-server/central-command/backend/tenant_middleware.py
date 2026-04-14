@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 # SET LOCAL doesn't support $1 parameterized queries in PostgreSQL.
 # Validate site_id to prevent SQL injection before interpolating.
 _SAFE_SITE_ID = re.compile(r"^[a-zA-Z0-9._-]{1,128}$")
+# appliance_id format: `{site_id}-{MAC with colons}` → need to allow ':'
+_SAFE_APPLIANCE_ID = re.compile(r"^[a-zA-Z0-9.:_-]{1,160}$")
 _SAFE_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
@@ -34,11 +36,21 @@ def _validated_site_id(site_id: str) -> str:
     return site_id
 
 
+def _validated_appliance_id(aid: str) -> str:
+    """Validate appliance_id is safe for SET LOCAL interpolation.
+    Appliance IDs contain colons (MAC addresses) so need a wider charset
+    than _validated_site_id."""
+    if not _SAFE_APPLIANCE_ID.match(aid):
+        raise ValueError(f"Invalid appliance_id for RLS context: {aid!r}")
+    return aid
+
+
 @asynccontextmanager
 async def tenant_connection(
     pool: asyncpg.Pool,
     site_id: Optional[str] = None,
     is_admin: bool = False,
+    actor_appliance_id: Optional[str] = None,
 ):
     """Acquire a connection with tenant context set for RLS.
 
@@ -51,10 +63,22 @@ async def tenant_connection(
             rows = await conn.fetch("SELECT * FROM incidents")
             # Admin bypass — sees all rows
 
+        # Session 206 D2: tag the actor appliance so cross-appliance writes
+        # can be audit-logged + eventually rejected.
+        async with tenant_connection(
+            pool, site_id=sid, actor_appliance_id=aid
+        ) as conn:
+            ...
+
     Args:
         pool: asyncpg connection pool
         site_id: The tenant's site_id. Required for non-admin contexts.
         is_admin: If True, sets admin bypass (sees all tenants).
+        actor_appliance_id: The authenticated appliance for this request —
+            used by Migration 197/199's cross-appliance UPDATE trigger to
+            detect (and eventually reject) one appliance modifying another's
+            row. Callers with access to a request-authenticated appliance
+            identity SHOULD pass this.
     """
     async with pool.acquire() as conn:
         if is_admin:
@@ -70,6 +94,11 @@ async def tenant_connection(
                     f"SET LOCAL app.current_tenant = '{safe_id}'"
                 )
                 await conn.execute("SET LOCAL app.is_admin = 'false'")
+                if actor_appliance_id:
+                    safe_aid = _validated_appliance_id(actor_appliance_id)
+                    await conn.execute(
+                        f"SET LOCAL app.actor_appliance_id = '{safe_aid}'"
+                    )
                 yield conn
         else:
             # No tenant context — RLS will return empty results

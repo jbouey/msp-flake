@@ -2572,6 +2572,9 @@ class ApplianceCheckin(BaseModel):
     generation_uuid: Optional[str] = None
     reconcile_needed: bool = False
     reconcile_signals: Optional[List[str]] = None
+    # D1 (Session 206): Ed25519 hex signature by the appliance over the
+    # heartbeat content hash. NULL until the Go daemon D1 PR ships.
+    heartbeat_signature: Optional[str] = None
 
 
 def normalize_mac(mac: str) -> str:
@@ -3029,6 +3032,11 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     mac_clean = mac_normalized.replace(':', '')
     appliance_id = f"{checkin.site_id}-{mac_normalized}"
 
+    # Session 206 D2: tag the authenticated appliance so the cross-appliance
+    # audit trigger (Migration 197/199) can reject any UPDATE that touches
+    # a different appliance's row.
+    _auth_actor_aid = appliance_id
+
     # === STEP -1: Live-USB installer isolation (Migration 190) ===
     # If the daemon reports boot_source='live_usb', it's running from the
     # installer ISO — not an installed appliance. Route to install_sessions
@@ -3037,7 +3045,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     # alive until install completes.
     boot_source_early = getattr(checkin, 'boot_source', None) or ''
     if boot_source_early == 'live_usb':
-        async with tenant_connection(pool, site_id=checkin.site_id) as conn:
+        async with tenant_connection(pool, site_id=checkin.site_id, actor_appliance_id=_auth_actor_aid) as conn:
             async with conn.transaction():
                 await conn.execute("""
                     INSERT INTO install_sessions (
@@ -3100,7 +3108,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             "reconcile_plan": None,
         }
 
-    async with tenant_connection(pool, site_id=checkin.site_id) as conn:
+    async with tenant_connection(pool, site_id=checkin.site_id, actor_appliance_id=_auth_actor_aid) as conn:
       # Micro-transaction architecture (Session 200):
       # tenant_connection wraps in one transaction for SET LOCAL RLS.
       # Each step uses its own savepoint (conn.transaction()) for isolation.
@@ -3336,11 +3344,18 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 async with conn.transaction():
                     _hb_subnet = _primary_subnet(checkin.ip_addresses or [])
                     _hb_has_anycast = ANYCAST_LINK_LOCAL in (checkin.ip_addresses or [])
+                    # D1: optional signed-heartbeat signature from the Go
+                    # daemon. Current daemon builds don't send it — column
+                    # will be NULL for pre-D1 daemons. When the daemon PR
+                    # ships, checkin.heartbeat_signature will carry an
+                    # Ed25519 hex over the heartbeat content hash.
+                    _hb_sig = getattr(checkin, 'heartbeat_signature', None)
                     await conn.execute("""
                         INSERT INTO appliance_heartbeats
                             (site_id, appliance_id, observed_at, status,
-                             agent_version, boot_source, primary_subnet, has_anycast)
-                        VALUES ($1, $2, $3, 'online', $4, $5, $6, $7)
+                             agent_version, boot_source, primary_subnet,
+                             has_anycast, agent_signature)
+                        VALUES ($1, $2, $3, 'online', $4, $5, $6, $7, $8)
                     """,
                         checkin.site_id,
                         canonical_id,
@@ -3349,6 +3364,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         _boot_source,
                         _hb_subnet,
                         _hb_has_anycast,
+                        _hb_sig,
                     )
             except Exception:
                 logger.error(

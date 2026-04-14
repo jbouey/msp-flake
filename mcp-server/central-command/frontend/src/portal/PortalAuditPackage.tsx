@@ -123,6 +123,21 @@ export const PortalAuditPackage: React.FC<Props> = ({ siteId: siteIdProp }) => {
 
   useEffect(() => { loadList(); }, [siteId]);
 
+  // Lazy-load Calendly's embed script only when this page is visited —
+  // no page-weight cost on unrelated portal pages.
+  useEffect(() => {
+    if (document.querySelector('script[data-calendly]')) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://assets.calendly.com/assets/external/widget.css';
+    document.head.appendChild(link);
+    const s = document.createElement('script');
+    s.src = 'https://assets.calendly.com/assets/external/widget.js';
+    s.async = true;
+    s.dataset.calendly = '1';
+    document.body.appendChild(s);
+  }, []);
+
   const generate = async () => {
     setGenerating(true);
     setError(null);
@@ -269,6 +284,28 @@ export const PortalAuditPackage: React.FC<Props> = ({ siteId: siteIdProp }) => {
                 {' · '}{relTime(mostRecent.delivered_at)}
               </div>
             )}
+
+            {/* Walkthrough call — Calendly popup. Psychology: punt the
+                hard auditor questions back to US. Revenue hook. */}
+            <div className="mt-4 pt-4 border-t border-emerald-100 flex items-center justify-between">
+              <div className="text-sm text-slate-700">
+                Need help walking your auditor through this package?
+              </div>
+              <button
+                onClick={() => {
+                  const calendlyUrl = 'https://calendly.com/osiriscare/audit-walkthrough';
+                  if ((window as unknown as { Calendly?: { initPopupWidget: (o: { url: string }) => void } }).Calendly) {
+                    (window as unknown as { Calendly: { initPopupWidget: (o: { url: string }) => void } })
+                      .Calendly.initPopupWidget({ url: calendlyUrl });
+                  } else {
+                    window.open(calendlyUrl, '_blank', 'noopener,noreferrer');
+                  }
+                }}
+                className="px-4 py-2 bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-100 rounded-md text-sm font-medium"
+              >
+                Schedule 15-min walkthrough →
+              </button>
+            </div>
           </div>
         )}
 

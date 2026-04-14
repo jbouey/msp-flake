@@ -212,6 +212,12 @@ type CheckinRequest struct {
 	HasLocalCredentials bool             `json:"has_local_credentials"`
 	AgentPublicKey      string           `json:"agent_public_key,omitempty"`
 	BootSource          string           `json:"boot_source,omitempty"`
+	// HeartbeatSignature — Ed25519 hex over SHA-256 of
+	//   {site_id}|{mac_address}|{checkin_timestamp_unix}|{agent_version}
+	// Populated if the daemon has a signing key available (post-D1). Server
+	// records it in appliance_heartbeats.agent_signature; verification is
+	// enabled server-side once every appliance in the fleet ships it.
+	HeartbeatSignature  string           `json:"heartbeat_signature,omitempty"`
 	WgPubKey            string           `json:"wg_pubkey,omitempty"`
 	WgConnected         bool             `json:"wg_connected,omitempty"`
 	WgIP                string           `json:"wg_ip,omitempty"`
