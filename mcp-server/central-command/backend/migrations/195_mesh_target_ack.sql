@@ -48,9 +48,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mesh_targets_site_key
     ON mesh_target_assignments(site_id, target_key, target_type);
 CREATE INDEX IF NOT EXISTS idx_mesh_targets_appliance
     ON mesh_target_assignments(appliance_id, expires_at);
+-- Full index on expires_at. Previous partial predicate used NOW() which
+-- Postgres rejects (not immutable in index predicates). A full B-tree on
+-- expires_at is still cheap and the reassignment loop filters in query.
 CREATE INDEX IF NOT EXISTS idx_mesh_targets_expires
-    ON mesh_target_assignments(expires_at)
-    WHERE last_ack_at IS NULL OR expires_at < NOW();
+    ON mesh_target_assignments(expires_at);
 
 COMMENT ON TABLE mesh_target_assignments IS
     'Session 206 M3: first-class mesh target assignments with appliance '

@@ -432,6 +432,17 @@ jobs:
         run: |
           ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} << 'EOF'
             cd /opt/mcp-server
+            # Session 206: pgbouncer transaction-pool shares server connections
+            # across mcp-server processes. asyncpg's deterministic prepared
+            # statement names collide on mcp-server restart. Terminate
+            # stale postgres sessions + restart pgbouncer BEFORE mcp-server
+            # starts fresh — guarantees a clean prepared-stmt namespace.
+            docker exec mcp-postgres psql -U mcp -d mcp -c \
+              "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+               WHERE datname='mcp' AND usename IN ('mcp','mcp_app') \
+                 AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
+            docker compose restart pgbouncer
+            sleep 5
             docker compose up -d pgbouncer
             sleep 3
             docker compose up -d mcp-server frontend
