@@ -11,12 +11,27 @@ hash. All run under the existing pytest config.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone, timedelta
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from dashboard_api.runbook_consent import (
+# ---------------------------------------------------------------------------
+# Path setup — tests import via `dashboard_api.X` which resolves through
+# the `mcp-server/dashboard_api -> central-command/backend` symlink.
+# CI working-directory is backend/, so we add mcp-server/ to sys.path.
+# See test_evidence_dedup.py for the canonical version of this dance.
+# ---------------------------------------------------------------------------
+
+_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_mcp_server_dir = os.path.dirname(os.path.dirname(_backend_dir))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+if _mcp_server_dir not in sys.path:
+    sys.path.insert(0, _mcp_server_dir)
+
+from dashboard_api.runbook_consent import (  # noqa: E402
     build_consent_payload,
     sign_consent_payload,
     verify_consent_signature,
