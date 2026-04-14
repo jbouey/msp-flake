@@ -2947,6 +2947,80 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     mac_clean = mac_normalized.replace(':', '')
     appliance_id = f"{checkin.site_id}-{mac_normalized}"
 
+    # === STEP -1: Live-USB installer isolation (Migration 190) ===
+    # If the daemon reports boot_source='live_usb', it's running from the
+    # installer ISO — not an installed appliance. Route to install_sessions
+    # (ephemeral, 24h TTL) instead of site_appliances so phantom rows never
+    # pollute the fleet. Return the minimum shape needed to keep the daemon
+    # alive until install completes.
+    boot_source_early = getattr(checkin, 'boot_source', None) or ''
+    if boot_source_early == 'live_usb':
+        async with tenant_connection(pool, site_id=checkin.site_id) as conn:
+            async with conn.transaction():
+                await conn.execute("""
+                    INSERT INTO install_sessions (
+                        session_id, site_id, mac_address, hostname, ip_addresses,
+                        agent_version, nixos_version, boot_source,
+                        first_seen, last_seen, checkin_count, install_stage, expires_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5::jsonb, $6, $7, 'live_usb',
+                        $8, $8, 1, 'live_usb', $8 + INTERVAL '24 hours'
+                    )
+                    ON CONFLICT (session_id) DO UPDATE SET
+                        hostname = EXCLUDED.hostname,
+                        ip_addresses = EXCLUDED.ip_addresses,
+                        agent_version = EXCLUDED.agent_version,
+                        nixos_version = EXCLUDED.nixos_version,
+                        last_seen = EXCLUDED.last_seen,
+                        checkin_count = install_sessions.checkin_count + 1,
+                        expires_at = EXCLUDED.last_seen + INTERVAL '24 hours'
+                """,
+                    f"{checkin.site_id}:{mac_normalized}",
+                    checkin.site_id,
+                    mac_normalized,
+                    checkin.hostname,
+                    json.dumps(checkin.ip_addresses or []),
+                    checkin.agent_version,
+                    checkin.nixos_version,
+                    now,
+                )
+        logger.info(
+            "install_session",
+            site_id=checkin.site_id,
+            mac=mac_normalized,
+            hostname=checkin.hostname,
+            agent_version=checkin.agent_version,
+        )
+        return {
+            "status": "ok",
+            "appliance_id": None,
+            "install_session": True,
+            "server_time": now.isoformat(),
+            "rotated_api_key": None,
+            "server_public_key": None,
+            "server_public_keys": [],
+            "merged_duplicates": 0,
+            "pending_orders": [],
+            "windows_targets": [],
+            "linux_targets": [],
+            "encrypted_credentials": [],
+            "enabled_runbooks": [],
+            "disabled_checks": [],
+            "maintenance_until": None,
+            "trigger_enumeration": False,
+            "trigger_immediate_scan": False,
+            "billing_hold": False,
+            "billing_status": None,
+            "pending_deploys": [],
+            "l2_confidence_threshold": 0.8,
+            "peer_bundle_hashes": [],
+            "mesh_peers": [],
+            "target_assignments": [],
+            "client_alert_mode": None,
+            "compliance_framework": None,
+            "reconcile_plan": None,
+        }
+
     async with tenant_connection(pool, site_id=checkin.site_id) as conn:
       # Micro-transaction architecture (Session 200):
       # tenant_connection wraps in one transaction for SET LOCAL RLS.
@@ -4456,6 +4530,39 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # Time-travel reconciliation plan (Session 205 Phase 2). Null unless
         # daemon reported ≥2 detection signals AND validation accepted them.
         "reconcile_plan": reconcile_plan_payload,
+    }
+
+
+# =============================================================================
+# INSTALL SESSIONS — visibility for in-flight installer ISOs (Migration 190)
+# =============================================================================
+
+@appliances_router.get("/install-sessions")
+async def list_install_sessions(user: dict = Depends(require_auth)):
+    """List active and recently abandoned install sessions.
+
+    Installer ISOs (boot_source='live_usb') register here instead of
+    site_appliances to prevent phantom rows. Operators can see what's
+    currently trying to install and spot stuck/abandoned attempts.
+    """
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch("""
+            SELECT
+                session_id, site_id, mac_address, hostname,
+                ip_addresses, agent_version, nixos_version,
+                boot_source, first_seen, last_seen, checkin_count,
+                install_stage, expires_at,
+                EXTRACT(EPOCH FROM (NOW() - last_seen))::int AS stale_seconds,
+                EXTRACT(EPOCH FROM (expires_at - NOW()))::int AS ttl_seconds
+            FROM install_sessions
+            WHERE last_seen > NOW() - INTERVAL '48 hours'
+            ORDER BY last_seen DESC
+            LIMIT 200
+        """)
+    return {
+        "count": len(rows),
+        "sessions": [dict(r) for r in rows],
     }
 
 
