@@ -462,19 +462,32 @@ const OrgOverviewSection: React.FC<{ siteId: string }> = ({ siteId }) => {
  * Wraps the hero card so we can fetch separately from the main portal
  * payload (main payload is heavier; hero is small + should land first).
  */
+interface HomeApiData {
+  site_id: string;
+  protected: boolean;
+  protected_reason: string;
+  protected_label: string;
+  last_updated_at: string;
+  this_month: { issues_found: number; auto_fixed: number; resolved_with_partner: number; period_start: string };
+  partner: { name: string | null; email: string | null; last_reviewed_at: string | null };
+  devices: { appliances: number; workstations: number };
+  coverage_30d: Array<{ date: string; covered: boolean; incidents: number }>;
+  auditor_kit_url: string;
+}
+
 const PracticeHomeCardWrapper: React.FC<{
   siteId: string;
   token: string | null;
   practiceName?: string;
 }> = ({ siteId, token, practiceName }) => {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<HomeApiData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!siteId) return;
     const qs = token ? `?token=${encodeURIComponent(token)}` : '';
     fetch(`/api/portal/site/${siteId}/home${qs}`, { credentials: 'same-origin' })
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => (r.ok ? (r.json() as Promise<HomeApiData>) : null))
       .then((d) => { setData(d); setLoading(false); })
       .catch(() => { setLoading(false); });
   }, [siteId, token]);
