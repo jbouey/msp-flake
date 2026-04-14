@@ -167,28 +167,20 @@ in
   # nosoftlockup: prevent false watchdog alarms during heavy dd I/O
   # audit=0: disable kernel audit on live ISO (configuration.nix enables auditd
   # with execve logging which causes kauditd hold queue overflow during boot)
-  # v13 (Session 206): amdgpu on Ryzen Embedded (HP t640 Thin Client with
-  # Radeon Vega) crashes the framebuffer during install, leaving the TTY1
-  # progress display warped while the installer runs invisibly underneath.
-  # Research: incomplete amdgpu firmware/IP-block init → framebuffer
-  # destruction → `nomodeset` + simple-framebuffer disabled is the
-  # production workaround. We ship `console=ttyS0,115200` as a serial
-  # fallback so operators with working serial (IPMI/console servers) see
-  # the install regardless of GPU state. Trade-off: no GPU accel in the
-  # installer — acceptable for a headless appliance.
-  # Sources: Arch Linux / Ubuntu launchpad bug 2003524 / freebsd forums.
+  # v15 (Session 206): minimal GPU hardening. v14 stacked 7 framebuffer
+  # disables (nomodeset + efifb:off + vesafb:off + fbcon=map:1 +
+  # amdgpu.dc=0 + sysfb_init blacklist + iommu=pt) which killed ALL
+  # video output after kernel load — the HP t640 user saw a blank
+  # screen after selecting "NixOS Installer" from GRUB.
+  # `nomodeset` alone falls back to VESA/simplefb and is the standard
+  # workaround for the AMDGPU-on-Ryzen-Embedded framebuffer crash
+  # (see Ubuntu launchpad bug 2003524). Serial console fallback kept
+  # for operators with IPMI. Don't over-engineer.
   boot.kernelParams = [
     "quiet" "loglevel=1" "systemd.show_status=false"
     "console=tty1" "console=ttyS0,115200"
     "nosoftlockup" "audit=0"
-    # AMDGPU framebuffer hardening:
-    "nomodeset"                           # fallback VGA/VESA, bypass KMS
-    "video=efifb:off"                     # prevent efifb from grabbing fb0
-    "video=vesafb:off"                    # and vesafb
-    "initcall_blacklist=sysfb_init"       # stop sysfb from fighting drm
-    "fbcon=map:1"                         # fbcon on tty1→fb1 (no conflict with drm on fb0)
-    "amdgpu.dc=0"                         # disable Display Core — use legacy path
-    "iommu=pt"                            # passthrough IOMMU (fixes Ryzen Embedded quirks)
+    "nomodeset"                           # VESA/simplefb fallback for AMDGPU early-init crash
   ];
   # Blacklist noisy Logitech HID++ driver — spams battery protocol errors on tty
   boot.blacklistedKernelModules = [ "hid_logitech_hidpp" ];
@@ -1691,19 +1683,17 @@ JSONEND
       # No other inbound - pull-only architecture
     };
 
-    # v14 (Session 206): wifi support for operator fallback when the
-    # wired NIC is dead (observed on one HP t640 unit). wpa_supplicant
-    # runs as a systemd service; if /iso/wifi.conf (on the installer
-    # ISO's data partition, or in the squashfs) is present, it drives
-    # the connection without operator interaction. Otherwise an
-    # operator can drop to TTY3 and run `wpa_supplicant -i wlan0 -c ...`
-    # manually. Either way wired DHCP is tried first.
-    wireless = {
-      enable = true;
-      # No declarative networks at build time — auto-wifi-config service
-      # below writes /etc/wpa_supplicant.conf from USB-provided config.
-      userControlled.enable = true;
-    };
+    # v15 (Session 206): wifi TOOLS are shipped (wpa_supplicant, iw,
+    # wirelesstools in systemPackages) so an operator can manually
+    # associate from TTY3 if wired eth is dead — but we do NOT enable
+    # the wireless systemd service by default. Enabling it on hardware
+    # WITHOUT a wifi card tries to associate on a non-existent
+    # interface and pipe to failure, which in v14 appears to have
+    # contributed to a hung boot.
+    # To activate wifi at runtime:
+    #   wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
+    # The auto-wifi-config oneshot still writes the config file from
+    # /iso/wifi.conf if present; operator just runs wpa_supplicant.
   };
 
   # mDNS - allows access via osiriscare-appliance.local
