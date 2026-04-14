@@ -158,7 +158,7 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v22";
+    installer_version = "v23";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
@@ -388,9 +388,17 @@ EOF
     script = ''
       set -euo pipefail
       LOG_FILE="/tmp/msp-install.log"
+      # v23 diagnostic: also mirror stdout+stderr to the shared log so
+      # failures before the first progress-bar redraw are recoverable
+      # after reboot. Systemd still sends stderr to the journal; stdout
+      # still goes to tty1 for the live display. Tee adds the third
+      # copy to /tmp/msp-install.log.
+      mkdir -p /tmp
+      exec >  >(tee -a "$LOG_FILE")
+      exec 2> >(tee -a "$LOG_FILE" >&2)
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v20"
+      INSTALLER_VERSION="v23"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
@@ -2145,7 +2153,13 @@ ISSUE
       if [ -f "$CONFIG_PATH" ]; then
         SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
         if [ -n "$SITE_ID" ]; then
-          hostnamectl set-hostname "$SITE_ID"
+          # NixOS rejects `hostnamectl set-hostname` ("Changing system
+          # settings via systemd is not supported on NixOS"). Use the
+          # kernel hostname() syscall via the bare `hostname` command
+          # instead, which sets the runtime hostname without trying
+          # to persist to /etc/hostname. Service unit is idempotent
+          # and survives this path on subsequent boots.
+          hostname "$SITE_ID" || true
           echo "Hostname set to: $SITE_ID"
         fi
 
