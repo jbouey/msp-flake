@@ -1069,13 +1069,19 @@ export const appliancesApi = {
   // Reads from appliance_status_rollup MV (Migration 191). The MV is
   // refreshed every 60s by heartbeat_rollup_loop; this hook should poll
   // at 30s. Replaces per-viewer reads of the wide site_appliances table.
+  //
+  // NOTE: uses fetchSitesApi (base /api) because this endpoint lives on
+  // appliances_router (prefix=/api/appliances), not dashboard_router
+  // (prefix=/api/dashboard). The existing getUnclaimed() above uses
+  // fetchApi because there's a MIRROR of /appliances/unclaimed on
+  // dashboard_router in routes.py — no such mirror for status-rollup.
   getStatusRollup: (params?: { site_id?: string; status?: string; limit?: number }) => {
     const q = new URLSearchParams();
     if (params?.site_id) q.set('site_id', params.site_id);
     if (params?.status) q.set('status', params.status);
     if (params?.limit) q.set('limit', String(params.limit));
     const qs = q.toString();
-    return fetchApi<ApplianceRollupResponse>(`/appliances/status-rollup${qs ? '?' + qs : ''}`);
+    return fetchSitesApi<ApplianceRollupResponse>(`/appliances/status-rollup${qs ? '?' + qs : ''}`);
   },
 };
 
