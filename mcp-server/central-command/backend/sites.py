@@ -3030,17 +3030,6 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     # pollute the fleet. Return the minimum shape needed to keep the daemon
     # alive until install completes.
     boot_source_early = getattr(checkin, 'boot_source', None) or ''
-    # DEBUG (transient): probe what we're seeing on every checkin until we
-    # confirm install_sessions is wired. Remove after install_sessions has
-    # at least one real row from a live USB.
-    logger.info(
-        "checkin_boot_source_probe",
-        site_id=checkin.site_id,
-        mac=mac_normalized,
-        hostname=checkin.hostname,
-        boot_source=boot_source_early,
-        boot_source_raw=getattr(checkin, 'boot_source', '<missing>'),
-    )
     if boot_source_early == 'live_usb':
         async with tenant_connection(pool, site_id=checkin.site_id) as conn:
             async with conn.transaction():
@@ -3072,11 +3061,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     now,
                 )
         logger.info(
-            "install_session",
-            site_id=checkin.site_id,
-            mac=mac_normalized,
-            hostname=checkin.hostname,
-            agent_version=checkin.agent_version,
+            f"install_session site={checkin.site_id} mac={mac_normalized} "
+            f"hostname={checkin.hostname} agent_version={checkin.agent_version}"
         )
         return {
             "status": "ok",
@@ -3353,10 +3339,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 if rec:
                     label = rec["display_name"] or rec["hostname"] or canonical_id
                     logger.info(
-                        "Appliance recovered from offline",
-                        appliance_id=canonical_id,
-                        site_id=checkin.site_id,
-                        display_name=label,
+                        f"Appliance recovered from offline: appliance_id={canonical_id} "
+                        f"site_id={checkin.site_id} display_name={label}"
                     )
                     try:
                         from dashboard_api.email_alerts import send_critical_alert
@@ -3378,14 +3362,12 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         )
                     except Exception:
                         logger.error(
-                            "Failed to send appliance_recovered alert",
-                            appliance_id=canonical_id,
+                            f"Failed to send appliance_recovered alert for {canonical_id}",
                             exc_info=True,
                         )
             except Exception as e:
                 logger.error(
-                    "Appliance recovery detection failed",
-                    appliance_id=canonical_id,
+                    f"Appliance recovery detection failed for {canonical_id}",
                     exc_info=True,
                 )
 
