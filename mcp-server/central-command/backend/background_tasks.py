@@ -2696,6 +2696,50 @@ async def phantom_detector_loop():
         await asyncio.sleep(PHANTOM_DETECTOR_INTERVAL_SECONDS)
 
 
+MESH_REBALANCE_INTERVAL_SECONDS = 300  # 5 min
+
+
+async def mesh_reassignment_loop():
+    """Session 206 M3: rebalance expired mesh target assignments every 5 min.
+    Unacked assignments (phantom appliance can't ACK) get reassigned to
+    live appliances — determined by heartbeats, not last_checkin."""
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.mesh_targets import rebalance_expired_assignments
+
+    await asyncio.sleep(180)
+    while True:
+        _hb("mesh_reassignment")
+        try:
+            pool = await get_pool()
+            async with admin_connection(pool) as conn:
+                sites = await conn.fetch(
+                    """
+                    SELECT DISTINCT site_id FROM mesh_target_assignments
+                    WHERE expires_at < NOW()
+                    """
+                )
+            total_reassigned = 0
+            for s in sites:
+                stats = await rebalance_expired_assignments(s["site_id"])
+                total_reassigned += stats["reassigned"]
+                if stats["orphaned"] > 0:
+                    logger.warning(
+                        f"mesh_reassignment: site={s['site_id']} "
+                        f"orphaned={stats['orphaned']} — no live appliance to reassign to"
+                    )
+            if total_reassigned:
+                logger.info(f"mesh_reassignment: reassigned {total_reassigned} targets across {len(sites)} site(s)")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(
+                f"mesh_reassignment iteration failed: {e}",
+                exc_info=True,
+            )
+        await asyncio.sleep(MESH_REBALANCE_INTERVAL_SECONDS)
+
+
 async def _raise_liveness_lie_if_not_suppressed(conn, row):
     """Emit an APPLIANCE_LIVENESS_LIE incident, suppressed if we've already
     fired one for this appliance in the last PHANTOM_ALERT_SUPPRESSION_HOURS."""

@@ -47,6 +47,7 @@ from dashboard_api.evidence_chain import router as evidence_router
 from dashboard_api.install_reports import router as install_router
 from dashboard_api.chaos_lab import router as chaos_lab_router
 from dashboard_api.public_status import public_status_router, admin_status_router
+from dashboard_api.mesh_targets import mesh_targets_router
 from dashboard_api.reconcile import (
     router as reconcile_router,
     admin_router as reconcile_admin_router,
@@ -1627,6 +1628,7 @@ async def lifespan(app: FastAPI):
         heartbeat_rollup_loop,
         heartbeat_partition_maintainer_loop,
         phantom_detector_loop,
+        mesh_reassignment_loop,
     )
     from dashboard_api.privileged_access_notifier import privileged_notifier_loop
     from dashboard_api.chain_tamper_detector import chain_tamper_detector_loop
@@ -1672,6 +1674,7 @@ async def lifespan(app: FastAPI):
         ("heartbeat_rollup", heartbeat_rollup_loop),
         ("heartbeat_partition_maintainer", heartbeat_partition_maintainer_loop),
         ("phantom_detector", phantom_detector_loop),
+        ("mesh_reassignment", mesh_reassignment_loop),
     ]
 
     for name, fn in task_defs:
@@ -1796,6 +1799,7 @@ app.include_router(install_router)
 app.include_router(chaos_lab_router)
 app.include_router(public_status_router)
 app.include_router(admin_status_router)
+app.include_router(mesh_targets_router)
 app.include_router(reconcile_router)
 app.include_router(reconcile_admin_router)  # /api/admin/reconcile/events
 app.include_router(provisioning_router)
