@@ -70,17 +70,6 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://mcp:mcp@localhost
 _db_sep = "&" if "?" in DATABASE_URL else "?"
 _db_url = DATABASE_URL + _db_sep + "prepared_statement_cache_size=0"
 
-# Session 206 root fix for pgbouncer DuplicatePreparedStatement crash loop:
-# asyncpg otherwise names its implicit prepared statements __asyncpg_stmt_N__
-# starting from 1 per connection. pgbouncer's transaction-pool reuses server
-# connections, so two clients both pick N=1 → collision and 500s at startup.
-# Passing a per-statement UUID name function makes every implicit prepare
-# globally unique. Also DEALLOCATE ALL on connect for belt-and-suspenders.
-import uuid
-
-def _unique_stmt_name():
-    return f"__asyncpg_stmt_{uuid.uuid4().hex}__"
-
 engine = create_async_engine(
     _db_url,
     echo=False,
@@ -88,10 +77,7 @@ engine = create_async_engine(
     max_overflow=30,
     pool_recycle=3600,
     pool_pre_ping=True,
-    connect_args={
-        "statement_cache_size": 0,
-        "prepared_statement_name_func": _unique_stmt_name,
-    },
+    connect_args={"statement_cache_size": 0},
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
