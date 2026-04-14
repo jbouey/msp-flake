@@ -158,7 +158,7 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v19";
+    installer_version = "v20";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
@@ -170,41 +170,43 @@ in
   # auditd with execve logging which causes kauditd hold queue overflow
   # during boot).
   #
-  # v19 (Session 206): EXACT v15 kernel params. Zero drift.
+  # v20 (Session 206): STOP overriding vanilla kernel params.
   #
-  # History:
+  # After iterating v13 → v14 → v15 → v16 → v17 → v18 → v19 (seven
+  # custom kernel-cmdline attempts with multiple hardware hangs and
+  # zero successful install_reports rows in 48h), the audit revealed
+  # the override itself is the problem.
   #
-  # * v13/v14 — 7 stacked GPU disables → blank screen
-  # * v15    — `quiet loglevel=1 systemd.show_status=false
-  #            console=tty1 console=ttyS0 nosoftlockup audit=0 nomodeset`
-  #            → KERNEL BOOTS + USERSPACE RUNS + installer TUI visible
-  #            on tty1. (Install-flow stall was in userspace telemetry,
-  #            fixed orthogonally in v17.)
-  # * v16    — swapped nomodeset→amdgpu.dc=0 → untested.
-  # * v17    — amdgpu.dc=0 + network fix → KERNEL HANG at 13.5s
-  #            (AMDGPU probe deadlock on this silicon).
-  # * v18    — nomodeset + loglevel=4 + console=tty0 → ALSO HANGS at
-  #            kvm_amd CPU 1 message. Unclear whether the hang is
-  #            (a) console=tty0 vs v15's tty1 breaking UART routing,
-  #            (b) loglevel=4 flooding serial and blocking on UART
-  #            buffer full, or (c) some subtle effect of dropping
-  #            `quiet` on module-init order.
-  # * v19    — restore v15 kernel params literally. We SEE v15 boot
-  #            clean in earlier screenshot. Don't "fix" what works.
-  #            Still ship v17's backgrounded network flow to unstick
-  #            the userspace install delay.
+  # Vanilla `installation-cd-minimal.nix` already ships:
+  #   * `root=LABEL=<volumeID>` (required — we've been SHIPPING
+  #     WITHOUT this by virtue of list-merge semantics being more
+  #     subtle than I thought)
+  #   * `boot.shell_on_fail` (drops to emergency shell instead of
+  #     hanging silently — operator-friendly)
+  #   * A multi-entry GRUB boot menu with fallbacks:
+  #       - Default
+  #       - `nomodeset` (GPU-safe)
+  #       - `copytoram` (eject USB early)
+  #       - `loglevel=7` (debug)
+  #       - `console=ttyS0,115200n8` (serial)
+  #   * All tested against thousands of NixOS deployments on
+  #     heterogeneous hardware, including AMD Ryzen Embedded
+  #     (21/21 working reports on linux-hardware.org for R1505G).
   #
-  # Tradeoff: v19 hides kernel boot messages (quiet+loglevel=1) so an
-  # operator seeing a black screen pre-installer-banner can't tell if
-  # it's booting. Acceptable because the installer banner appears
-  # ~15-20s after GRUB — waiting that long is the standard signal
-  # of "it's working."
-  boot.kernelParams = [
-    "quiet" "loglevel=1" "systemd.show_status=false"
-    "console=tty1" "console=ttyS0,115200"
-    "nosoftlockup" "audit=0"
-    "nomodeset"                           # v15 known-good
-  ];
+  # Our job is NOT to second-guess the vanilla defaults. Let them
+  # rule. An operator who hits a hardware edge case selects the
+  # matching entry from the GRUB menu — upstream already provides
+  # the options.
+  #
+  # The install SCRIPT (userspace) is where our value-add lives.
+  # That stays. The backgrounded network flow from v17 stays. The
+  # embedded raw image + dd logic stays. The auto-install service
+  # stays. Zero-friction for end clients preserved.
+  #
+  # Do NOT add a `boot.kernelParams = [...]` override here. If a
+  # hardware bug surfaces, document the specific GRUB entry the
+  # operator should select in the runbook — don't monkeypatch the
+  # default cmdline across the whole fleet.
   # Blacklist noisy Logitech HID++ driver — spams battery protocol errors on tty
   boot.blacklistedKernelModules = [ "hid_logitech_hidpp" ];
   boot.loader.timeout = lib.mkForce 3;
@@ -388,7 +390,7 @@ EOF
       LOG_FILE="/tmp/msp-install.log"
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v19"
+      INSTALLER_VERSION="v20"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
