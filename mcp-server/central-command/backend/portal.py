@@ -1740,6 +1740,31 @@ async def approve_consent_via_token(
                 consumed_consent_id = :cid
             WHERE token_hash = :th
         """), {"th": token_hash, "cid": consent_id})
+        # Legal / audit trail — every magic-link approval lands in
+        # admin_audit_log in addition to the promoted_rule_events
+        # ledger. admin_audit_log is append-only (migration 151) and
+        # surfaces in the existing admin UI.
+        try:
+            await execute_with_retry(db, text("""
+                INSERT INTO admin_audit_log
+                    (username, action, target, details, created_at)
+                VALUES
+                    (:actor, :action, :target, :details::jsonb, NOW())
+            """), {
+                "actor": consented_by_email,
+                "action": "CONSENT_APPROVED_VIA_TOKEN",
+                "target": f"site:{r['site_id']}",
+                "details": json.dumps({
+                    "class_id": r["class_id"],
+                    "consent_id": consent_id,
+                    "token_hash_prefix": token_hash[:12],
+                    "ttl_days": int(r["requested_ttl_days"] or 365),
+                }),
+            })
+        except Exception:
+            # audit mirror is secondary; primary record is in
+            # compliance_bundles + promoted_rule_events
+            logger.warning(f"admin_audit_log mirror failed for consent {consent_id}")
         await db.commit()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
