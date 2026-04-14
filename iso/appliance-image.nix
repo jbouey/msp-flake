@@ -158,7 +158,7 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v18";
+    installer_version = "v19";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
@@ -170,39 +170,40 @@ in
   # auditd with execve logging which causes kauditd hold queue overflow
   # during boot).
   #
-  # v18 (Session 206): kernel-boot parity with known-good v15 + v17
-  # network flow + visibility.
+  # v19 (Session 206): EXACT v15 kernel params. Zero drift.
   #
-  # History of what hung on HP t640 Ryzen Embedded R1505G:
+  # History:
   #
-  # * v13/v14 — 7 stacked GPU disables → blank screen (over-engineered)
-  # * v15    — `nomodeset` alone → KERNEL BOOTS CLEAN (AMDGPU never loads,
-  #            falls back to efifb). Install flow stalled on inline
-  #            network calls (fixed separately in v17).
-  # * v16    — `amdgpu.dc=0` (replacing nomodeset) → untested.
-  # * v17    — `amdgpu.dc=0` + network fix → KERNEL HANGS AT 13.5s.
-  #            AMDGPU driver loads (just with Display Core off) and
-  #            the GPU probe itself hangs on this specific silicon
-  #            stepping, before userspace starts. SSH unreachable,
-  #            tty switching dead, CapsLock LED dead = full kernel
-  #            freeze.
+  # * v13/v14 — 7 stacked GPU disables → blank screen
+  # * v15    — `quiet loglevel=1 systemd.show_status=false
+  #            console=tty1 console=ttyS0 nosoftlockup audit=0 nomodeset`
+  #            → KERNEL BOOTS + USERSPACE RUNS + installer TUI visible
+  #            on tty1. (Install-flow stall was in userspace telemetry,
+  #            fixed orthogonally in v17.)
+  # * v16    — swapped nomodeset→amdgpu.dc=0 → untested.
+  # * v17    — amdgpu.dc=0 + network fix → KERNEL HANG at 13.5s
+  #            (AMDGPU probe deadlock on this silicon).
+  # * v18    — nomodeset + loglevel=4 + console=tty0 → ALSO HANGS at
+  #            kvm_amd CPU 1 message. Unclear whether the hang is
+  #            (a) console=tty0 vs v15's tty1 breaking UART routing,
+  #            (b) loglevel=4 flooding serial and blocking on UART
+  #            buffer full, or (c) some subtle effect of dropping
+  #            `quiet` on module-init order.
+  # * v19    — restore v15 kernel params literally. We SEE v15 boot
+  #            clean in earlier screenshot. Don't "fix" what works.
+  #            Still ship v17's backgrounded network flow to unstick
+  #            the userspace install delay.
   #
-  # v18 conclusion: `nomodeset` is the correct flag for t640 Ryzen
-  # Embedded. Don't load AMDGPU at all. The efifb fallback handoff
-  # worked fine on v15. My v16/v17 "targeted fix" (amdgpu.dc=0) was
-  # wrong for this hardware revision — the DC-specific errata
-  # documented for Raven DOES exist, but on t640 the whole AMDGPU
-  # probe hangs regardless of DC state.
-  #
-  # Keep v17's visibility (`loglevel=4`, drop quiet/show_status=false)
-  # because that's how we diagnosed the hang in the first place.
-  # Keep v17's backgrounded network flow (separate edits below) —
-  # orthogonal to the GPU question.
+  # Tradeoff: v19 hides kernel boot messages (quiet+loglevel=1) so an
+  # operator seeing a black screen pre-installer-banner can't tell if
+  # it's booting. Acceptable because the installer banner appears
+  # ~15-20s after GRUB — waiting that long is the standard signal
+  # of "it's working."
   boot.kernelParams = [
-    "console=tty0" "console=ttyS0,115200"
-    "loglevel=4"                          # INFO — visible but not flooded
+    "quiet" "loglevel=1" "systemd.show_status=false"
+    "console=tty1" "console=ttyS0,115200"
     "nosoftlockup" "audit=0"
-    "nomodeset"                           # AMDGPU skipped — fall back to efifb (v15 known-good)
+    "nomodeset"                           # v15 known-good
   ];
   # Blacklist noisy Logitech HID++ driver — spams battery protocol errors on tty
   boot.blacklistedKernelModules = [ "hid_logitech_hidpp" ];
@@ -387,7 +388,7 @@ EOF
       LOG_FILE="/tmp/msp-install.log"
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v18"
+      INSTALLER_VERSION="v19"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
