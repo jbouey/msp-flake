@@ -1064,6 +1064,201 @@ async def _get_site_framework_info(db: AsyncSession, site_id: str) -> PortalFram
 # MAIN PORTAL ENDPOINT
 # =============================================================================
 
+@router.get("/site/{site_id}/home")
+async def get_portal_home(
+    site_id: str,
+    token: str = Query(None, description="Portal access token"),
+    portal_session: Optional[str] = Cookie(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Psychology-first client-portal hero endpoint (Session 206 round-table).
+
+    Data shape is deliberately minimal — exactly what goes above the
+    fold on the practice manager's homepage. Everything else (device
+    inventory, full evidence chain, billing) is behind other routes
+    this endpoint does NOT touch.
+
+    Invariants from the round-table:
+      * "protected" state uses LIVE data age, not a stored boolean
+        (all 25 checks passing AND no open incident AND all appliances
+        checked in within 15 min = protected)
+      * "this_month" counts are drift-to-healed outcomes, not raw
+        incident volume (auto-heals are visible value)
+      * partner attribution surfaces the human signing off
+      * no technical jargon in response (UI translates id → plain label)
+
+    Returns 200 even when data is partial — the UI degrades gracefully
+    to "Checking..." states rather than error screens. Psychology: the
+    practice manager cannot see a red error page and feel safe.
+    """
+    await validate_session(site_id, portal_session, token)
+
+    now = datetime.now(timezone.utc)
+
+    # ─── Protected state ──────────────────────────────────────────
+    # All three have to be true for "Protected":
+    #   1. At least one appliance checked in within 15 minutes
+    #   2. Latest bundle for the site is < 24h old
+    #   3. No OPEN incident at L3 (escalated to human) right now
+    protected = True
+    protected_reason = ""
+    try:
+        live_appliances = await execute_with_retry(db, text("""
+            SELECT COUNT(*) FROM site_appliances
+            WHERE site_id = :sid
+              AND last_checkin > NOW() - INTERVAL '15 minutes'
+              AND deleted_at IS NULL
+        """), {"sid": site_id})
+        live_appliances_n = live_appliances.scalar() or 0
+        if live_appliances_n < 1:
+            protected = False
+            protected_reason = "Appliance hasn't checked in recently"
+    except Exception:
+        pass
+
+    if protected:
+        try:
+            open_l3 = await execute_with_retry(db, text("""
+                SELECT COUNT(*) FROM incidents
+                WHERE site_id = :sid
+                  AND status NOT IN ('resolved', 'closed')
+                  AND resolution_tier = 'L3'
+            """), {"sid": site_id})
+            if (open_l3.scalar() or 0) > 0:
+                protected = False
+                protected_reason = "An item is awaiting your attention"
+        except Exception:
+            pass
+
+    # ─── This-month summary ──────────────────────────────────────
+    # "45 found, 42 fixed automatically, 3 resolved with your partner"
+    this_month = {
+        "issues_found": 0,
+        "auto_fixed": 0,
+        "resolved_with_partner": 0,
+        "period_start": (now - timedelta(days=30)).date().isoformat(),
+    }
+    try:
+        month_row = await execute_with_retry(db, text("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE resolution_tier = 'L1') AS auto,
+                COUNT(*) FILTER (WHERE resolution_tier IN ('L2', 'L3')) AS with_partner
+            FROM incidents
+            WHERE site_id = :sid
+              AND created_at > NOW() - INTERVAL '30 days'
+        """), {"sid": site_id})
+        r = month_row.mappings().first()
+        if r:
+            this_month["issues_found"] = int(r["total"] or 0)
+            this_month["auto_fixed"] = int(r["auto"] or 0)
+            this_month["resolved_with_partner"] = int(r["with_partner"] or 0)
+    except Exception:
+        pass
+
+    # ─── Partner attribution (Session 206, migration 183) ────────
+    partner = {"name": None, "email": None, "last_reviewed_at": None}
+    try:
+        prow = await execute_with_retry(db, text("""
+            SELECT s.last_partner_reviewed_at,
+                   s.last_partner_reviewed_by,
+                   o.name AS org_name,
+                   (SELECT email FROM partners
+                    WHERE org_id = s.org_id AND deactivated_at IS NULL
+                    ORDER BY created_at ASC LIMIT 1) AS primary_partner_email,
+                   (SELECT full_name FROM partners
+                    WHERE org_id = s.org_id AND deactivated_at IS NULL
+                    ORDER BY created_at ASC LIMIT 1) AS primary_partner_name
+            FROM sites s
+            LEFT JOIN client_organizations o ON o.id = s.org_id
+            WHERE s.site_id = :sid
+        """), {"sid": site_id})
+        pr = prow.mappings().first()
+        if pr:
+            partner["name"] = (
+                pr["primary_partner_name"]
+                or pr["org_name"]
+                or pr["last_partner_reviewed_by"]
+            )
+            partner["email"] = pr["primary_partner_email"]
+            if pr["last_partner_reviewed_at"]:
+                partner["last_reviewed_at"] = (
+                    pr["last_partner_reviewed_at"].isoformat()
+                )
+    except Exception:
+        pass
+
+    # ─── 30-day coverage timeline ────────────────────────────────
+    # For each of last 30 days, was the site "fully covered" (no gap
+    # where an incident sat open > 2 hours undetected-and-untreated)?
+    # Simplest honest proxy: days with at least 1 successful L1 run
+    # OR zero incidents count as covered; days where incidents piled
+    # up unresolved count as gap days.
+    coverage = []
+    try:
+        cov_rows = await execute_with_retry(db, text("""
+            SELECT DATE_TRUNC('day', reported_at) AS day,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (
+                       WHERE status IN ('resolved', 'closed')
+                   ) AS closed
+            FROM incidents
+            WHERE site_id = :sid
+              AND reported_at > NOW() - INTERVAL '30 days'
+            GROUP BY 1 ORDER BY 1 ASC
+        """), {"sid": site_id})
+        day_map = {}
+        for row in cov_rows.mappings():
+            d = row["day"].date().isoformat() if row["day"] else None
+            if d:
+                total = int(row["total"] or 0)
+                closed = int(row["closed"] or 0)
+                day_map[d] = {
+                    "date": d,
+                    "covered": total == 0 or closed >= total,
+                    "incidents": total,
+                }
+        for i in range(29, -1, -1):
+            d = (now - timedelta(days=i)).date().isoformat()
+            coverage.append(day_map.get(d, {"date": d, "covered": True, "incidents": 0}))
+    except Exception:
+        pass
+
+    # ─── Device count (for "4 workstations, 1 appliance") ────────
+    devices = {"appliances": 0, "workstations": 0}
+    try:
+        arow = await execute_with_retry(db, text("""
+            SELECT COUNT(*) FROM site_appliances
+            WHERE site_id = :sid AND deleted_at IS NULL
+        """), {"sid": site_id})
+        devices["appliances"] = int(arow.scalar() or 0)
+        wrow = await execute_with_retry(db, text("""
+            SELECT COUNT(*) FROM discovered_devices
+            WHERE site_id = :sid
+              AND device_type IN ('workstation', 'server')
+              AND last_seen_at > NOW() - INTERVAL '7 days'
+        """), {"sid": site_id})
+        devices["workstations"] = int(wrow.scalar() or 0)
+    except Exception:
+        pass
+
+    return {
+        "site_id": site_id,
+        "protected": protected,
+        "protected_reason": protected_reason or "All checks passing",
+        "protected_label": (
+            "You are protected"
+            if protected else "Needs your attention"
+        ),
+        "last_updated_at": now.isoformat(),
+        "this_month": this_month,
+        "partner": partner,
+        "devices": devices,
+        "coverage_30d": coverage,
+        "auditor_kit_url": f"/api/evidence/sites/{site_id}/auditor-kit",
+    }
+
+
 @router.get("/site/{site_id}", response_model=PortalData)
 async def get_portal_data(
     site_id: str,

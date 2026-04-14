@@ -2383,12 +2383,137 @@ async def get_flywheel_spine(
         except Exception:
             operator_ack_required = []
 
+        # Hero metric — self-heal rate. Session 206 round-table:
+        # PM's request to demote "open incident count" in favor of
+        # "of every drift the platform saw in the last 24h, what %
+        # auto-resolved without human touch?"
+        #
+        # Numerator: incidents with resolution_tier='L1' (auto-heal)
+        # Denominator: total incidents (exclude status='rejected' or
+        #              chaos-lab synthetic if we ever tag them)
+        # Window: 24h rolling + 7d rolling
+        self_heal_24h = {"total": 0, "l1": 0, "l2": 0, "l3": 0, "pct": 0.0}
+        self_heal_7d = {"total": 0, "l1": 0, "l2": 0, "l3": 0, "pct": 0.0}
+        trend_7d: list[dict] = []
+        per_site: list[dict] = []
+        chronic_pattern_count = 0
+        try:
+            sh24 = await conn.fetchrow("""
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE resolution_tier = 'L1') AS l1,
+                    COUNT(*) FILTER (WHERE resolution_tier = 'L2') AS l2,
+                    COUNT(*) FILTER (WHERE resolution_tier = 'L3') AS l3
+                FROM incidents
+                WHERE created_at > NOW() - INTERVAL '24 hours'
+            """)
+            if sh24:
+                total = int(sh24["total"] or 0)
+                l1 = int(sh24["l1"] or 0)
+                self_heal_24h = {
+                    "total": total,
+                    "l1": l1,
+                    "l2": int(sh24["l2"] or 0),
+                    "l3": int(sh24["l3"] or 0),
+                    "pct": round(100.0 * l1 / total, 1) if total > 0 else 100.0,
+                }
+            sh7 = await conn.fetchrow("""
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE resolution_tier = 'L1') AS l1,
+                    COUNT(*) FILTER (WHERE resolution_tier = 'L2') AS l2,
+                    COUNT(*) FILTER (WHERE resolution_tier = 'L3') AS l3
+                FROM incidents
+                WHERE created_at > NOW() - INTERVAL '7 days'
+            """)
+            if sh7:
+                total = int(sh7["total"] or 0)
+                l1 = int(sh7["l1"] or 0)
+                self_heal_7d = {
+                    "total": total,
+                    "l1": l1,
+                    "l2": int(sh7["l2"] or 0),
+                    "l3": int(sh7["l3"] or 0),
+                    "pct": round(100.0 * l1 / total, 1) if total > 0 else 100.0,
+                }
+        except Exception:
+            logger.exception("flywheel-spine: self_heal aggregation failed")
+
+        # Daily trend — used by the dashboard's sparkline
+        try:
+            trend_rows = await conn.fetch("""
+                SELECT DATE_TRUNC('day', created_at) AS day,
+                       COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE resolution_tier = 'L1') AS l1
+                FROM incidents
+                WHERE created_at > NOW() - INTERVAL '7 days'
+                GROUP BY 1 ORDER BY 1 ASC
+            """)
+            trend_7d = [
+                {
+                    "date": r["day"].date().isoformat() if r["day"] else None,
+                    "total": int(r["total"] or 0),
+                    "l1": int(r["l1"] or 0),
+                    "pct": (
+                        round(100.0 * int(r["l1"] or 0) / int(r["total"]), 1)
+                        if r["total"] and int(r["total"]) > 0 else 100.0
+                    ),
+                }
+                for r in trend_rows
+            ]
+        except Exception:
+            logger.exception("flywheel-spine: trend aggregation failed")
+
+        # Per-site breakdown (CCIE's ask — becomes essential when 2nd site lands)
+        try:
+            per_site_rows = await conn.fetch("""
+                SELECT site_id,
+                       COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE resolution_tier = 'L1') AS l1
+                FROM incidents
+                WHERE created_at > NOW() - INTERVAL '24 hours'
+                  AND site_id IS NOT NULL
+                GROUP BY site_id ORDER BY total DESC LIMIT 20
+            """)
+            per_site = [
+                {
+                    "site_id": r["site_id"],
+                    "total": int(r["total"] or 0),
+                    "l1": int(r["l1"] or 0),
+                    "pct": (
+                        round(100.0 * int(r["l1"] or 0) / int(r["total"]), 1)
+                        if r["total"] and int(r["total"]) > 0 else 100.0
+                    ),
+                }
+                for r in per_site_rows
+            ]
+        except Exception:
+            logger.exception("flywheel-spine: per_site aggregation failed")
+
+        # Chronic-pattern count (recurrence-aware)
+        try:
+            cnt = await conn.fetchval("""
+                SELECT COUNT(*) FROM incident_recurrence_velocity
+                WHERE is_chronic = TRUE
+            """)
+            chronic_pattern_count = int(cnt or 0)
+        except Exception:
+            pass
+
     return {
         "state_distribution": state_distribution,
         "events_last_24h": events_last_24h,
         "stuck_rules": stuck_rules,
         "failed_transitions_7d": failed_transitions_7d,
         "operator_ack_required": operator_ack_required,
+        # Hero metric block (Session 206 round-table P0)
+        "self_heal_rate_24h_pct": self_heal_24h["pct"],
+        "self_heal_rate_7d_pct": self_heal_7d["pct"],
+        "self_heal_24h": self_heal_24h,
+        "self_heal_7d": self_heal_7d,
+        "trend_7d": trend_7d,
+        "per_site_24h": per_site,
+        "chronic_pattern_count": chronic_pattern_count,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -238,6 +238,36 @@ export function useFlywheelIntelligence() {
   });
 }
 
+// Session 206 round-table P0: operator hero metric.
+export interface FlywheelSpine {
+  state_distribution: Record<string, number>;
+  events_last_24h: Record<string, number>;
+  stuck_rules: Array<{ rule_id: string; state: string; stuck_days: number; site_id: string | null }>;
+  failed_transitions_7d: number;
+  operator_ack_required: Array<{ rule_id: string; state: string; site_id: string | null; since: string | null; reason: string | null }>;
+  self_heal_rate_24h_pct: number;
+  self_heal_rate_7d_pct: number;
+  self_heal_24h: { total: number; l1: number; l2: number; l3: number; pct: number };
+  self_heal_7d: { total: number; l1: number; l2: number; l3: number; pct: number };
+  trend_7d: Array<{ date: string | null; total: number; l1: number; pct: number }>;
+  per_site_24h: Array<{ site_id: string; total: number; l1: number; pct: number }>;
+  chronic_pattern_count: number;
+  generated_at: string;
+}
+
+export function useFlywheelSpine() {
+  const defaults = useQueryDefaults();
+  return useQuery<FlywheelSpine>({
+    queryKey: ['flywheel', 'spine'],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard/flywheel-spine', { credentials: 'include' });
+      if (!res.ok) throw new Error(`flywheel-spine: HTTP ${res.status}`);
+      return res.json() as Promise<FlywheelSpine>;
+    },
+    ...defaults,
+  });
+}
+
 interface InstallReport {
   installer_id: string;
   mac_address: string | null;

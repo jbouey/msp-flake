@@ -3,6 +3,7 @@ import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import { KPICard, ControlGrid, IncidentList, EvidenceDownloads } from './components';
 import { AddDeviceModal } from '../components/shared/AddDeviceModal';
 import { DISCLAIMERS, BRANDING } from '../constants';
+import { PracticeHomeCard } from './PracticeHomeCard';
 
 interface PortalSite {
   site_id: string;
@@ -219,6 +220,9 @@ export const PortalDashboard: React.FC = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
+        {/* Hero — psychology-first summary (Session 206 round-table P0) */}
+        <PracticeHomeCardWrapper siteId={siteId!} token={token} practiceName={data.site.name} />
+
         {/* KPI Section */}
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <KPICard
@@ -450,6 +454,35 @@ const OrgOverviewSection: React.FC<{ siteId: string }> = ({ siteId }) => {
         </div>
       </div>
     </section>
+  );
+};
+
+/**
+ * Fetches /api/portal/site/{site_id}/home and renders the PracticeHomeCard.
+ * Wraps the hero card so we can fetch separately from the main portal
+ * payload (main payload is heavier; hero is small + should land first).
+ */
+const PracticeHomeCardWrapper: React.FC<{
+  siteId: string;
+  token: string | null;
+  practiceName?: string;
+}> = ({ siteId, token, practiceName }) => {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!siteId) return;
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    fetch(`/api/portal/site/${siteId}/home${qs}`, { credentials: 'same-origin' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { setData(d); setLoading(false); })
+      .catch(() => { setLoading(false); });
+  }, [siteId, token]);
+
+  return (
+    <div className="mb-8">
+      <PracticeHomeCard data={data} practiceName={practiceName} isLoading={loading} />
+    </div>
   );
 };
 

@@ -14,6 +14,7 @@ import {
 } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
 import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFlywheelIntelligence, useInstallReports } from '../hooks';
+import { useFlywheelSpine } from '../hooks/useFleet';
 import { METRIC_TOOLTIPS, getScoreStatus, formatTimeAgo } from '../constants';
 
 // Shape of the /api/dashboard/sla-strip response — shared between
@@ -47,6 +48,124 @@ const L1_AUTOHEAL_TARGET = 85;
 // a +122 change from the screenshot is well past this line and should tint
 // the card critically instead of sitting in neutral gray.
 const INCIDENT_SPIKE_THRESHOLD = 20;
+
+// ─── FlywheelSpineHero ─────────────────────────────────────────────
+// Session 206 round-table P0: the operator's hero metric.
+// "Of every drift the platform saw in the last 24h, what %
+//  auto-resolved without human touch?"
+// Demotes raw incident counts; promotes the rate-of-closure value prop.
+const FlywheelSpineHero: React.FC = () => {
+  const { data, isLoading } = useFlywheelSpine();
+  if (isLoading) {
+    return (
+      <GlassCard>
+        <div className="flex items-center justify-between">
+          <div className="space-y-2">
+            <div className="skeleton w-32 h-4" />
+            <div className="skeleton w-24 h-10" />
+          </div>
+          <Spinner size="sm" />
+        </div>
+      </GlassCard>
+    );
+  }
+  if (!data) return null;
+  const pct24 = data.self_heal_rate_24h_pct;
+  const pct7 = data.self_heal_rate_7d_pct;
+  const delta = Math.round((pct24 - pct7) * 10) / 10;
+  const deltaArrow = delta > 0.2 ? '↗' : delta < -0.2 ? '↘' : '→';
+  const pctColor =
+    pct24 >= 95 ? 'text-health-healthy'
+    : pct24 >= 85 ? 'text-health-warning'
+    : 'text-health-critical';
+  const trendValues = (data.trend_7d || []).map((t) => t.pct);
+  return (
+    <GlassCard>
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+        <div className="md:col-span-4 space-y-1">
+          <div className="text-[11px] uppercase tracking-wide text-label-tertiary font-semibold">
+            Self-heal rate (24h)
+            <InfoTip text="Of every drift the platform detected in the last 24 hours, the percent that auto-resolved at L1 without human intervention. Target: ≥95%." />
+          </div>
+          <div className="flex items-baseline gap-3">
+            <span className={`text-5xl font-bold tabular-nums ${pctColor}`}>
+              {pct24.toFixed(1)}%
+            </span>
+            <span className="text-xs text-label-secondary">
+              {deltaArrow} {delta >= 0 ? '+' : ''}{delta.toFixed(1)} vs 7d
+            </span>
+          </div>
+          <div className="text-[11px] text-label-tertiary">
+            Target ≥95%. 7-day avg: {pct7.toFixed(1)}%
+          </div>
+        </div>
+        <div className="md:col-span-3 space-y-1">
+          <div className="text-[11px] uppercase tracking-wide text-label-tertiary font-semibold">
+            Today's activity
+          </div>
+          <ul className="text-xs text-label-secondary space-y-0.5 tabular-nums">
+            <li>⚙ {data.self_heal_24h.total} drifts detected</li>
+            <li className="text-health-healthy">✓ {data.self_heal_24h.l1} auto-healed by L1</li>
+            <li>↗ {data.self_heal_24h.l2} escalated to L2</li>
+            <li>👤 {data.self_heal_24h.l3} required human</li>
+          </ul>
+        </div>
+        <div className="md:col-span-2 space-y-1">
+          <div className="text-[11px] uppercase tracking-wide text-label-tertiary font-semibold">
+            Chronic patterns
+          </div>
+          <div className={`text-2xl font-bold tabular-nums ${
+            data.chronic_pattern_count > 0 ? 'text-health-warning' : 'text-health-healthy'
+          }`}>
+            {data.chronic_pattern_count}
+          </div>
+          <div className="text-[11px] text-label-tertiary">
+            Recurrence-flagged types
+          </div>
+        </div>
+        <div className="md:col-span-3 space-y-1">
+          <div className="text-[11px] uppercase tracking-wide text-label-tertiary font-semibold">
+            7-day trend
+          </div>
+          {trendValues.length > 0 && (
+            <Sparkline
+              points={trendValues}
+              width={180}
+              height={44}
+              color={pct24 >= 95 ? '#34c759' : pct24 >= 85 ? '#ff9f0a' : '#ff3b30'}
+            />
+          )}
+          <div className="text-[11px] text-label-tertiary">
+            {(data.operator_ack_required?.length ?? 0) > 0
+              ? `⚠ ${data.operator_ack_required.length} rule(s) awaiting your ack`
+              : 'No rules awaiting your ack'}
+          </div>
+        </div>
+      </div>
+      {(data.per_site_24h && data.per_site_24h.length > 1) && (
+        <div className="mt-3 pt-3 border-t border-glass-border">
+          <div className="text-[10px] text-label-tertiary mb-1">Per site, last 24h:</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {data.per_site_24h.slice(0, 8).map((s) => (
+              <div key={s.site_id} className="text-xs">
+                <div className="text-label-secondary truncate" title={s.site_id}>
+                  {s.site_id}
+                </div>
+                <div className={`tabular-nums ${
+                  s.pct >= 95 ? 'text-health-healthy'
+                  : s.pct >= 85 ? 'text-health-warning'
+                  : 'text-health-critical'
+                }`}>
+                  {s.pct.toFixed(1)}% ({s.l1}/{s.total})
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </GlassCard>
+  );
+};
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -406,6 +525,9 @@ export const Dashboard: React.FC = () => {
 
       {/* Platform SLA strip — Healing, Evidence, Fleet */}
       {!showEmptyState && <DashboardSLAStrip />}
+
+      {/* Hero metric — self-heal rate (Session 206 round-table P0) */}
+      {!showEmptyState && <FlywheelSpineHero />}
 
       {/* Attention + Incident trend */}
       {!showEmptyState && (
