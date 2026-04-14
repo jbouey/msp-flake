@@ -1457,6 +1457,188 @@ async def set_notification_prefs(
     return {"ok": True}
 
 
+# ─── Migration 184 Phase 2 — client portal consent management ────
+#
+# Practice managers grant + revoke class-level consent from the
+# portal. The actual signing happens server-side: the server
+# generates an Ed25519 keypair, signs the payload, stores the row,
+# and discards the private key. The pubkey alone makes the consent
+# non-repudiable (any auditor can re-verify without OsirisCare's
+# help).
+#
+# In Phase 4 we'll add magic-link partner-initiated requests; for
+# now the client grants directly from their own session.
+
+@router.get("/site/{site_id}/consent")
+async def list_site_consents(
+    site_id: str,
+    token: str = Query(None),
+    portal_session: Optional[str] = Cookie(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all consent rows + class catalog for a site.
+
+    Returns {classes: [...], consents: [...]} so the UI can render
+    one row per class with its current consent state.
+    """
+    await validate_session(site_id, portal_session, token)
+    try:
+        class_rows = await execute_with_retry(db, text("""
+            SELECT class_id, display_name, description, risk_level,
+                   hipaa_controls, example_actions
+            FROM runbook_classes
+            ORDER BY risk_level, class_id
+        """), {})
+        classes = [
+            {
+                "class_id": r["class_id"],
+                "display_name": r["display_name"],
+                "description": r["description"],
+                "risk_level": r["risk_level"],
+                "hipaa_controls": list(r["hipaa_controls"] or []),
+                "example_actions": r["example_actions"] or [],
+            }
+            for r in class_rows.mappings()
+        ]
+    except Exception:
+        # Table missing on pre-migration deploys — return empty so the
+        # UI degrades cleanly.
+        classes = []
+
+    try:
+        consent_rows = await execute_with_retry(db, text("""
+            SELECT consent_id, class_id, consented_by_email, consented_at,
+                   consent_ttl_days, revoked_at, revocation_reason,
+                   (consented_at + (consent_ttl_days || ' days')::INTERVAL) AS expires_at
+            FROM runbook_class_consent
+            WHERE site_id = :sid
+            ORDER BY consented_at DESC
+        """), {"sid": site_id})
+        consents = [
+            {
+                "consent_id": str(r["consent_id"]),
+                "class_id": r["class_id"],
+                "consented_by_email": r["consented_by_email"],
+                "consented_at": r["consented_at"].isoformat() if r["consented_at"] else None,
+                "consent_ttl_days": int(r["consent_ttl_days"] or 365),
+                "revoked_at": r["revoked_at"].isoformat() if r["revoked_at"] else None,
+                "revocation_reason": r["revocation_reason"],
+                "expires_at": r["expires_at"].isoformat() if r["expires_at"] else None,
+                "active": r["revoked_at"] is None
+                          and (r["expires_at"] is None
+                               or r["expires_at"] > datetime.now(timezone.utc)),
+            }
+            for r in consent_rows.mappings()
+        ]
+    except Exception:
+        consents = []
+
+    return {
+        "site_id": site_id,
+        "classes": classes,
+        "consents": consents,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/site/{site_id}/consent/grant")
+async def grant_site_consent(
+    site_id: str,
+    body: dict,
+    token: str = Query(None),
+    portal_session: Optional[str] = Cookie(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new class-level consent.
+
+    Body: `{class_id, consented_by_email, ttl_days?}`. The email MUST
+    be a valid address; we don't verify ownership in Phase 2 beyond
+    portal auth, but it's persisted + signed so the audit trail is
+    attributable.
+    """
+    await validate_session(site_id, portal_session, token)
+    class_id = (body.get("class_id") or "").strip()
+    email = (body.get("consented_by_email") or "").strip()
+    ttl_days = int(body.get("ttl_days") or 365)
+
+    if not class_id:
+        raise HTTPException(status_code=400, detail="class_id required")
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="consented_by_email must be valid")
+    if ttl_days < 30 or ttl_days > 3650:
+        raise HTTPException(status_code=400, detail="ttl_days must be 30..3650")
+
+    # Reject if an active consent already exists — client must revoke
+    # it first, per the spec's "one active per class" rule.
+    existing = await execute_with_retry(db, text("""
+        SELECT consent_id FROM runbook_class_consent
+        WHERE site_id = :sid AND class_id = :cls AND revoked_at IS NULL
+    """), {"sid": site_id, "cls": class_id})
+    if existing.scalar() is not None:
+        raise HTTPException(status_code=409, detail="active consent already exists for this class")
+
+    from dashboard_api.runbook_consent import create_consent as _create_consent
+    try:
+        consent_id = await _create_consent(
+            db,
+            site_id=site_id,
+            class_id=class_id,
+            consented_by_email=email,
+            ttl_days=ttl_days,
+        )
+        await db.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"consent grant failed for {site_id}/{class_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="failed to record consent")
+    return {"ok": True, "consent_id": consent_id, "class_id": class_id}
+
+
+@router.put("/site/{site_id}/consent/{consent_id}/revoke")
+async def revoke_site_consent(
+    site_id: str,
+    consent_id: str,
+    body: dict,
+    token: str = Query(None),
+    portal_session: Optional[str] = Cookie(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke an existing consent. Body: `{reason, revoked_by_email}`."""
+    await validate_session(site_id, portal_session, token)
+    reason = (body.get("reason") or "").strip()
+    email = (body.get("revoked_by_email") or "").strip()
+    if len(reason) < 10:
+        raise HTTPException(status_code=400, detail="reason must be >=10 chars")
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="revoked_by_email must be valid")
+
+    # Ownership check — consent must belong to this site (prevents
+    # cross-site revoke via URL tampering).
+    owner = await execute_with_retry(db, text("""
+        SELECT site_id FROM runbook_class_consent WHERE consent_id = :cid
+    """), {"cid": consent_id})
+    row = owner.fetchone()
+    if row is None or row[0] != site_id:
+        raise HTTPException(status_code=404, detail="consent not found")
+
+    from dashboard_api.runbook_consent import revoke_consent as _revoke_consent
+    try:
+        await _revoke_consent(
+            db,
+            consent_id=consent_id,
+            revoked_by_email=email,
+            reason=reason,
+        )
+        await db.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"consent revoke failed for {consent_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="failed to revoke consent")
+    return {"ok": True, "consent_id": consent_id}
+
+
 @router.get("/site/{site_id}", response_model=PortalData)
 async def get_portal_data(
     site_id: str,

@@ -907,6 +907,49 @@ async def report_incident(
 
     order_id = None
 
+    # ─── Migration 184 Phase 2 — shadow-mode consent check ──────────
+    # Verify the site has granted class-level consent for this runbook
+    # BEFORE we dispatch an order. In `shadow` mode we only log and
+    # write the ledger event; in `enforce` (Phase 3+) we block.
+    consent_class_id = None
+    consent_result = None
+    if runbook_id and resolution_tier == "L1":
+        try:
+            from dashboard_api.runbook_consent import (
+                classify_runbook_to_class,
+                verify_consent_active,
+                get_consent_mode,
+            )
+            consent_class_id = classify_runbook_to_class(runbook_id)
+            consent_result = await verify_consent_active(
+                db, site_id=incident.site_id, class_id=consent_class_id,
+            )
+            logger.info(
+                "runbook_consent_check",
+                site_id=incident.site_id,
+                runbook_id=runbook_id,
+                class_id=consent_class_id,
+                ok=consent_result.ok,
+                reason=consent_result.reason,
+                consent_id=consent_result.consent_id,
+                mode=get_consent_mode(),
+            )
+            if consent_result.should_block():
+                # Phase 3+ — enforce mode blocks execution. For now this
+                # branch is dormant under RUNBOOK_CONSENT_MODE=shadow.
+                logger.warning(
+                    "runbook_consent_block (enforce mode)",
+                    site_id=incident.site_id,
+                    runbook_id=runbook_id,
+                    reason=consent_result.reason,
+                )
+                runbook_id = None
+                resolution_tier = "L3"
+        except Exception:
+            # Never let the consent check break the resolution pipeline
+            # while shadow-mode is on. Log + continue.
+            logger.exception("runbook_consent_check_error (non-fatal in shadow)")
+
     if runbook_id:
         # Create signed order
         order_id = hashlib.sha256(
@@ -989,6 +1032,25 @@ async def report_incident(
                     order_id=order_id,
                     runbook_id=runbook_id,
                     tier=resolution_tier)
+
+        # ─── Migration 184 Phase 2 — write ledger event for the ──────
+        # execution. `consent_id` is None when no consent row existed
+        # (shadow-mode log signal) so auditors can see the gap.
+        try:
+            from dashboard_api.runbook_consent import record_executed_with_consent
+            if consent_class_id:
+                await record_executed_with_consent(
+                    db,
+                    site_id=incident.site_id,
+                    class_id=consent_class_id,
+                    runbook_id=runbook_id,
+                    consent_id=consent_result.consent_id if consent_result else None,
+                    incident_id=str(incident_id) if incident_id else None,
+                )
+        except Exception:
+            # Ledger write failures do NOT block order dispatch.
+            # Shadow-mode philosophy: learn, don't break.
+            logger.exception("runbook_consent_ledger_write_failed")
     elif resolution_tier == "L3":
         await db.execute(
             text("""

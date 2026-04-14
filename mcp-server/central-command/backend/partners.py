@@ -879,6 +879,90 @@ async def get_partner_weekly_rollup(
     return {"sites": sites, "computed_at": computed_at, "total_sites": len(sites), "stale": False}
 
 
+@router.get("/me/sites/{site_id}/consent")
+async def get_partner_site_consents(
+    site_id: str,
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Session 206 Migration 184 Phase 2 — partner view of consent state.
+
+    Read-only for partners; only the client can grant or revoke.
+    Shows which classes are covered by active consent + which are
+    exposed (no consent = L1/L2 will skip-and-log in shadow mode,
+    block in enforce).
+
+    Scoped to partner_id at SQL layer (same isolation contract as
+    /me/dashboard).
+    """
+    pool = await get_pool()
+    partner_id = partner["id"]
+
+    async with admin_connection(pool) as conn:
+        # Ownership check.
+        own = await conn.fetchval(
+            "SELECT 1 FROM sites WHERE site_id = $1 AND partner_id = $2",
+            site_id, partner_id,
+        )
+        if not own:
+            raise HTTPException(status_code=404, detail="Site not in your book of business")
+
+        try:
+            class_rows = await conn.fetch(
+                """
+                SELECT class_id, display_name, risk_level, hipaa_controls
+                FROM runbook_classes
+                ORDER BY risk_level, class_id
+                """,
+            )
+        except Exception:
+            class_rows = []
+
+        try:
+            consent_rows = await conn.fetch(
+                """
+                SELECT consent_id, class_id, consented_by_email, consented_at,
+                       consent_ttl_days, revoked_at,
+                       (consented_at + (consent_ttl_days || ' days')::INTERVAL) AS expires_at
+                FROM runbook_class_consent
+                WHERE site_id = $1
+                ORDER BY consented_at DESC
+                """,
+                site_id,
+            )
+        except Exception:
+            consent_rows = []
+
+    active_by_class: dict = {}
+    for r in consent_rows:
+        if r["revoked_at"] is None and (r["expires_at"] is None or r["expires_at"] > datetime.now(timezone.utc)):
+            active_by_class[r["class_id"]] = {
+                "consent_id": str(r["consent_id"]),
+                "consented_by_email": r["consented_by_email"],
+                "consented_at": r["consented_at"].isoformat() if r["consented_at"] else None,
+                "expires_at": r["expires_at"].isoformat() if r["expires_at"] else None,
+            }
+
+    classes = [
+        {
+            "class_id": r["class_id"],
+            "display_name": r["display_name"],
+            "risk_level": r["risk_level"],
+            "hipaa_controls": list(r["hipaa_controls"] or []),
+            "active_consent": active_by_class.get(r["class_id"]),
+        }
+        for r in class_rows
+    ]
+    covered = sum(1 for c in classes if c["active_consent"])
+    return {
+        "site_id": site_id,
+        "classes": classes,
+        "total_classes": len(classes),
+        "covered_classes": covered,
+        "coverage_pct": round(100.0 * covered / len(classes), 1) if classes else 0.0,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/me/sites/{site_id}/topology")
 async def get_partner_site_topology(
     site_id: str,
