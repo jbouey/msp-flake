@@ -2787,10 +2787,18 @@ async def get_flywheel_events(
     limit = max(1, min(int(limit), 200))
     pool = await get_pool()
     async with admin_connection(pool) as conn:
+        # Schema note: `promoted_rule_events` does NOT carry from_state /
+        # to_state as columns — the ledger is event-oriented, not
+        # state-transition-oriented. Previous version of this query
+        # selected those nonexistent columns and 500'd silently. The
+        # frontend's FlywheelEventStream.tsx still exposes the fields
+        # in its TypeScript interface but they stay null here; the spine
+        # stores state only on `promoted_rules.lifecycle_state`, not
+        # per-event.
         if rule_id:
             rows = await conn.fetch(
                 """
-                SELECT event_id, rule_id, event_type, from_state, to_state,
+                SELECT event_id, rule_id, site_id, event_type,
                        actor, stage, outcome, reason, created_at, proof
                 FROM promoted_rule_events
                 WHERE rule_id = $1
@@ -2802,7 +2810,7 @@ async def get_flywheel_events(
         else:
             rows = await conn.fetch(
                 """
-                SELECT event_id, rule_id, event_type, from_state, to_state,
+                SELECT event_id, rule_id, site_id, event_type,
                        actor, stage, outcome, reason, created_at, proof
                 FROM promoted_rule_events
                 ORDER BY created_at DESC
@@ -2815,9 +2823,10 @@ async def get_flywheel_events(
             {
                 "event_id": str(r["event_id"]),
                 "rule_id": r["rule_id"],
+                "site_id": r["site_id"],
                 "event_type": r["event_type"],
-                "from_state": r["from_state"],
-                "to_state": r["to_state"],
+                "from_state": None,  # spine does not track transitions per event
+                "to_state": None,
                 "actor": r["actor"],
                 "stage": r["stage"],
                 "outcome": r["outcome"],
