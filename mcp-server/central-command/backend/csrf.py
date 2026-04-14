@@ -100,6 +100,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     # Session-authenticated portals (partner, client, companion) MUST be CSRF-protected.
     # Admin cookie-session endpoints (/api/admin/, /api/sites) are NOT exempt.
     EXEMPT_PREFIXES = (
+        # --- Public (unauthenticated) endpoints ---
+        "/api/public/",          # Public status page (GET-only, slug-protected)
         # --- Machine-to-machine / API-key auth (no browser session) ---
         "/api/appliances/",
         "/api/agent/",           # Agent sync endpoints use API-key auth

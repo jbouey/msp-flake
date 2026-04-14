@@ -46,6 +46,7 @@ from dashboard_api.portal import router as portal_router
 from dashboard_api.evidence_chain import router as evidence_router
 from dashboard_api.install_reports import router as install_router
 from dashboard_api.chaos_lab import router as chaos_lab_router
+from dashboard_api.public_status import public_status_router, admin_status_router
 from dashboard_api.reconcile import (
     router as reconcile_router,
     admin_router as reconcile_admin_router,
@@ -1793,6 +1794,8 @@ app.include_router(portal_router)
 app.include_router(evidence_router)
 app.include_router(install_router)
 app.include_router(chaos_lab_router)
+app.include_router(public_status_router)
+app.include_router(admin_status_router)
 app.include_router(reconcile_router)
 app.include_router(reconcile_admin_router)  # /api/admin/reconcile/events
 app.include_router(provisioning_router)

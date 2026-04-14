@@ -12,6 +12,8 @@ import { ToastProvider } from './components/shared/Toast';
 
 // Critical pages - loaded immediately
 import { Dashboard, Login, Sites } from './pages';
+const Fleet = lazy(() => import('./pages/Fleet'));
+const PublicStatus = lazy(() => import('./pages/PublicStatus'));
 
 // Lazy-loaded pages - loaded on demand for code splitting
 // Uses .then() pattern to handle named exports
@@ -342,6 +344,7 @@ const AppLayout: React.FC = () => {
             <div className="page-transition-enter">
             <Routes>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/fleet" element={<Fleet />} />
               <Route path="/sites" element={<Sites />} />
               <Route path="/sites/:siteId" element={<SiteDetail />} />
               <Route path="/sites/:siteId/frameworks" element={<FrameworkConfig />} />
@@ -489,6 +492,10 @@ const App: React.FC = () => {
                     changes with dates, categories, and links to security
                     advisories. Read by auditors. */}
                 <Route path="/changelog" element={<PublicChangelog />} />
+
+                {/* Public status page (Session 206 #144). Unauthenticated
+                    per-site status at /status/{unguessable-slug}. */}
+                <Route path="/status/:slug" element={<PublicStatus />} />
 
                 {/* www.osiriscare.net → landing page; dashboard.osiriscare.net → admin */}
                 <Route path="/*" element={isLandingSite ? <LandingPage /> : <AuthenticatedApp />} />
