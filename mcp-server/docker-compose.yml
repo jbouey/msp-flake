@@ -118,6 +118,12 @@ services:
       RUNBOOK_DIR: /app/runbooks
       # Session 206 spine cutover — shadow | enforce (default shadow)
       FLYWHEEL_ORCHESTRATOR_MODE: ${FLYWHEEL_ORCHESTRATOR_MODE:-shadow}
+      # Migration 184 Phase 3 — per-class consent enforcement.
+      # Comma-separated list of class_ids (e.g. "LOG_ARCHIVE"), "*" for
+      # all, empty = shadow everything (Phase 2 default). Rollout:
+      # LOG_ARCHIVE first (lowest risk, no runbooks currently ship for
+      # it), then CONFIG_SYNC, then expand.
+      RUNBOOK_CONSENT_ENFORCE_CLASSES: ${RUNBOOK_CONSENT_ENFORCE_CLASSES:-}
       RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-10}
       RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-300}
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-Admin}
