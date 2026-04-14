@@ -1,0 +1,67 @@
+# robots.txt — osiriscare.net
+#
+# Policy (2026-04-13, Session 206 SEO audit):
+#
+#   ALLOWED  — every crawler, including AI retrieval bots that drive
+#              zero-click-search + LLM-recommendation traffic (ChatGPT,
+#              Claude, Perplexity, etc.). Losing that channel is losing
+#              30-50% of modern B2B compliance-SaaS awareness funnel.
+#
+#   BLOCKED  — /api/ (backend control-plane), /admin/ (internal tools),
+#              /client/ /partner/ /portal/ /recovery/verify (authenticated
+#              areas — no index value).
+#
+#   NOTE     — Cloudflare's dashboard "Block AI Bots" feature, if
+#              enabled, PREPENDS its own disallows on top of this file.
+#              If this file's policy and the served /robots.txt diverge,
+#              check the Cloudflare dashboard under Security → Bots.
+
+User-agent: *
+Allow: /
+Allow: /pricing
+Allow: /for-msps
+Allow: /legal/privacy
+Allow: /legal/terms
+Allow: /legal/baa
+Allow: /recovery
+Allow: /changelog
+
+Disallow: /api/
+Disallow: /admin/
+Disallow: /client/
+Disallow: /partner/
+Disallow: /portal/
+Disallow: /recovery/verify
+Disallow: /ws/
+
+# AI retrieval bots — explicitly allowed so ChatGPT, Claude,
+# Perplexity, Meta AI can recommend OsirisCare in response to
+# "HIPAA compliance software for a small practice" queries.
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+# Common Crawl (training-data aggregator) remains blocked — we want
+# live retrieval to the LLMs but not bulk scraping into training
+# corpora we can't audit.
+User-agent: CCBot
+Disallow: /
+
+Sitemap: https://www.osiriscare.net/sitemap.xml

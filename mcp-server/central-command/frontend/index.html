@@ -11,7 +11,7 @@
     <meta name="keywords" content="HIPAA compliance, healthcare IT, MSP, compliance monitoring, drift detection, medical practice IT, HIPAA audit, healthcare cybersecurity, automated remediation" />
     <link rel="canonical" href="https://www.osiriscare.net/" />
 
-    <!-- Structured Data -->
+    <!-- Structured Data: SoftwareApplication (pricing updated to $499 floor) -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -19,20 +19,92 @@
       "name": "OsirisCare",
       "applicationCategory": "Healthcare Compliance Software",
       "operatingSystem": "Cloud",
-      "description": "HIPAA compliance attestation platform with automated drift detection, evidence capture, and self-healing remediation for healthcare practices.",
+      "description": "HIPAA compliance attestation platform with automated drift detection, evidence-grade audit trails, and self-healing remediation for healthcare practices.",
       "url": "https://www.osiriscare.net",
       "offers": {
         "@type": "Offer",
-        "price": "200",
+        "price": "499",
         "priceCurrency": "USD",
         "priceValidUntil": "2027-12-31",
-        "description": "Starting at $200/month per practice"
+        "description": "Starting at $499/month per practice"
       },
       "provider": {
         "@type": "Organization",
         "name": "OsirisCare",
         "url": "https://www.osiriscare.net"
       }
+    }
+    </script>
+
+    <!-- Structured Data: Organization -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "OsirisCare",
+      "url": "https://www.osiriscare.net",
+      "logo": "https://www.osiriscare.net/og-image.png",
+      "description": "HIPAA compliance attestation substrate for healthcare SMBs. Drift detection, evidence-grade observability, and human-authorized remediation — at 75% the cost of traditional MSPs.",
+      "areaServed": "US",
+      "foundingLocation": { "@type": "Place", "name": "Northeastern Pennsylvania" },
+      "knowsAbout": [
+        "HIPAA compliance monitoring",
+        "drift detection",
+        "evidence-grade audit trails",
+        "healthcare cybersecurity",
+        "managed IT services for medical practices",
+        "self-healing remediation"
+      ]
+    }
+    </script>
+
+    <!-- Structured Data: FAQ (rich snippet eligible) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is OsirisCare HIPAA compliant?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "OsirisCare is a HIPAA compliance attestation substrate. All PHI is scrubbed at the appliance before any data leaves the practice. Central Command operates on PHI-free evidence bundles that are Ed25519-signed, hash-chained, and OpenTimestamps anchored for auditor verification."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How much does OsirisCare cost compared to a traditional MSP?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "OsirisCare starts at $499/month per practice for the compliance tier. Traditional MSPs in the healthcare vertical typically charge $2,000–$4,000 per month for comparable HIPAA evidence, monitoring, and attestation coverage — a 75% cost reduction."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is drift detection?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Drift detection is the continuous monitoring of system configuration against a HIPAA-aligned baseline — patching status, firewall posture, audit logging, antivirus, backup cadence, and encryption. When a system drifts out of compliance, OsirisCare captures signed evidence and either auto-heals via a pre-approved runbook or escalates to an operator."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What size practice does OsirisCare serve?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "OsirisCare is designed for 1 to 50 provider healthcare practices — the segment underserved by large enterprise compliance platforms but too regulated for generic managed IT."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does OsirisCare prove compliance to an auditor?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Every compliance bundle is Ed25519-signed, hash-chained, and anchored to the OpenTimestamps Bitcoin blockchain. Auditors can verify the full evidence chain independently, on their own laptop, with no reliance on OsirisCare infrastructure — a downloadable ZIP kit at /api/evidence/sites/{site_id}/auditor-kit contains the verifier script, all bundles, public keys, and OTS proofs."
+          }
+        }
+      ]
     }
     </script>
 
@@ -55,9 +127,88 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
+
+    <!-- Inline fallback styles for the crawler-visible content below. Small;
+         keeps the page usable for bots + JS-disabled users without adding
+         a second stylesheet request. React will replace this shell on hydrate. -->
+    <style>
+      #root > noscript, #root > .seo-fallback {
+        max-width: 820px; margin: 0 auto; padding: 48px 24px;
+        font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+        color: #1c1c1e; line-height: 1.55;
+      }
+      #root > .seo-fallback h1 { font-size: 2.25rem; margin: 0 0 12px; }
+      #root > .seo-fallback h2 { font-size: 1.35rem; margin: 24px 0 8px; }
+      #root > .seo-fallback p { margin: 0 0 14px; }
+      #root > .seo-fallback ul { margin: 0 0 14px 24px; padding: 0; }
+      #root > .seo-fallback a { color: #0b73ff; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <!--
+      SEO-critical content baked into the HTML payload so non-JS crawlers
+      (Bing, DuckDuckGo, social preview bots, AI retrievers) see actual
+      semantic content instead of an empty <div id="root">. React will
+      replace this shell on mount — real users with JS see the full app.
+      Keep this block a faithful summary of the /pricing and /for-msps
+      pages. When the copy changes, this block should be refreshed too.
+    -->
+    <div id="root">
+      <main class="seo-fallback">
+        <h1>OsirisCare — HIPAA compliance monitoring for healthcare practices</h1>
+        <p>
+          OsirisCare is a HIPAA compliance attestation substrate built for
+          1–50 provider practices. We continuously monitor your systems for
+          configuration drift, capture evidence-grade audit trails, and
+          remediate common issues through pre-approved runbooks — at
+          <strong>75% lower cost than a traditional MSP</strong>, starting
+          at $499/month per practice.
+        </p>
+
+        <h2>What we do</h2>
+        <ul>
+          <li><strong>Drift detection</strong> — 25+ HIPAA-aligned checks, continuously, per endpoint</li>
+          <li><strong>Evidence-grade audit trail</strong> — every check produces an Ed25519-signed, hash-chained, Bitcoin-anchored bundle</li>
+          <li><strong>Self-healing remediation</strong> — pre-approved runbooks auto-resolve common issues without human intervention</li>
+          <li><strong>PHI scrubbed at the appliance</strong> — Central Command never sees raw patient data</li>
+          <li><strong>Auditor verification kit</strong> — downloadable ZIP lets auditors verify the full evidence chain independently</li>
+        </ul>
+
+        <h2>Who we serve</h2>
+        <p>
+          Small and mid-size healthcare practices in the Northeastern US
+          — dental offices, primary care, specialty clinics, mental
+          health providers — where the clinical workload is full time and
+          compliance cannot be. We install a physical appliance on-site
+          (no agent footprint on workstations) and it continuously reports
+          HIPAA posture to a secure cloud control plane.
+        </p>
+
+        <h2>How we compare</h2>
+        <p>
+          Unlike policy-and-training-only platforms (Compliancy Group,
+          HIPAA One), OsirisCare continuously verifies the <em>technical</em>
+          state of the practice. Unlike enterprise GRC tools (Vanta,
+          Sprinto, Scytale), we are purpose-built for small healthcare —
+          no multi-year contracts, no per-seat pricing, no need for a
+          compliance team to configure it.
+        </p>
+
+        <h2>Get started</h2>
+        <p>
+          Visit <a href="https://www.osiriscare.net/pricing">/pricing</a>
+          to see plan tiers, or
+          <a href="https://www.osiriscare.net/contact">/contact</a> to
+          request a 30-minute demo.
+        </p>
+
+        <noscript>
+          <p><strong>JavaScript is disabled in your browser.</strong>
+          OsirisCare's dashboard requires JavaScript, but the public
+          pages above are fully readable without it.</p>
+        </noscript>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
