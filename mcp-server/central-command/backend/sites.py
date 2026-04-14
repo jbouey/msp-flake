@@ -2786,9 +2786,15 @@ async def submit_domain_credentials(
             WHERE site_id = $2
         """, now, site_id)
         
-        # Trigger immediate enumeration AND scan via next checkin
+        # Trigger immediate enumeration AND scan via next checkin.
+        # Intentional bulk: all appliances at this site should pick up
+        # the new domain credentials + rescan on their next checkin.
+        # Declare bulk intent via LOCAL flag so Migration 192 trigger
+        # allows it; transaction-scoped so it doesn't leak to other
+        # statements.
+        await conn.execute("SET LOCAL app.allow_multi_row = 'true'")
         await conn.execute("""
-            UPDATE site_appliances 
+            UPDATE site_appliances
             SET trigger_enumeration = true,
                 trigger_immediate_scan = true
             WHERE site_id = $1

@@ -970,14 +970,19 @@ async def submit_evidence(
                             last_evidence_rejection = NOW()
                         WHERE appliance_id = :appliance_id
                     """), {"appliance_id": matched_appliance_id})
+                    await db.commit()
                 else:
-                    await db.execute(text("""
-                        UPDATE site_appliances SET
-                            evidence_rejection_count = COALESCE(evidence_rejection_count, 0) + 1,
-                            last_evidence_rejection = NOW()
-                        WHERE site_id = :site_id
-                    """), {"site_id": site_id})
-                await db.commit()
+                    # When we can't identify which appliance produced the
+                    # bad signature, do NOT increment a counter on every
+                    # appliance at the site (Session 206 invariant — that
+                    # pollutes legitimate appliances with someone else's
+                    # failures). Log loudly; the offending appliance is
+                    # anonymous but the event is recorded.
+                    logger.warning(
+                        f"Evidence signature rejection at site {site_id} "
+                        f"could not be attributed to any appliance. "
+                        f"Not incrementing per-appliance counter."
+                    )
             except Exception as e:
                 logger.warning(f"Evidence rejection tracking failed for site {site_id}: {e}")
 
