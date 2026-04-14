@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // signedProcessor creates a Processor with a test Ed25519 keypair so that
@@ -939,5 +940,142 @@ func TestOrderExpirySkippedWithoutSignedPayload(t *testing.T) {
 
 	if !result.Success {
 		t.Fatalf("expected success for unsigned order without expiry, got: %s", result.Error)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase 13.5 — H4 refresh retry + H6 envelope-key fallback
+// ═══════════════════════════════════════════════════════════════════
+
+// TestVerifySignature_H6EnvelopeKey_FallbackSucceeds asserts that when
+// the daemon's cached pubkey is stale, an order signed with the CURRENT
+// server key (advertised in the envelope) still verifies as long as the
+// processor's last-delivered-pubkey reference matches the envelope key.
+func TestVerifySignature_H6EnvelopeKey_FallbackSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	p := NewProcessor(dir, nil)
+	// Cache a STALE key that won't verify the signature
+	stalePub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetServerPublicKey(hex.EncodeToString(stalePub)); err != nil {
+		t.Fatal(err)
+	}
+	// Sign with the CURRENT server key
+	currentPub, currentPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentPubHex := hex.EncodeToString(currentPub)
+	// Stamp last-delivered — this is what the daemon would set after
+	// receiving the new pubkey via checkin
+	p.SetLastDeliveredPubkey(currentPubHex)
+
+	payload := map[string]interface{}{
+		"order_id":           "h6-1",
+		"order_type":         "force_checkin",
+		"signing_pubkey_hex": currentPubHex,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	sig := ed25519.Sign(currentPriv, payloadBytes)
+
+	order := &Order{
+		OrderID:       "h6-1",
+		OrderType:     "force_checkin",
+		Signature:     hex.EncodeToString(sig),
+		SignedPayload: string(payloadBytes),
+	}
+
+	if err := p.verifySignature(order); err != nil {
+		t.Errorf("H6 envelope-key fallback should accept: %v", err)
+	}
+}
+
+// TestVerifySignature_H4RefreshCallback_TriggeredOnFailure asserts that
+// when signature verification fails AND a refresh callback is registered,
+// the processor calls it. Uses a done-channel to confirm invocation.
+func TestVerifySignature_H4RefreshCallback_TriggeredOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	p := NewProcessor(dir, nil)
+	// Set a pubkey that will NOT verify — forces verifyErr != nil
+	wrongPub, _, _ := ed25519.GenerateKey(nil)
+	if err := p.SetServerPublicKey(hex.EncodeToString(wrongPub)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Record whether the refresh callback was invoked. The callback
+	// returns false (simulates "checkin did not complete") so the
+	// retry fails but the CALLBACK INVOCATION is what we're asserting.
+	called := make(chan struct{}, 1)
+	p.SetRefreshCheckinCallback(func(timeout time.Duration) bool {
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+		return false
+	})
+
+	// Forge a bogus-but-structured order. Sign with a wrong key so
+	// verify fails.
+	_, wrongPriv, _ := ed25519.GenerateKey(nil)
+	payloadBytes, _ := json.Marshal(map[string]interface{}{"order_id": "h4-1", "order_type": "force_checkin"})
+	sig := ed25519.Sign(wrongPriv, payloadBytes)
+	order := &Order{
+		OrderID:       "h4-1",
+		OrderType:     "force_checkin",
+		Signature:     hex.EncodeToString(sig),
+		SignedPayload: string(payloadBytes),
+	}
+
+	// First attempt — should fire the callback + ultimately fail.
+	err := p.verifySignature(order)
+	if err == nil {
+		t.Error("expected failure (wrong key + no refresh success)")
+	}
+	select {
+	case <-called:
+		// expected — refresh was attempted
+	default:
+		t.Error("H4 refresh callback was not invoked on verify failure")
+	}
+
+	// Second attempt with the SAME order_id — retry guard should
+	// prevent a second callback invocation (prevents refresh spam).
+	err2 := p.verifySignature(order)
+	if err2 == nil {
+		t.Error("expected retry-guard to still fail")
+	}
+	select {
+	case <-called:
+		t.Error("retry guard failed: refresh called twice for the same order_id")
+	default:
+		// expected — retry guard stopped the second refresh
+	}
+}
+
+// TestVerifySignature_H4_RetryGuardGCs verifies the retry guard eventually
+// forgets old entries so a long-lived daemon doesn't accumulate dead ones.
+// We can't wait 30 minutes in CI, so just confirm the map GC logic runs
+// when the guard is consulted.
+func TestVerifySignature_H4_RetryGuardGCs(t *testing.T) {
+	dir := t.TempDir()
+	p := NewProcessor(dir, nil)
+	// Inject an ancient entry
+	p.markVerifyRetried("ancient-order")
+	// Backdate it past the 30-min cutoff
+	p.verifyRetryMu.Lock()
+	p.verifyRetried["ancient-order"] = time.Now().Add(-1 * time.Hour)
+	p.verifyRetryMu.Unlock()
+
+	// Calling alreadyRetriedVerify should GC the stale entry
+	if p.alreadyRetriedVerify("new-order") {
+		t.Error("unrelated new order should not be flagged as retried")
+	}
+	p.verifyRetryMu.Lock()
+	_, stillThere := p.verifyRetried["ancient-order"]
+	p.verifyRetryMu.Unlock()
+	if stillThere {
+		t.Error("ancient entry should have been GC'd")
 	}
 }

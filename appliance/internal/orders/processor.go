@@ -246,6 +246,13 @@ type Processor struct {
 	// Order idempotency: tracks recently executed order IDs to skip duplicates
 	executedMu     sync.Mutex
 	executedOrders map[string]time.Time // order_id → execution timestamp
+
+	// Phase 13.5 — signature-verification hardening
+	pubkeyMu               sync.RWMutex
+	lastDeliveredPubkeyHex string                          // Pubkey server delivered on most recent checkin — H6 trust source
+	refreshCheckin         func(timeout time.Duration) bool // Trigger an immediate checkin + wait — H4 auto-refresh
+	verifyRetryMu          sync.Mutex
+	verifyRetried          map[string]time.Time // order_id → time retry was attempted (prevents loop)
 }
 
 // SetRuleReloader registers a callback to reload L1 rules after promoted rule deployment.
@@ -262,6 +269,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 		verifier:       crypto.NewOrderVerifier(""),
 		usedNonces:     make(map[string]time.Time),
 		executedOrders: make(map[string]time.Time),
+		verifyRetried:  make(map[string]time.Time),
 	}
 
 	// Load persisted nonces from previous sessions
@@ -327,6 +335,27 @@ func (p *Processor) SetPublicKeys(currentHex string, previousHexes []string) err
 // Orders signed with a target_appliance_id that doesn't match will be rejected.
 func (p *Processor) SetApplianceID(id string) {
 	p.applianceID = id
+}
+
+// SetLastDeliveredPubkey records the pubkey the server sent in the most
+// recent successful checkin response. This is the H6 trust source —
+// verifySignature will fall back to verifying against an envelope-
+// advertised pubkey ONLY when it matches this value byte-for-byte.
+//
+// Called from the daemon's checkin handler on every checkin that
+// returns server_public_key. Thread-safe via `pubkeyMu`.
+func (p *Processor) SetLastDeliveredPubkey(hexKey string) {
+	p.pubkeyMu.Lock()
+	p.lastDeliveredPubkeyHex = hexKey
+	p.pubkeyMu.Unlock()
+}
+
+// SetRefreshCheckinCallback registers a function the Processor calls
+// when signature verification fails — to pull a fresh pubkey via an
+// immediate checkin (H4). The callback blocks up to `timeout` waiting
+// for the checkin to finish, returning true if it completed in time.
+func (p *Processor) SetRefreshCheckinCallback(fn func(timeout time.Duration) bool) {
+	p.refreshCheckin = fn
 }
 
 // VerifySignedPayload verifies an Ed25519 signature over an arbitrary canonical
@@ -497,9 +526,51 @@ func (p *Processor) verifySignature(order *Order) error {
 		return fmt.Errorf("unsigned order rejected: order %s has no signature", order.OrderID)
 	}
 
-	// Step 1: Verify Ed25519 cryptographic signature
-	if err := p.verifier.VerifyOrder(order.SignedPayload, order.Signature); err != nil {
-		return err
+	// Step 1: Verify Ed25519 cryptographic signature.
+	//
+	// Phase 13.5 — hardened verification path:
+	//   H6: if cache fails, try envelope's signing_pubkey_hex IF and only
+	//       if it matches the pubkey the server most-recently delivered
+	//       via checkin. Bounds trust.
+	//   H4: if H6 also fails (or envelope carries no pubkey), fire an
+	//       immediate checkin, wait up to 5s, retry the verify ONCE.
+	//       The per-order retry map prevents retry loops.
+	envelopeKeyHex := extractEnvelopePubkey(order.SignedPayload)
+	p.pubkeyMu.RLock()
+	trustedEnvelopeKey := p.lastDeliveredPubkeyHex
+	p.pubkeyMu.RUnlock()
+
+	verifyErr := p.verifier.VerifyOrderWithEnvelopeKey(
+		order.SignedPayload, order.Signature, envelopeKeyHex, trustedEnvelopeKey,
+	)
+
+	if verifyErr != nil && p.refreshCheckin != nil && !p.alreadyRetriedVerify(order.OrderID) {
+		// H4 — one-shot refresh retry.
+		p.markVerifyRetried(order.OrderID)
+		log.Printf("[orders] H4: verify failed for order %s; requesting immediate checkin + retry",
+			order.OrderID)
+		if p.refreshCheckin(5 * time.Second) {
+			// Pubkey may have been refreshed — pull it again + retry.
+			p.pubkeyMu.RLock()
+			trustedEnvelopeKey = p.lastDeliveredPubkeyHex
+			p.pubkeyMu.RUnlock()
+			verifyErr = p.verifier.VerifyOrderWithEnvelopeKey(
+				order.SignedPayload, order.Signature, envelopeKeyHex, trustedEnvelopeKey,
+			)
+			if verifyErr == nil {
+				log.Printf("[orders] H4: verify PASSED after refresh for order %s", order.OrderID)
+			} else {
+				// Structured failure token — makes fleet-wide grep trivial.
+				log.Printf("[orders] sig_verify_pubkey_stale_after_refresh order_id=%s type=%s err=%v",
+					order.OrderID, order.OrderType, verifyErr)
+			}
+		} else {
+			log.Printf("[orders] H4: refresh checkin did NOT complete within 5s for order %s",
+				order.OrderID)
+		}
+	}
+	if verifyErr != nil {
+		return verifyErr
 	}
 
 	// Step 2: Verify host scoping — reject orders targeted at a different appliance.
@@ -509,6 +580,48 @@ func (p *Processor) verifySignature(order *Order) error {
 	}
 
 	return nil
+}
+
+// extractEnvelopePubkey pulls the H6 advertised signing pubkey out of the
+// signed payload JSON. Returns "" if the envelope has no such field or
+// the payload is malformed — callers treat "" as "no envelope key, use
+// only the cache path."
+func extractEnvelopePubkey(signedPayload string) string {
+	if signedPayload == "" {
+		return ""
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(signedPayload), &m); err != nil {
+		return ""
+	}
+	if v, ok := m["signing_pubkey_hex"].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// alreadyRetriedVerify returns true iff we've already done the H4
+// refresh-retry dance for this order_id within the last 30 minutes.
+// Prevents a persistently-bad-pubkey scenario from spamming checkins
+// every poll cycle.
+func (p *Processor) alreadyRetriedVerify(orderID string) bool {
+	p.verifyRetryMu.Lock()
+	defer p.verifyRetryMu.Unlock()
+	// GC stale entries so the map doesn't grow unbounded
+	cutoff := time.Now().Add(-30 * time.Minute)
+	for id, t := range p.verifyRetried {
+		if t.Before(cutoff) {
+			delete(p.verifyRetried, id)
+		}
+	}
+	_, ok := p.verifyRetried[orderID]
+	return ok
+}
+
+func (p *Processor) markVerifyRetried(orderID string) {
+	p.verifyRetryMu.Lock()
+	p.verifyRetried[orderID] = time.Now()
+	p.verifyRetryMu.Unlock()
 }
 
 // verifyHostScope checks that the signed payload's target_appliance_id matches

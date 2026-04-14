@@ -83,8 +83,22 @@ def sign_order(
     created_at: datetime,
     expires_at: datetime,
 ) -> tuple[str, str, str]:
-    """Sign a fleet order. Returns (nonce, signature, signed_payload)."""
+    """Sign a fleet order. Returns (nonce, signature, signed_payload).
+
+    Phase 13.5 H6 — embed the signing pubkey inside the signed payload
+    so the appliance daemon can cross-check against the pubkey most
+    recently delivered via checkin. Bounded trust: the daemon only
+    honors this field when it byte-matches its most-recent-checkin
+    reference. That closes the "verifier cache stale" race window with
+    zero widening of attack surface.
+
+    The pubkey goes inside the signed payload — i.e. it IS part of what
+    the signature attests to. An attacker can't swap the pubkey without
+    breaking the signature; the daemon's bounded-trust check closes the
+    remaining "arbitrary pubkey substitution" window.
+    """
     nonce = secrets.token_hex(16)
+    pubkey_hex = signing_key.verify_key.encode(encoder=HexEncoder).decode("ascii")
     payload_dict = {
         "order_id": "0",
         "order_type": order_type,
@@ -92,6 +106,10 @@ def sign_order(
         "nonce": nonce,
         "created_at": created_at.isoformat(),
         "expires_at": expires_at.isoformat(),
+        # Phase 13.5 H6 — advertise the signing pubkey so the daemon
+        # can fall back to verifying against it IF AND ONLY IF it
+        # matches the daemon's last-checkin-delivered pubkey.
+        "signing_pubkey_hex": pubkey_hex,
     }
     signed_payload = json.dumps(payload_dict, sort_keys=True)
     signature = signing_key.sign(signed_payload.encode()).signature.hex()

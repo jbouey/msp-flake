@@ -151,6 +151,19 @@ type Daemon struct {
 
 	// configPath is the path to config.yaml (for atomic API key updates)
 	configPath string
+
+	// Phase 13.5 H4 — immediate-checkin channel for sig-verify refresh.
+	// When the Processor's verifySignature fails, it calls
+	// RequestImmediateCheckin() which pushes to this buffered chan.
+	// The main loop `select`s on `ticker.C OR <-checkinRequest` and
+	// runs an extra checkin cycle on signal.
+	//
+	// `checkinDone` is a one-shot-per-cycle broadcast that fires at
+	// the END of each runCheckin (success OR failure). The H4 caller
+	// waits on it to know when the pubkey has been refreshed.
+	checkinRequest chan struct{}
+	checkinDoneMu  sync.Mutex
+	checkinDone    []chan struct{} // waiters to notify on next checkin completion
 }
 
 // safeGo runs f in a new goroutine tracked by d.wg, with panic recovery.
@@ -218,6 +231,10 @@ func New(cfg *Config) *Daemon {
 		// reconcileDetector bumps boot_counter on construction — call once here.
 		reconcileDetector: NewReconcileDetector(cfg.StateDir),
 		startTime:     time.Now(),
+		// Phase 13.5 H4 — buffered 1 so the sig-verify fail path never
+		// blocks. Extra signals collapse to "at most one pending checkin
+		// refresh request" which is exactly what we want.
+		checkinRequest: make(chan struct{}, 1),
 	}
 
 	// Initialize WinRM cert pin store + executor (must be before L1 engine)
@@ -300,6 +317,9 @@ func New(cfg *Config) *Daemon {
 	d.orderProc = orders.NewProcessor(cfg.StateDir, d.completeOrder)
 	d.orderProc.SetAgentCounter(d.registry)
 	d.orderProc.SetRuleReloader(d.l1Engine.ReloadRules)
+	// Phase 13.5 H4 — processor can trigger an immediate checkin when
+	// sig-verify fails; it waits briefly for the pubkey refresh.
+	d.orderProc.SetRefreshCheckinCallback(d.requestImmediateCheckinAndWait)
 
 	// Build Services struct for subsystem injection (RunCtx set in Run())
 	d.svc = &Services{
@@ -621,6 +641,64 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case <-ticker.C:
 			// Watchdog is pinged by a separate goroutine above
 			d.runCycle(ctx)
+		case <-d.checkinRequest:
+			// Phase 13.5 H4 — processor requested an immediate checkin
+			// (typically because a sig-verify failed and we want to
+			// refresh the server pubkey). Run a full cycle — not just
+			// runCheckin — so downstream work (auto-deploy, etc) stays
+			// in sync. The cycle's checkin completion fires the
+			// broadcast that H4's caller is waiting on.
+			log.Printf("[daemon] H4: immediate checkin requested (sig-verify refresh path)")
+			d.runCycle(ctx)
+		}
+	}
+}
+
+// requestImmediateCheckinAndWait signals the main loop to run an
+// immediate checkin, then blocks up to `timeout` waiting for that
+// checkin to complete (success OR failure). Returns true iff a
+// checkin completed within the window.
+//
+// Phase 13.5 H4 — the Processor calls this when its verifySignature
+// path fails; one short delay here is cheap compared to leaving a
+// good order stuck until the next poll tick.
+func (d *Daemon) requestImmediateCheckinAndWait(timeout time.Duration) bool {
+	// Register a completion listener before signaling so we don't miss
+	// a wake-up if the checkin happens to be about to fire anyway.
+	done := make(chan struct{}, 1)
+	d.checkinDoneMu.Lock()
+	d.checkinDone = append(d.checkinDone, done)
+	d.checkinDoneMu.Unlock()
+
+	// Non-blocking signal — if the channel is already full, a request
+	// is already queued and our listener will pick up that completion.
+	select {
+	case d.checkinRequest <- struct{}{}:
+	default:
+	}
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// notifyCheckinDone fires the broadcast channel to every registered
+// waiter exactly once. Called by runCheckin after every attempt
+// (success or failure) so H4 callers stop blocking even on
+// partial failures. Listeners are drained so the slice never grows
+// unbounded.
+func (d *Daemon) notifyCheckinDone() {
+	d.checkinDoneMu.Lock()
+	waiters := d.checkinDone
+	d.checkinDone = nil
+	d.checkinDoneMu.Unlock()
+	for _, w := range waiters {
+		select {
+		case w <- struct{}{}:
+		default:
 		}
 	}
 }
@@ -690,6 +768,11 @@ func touchActivityMarker() {
 
 // runCheckin sends a checkin to Central Command and processes the response.
 func (d *Daemon) runCheckin(ctx context.Context) {
+	// H4 — every checkin attempt (success OR failure) notifies any
+	// waiters from requestImmediateCheckinAndWait so they don't block
+	// forever when a checkin fails partway through.
+	defer d.notifyCheckinDone()
+
 	var req CheckinRequest
 	if d.agentPublicKey != "" {
 		req = SystemInfoWithKey(d.config, Version, d.agentPublicKey)
@@ -893,6 +976,11 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 				log.Printf("[daemon] Failed to set server public key on order processor: %v", err)
 			}
 		}
+		// Phase 13.5 H6 — stamp the just-delivered pubkey as the trusted
+		// envelope-key reference. Used as the bounded-trust source when
+		// verify fails against the cache but the order envelope
+		// advertises the same pubkey we just received here.
+		d.orderProc.SetLastDeliveredPubkey(resp.ServerPublicKey)
 		if d.l1Engine != nil {
 			if err := d.l1Engine.SetServerPublicKey(resp.ServerPublicKey); err != nil {
 				log.Printf("[daemon] Failed to set server public key on L1 engine: %v", err)

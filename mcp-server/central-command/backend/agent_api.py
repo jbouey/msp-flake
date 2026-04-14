@@ -967,6 +967,11 @@ async def report_incident(
             "issued_at": now.isoformat(),
             "expires_at": expires_at.isoformat(),
             "target_appliance_id": canonical_appliance_id,
+            # Phase 13.5 H6 — advertise the signing pubkey so the daemon
+            # can fall back to verifying against it when its verifier
+            # cache is stale. Bounded trust on daemon side: the key must
+            # match what the server most-recently delivered via checkin.
+            "signing_pubkey_hex": get_public_key_hex(),
         }, sort_keys=True)
 
         signature = sign_data(order_payload)
@@ -1126,6 +1131,9 @@ async def report_incident(
                         "issued_at": now.isoformat(),
                         "expires_at": expires_at.isoformat(),
                         "target_appliance_id": canonical_appliance_id,
+                        # Phase 13.5 H6 — see note at the other sign site
+                        # in this file (line ~962). Backward compatible.
+                        "signing_pubkey_hex": get_public_key_hex(),
                     }, sort_keys=True)
 
                     signature = sign_data(order_payload)

@@ -180,6 +180,73 @@ func (v *OrderVerifier) VerifyRulesBundle(rulesJSON, signatureHex string) error 
 	return v.VerifyOrder(rulesJSON, signatureHex)
 }
 
+// VerifyOrderWithEnvelopeKey is Phase 13.5 H6 — a bounded-trust fallback
+// verifier. Tries current + previous keys first; on failure, if the
+// envelope carries `signing_pubkey_hex` AND it matches the pubkey the
+// server most-recently delivered via checkin (which the caller passes
+// as `trustedEnvelopeKeyHex`), retry the verify against that envelope
+// key.
+//
+// Why "bounded": the daemon does NOT accept arbitrary envelope keys.
+// The envelope's pubkey is only honored when an independent channel
+// (the most-recent checkin) already acknowledged the same key — so the
+// envelope adds a second verification path without widening trust.
+//
+// Closes the "verifier cache is stale but the checkin already delivered
+// the new pubkey" race window, at zero cost to security posture.
+//
+// Returns nil on any successful verification. Returns the original
+// current-keys error (H1 enriched) on any kind of failure — callers
+// don't get a different error shape for the envelope-key path.
+func (v *OrderVerifier) VerifyOrderWithEnvelopeKey(
+	signedPayload, signatureHex, envelopeKeyHex, trustedEnvelopeKeyHex string,
+) error {
+	// Fast path — current + previous key already verifies.
+	if err := v.VerifyOrder(signedPayload, signatureHex); err == nil {
+		return nil
+	} else {
+		// Only attempt H6 path when we have BOTH an envelope key (the
+		// payload's advertised pubkey) AND a trusted reference (the
+		// pubkey most-recently delivered via checkin). Both must be
+		// present and byte-equal for the envelope key to be honored.
+		if envelopeKeyHex == "" || trustedEnvelopeKeyHex == "" {
+			return err
+		}
+		if envelopeKeyHex != trustedEnvelopeKeyHex {
+			// Envelope is advertising a pubkey the server has NOT
+			// delivered to us. Reject — this is the attack vector the
+			// bounded-trust design rejects.
+			return err
+		}
+	}
+
+	// Envelope pubkey matches last-delivered. Try it.
+	pkBytes, decodeErr := hex.DecodeString(envelopeKeyHex)
+	if decodeErr != nil || len(pkBytes) != ed25519.PublicKeySize {
+		return fmt.Errorf("envelope pubkey hex invalid: decode err=%v len=%d", decodeErr, len(pkBytes))
+	}
+	sig, sigErr := hex.DecodeString(signatureHex)
+	if sigErr != nil || len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("signature decode: err=%v len=%d", sigErr, len(sig))
+	}
+
+	pk := ed25519.PublicKey(pkBytes)
+	if ed25519.Verify(pk, []byte(signedPayload), sig) {
+		log.Printf("[crypto] H6 verify PASSED via envelope pubkey %s (matches last-checkin-delivered)",
+			safeFingerprint(envelopeKeyHex))
+		return nil
+	}
+
+	// Same enriched error as VerifyOrder for consistency
+	spSum := sha256.Sum256([]byte(signedPayload))
+	spSumHex := hex.EncodeToString(spSum[:])
+	return fmt.Errorf(
+		"Ed25519 signature verification failed (H6 envelope path also fails; "+
+			"envelope_fp=%s sp_len=%d sp_sha256_16=%s)",
+		safeFingerprint(envelopeKeyHex), len(signedPayload), spSumHex[:16],
+	)
+}
+
 // BuildSignedPayload reconstructs the canonical signed payload from order fields.
 // This must match the Python side's json.dumps(dict, sort_keys=True) format.
 func BuildSignedPayload(fields map[string]interface{}) (string, error) {
