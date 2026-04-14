@@ -750,6 +750,42 @@ func SystemInfoWithKey(cfg *Config, version, pubKeyHex string) CheckinRequest {
 	return req
 }
 
+// SystemInfoSigned returns a checkin request with the agent public key AND
+// a D1 heartbeat signature. The signature is Ed25519 over SHA-256 of the
+// canonical heartbeat payload: site_id|mac|timestamp_unix|agent_version.
+// Server records it in appliance_heartbeats.agent_signature so auditors can
+// verify liveness claims were made by the legitimate appliance key.
+//
+// Pass a SignFunc (typically daemon.SignBytes or similar). If signFn is nil
+// or returns an error, HeartbeatSignature is omitted (server treats as NULL).
+func SystemInfoSigned(
+	cfg *Config,
+	version, pubKeyHex string,
+	signFn func([]byte) ([]byte, error),
+) CheckinRequest {
+	req := SystemInfoWithKey(cfg, version, pubKeyHex)
+	if signFn == nil {
+		return req
+	}
+	// Canonical form — must match server's expectation.
+	ts := fmt.Sprintf("%d", time.Now().UTC().Unix())
+	payload := strings.Join([]string{
+		req.SiteID,
+		strings.ToUpper(req.MACAddress),
+		ts,
+		req.AgentVersion,
+	}, "|")
+	h := sha256.Sum256([]byte(payload))
+	sig, err := signFn(h[:])
+	if err != nil {
+		slog.Warn("heartbeat signing failed — sending unsigned",
+			"component", "phonehome", "error", err)
+		return req
+	}
+	req.HeartbeatSignature = hex.EncodeToString(sig)
+	return req
+}
+
 func getHostname() string {
 	h, err := os.Hostname()
 	if err != nil {
