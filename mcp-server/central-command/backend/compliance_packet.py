@@ -332,14 +332,14 @@ class CompliancePacket:
             )
         except ImportError:
             # Fallback: wrap raw markdown in <pre> so at least the content is legible.
-            body = f"<pre>{_html_escape(markdown)}</pre>"
+            body = f"<pre>{self._html_escape(markdown)}</pre>"
         title = (
             f"{data.get('clinic_name', 'Site')} — "
             f"Compliance Packet {self._period_start.strftime('%B %Y')}"
         )
         return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
-<title>{_html_escape(title)}</title>
+<title>{self._html_escape(title)}</title>
 <style>
   body{{font-family:system-ui,-apple-system,sans-serif;max-width:900px;margin:32px auto;padding:0 24px;color:#111;line-height:1.55}}
   h1{{font-size:22px;margin-bottom:4px}} h2{{font-size:18px;margin-top:28px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}}
@@ -370,13 +370,18 @@ class CompliancePacket:
             logger.warning(f"Compliance packet PDF render failed: {e}")
             return False
 
-
-def _html_escape(s: Any) -> str:
-    if s is None:
-        return ""
-    return (
-        str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    )
+    @staticmethod
+    def _html_escape(s: Any) -> str:
+        """Static helper — kept inside the class so the class body isn't
+        closed mid-definition by a module-level function."""
+        if s is None:
+            return ""
+        return (
+            str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
 
     async def _get_site_name(self) -> str:
         result = await self.db.execute(
