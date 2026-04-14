@@ -167,7 +167,29 @@ in
   # nosoftlockup: prevent false watchdog alarms during heavy dd I/O
   # audit=0: disable kernel audit on live ISO (configuration.nix enables auditd
   # with execve logging which causes kauditd hold queue overflow during boot)
-  boot.kernelParams = [ "quiet" "loglevel=1" "systemd.show_status=false" "console=tty1" "console=ttyS0,115200" "nosoftlockup" "audit=0" ];
+  # v13 (Session 206): amdgpu on Ryzen Embedded (HP t640 Thin Client with
+  # Radeon Vega) crashes the framebuffer during install, leaving the TTY1
+  # progress display warped while the installer runs invisibly underneath.
+  # Research: incomplete amdgpu firmware/IP-block init → framebuffer
+  # destruction → `nomodeset` + simple-framebuffer disabled is the
+  # production workaround. We ship `console=ttyS0,115200` as a serial
+  # fallback so operators with working serial (IPMI/console servers) see
+  # the install regardless of GPU state. Trade-off: no GPU accel in the
+  # installer — acceptable for a headless appliance.
+  # Sources: Arch Linux / Ubuntu launchpad bug 2003524 / freebsd forums.
+  boot.kernelParams = [
+    "quiet" "loglevel=1" "systemd.show_status=false"
+    "console=tty1" "console=ttyS0,115200"
+    "nosoftlockup" "audit=0"
+    # AMDGPU framebuffer hardening:
+    "nomodeset"                           # fallback VGA/VESA, bypass KMS
+    "video=efifb:off"                     # prevent efifb from grabbing fb0
+    "video=vesafb:off"                    # and vesafb
+    "initcall_blacklist=sysfb_init"       # stop sysfb from fighting drm
+    "fbcon=map:1"                         # fbcon on tty1→fb1 (no conflict with drm on fb0)
+    "amdgpu.dc=0"                         # disable Display Core — use legacy path
+    "iommu=pt"                            # passthrough IOMMU (fixes Ryzen Embedded quirks)
+  ];
   # Blacklist noisy Logitech HID++ driver — spams battery protocol errors on tty
   boot.blacklistedKernelModules = [ "hid_logitech_hidpp" ];
   boot.loader.timeout = lib.mkForce 3;
@@ -241,8 +263,9 @@ in
     };
 
     path = with pkgs; [
-      util-linux      # lsblk, blockdev, findmnt, partprobe, mount, umount, uuidgen
+      util-linux      # lsblk, blockdev, findmnt, partprobe, mount, umount, uuidgen, wipefs
       parted          # partprobe (kernel re-read after dd)
+      gptfdisk        # sgdisk — zap GPT/MBR pre-install (v13, Session 206)
       dosfstools      # fsck.vfat (not used in dd flow but harmless)
       e2fsprogs       # e2fsck, resize2fs (root partition resize)
       coreutils gnugrep gawk procps
@@ -891,23 +914,33 @@ JSONEND
       # 10-second reinstall countdown. The dd pass that follows overwrites
       # the disk regardless, so label-only detection is sufficient.
       set_step 4 "''${WHITE}Checking target disk...''${RESET}"
-      NIXOS_PART=$(lsblk -rno NAME,LABEL "$INTERNAL_DEV" 2>/dev/null | grep nixos | head -1 | awk '{print $1}')
-      if [ -n "$NIXOS_PART" ] && [ ! -f /tmp/force-reinstall ]; then
-        log "existing install detected via label 'nixos' on /dev/$NIXOS_PART (no mount probe)"
-        stop_heartbeat_daemon
-        clear_screen
-        echo ""
-        echo -e "  ''${YELLOW}Existing installation detected on $INTERNAL_DEV ($DEV_SIZE)''${RESET}"
-        echo -e "  ''${WHITE}Auto-reinstall in 10 seconds...''${RESET}"
-        echo ""
-        for i in 10 9 8 7 6 5 4 3 2 1; do
-          echo -ne "\r  ''${DIM}Reinstall in ''${WHITE}$i''${RESET}''${DIM}s...  (Ctrl+C to cancel)''${RESET}  "
-          sleep 1
-        done
-        echo ""
-        log "auto-reinstall: proceeding after 10s countdown"
-        start_heartbeat_daemon
-      fi
+      # v13 (Session 206): the "reinstall countdown" that used to live
+      # here read LABELs via lsblk, which triggered a blkid FS probe per
+      # partition and hung indefinitely on BitLocker / corrupted NTFS /
+      # unlocked LUKS headers (observed 2026-04-13 on HP t640 with prior
+      # Windows install). The countdown was cosmetic UX — the dd pass
+      # overwrites unconditionally — so we removed it.
+      #
+      # Instead, IMMEDIATELY neutralize the existing partition table so
+      # nothing downstream accidentally probes a half-readable FS. All
+      # operations bounded with timeout + --kill-after. Each failure is
+      # non-fatal: if the disk refuses sgdisk or wipefs, dd will still
+      # write the raw image and overwrite everything anyway.
+      #
+      # Research (Talos Linux install pattern, Rook/Ceph disk prep,
+      # util-linux docs): `sgdisk --zap-all` nukes both GPT and MBR
+      # structures; `wipefs --all -f` erases FS/RAID/partition signatures
+      # so libblkid can no longer trip on them. Together they guarantee
+      # a clean-slate disk before any downstream read.
+      log "pre-wipe: neutralizing existing partition table on $INTERNAL_DEV"
+      timeout --kill-after=3 10 sgdisk --zap-all --force "$INTERNAL_DEV" \
+        >> "$LOG_FILE" 2>&1 || log "sgdisk --zap-all returned non-zero (non-fatal; dd will overwrite)"
+      timeout --kill-after=3 10 wipefs --all --force "$INTERNAL_DEV" \
+        >> "$LOG_FILE" 2>&1 || log "wipefs --all returned non-zero (non-fatal; dd will overwrite)"
+      # Inform the kernel the partition table changed — bounded.
+      timeout --kill-after=3 5 partprobe "$INTERNAL_DEV" \
+        >> "$LOG_FILE" 2>&1 || log "partprobe returned non-zero (non-fatal)"
+      log "pre-wipe complete — target disk is ready for dd"
 
       set_step 5 "''${WHITE}Target ready: ''${DEV_DESC}''${RESET}"
       sleep 1
