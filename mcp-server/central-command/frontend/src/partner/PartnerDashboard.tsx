@@ -8,6 +8,7 @@ import { PartnerComplianceSettings } from './PartnerComplianceSettings';
 import { PartnerExceptionManagement } from './PartnerExceptionManagement';
 import { PartnerLearning } from './PartnerLearning';
 import { PartnerEscalations } from './PartnerEscalations';
+import { PartnerHomeDashboard } from './PartnerHomeDashboard';
 import { PartnerDriftConfig } from './PartnerDriftConfig';
 import { PartnerOnboarding } from './PartnerOnboarding';
 import { PartnerSSOConfig } from './PartnerSSOConfig';
@@ -268,6 +269,9 @@ export const PartnerDashboard: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* Partner hero dashboard (Session 206 round-table P0) */}
+      <PartnerHomeDashboard />
 
       {/* Stats */}
       <div className="max-w-7xl mx-auto px-6 py-6">

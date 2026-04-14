@@ -214,6 +214,23 @@ jobs:
         run: |
           python3 -m pytest tests/test_yaml_daemon_compat.py -v --tb=short
 
+      - name: Partner dashboard cross-partner isolation (PG)
+        # Session 206 partner round-table P0: single most trust-ending
+        # bug class is leaking one partner's sites into another's dashboard.
+        # Pins the isolation contract at the SQL layer.
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_partner_dashboard_isolation.py -v --tb=short
+
+      - name: Flywheel hero metric math (PG)
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_flywheel_hero_metric_pg.py -v --tb=short
+
       - name: Flywheel Spine — state machine + orchestrator (PG)
         # Session 206 redesign: the spine. This test is the contract —
         # if it passes, the flywheel's state machine is intact end-to-end.

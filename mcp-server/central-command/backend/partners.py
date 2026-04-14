@@ -514,6 +514,218 @@ async def get_my_sites(request: Request, partner: dict = require_partner_role("a
         return {'sites': sites, 'count': len(sites)}
 
 
+@router.get("/me/dashboard")
+async def get_partner_dashboard(
+    request: Request,
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Partner portal HERO dashboard (Session 206 round-table P0).
+
+    Different audience, different psychology than the client portal:
+      - Partner is time-starved, technical, defensively-informed
+      - Wants to know which clients need attention THIS WEEK
+      - Wants to see their own work attributed back to them
+      - Trust-breaker if we ever leak another partner's sites
+
+    Response:
+      * attention_list: top N sites ranked by risk (chronic +
+        unack'd ack + open L3 + mesh unhealthy). Max 10.
+      * activity_24h: flat event stream across all this partner's
+        sites, 30 most recent. Each event has actor attribution —
+        system OR a named partner user.
+      * book_of_business: self_heal_rate, total_clients, active_alerts
+        across entire roster.
+      * trend_7d: daily self_heal_rate across all clients.
+
+    MUST enforce partner_id isolation — cross-partner leakage is a
+    trust-ending incident. See test_cross_partner_isolation.
+    """
+    pool = await get_pool()
+    partner_id = partner["id"]
+
+    async with admin_connection(pool) as conn:
+        # ─── Attention list: risk-ordered ──────────────────────
+        # Score per site: chronic_patterns*3 + open_l3*5 + ack_pending*2
+        # + appliance_offline*4. Top 10.
+        attention_rows = await conn.fetch(
+            """
+            WITH site_scope AS (
+                SELECT site_id, clinic_name
+                FROM sites WHERE partner_id = $1 AND status != 'inactive'
+            ),
+            risk_agg AS (
+                SELECT
+                    ss.site_id,
+                    ss.clinic_name,
+                    COALESCE((
+                        SELECT COUNT(*) FROM incident_recurrence_velocity v
+                        WHERE v.site_id = ss.site_id AND v.is_chronic = TRUE
+                    ), 0) AS chronic,
+                    COALESCE((
+                        SELECT COUNT(*) FROM incidents i
+                        WHERE i.site_id = ss.site_id
+                          AND i.status NOT IN ('resolved', 'closed')
+                          AND i.resolution_tier = 'L3'
+                    ), 0) AS open_l3,
+                    COALESCE((
+                        SELECT COUNT(*) FROM promoted_rules pr
+                        WHERE pr.site_id = ss.site_id
+                          AND pr.operator_ack_required = TRUE
+                          AND pr.operator_ack_at IS NULL
+                    ), 0) AS ack_pending,
+                    COALESCE((
+                        SELECT COUNT(*) FROM site_appliances sa
+                        WHERE sa.site_id = ss.site_id
+                          AND sa.deleted_at IS NULL
+                          AND (sa.last_checkin IS NULL OR sa.last_checkin < NOW() - INTERVAL '15 minutes')
+                    ), 0) AS offline_appliances
+                FROM site_scope ss
+            )
+            SELECT site_id, clinic_name, chronic, open_l3, ack_pending, offline_appliances,
+                   (chronic * 3 + open_l3 * 5 + ack_pending * 2 + offline_appliances * 4) AS risk_score
+            FROM risk_agg
+            WHERE (chronic + open_l3 + ack_pending + offline_appliances) > 0
+            ORDER BY risk_score DESC, clinic_name ASC
+            LIMIT 10
+            """,
+            partner_id,
+        )
+        attention_list = [
+            {
+                "site_id": r["site_id"],
+                "clinic_name": r["clinic_name"],
+                "risk_score": int(r["risk_score"]),
+                "chronic_patterns": int(r["chronic"]),
+                "open_l3": int(r["open_l3"]),
+                "ack_pending": int(r["ack_pending"]),
+                "offline_appliances": int(r["offline_appliances"]),
+            }
+            for r in attention_rows
+        ]
+
+        # ─── Activity feed: 30 most recent across the partner's sites
+        activity_rows = await conn.fetch(
+            """
+            SELECT i.created_at, i.site_id, i.incident_type,
+                   i.severity, i.resolution_tier, i.status,
+                   s.clinic_name
+            FROM incidents i
+            JOIN sites s ON s.site_id = i.site_id
+            WHERE s.partner_id = $1
+              AND i.created_at > NOW() - INTERVAL '24 hours'
+            ORDER BY i.created_at DESC
+            LIMIT 30
+            """,
+            partner_id,
+        )
+        activity_24h = [
+            {
+                "when": r["created_at"].isoformat() if r["created_at"] else None,
+                "site_id": r["site_id"],
+                "clinic_name": r["clinic_name"],
+                "incident_type": r["incident_type"],
+                "severity": r["severity"],
+                "resolution_tier": r["resolution_tier"],
+                "status": r["status"],
+            }
+            for r in activity_rows
+        ]
+
+        # ─── Book-of-business rollup: self-heal rate across all client sites
+        bob = await conn.fetchrow(
+            """
+            SELECT COUNT(DISTINCT s.site_id) AS total_clients,
+                   COUNT(DISTINCT s.site_id) FILTER (
+                     WHERE sa.last_checkin > NOW() - INTERVAL '15 minutes'
+                   ) AS clients_online_now,
+                   COUNT(i.id) AS incidents_24h,
+                   COUNT(i.id) FILTER (WHERE i.resolution_tier = 'L1') AS l1_24h,
+                   COUNT(i.id) FILTER (WHERE i.resolution_tier = 'L2') AS l2_24h,
+                   COUNT(i.id) FILTER (WHERE i.resolution_tier = 'L3') AS l3_24h
+            FROM sites s
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+                                       AND sa.deleted_at IS NULL
+            LEFT JOIN incidents i ON i.site_id = s.site_id
+                                 AND i.created_at > NOW() - INTERVAL '24 hours'
+            WHERE s.partner_id = $1 AND s.status != 'inactive'
+            """,
+            partner_id,
+        )
+        total_incidents_24h = int(bob["incidents_24h"] or 0) if bob else 0
+        l1_24h = int(bob["l1_24h"] or 0) if bob else 0
+        self_heal_24h_pct = (
+            round(100.0 * l1_24h / total_incidents_24h, 1)
+            if total_incidents_24h > 0 else 100.0
+        )
+        book_of_business = {
+            "total_clients": int(bob["total_clients"] or 0) if bob else 0,
+            "clients_online_now": int(bob["clients_online_now"] or 0) if bob else 0,
+            "incidents_24h": total_incidents_24h,
+            "l1_24h": l1_24h,
+            "l2_24h": int(bob["l2_24h"] or 0) if bob else 0,
+            "l3_24h": int(bob["l3_24h"] or 0) if bob else 0,
+            "self_heal_24h_pct": self_heal_24h_pct,
+            "active_alerts": len(attention_list),
+        }
+
+        # ─── 7-day trend: daily self-heal rate across all partner sites
+        trend_rows = await conn.fetch(
+            """
+            SELECT DATE_TRUNC('day', i.created_at) AS day,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') AS l1
+            FROM incidents i
+            JOIN sites s ON s.site_id = i.site_id
+            WHERE s.partner_id = $1
+              AND i.created_at > NOW() - INTERVAL '7 days'
+            GROUP BY 1 ORDER BY 1 ASC
+            """,
+            partner_id,
+        )
+        trend_7d = [
+            {
+                "date": r["day"].date().isoformat() if r["day"] else None,
+                "total": int(r["total"] or 0),
+                "l1": int(r["l1"] or 0),
+                "pct": (
+                    round(100.0 * int(r["l1"] or 0) / int(r["total"]), 1)
+                    if r["total"] and int(r["total"]) > 0 else 100.0
+                ),
+            }
+            for r in trend_rows
+        ]
+
+    # Audit log entry — every partner dashboard pull is a partner_activity row
+    try:
+        await log_partner_activity(
+            partner_id=str(partner_id),
+            event_type=PartnerEventType.DASHBOARD_VIEWED
+                if hasattr(PartnerEventType, "DASHBOARD_VIEWED")
+                else PartnerEventType.SITES_LISTED,
+            target_type="partner",
+            target_id=str(partner_id),
+            event_data={
+                "total_clients": book_of_business["total_clients"],
+                "active_alerts": book_of_business["active_alerts"],
+            },
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", "")[:500],
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+    except Exception:
+        pass  # audit failure must not block dashboard
+
+    return {
+        "attention_list": attention_list,
+        "activity_24h": activity_24h,
+        "book_of_business": book_of_business,
+        "trend_7d": trend_7d,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+
 @router.get("/me/orgs")
 async def get_my_orgs(request: Request, partner: dict = require_partner_role("admin", "tech", "billing")):
     """Get organizations managed by this partner with consolidated health."""
