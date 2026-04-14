@@ -240,6 +240,88 @@ in
   '';
 
   # ============================================================================
+  # ============================================================================
+  # AUTO-WIFI-CONFIG (v14, Session 206)
+  # If the installer USB has a wifi.conf in the squashfs root (shipped
+  # at ISO build time) OR on a secondary FAT32 partition, install it
+  # to wpa_supplicant's config before wpa_supplicant.service starts.
+  # Expected format:
+  #   ssid=MyNetwork
+  #   psk=mypassword
+  # (PSK in plaintext is accepted for simplicity; wpa_passphrase can
+  # be run separately to produce a hashed form if desired.)
+  # ============================================================================
+  systemd.services.auto-wifi-config = {
+    description = "MSP Installer: auto-configure wifi from /iso/wifi.conf if present";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "wpa_supplicant.service" ];
+    wants = [ "local-fs.target" ];
+    after = [ "local-fs.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      StandardOutput = "journal";
+    };
+    path = with pkgs; [ coreutils gnused gawk gnugrep ];
+    script = ''
+      set -u  # treat unset vars as errors (but not set -e — errors are non-fatal here)
+      CONF_SRC=""
+      # Probe the usual locations for a wifi.conf. The squashfs /iso
+      # mount is the most reliable since it's always mounted when the
+      # live ISO boots. A secondary FAT32 partition is a nicer UX
+      # (operator drops the file on a running USB) but isn't always
+      # auto-mounted, so we fall back to the live ISO's root.
+      for cand in /iso/wifi.conf /wifi.conf /etc/wifi.conf; do
+        if [ -f "$cand" ]; then
+          CONF_SRC="$cand"
+          break
+        fi
+      done
+      if [ -z "$CONF_SRC" ]; then
+        echo "auto-wifi-config: no wifi.conf found — skipping wifi setup"
+        exit 0
+      fi
+      echo "auto-wifi-config: found $CONF_SRC"
+      SSID=$(grep -E '^ssid=' "$CONF_SRC" 2>/dev/null | head -1 | cut -d= -f2-)
+      PSK=$(grep -E '^psk=' "$CONF_SRC" 2>/dev/null | head -1 | cut -d= -f2-)
+      if [ -z "$SSID" ]; then
+        echo "auto-wifi-config: $CONF_SRC has no ssid= line — skipping"
+        exit 0
+      fi
+      # Write wpa_supplicant config at the path networking.wireless expects.
+      # Using open network if no PSK (for open wifi test networks).
+      if [ -z "$PSK" ]; then
+        echo "auto-wifi-config: writing open-network config for SSID=$SSID"
+        cat > /etc/wpa_supplicant.conf <<EOF
+ctrl_interface=/run/wpa_supplicant
+ctrl_interface_group=wheel
+update_config=1
+
+network={
+  ssid="$SSID"
+  key_mgmt=NONE
+}
+EOF
+      else
+        echo "auto-wifi-config: writing WPA2-PSK config for SSID=$SSID"
+        cat > /etc/wpa_supplicant.conf <<EOF
+ctrl_interface=/run/wpa_supplicant
+ctrl_interface_group=wheel
+update_config=1
+
+network={
+  ssid="$SSID"
+  psk="$PSK"
+  key_mgmt=WPA-PSK
+}
+EOF
+      fi
+      chmod 600 /etc/wpa_supplicant.conf
+      echo "auto-wifi-config: /etc/wpa_supplicant.conf written"
+    '';
+  };
+
+  # ============================================================================
   # ZERO FRICTION AUTO-INSTALL SERVICE
   # Detects internal drive, writes embedded raw image via dd+zstd
   # No network required — full NixOS closure is on the ISO
@@ -266,6 +348,9 @@ in
       util-linux      # lsblk, blockdev, findmnt, partprobe, mount, umount, uuidgen, wipefs
       parted          # partprobe (kernel re-read after dd)
       gptfdisk        # sgdisk — zap GPT/MBR pre-install (v13, Session 206)
+      wpa_supplicant  # v14: wifi support for operator fallback when eth dead
+      iw              # v14: wifi scan/connect/debug
+      wirelesstools   # v14: iwconfig for legacy cards
       dosfstools      # fsck.vfat (not used in dd flow but harmless)
       e2fsprogs       # e2fsck, resize2fs (root partition resize)
       coreutils gnugrep gawk procps
@@ -804,6 +889,33 @@ JSONEND
       # v10: Network readiness gate. Checks DHCP/NTP/API reachability.
       # Self-bounded: ntpdate(15s) + curl(10s).
       set_step 3 "''${WHITE}Checking network readiness...''${RESET}"
+
+      # v14 (Session 206): DHCP wait gate. Observed 2026-04-13:
+      # check_network ran at T+0 when USB-ethernet had LINK but DHCP was
+      # still negotiating. Probe logged dhcp=false; the lease came up 3s
+      # later. Fix: before running the network probe, wait up to 30s for
+      # ANY interface to get a default route + IP. Proceed regardless
+      # on timeout — check_network is non-fatal and will log the state
+      # we ended up with.
+      log "DHCP wait gate: waiting up to 30s for a usable default route..."
+      _net_start=$(date +%s)
+      _net_deadline=$(( _net_start + 30 ))
+      while [ "$(date +%s)" -lt "$_net_deadline" ]; do
+        _net_iface=$(ip -o -4 route show default 2>/dev/null | awk '{print $5; exit}')
+        _net_ip=""
+        if [ -n "$_net_iface" ]; then
+          _net_ip=$(ip -o -4 addr show "$_net_iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+        fi
+        if [ -n "$_net_iface" ] && [ -n "$_net_ip" ]; then
+          log "DHCP wait gate: network ready after $(( $(date +%s) - _net_start ))s (iface=$_net_iface ip=$_net_ip)"
+          break
+        fi
+        sleep 2
+      done
+      if [ -z "''${_net_iface:-}" ] || [ -z "''${_net_ip:-}" ]; then
+        log "DHCP wait gate: timed out after 30s — no default route found. Install will proceed; telemetry will be skipped."
+      fi
+
       check_network || true
 
       # Check if we're running from live ISO
@@ -1577,6 +1689,20 @@ JSONEND
       allowedTCPPorts = [ 80 22 8080 50051 8082 8083 ];  # Status + SSH + Sensor API + gRPC + Scanner API + Local Portal
       allowedUDPPorts = [ 5353 ];   # mDNS
       # No other inbound - pull-only architecture
+    };
+
+    # v14 (Session 206): wifi support for operator fallback when the
+    # wired NIC is dead (observed on one HP t640 unit). wpa_supplicant
+    # runs as a systemd service; if /iso/wifi.conf (on the installer
+    # ISO's data partition, or in the squashfs) is present, it drives
+    # the connection without operator interaction. Otherwise an
+    # operator can drop to TTY3 and run `wpa_supplicant -i wlan0 -c ...`
+    # manually. Either way wired DHCP is tried first.
+    wireless = {
+      enable = true;
+      # No declarative networks at build time — auto-wifi-config service
+      # below writes /etc/wpa_supplicant.conf from USB-provided config.
+      userControlled.enable = true;
     };
   };
 
