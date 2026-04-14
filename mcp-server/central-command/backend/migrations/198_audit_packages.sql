@@ -46,9 +46,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_packages_site_period
     ON audit_packages(site_id, period_end DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_packages_framework
     ON audit_packages(framework, period_end DESC);
+-- Full index (not partial) — Postgres rejects CURRENT_DATE in predicates
+-- as not immutable. Retention-cleanup jobs filter at query time instead.
 CREATE INDEX IF NOT EXISTS idx_audit_packages_retain
-    ON audit_packages(retain_until)
-    WHERE retain_until > CURRENT_DATE;
+    ON audit_packages(retain_until);
 
 COMMENT ON TABLE audit_packages IS
     'Session 206 #150: client-facing audit package handoffs to HIPAA / SOC 2 / '
