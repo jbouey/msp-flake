@@ -64,6 +64,8 @@ ALLOWED_EVENTS = {
     "watchdog_reset_api_key",
     "watchdog_redeploy_daemon",
     "watchdog_collect_diagnostics",
+    # Session 207 Phase S escape hatch — see fleet_cli comment.
+    "enable_recovery_shell_24h",
 }
 
 

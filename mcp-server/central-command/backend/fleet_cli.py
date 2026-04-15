@@ -157,6 +157,12 @@ PRIVILEGED_ORDER_TYPES = {
     "watchdog_reset_api_key",
     "watchdog_redeploy_daemon",
     "watchdog_collect_diagnostics",
+    # Session 207 Phase S escape hatch: time-boxed SSH re-enable for
+    # installed systems that shipped with sshd disabled. Watchdog
+    # receives, writes operator pubkey to AuthorizedKeysFile, starts
+    # sshd, arms a systemd-run transient timer to stop sshd + wipe
+    # keys at duration_hours expiry. Bypassable only with a new order.
+    "enable_recovery_shell_24h",
 }
 PRIVILEGED_RATE_LIMIT_PER_WEEK = 3  # per site, per event_type
 

@@ -327,6 +327,8 @@ def test_allowed_events_matches_privileged_order_types():
         "watchdog_reset_api_key",
         "watchdog_redeploy_daemon",
         "watchdog_collect_diagnostics",
+        # Session 207 Phase S escape hatch
+        "enable_recovery_shell_24h",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted. Got {paa.ALLOWED_EVENTS}. Update "
