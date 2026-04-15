@@ -59,12 +59,14 @@ jobs:
       # pytest's per-file try/except swallowed the collection-time
       # ImportError, 400+ tests "passed", deploy step still ran exit-1,
       # and the ACTUAL error only appeared halfway through a 20 000-line
-      # log. A single `import dashboard_api.main` here fails in <1s with
-      # a clear stacktrace, before any test runs.
-      - name: Import sanity — dashboard_api.main must load clean
+      # log. A single `import main` here fails in <1s with a clear
+      # stacktrace, before any test runs. `main.py` lives at
+      # mcp-server/main.py and pulls in every dashboard_api.* submodule
+      # used by the live service, so this is the right load check.
+      - name: Import sanity — backend loads clean
         working-directory: mcp-server
         run: |
-          python -c "import dashboard_api.main; print('dashboard_api.main imports clean')"
+          python -c "import main; print('mcp-server/main.py loads clean')"
 
       - name: Run backend tests
         working-directory: mcp-server/central-command/backend
