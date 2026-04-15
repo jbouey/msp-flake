@@ -464,6 +464,18 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="An appliance completed the live-USB install phase but the installed system has never phoned home. Check the local status beacon at :8443 or the /boot/msp-boot-diag.json dump for per-boot diagnostics.",
         check=lambda c: _check_installed_but_silent(c),
     ),
+    Assertion(
+        name="watchdog_silent",
+        severity="sev1",
+        description="Watchdog service on a previously-reporting appliance has stopped checking in for >10 min. SSH-strip precondition regression — investigate immediately.",
+        check=lambda c: _check_watchdog_silent(c),
+    ),
+    Assertion(
+        name="watchdog_reports_daemon_down",
+        severity="sev2",
+        description="Watchdog is alive but reports the main daemon is not active. Issue watchdog_restart_daemon fleet order to remediate.",
+        check=lambda c: _check_watchdog_reports_daemon_down(c),
+    ),
 ]
 
 
@@ -689,6 +701,94 @@ async def _check_mac_rekeyed_recently(conn: asyncpg.Connection) -> List[Violatio
                 "latest_claimed_at": r["latest"].isoformat(),
                 "sources": list(r["sources"] or []),
                 "interpretation": "reinstall churn OR impersonation — verify with operator",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_watchdog_silent(conn: asyncpg.Connection) -> List[Violation]:
+    """The appliance-watchdog service checks in every 2 min. If an
+    appliance has ever produced a watchdog_events.checkin AND the
+    latest such row is > 10 min stale, either (a) the watchdog itself
+    is down or (b) the box has lost network. Either way an operator
+    needs to know because the watchdog is the SSH-strip precondition;
+    if it's broken, we've regressed to needing SSH for recovery.
+
+    Doesn't fire for appliances that never registered a watchdog
+    (pre-v30 fleet) — only for boxes that USED to report and stopped.
+    That distinction matters during the rollout window.
+    """
+    rows = await conn.fetch(
+        """
+        WITH latest AS (
+            SELECT DISTINCT ON (appliance_id)
+                   site_id, appliance_id, created_at
+              FROM watchdog_events
+             WHERE event_type = 'checkin'
+          ORDER BY appliance_id, created_at DESC
+        )
+        SELECT site_id, appliance_id, created_at,
+               EXTRACT(EPOCH FROM (NOW() - created_at))/60 AS minutes_silent
+          FROM latest
+         WHERE created_at < NOW() - INTERVAL '10 minutes'
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "watchdog_appliance_id": r["appliance_id"],
+                "last_checkin": r["created_at"].isoformat(),
+                "minutes_silent": float(r["minutes_silent"] or 0),
+                "remediation": (
+                    "Watchdog service on this appliance has stopped reporting. "
+                    "Either the watchdog binary crashed, the -watchdog bearer "
+                    "is invalid, or the box is fully offline. Check "
+                    "site_appliances.last_checkin for the main daemon too — if "
+                    "both are silent, physical/console access is now required. "
+                    "If only the watchdog is silent, the watchdog is the bug."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_watchdog_reports_daemon_down(conn: asyncpg.Connection) -> List[Violation]:
+    """Watchdog is alive (recent checkin) AND its payload reports that
+    the main daemon is NOT active. The watchdog did its job — surfaced
+    the problem — now operator action is needed.
+    """
+    rows = await conn.fetch(
+        """
+        WITH latest AS (
+            SELECT DISTINCT ON (appliance_id)
+                   site_id, appliance_id, created_at, payload
+              FROM watchdog_events
+             WHERE event_type = 'checkin'
+          ORDER BY appliance_id, created_at DESC
+        )
+        SELECT site_id, appliance_id, created_at, payload
+          FROM latest
+         WHERE created_at > NOW() - INTERVAL '10 minutes'
+           AND payload->>'main_daemon_status' IS DISTINCT FROM 'active'
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "watchdog_appliance_id": r["appliance_id"],
+                "watchdog_last_checkin": r["created_at"].isoformat(),
+                "main_daemon_status": r["payload"].get("main_daemon_status"),
+                "main_daemon_substate": r["payload"].get("main_daemon_substate"),
+                "remediation": (
+                    "Watchdog reports the main daemon is down. Issue a "
+                    "watchdog_restart_daemon fleet order via "
+                    "fleet_cli --actor-email / --reason. If that fails, "
+                    "escalate to watchdog_redeploy_daemon."
+                ),
             },
         )
         for r in rows

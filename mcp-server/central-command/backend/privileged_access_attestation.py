@@ -54,6 +54,16 @@ ALLOWED_EVENTS = {
     "disable_emergency_access",
     "signing_key_rotation",
     "bulk_remediation",
+    # Session 207 Phase W0 — watchdog order catalog. Kept in lockstep
+    # with fleet_cli.PRIVILEGED_ORDER_TYPES + migration 218
+    # v_privileged_types. CI enforces via
+    # scripts/check_privileged_chain_lockstep.py.
+    "watchdog_restart_daemon",
+    "watchdog_refetch_config",
+    "watchdog_reset_pin_store",
+    "watchdog_reset_api_key",
+    "watchdog_redeploy_daemon",
+    "watchdog_collect_diagnostics",
 }
 
 

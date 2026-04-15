@@ -30,7 +30,31 @@ import sys
 REPO = pathlib.Path(__file__).resolve().parent.parent
 FLEET_CLI = REPO / "mcp-server/central-command/backend/fleet_cli.py"
 ATTESTATION = REPO / "mcp-server/central-command/backend/privileged_access_attestation.py"
-MIGRATION_175 = REPO / "mcp-server/central-command/backend/migrations/175_privileged_chain_enforcement.sql"
+MIGRATIONS_DIR = REPO / "mcp-server/central-command/backend/migrations"
+
+
+def _find_authoritative_migration() -> pathlib.Path:
+    """Return the latest migration file that defines `v_privileged_types`.
+    Migration 175 introduced the enforcement trigger; subsequent migrations
+    can redefine the function (e.g., migration 218 added the watchdog_*
+    types). The HIGHEST-numbered migration containing the array literal
+    is authoritative — that's the body CREATE OR REPLACE leaves live.
+    """
+    candidates = []
+    for p in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        try:
+            src = p.read_text()
+        except Exception:
+            continue
+        if re.search(r"v_privileged_types\s+TEXT\[\]\s*:=\s*ARRAY", src):
+            # Extract numeric prefix for ordering (e.g. "218_foo.sql" → 218)
+            m = re.match(r"(\d+)_", p.name)
+            if m:
+                candidates.append((int(m.group(1)), p))
+    if not candidates:
+        _fail("no migration defines v_privileged_types", code=2)
+    candidates.sort(key=lambda t: t[0])
+    return candidates[-1][1]
 
 
 def _fail(msg: str, code: int = 1) -> "None":
@@ -81,11 +105,12 @@ def extract_sql_array(path: pathlib.Path, var_name: str) -> set[str]:
 def main() -> int:
     fleet_cli_types = extract_python_set(FLEET_CLI, "PRIVILEGED_ORDER_TYPES")
     allowed_events = extract_python_set(ATTESTATION, "ALLOWED_EVENTS")
-    migration_types = extract_sql_array(MIGRATION_175, "v_privileged_types")
+    authoritative = _find_authoritative_migration()
+    migration_types = extract_sql_array(authoritative, "v_privileged_types")
 
     print(f"fleet_cli.PRIVILEGED_ORDER_TYPES  = {sorted(fleet_cli_types)}")
     print(f"attestation.ALLOWED_EVENTS         = {sorted(allowed_events)}")
-    print(f"migration 175 v_privileged_types   = {sorted(migration_types)}")
+    print(f"{authoritative.name} v_privileged_types = {sorted(migration_types)}")
 
     errors: list[str] = []
 
