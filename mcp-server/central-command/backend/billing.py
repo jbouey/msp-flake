@@ -564,7 +564,20 @@ async def stripe_webhook(request: Request):
     logger.info(f"Received Stripe webhook: {event_type} ({event_id})")
 
     if event_type == "checkout.session.completed":
-        # New subscription created via checkout
+        # Client signup flow — session.metadata.signup_id matches a
+        # signup_sessions row. Dispatch to client_signup for the
+        # subscription-row upsert + provisioning kickoff.
+        signup_id = data.metadata.get("signup_id")
+        if signup_id:
+            try:
+                from .client_signup import handle_checkout_completed_for_signup
+            except ImportError:
+                from client_signup import handle_checkout_completed_for_signup
+            await handle_checkout_completed_for_signup(
+                {"object": data.to_dict() if hasattr(data, "to_dict") else dict(data)}
+            )
+
+        # Partner flow (pre-existing) — session.metadata.partner_id
         partner_id = data.metadata.get("partner_id")
         if partner_id and data.subscription:
             subscription = stripe.Subscription.retrieve(data.subscription)
