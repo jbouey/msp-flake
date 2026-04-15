@@ -65,7 +65,7 @@ let
   # Build the Go appliance daemon (replaces Python compliance-agent)
   # Single source of truth for the installer-ISO daemon version. Bump here
   # AND in appliance-disk-image.nix when the daemon binary version changes.
-  daemonVersion = "0.4.4";
+  daemonVersion = "0.4.5";
 
   appliance-daemon-go = pkgs.buildGoModule {
     pname = "appliance-daemon";
@@ -166,7 +166,7 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v27";
+    installer_version = "v28";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
@@ -406,7 +406,7 @@ EOF
       exec 2> >(tee -a "$LOG_FILE" >&2)
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v27"
+      INSTALLER_VERSION="v28"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
@@ -1352,6 +1352,94 @@ JSONEND
         }
       else
         log "Disk same size as image or smaller — skipping resize"
+      fi
+
+      # ── Step 3.5 (v28): MSP-DATA verification + recovery ────────
+      # The resize branch above can silently abandon sfdisk-append or
+      # mkfs.ext4 on misbehaving eMMC controllers (observed on .226 /
+      # .227 where the installed system booted into a 90s systemd wait
+      # for /dev/disk/by-partlabel/MSP-DATA that never appeared).
+      # Always verify the partition exists, has the MSP-DATA partlabel,
+      # and holds a usable ext4 filesystem — rebuild whatever is
+      # missing with a tight timeout. Non-fatal on failure; the
+      # installed system's msp-data-partition-recovery.service is the
+      # second line of defense.
+      set_step 85 "''${WHITE}Verifying MSP-DATA partition...''${RESET}"
+      log "Step 3.5 (v28): Verifying MSP-DATA partition exists + is ext4-labeled"
+
+      msp_data_ok() {
+        # Partition must exist as a block device, have PARTLABEL=MSP-DATA,
+        # and be a readable ext4 filesystem labeled MSP-DATA.
+        [ -b "$DATA_PART" ] || return 1
+        partlabel=$(blkid -o value -s PARTLABEL "$DATA_PART" 2>/dev/null || true)
+        fslabel=$(blkid -o value -s LABEL "$DATA_PART" 2>/dev/null || true)
+        fstype=$(blkid -o value -s TYPE "$DATA_PART" 2>/dev/null || true)
+        [ "$partlabel" = "MSP-DATA" ] && [ "$fslabel" = "MSP-DATA" ] && [ "$fstype" = "ext4" ]
+      }
+
+      if msp_data_ok; then
+        log "MSP-DATA partition verified: partlabel+fslabel match, ext4 OK"
+      else
+        log "MSP-DATA partition missing or incomplete — running recovery"
+
+        # ── Pre-delete safety probe ──────────────────────────────
+        # On a re-flashed appliance the operator already chose to destroy
+        # prior state by writing the raw image. But belt-and-suspenders:
+        # if partition 3 mounts read-only and contains non-empty data,
+        # skip recovery and surface it to the operator instead of
+        # blowing it away. This guards against the msp_data_ok() strict-
+        # label check false-negating on a disk that actually has a
+        # working (differently-labeled) filesystem.
+        safe_to_reformat=1
+        if [ -b "$DATA_PART" ]; then
+          mkdir -p /tmp/msp-data-probe
+          if bounded_abandon 15 probe_mount mount -o ro "$DATA_PART" /tmp/msp-data-probe 2>/dev/null; then
+            probe_content=$(ls -A /tmp/msp-data-probe 2>/dev/null || true)
+            umount /tmp/msp-data-probe 2>/dev/null || true
+            if [ -n "$probe_content" ]; then
+              log "WARNING: partition 3 is mountable AND non-empty — skipping recovery to preserve data. Operator must inspect manually."
+              safe_to_reformat=0
+            fi
+          fi
+        fi
+
+        # Recompute sector geometry in case resize skipped (small disk path).
+        DISK_SECTORS=$(blockdev --getsz "$INTERNAL_DEV")
+        DATA_SECTORS=4194304  # 2GB / 512B sectors
+        GPT_BACKUP=34
+        # Only recover if there's room for a 2GB tail partition. Otherwise
+        # the installed system will boot with /var/lib/msp on / (nofail
+        # saves us) and the recovery service can re-attempt later.
+        if [ "$safe_to_reformat" -eq 1 ] && [ "$DISK_SECTORS" -gt $(( DATA_SECTORS + GPT_BACKUP + 2048 )) ]; then
+          # Partition 3 verified empty/unmountable above; safe to drop.
+          bounded_abandon 15 recover_del3 sfdisk --delete "$INTERNAL_DEV" 3 || true
+          bounded_abandon 15 recover_partprobe1 partprobe "$INTERNAL_DEV" || true
+
+          # Allocate partition 3 at the tail of the disk using sgdisk,
+          # which is more forgiving than sfdisk on partially-corrupt GPTs.
+          # -n 3:$start:$end (0 means "end of disk minus backup GPT").
+          DATA_START_SECTOR=$(( DISK_SECTORS - GPT_BACKUP - DATA_SECTORS ))
+          bounded_abandon 30 recover_sgdisk_new \
+            sgdisk -n 3:$DATA_START_SECTOR:0 -t 3:8300 -c 3:MSP-DATA "$INTERNAL_DEV" \
+            >> "$LOG_FILE" 2>&1 || log "WARNING: sgdisk recovery failed/abandoned"
+
+          bounded_abandon 15 recover_partprobe2 partprobe "$INTERNAL_DEV" || true
+          sleep 1
+
+          bounded_abandon 90 recover_mkfs \
+            mkfs.ext4 -F -L MSP-DATA "$DATA_PART" \
+            >> "$LOG_FILE" 2>&1 || log "WARNING: recovery mkfs.ext4 failed/abandoned"
+
+          if msp_data_ok; then
+            log "MSP-DATA recovery succeeded"
+          else
+            log "WARNING: MSP-DATA still missing after recovery; installed-system service will retry at first boot"
+          fi
+        elif [ "$safe_to_reformat" -eq 0 ]; then
+          log "Skipping installer-side recovery — data preservation guard active. Installed-system service will re-evaluate on first boot."
+        else
+          log "Disk too small for 2GB MSP-DATA tail; deferring to installed-system recovery service"
+        fi
       fi
 
       set_step 86 "''${WHITE}Checking root filesystem...''${RESET}"

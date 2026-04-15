@@ -51,7 +51,7 @@ let
   # Feature-flagged: enabled by /var/lib/msp/.use-go-daemon or config.yaml use_go_daemon: true
   # Single source of truth for daemon version. Update this ONE line to bump.
   # Keep in sync with iso/appliance-image.nix's daemonVersion.
-  daemonVersion = "0.4.4";
+  daemonVersion = "0.4.5";
 
   appliance-daemon-go = pkgs.buildGoModule {
     pname = "appliance-daemon";
@@ -1133,6 +1133,138 @@ except Exception as e:
 
       log "Auto-provisioning failed - manual configuration required"
       log "Options: 1) Insert USB with config.yaml  2) Register MAC in dashboard"
+    '';
+  };
+
+  # ============================================================================
+  # MSP-DATA partition recovery (Mesh Hardening Phase 1 / installer v28)
+  # ============================================================================
+  # Second line of defense against the "MSP-DATA partition didn't get created"
+  # class of installer bug (observed on .226 / .227 where the installer
+  # abandoned sfdisk/mkfs on flaky eMMC controllers and booted into a 90s
+  # systemd wait for /dev/disk/by-partlabel/MSP-DATA). This service runs at
+  # boot, checks whether partition 3 exists with the MSP-DATA label and a
+  # live ext4 filesystem, and creates it if not. Idempotent — no-op when
+  # MSP-DATA is already healthy.
+  # ============================================================================
+  systemd.services.msp-data-partition-recovery = {
+    description = "MSP-DATA partition recovery (create if missing)";
+    wantedBy = [ "local-fs.target" ];
+    before = [ "var-lib-msp.mount" "local-fs.target" ];
+    after = [ "sysinit.target" ];
+    unitConfig = {
+      DefaultDependencies = false;
+    };
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = with pkgs; [ util-linux gptfdisk e2fsprogs coreutils ];
+    script = ''
+      set -u
+      LOG="/var/log/msp-data-partition-recovery.log"
+      mkdir -p /var/lib/msp /var/log
+      exec >> "$LOG" 2>&1
+      date -u +"=== %Y-%m-%dT%H:%M:%SZ msp-data-partition-recovery start ==="
+
+      # Find the root block device (it's the parent of the mounted /).
+      # e.g. /dev/sda2 → /dev/sda, /dev/mmcblk0p2 → /dev/mmcblk0.
+      ROOT_SRC=$(findmnt -n -o SOURCE / | head -1)
+      case "$ROOT_SRC" in
+        */mapper/*|/dev/dm-*)
+          echo "Root is on LVM/dm — recovery not applicable"
+          exit 0
+          ;;
+      esac
+      # Strip trailing partition suffix: nvme0n1p2 or mmcblk0p2 → …p, then drop.
+      PARENT=$(lsblk -no PKNAME "$ROOT_SRC" 2>/dev/null || true)
+      if [ -z "$PARENT" ]; then
+        echo "Cannot determine parent disk of $ROOT_SRC — skipping"
+        exit 0
+      fi
+      DISK="/dev/$PARENT"
+      case "$DISK" in
+        *nvme*|*mmcblk*) DATA_PART="''${DISK}p3" ;;
+        *)               DATA_PART="''${DISK}3"  ;;
+      esac
+      echo "Disk=$DISK  DataPart=$DATA_PART"
+
+      msp_data_ok() {
+        [ -b "$DATA_PART" ] || return 1
+        partlabel=$(blkid -o value -s PARTLABEL "$DATA_PART" 2>/dev/null || true)
+        fslabel=$(blkid -o value -s LABEL "$DATA_PART" 2>/dev/null || true)
+        fstype=$(blkid -o value -s TYPE "$DATA_PART" 2>/dev/null || true)
+        [ "$partlabel" = "MSP-DATA" ] && [ "$fslabel" = "MSP-DATA" ] && [ "$fstype" = "ext4" ]
+      }
+
+      if msp_data_ok; then
+        echo "MSP-DATA already healthy — no action"
+        exit 0
+      fi
+
+      echo "MSP-DATA missing or unhealthy; checking if partition 3 has salvageable data before recovery"
+
+      # ── Pre-delete safety probe ────────────────────────────────
+      # msp_data_ok() returns false on a strict match (PARTLABEL+FSLABEL+
+      # FSTYPE all equal MSP-DATA/ext4). A field appliance whose partition
+      # 3 has a different label but still holds live evidence bundles must
+      # NOT be blown away. Before running `sfdisk --delete`, mount partition
+      # 3 read-only and abort the recovery if it contains any files.
+      if [ -b "$DATA_PART" ]; then
+        mkdir -p /tmp/msp-data-probe
+        if mount -o ro "$DATA_PART" /tmp/msp-data-probe 2>/dev/null; then
+          probe_content=$(ls -A /tmp/msp-data-probe 2>/dev/null || true)
+          umount /tmp/msp-data-probe 2>/dev/null || true
+          if [ -n "$probe_content" ]; then
+            echo "ABORT: partition 3 is mountable AND non-empty — refusing to delete. Operator must inspect manually:"
+            echo "  ls -la /tmp/msp-data-probe (after 'mount -o ro $DATA_PART /tmp/msp-data-probe')"
+            echo "  If this is stale data, remove it and re-run: systemctl restart msp-data-partition-recovery"
+            exit 0
+          fi
+          echo "partition 3 mountable but empty — safe to reformat"
+        else
+          echo "partition 3 not mountable — safe to reformat"
+        fi
+      fi
+
+      DISK_SECTORS=$(blockdev --getsz "$DISK")
+      DATA_SECTORS=4194304  # 2GB / 512-byte sectors
+      GPT_BACKUP=34
+
+      if [ "$DISK_SECTORS" -lt $(( DATA_SECTORS + GPT_BACKUP + 2048 )) ]; then
+        echo "Disk smaller than 2GB + headroom; cannot create MSP-DATA tail"
+        exit 0
+      fi
+
+      # Drop the half-built partition 3 (verified empty/unmountable above).
+      sfdisk --delete "$DISK" 3 2>/dev/null || true
+      partprobe "$DISK" 2>/dev/null || true
+      sleep 1
+
+      DATA_START_SECTOR=$(( DISK_SECTORS - GPT_BACKUP - DATA_SECTORS ))
+      echo "Creating partition 3 at sector $DATA_START_SECTOR size $DATA_SECTORS"
+      sgdisk -n 3:$DATA_START_SECTOR:0 -t 3:8300 -c 3:MSP-DATA "$DISK"
+      partprobe "$DISK" 2>/dev/null || true
+      sleep 1
+
+      # Wait for the kernel to surface the new partition node.
+      for _i in 1 2 3 4 5; do
+        [ -b "$DATA_PART" ] && break
+        sleep 1
+      done
+
+      if [ ! -b "$DATA_PART" ]; then
+        echo "Partition $DATA_PART did not appear; giving up"
+        exit 0
+      fi
+
+      mkfs.ext4 -F -L MSP-DATA "$DATA_PART"
+
+      if msp_data_ok; then
+        echo "MSP-DATA recovery successful"
+      else
+        echo "MSP-DATA still not healthy after recovery attempt"
+      fi
     '';
   };
 
