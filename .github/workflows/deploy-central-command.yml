@@ -53,6 +53,19 @@ jobs:
           pip install pytest==8.3.4 pytest-asyncio==0.24.0 httpx==0.27.0
           pip install -r requirements.txt
 
+      # Fast-fail import sanity check. Catches the class of bug that
+      # silently blocked 8 consecutive deploys on 2026-04-15 when Phase
+      # W0 imported `require_appliance_bearer` from the wrong module:
+      # pytest's per-file try/except swallowed the collection-time
+      # ImportError, 400+ tests "passed", deploy step still ran exit-1,
+      # and the ACTUAL error only appeared halfway through a 20 000-line
+      # log. A single `import dashboard_api.main` here fails in <1s with
+      # a clear stacktrace, before any test runs.
+      - name: Import sanity — dashboard_api.main must load clean
+        working-directory: mcp-server
+        run: |
+          python -c "import dashboard_api.main; print('dashboard_api.main imports clean')"
+
       - name: Run backend tests
         working-directory: mcp-server/central-command/backend
         run: |
