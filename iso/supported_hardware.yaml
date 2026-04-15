@@ -1,0 +1,45 @@
+# Hardware compatibility matrix for the OsirisCare installer.
+#
+# Each entry maps a dmidecode `system-product-name` value to a
+# verification record. The installer reads this file via yq at
+# boot, looks up the running hardware's product name, and HALTS
+# with a clear message if the model isn't on the list.
+#
+# Adding a new supported model:
+#   1. Boot the new hardware with the current ISO. It will halt
+#      and print the dmidecode product string.
+#   2. Add a stanza below with `tested: true` once you've verified
+#      a clean install + reboot cycle on the box.
+#   3. Open a PR with the install evidence (tee log + first checkin
+#      timestamp).
+#
+# Status semantics:
+#   tested:           verified end-to-end install on this exact model.
+#   uefi_fallback:    requires \EFI\BOOT\BOOTX64.EFI fallback path
+#                     (no NVRAM auto-scan). v25+ installer handles
+#                     this generically — true here is documentation.
+#   storage_quirks:   notes for operators (eMMC vs NVMe vs SATA).
+#   first_verified:   ISO version that was first known to install
+#                     successfully on this model.
+
+models:
+
+  HP t640 Thin Client:
+    tested: true
+    first_verified: v17
+    uefi_fallback: true
+    storage_quirks: "eMMC mmcblk0; /sys/block/mmcblk0/device lacks model+vendor (sysfs_read default-fallback required)"
+    notes: "Original lab box — most thoroughly exercised model."
+
+  HP t740 Thin Client:
+    tested: true
+    first_verified: v25
+    uefi_fallback: true
+    storage_quirks: "eMMC mmcblk0; identical sysfs quirks to t640"
+    notes: "Required v24 (sysfs_read fix) + v25 (BOOTX64.EFI fallback) before clean install."
+
+# Models we've SEEN but NOT certified yet — informational. The
+# installer treats any product name not in `models` as untested
+# and halts. Listing here just makes the operator's "is this
+# under investigation?" lookup faster.
+known_unverified: []

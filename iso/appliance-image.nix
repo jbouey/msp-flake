@@ -146,6 +146,14 @@ in
   environment.etc."installer/decompressed-size".source =
     "${appliance-raw-image}/decompressed-size";
 
+  # Hardware compatibility matrix consumed by the installer at boot.
+  # Format: one block per dmidecode system-product-name. Boxes not in
+  # this list are halted with a clear "open a support ticket"
+  # message rather than being attempted blindly. Adding a new
+  # supported model is a 5-line PR.
+  environment.etc."installer/supported_hardware.yaml".source =
+    ./supported_hardware.yaml;
+
   # Build provenance — every ISO embeds the git commit it was built from.
   # On a failed install the user can run `cat /etc/osiriscare-build.json`
   # from the live TTY and we know exactly which source tree to debug.
@@ -158,7 +166,7 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v25";
+    installer_version = "v26";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
@@ -398,7 +406,7 @@ EOF
       exec 2> >(tee -a "$LOG_FILE" >&2)
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v25"
+      INSTALLER_VERSION="v26"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
@@ -941,6 +949,66 @@ JSONEND
 
       # v10: Collect hardware fingerprint EARLY, before any install work.
       collect_hw_info || true
+
+      # v25 hardware compatibility gate. Runs after collect_hw_info
+      # so HW_PRODUCT is set. Reads /etc/installer/supported_hardware.yaml
+      # (shipped in the ISO) and halts with a clear message if the
+      # detected model isn't on the certified list. Better than
+      # bricking a customer's box with an unverified install.
+      check_hardware_compat() {
+        local hw_yaml="/etc/installer/supported_hardware.yaml"
+        if [ ! -f "$hw_yaml" ]; then
+          log "HW compat: matrix file missing — skipping check (legacy ISO?)"
+          return 0
+        fi
+        if [ -z "$HW_PRODUCT" ]; then
+          log "HW compat: dmidecode product unknown — skipping check"
+          return 0
+        fi
+        local entry
+        entry=$(${pkgs.yq}/bin/yq -r --arg k "$HW_PRODUCT" '.models[$k] // empty' "$hw_yaml" 2>/dev/null || echo "")
+        if [ -z "$entry" ]; then
+          log "HW compat: $HW_PRODUCT NOT on certified list — halting install"
+          # Pretty halt screen — operator can read it on tty1.
+          clear_screen
+          echo ""
+          echo -e "  ''${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
+          echo -e "  ''${WHITE}  HARDWARE NOT CERTIFIED — install aborted''${RESET}"
+          echo -e "  ''${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
+          echo ""
+          echo -e "  Detected: ''${YELLOW}$HW_PRODUCT''${RESET}"
+          echo ""
+          echo -e "  This model is not on the OsirisCare certified hardware list."
+          echo -e "  Installing anyway risks bricking the device."
+          echo ""
+          echo -e "  ''${WHITE}Action:''${RESET}"
+          echo -e "    1. Open a support ticket at support@osiriscare.net"
+          echo -e "    2. Include this product string in the body."
+          echo -e "    3. We'll certify the model and ship a v''${INSTALLER_VERSION}+ ISO."
+          echo ""
+          echo -e "  ''${DIM}Drop to TTY shell with Alt+F2 to read /tmp/msp-install.log''${RESET}"
+          echo ""
+          # Keep TTY alive for operator inspection — no hard exit so
+          # they can browse the log + share screen photos.
+          sleep 86400
+          exit 1
+        fi
+        local tested
+        tested=$(${pkgs.yq}/bin/yq -r --arg k "$HW_PRODUCT" '.models[$k].tested' "$hw_yaml" 2>/dev/null || echo "false")
+        if [ "$tested" != "true" ]; then
+          log "HW compat: $HW_PRODUCT listed but tested=false — halting install"
+          clear_screen
+          echo ""
+          echo -e "  ''${YELLOW}HARDWARE PARTIALLY KNOWN, NOT YET CERTIFIED''${RESET}"
+          echo -e "  Model: $HW_PRODUCT"
+          echo -e "  Status from matrix: tested=false"
+          echo -e "  ''${DIM}Same support path as above.''${RESET}"
+          sleep 86400
+          exit 1
+        fi
+        log "HW compat: $HW_PRODUCT certified (tested=true) — proceeding"
+      }
+      check_hardware_compat
 
       # v17 (Session 206): enterprise install flow — network is 100%
       # OPTIONAL for install. The raw image is embedded in the ISO;
