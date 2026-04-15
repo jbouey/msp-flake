@@ -3086,13 +3086,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
 
         if sig_result.present:
             logger.info(
-                "sigauth observed",
-                site_id=checkin.site_id,
-                mac=mac_normalized,
-                valid=sig_result.valid,
-                reason=sig_result.reason,
-                fingerprint=sig_result.pubkey_fingerprint,
-                sig_mode=sig_mode,
+                "sigauth observed: site=%s mac=%s valid=%s reason=%s fp=%s mode=%s",
+                checkin.site_id, mac_normalized,
+                sig_result.valid, sig_result.reason,
+                sig_result.pubkey_fingerprint, sig_mode,
             )
 
         # Enforcement gate. Global env override wins over the per-row
@@ -3102,12 +3099,9 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         if global_override != "disabled" and sig_mode == "enforce":
             if not sig_result.present or not sig_result.valid:
                 logger.warning(
-                    "sigauth enforce 401",
-                    site_id=checkin.site_id,
-                    mac=mac_normalized,
-                    present=sig_result.present,
-                    valid=sig_result.valid,
-                    reason=sig_result.reason,
+                    "sigauth enforce 401: site=%s mac=%s present=%s valid=%s reason=%s",
+                    checkin.site_id, mac_normalized,
+                    sig_result.present, sig_result.valid, sig_result.reason,
                 )
                 raise HTTPException(
                     status_code=401,

@@ -115,13 +115,9 @@ async def _set_enforcement(
         )
 
     logger.info(
-        "sigauth_enforcement changed",
-        appliance_id=appliance_id,
-        site_id=row["site_id"],
-        previous=previous,
-        new=target,
-        actor=actor,
-        reason=reason,
+        "sigauth_enforcement changed: appliance=%s site=%s %s→%s actor=%s",
+        appliance_id, row["site_id"], previous, target, actor,
+        extra={"reason": reason},
     )
 
     return EnforcementChangeResponse(
@@ -205,9 +201,8 @@ async def _auto_promotion_tick(conn) -> dict:
             promoted += 1
         except Exception:
             logger.error(
-                "sigauth auto-promotion failed",
-                appliance_id=row["appliance_id"],
-                exc_info=True,
+                "sigauth auto-promotion failed for appliance %s",
+                row["appliance_id"], exc_info=True,
             )
 
     return {"candidates": len(candidates), "promoted": promoted}
@@ -218,10 +213,8 @@ async def sigauth_auto_promotion_loop():
     Wired into main.py task supervisor as 'sigauth_auto_promotion'."""
     await asyncio.sleep(180)  # Settle period after cold start.
     logger.info(
-        "sigauth_auto_promotion loop started",
-        interval_s=AUTO_PROMOTE_INTERVAL_SECONDS,
-        min_samples=MIN_SAMPLES,
-        window_h=AUTO_PROMOTE_WINDOW_HOURS,
+        "sigauth_auto_promotion loop started (interval=%ds, min_samples=%d, window=%dh)",
+        AUTO_PROMOTE_INTERVAL_SECONDS, MIN_SAMPLES, AUTO_PROMOTE_WINDOW_HOURS,
     )
     while True:
         try:
@@ -230,9 +223,8 @@ async def sigauth_auto_promotion_loop():
                 result = await _auto_promotion_tick(conn)
             if result["promoted"]:
                 logger.info(
-                    "sigauth auto-promotion tick",
-                    candidates=result["candidates"],
-                    promoted=result["promoted"],
+                    "sigauth auto-promotion tick: candidates=%d promoted=%d",
+                    result["candidates"], result["promoted"],
                 )
         except asyncio.CancelledError:
             raise
