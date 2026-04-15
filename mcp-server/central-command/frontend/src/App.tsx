@@ -57,6 +57,9 @@ const RecoveryLanding = lazy(() => import('./pages/RecoveryLanding'));
 const PublicChangelog = lazy(() => import('./pages/PublicChangelog'));
 const Legal = lazy(() => import('./pages/Legal'));
 const Pricing = lazy(() => import('./pages/Pricing'));
+const Signup = lazy(() => import('./pages/Signup'));
+const SignupBaa = lazy(() => import('./pages/SignupBaa'));
+const SignupComplete = lazy(() => import('./pages/SignupComplete'));
 const Organizations = lazy(() => import('./pages/Organizations').then(m => ({ default: m.Organizations })));
 const OrgDashboard = lazy(() => import('./pages/OrgDashboard').then(m => ({ default: m.OrgDashboard })));
 const ProtectionProfiles = lazy(() => import('./pages/ProtectionProfiles').then(m => ({ default: m.ProtectionProfiles })));
@@ -486,6 +489,12 @@ const App: React.FC = () => {
                 {/* Legal + pricing pages — accessible on both domains */}
                 <Route path="/legal/:page" element={<Legal />} />
                 <Route path="/pricing" element={<Pricing />} />
+
+                {/* Public signup flow (Session 207) — pilot tier self-serve.
+                    Paid tiers currently go through Calendly/demo on /pricing. */}
+                <Route path="/signup" element={<Signup />} />
+                <Route path="/signup/baa" element={<SignupBaa />} />
+                <Route path="/signup/complete" element={<SignupComplete />} />
 
                 {/* Recovery landing — public, accessible on both domains.
                     Built for compliance refugees migrating from a vendor

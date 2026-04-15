@@ -229,14 +229,16 @@ export const Pricing: React.FC = () => {
             Full Essentials tier access with your own on-premise appliance.
             After 90 days, upgrade to a full plan or the appliance comes back. No risk.
           </p>
-          <a
-            href="https://calendly.com/jbouey-osiriscare/osiriscare-demo-onboard"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center px-6 py-3 text-sm font-semibold rounded-lg text-teal-700 border-2 border-teal-500 hover:bg-teal-50 transition-all font-body"
+          <Link
+            to="/signup?plan=pilot"
+            className="inline-flex items-center px-6 py-3 text-sm font-semibold rounded-lg text-white transition-all font-body"
+            style={{
+              background: 'linear-gradient(135deg, #14A89E 0%, #0d9488 100%)',
+              boxShadow: '0 2px 12px rgba(20, 168, 158, 0.3)',
+            }}
           >
-            Start a Pilot
-          </a>
+            Start a Pilot — $299
+          </Link>
         </div>
       </section>
 
