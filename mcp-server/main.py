@@ -1680,6 +1680,7 @@ async def lifespan(app: FastAPI):
         ("phantom_detector", phantom_detector_loop),
         ("mesh_reassignment", mesh_reassignment_loop),
         ("substrate_assertions", assertions_loop),
+        ("sigauth_auto_promotion", sigauth_auto_promotion_loop),
     ]
 
     for name, fn in task_defs:
@@ -1815,6 +1816,11 @@ from dashboard_api.iso_ca import router as iso_ca_router  # Week 2: ISO CA + cla
 app.include_router(iso_ca_router)
 from dashboard_api.attestation_api import router as attestation_router  # Week 4: customer attestation
 app.include_router(attestation_router)
+from dashboard_api.sigauth_enforcement import (
+    router as sigauth_router,
+    sigauth_auto_promotion_loop,
+)  # Week 5: per-appliance signature enforcement
+app.include_router(sigauth_router)
 app.include_router(partners_router)
 app.include_router(fleet_intelligence_router)
 app.include_router(diagnostic_api_router)

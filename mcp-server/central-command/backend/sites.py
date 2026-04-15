@@ -5,6 +5,7 @@ that modify site data directly.
 """
 
 import json
+import os
 import time
 import secrets
 import logging
@@ -3032,12 +3033,19 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     mac_clean = mac_normalized.replace(':', '')
     appliance_id = f"{checkin.site_id}-{mac_normalized}"
 
-    # Week 1 of the composed identity stack: observe-only signature
-    # check. We capture presence + validity for the substrate engine
-    # `signature_verification_failures` invariant (Week 4). Bearer
-    # auth (above) is still the enforcement path; soak observation
-    # runs alongside. No exception path — this MUST NOT regress
-    # checkin behavior.
+    # Week 1+4+5 of the composed identity stack:
+    #   * Verify the X-Appliance-Signature when present
+    #   * Record the outcome in sigauth_observations
+    #   * If this appliance is in 'enforce' mode (Week 5) AND the
+    #     signature is missing or invalid, return 401 BEFORE doing
+    #     any state-changing work. Bearer auth above already
+    #     authenticated the caller; enforcement adds the device-bound
+    #     signature requirement on top.
+    #
+    # Hard kill switch: SIGAUTH_GLOBAL_ENFORCE_OVERRIDE=disabled in the
+    # process env disables enforcement fleet-wide instantly without
+    # touching the DB. Phase 5C operational lever.
+    sig_result = None
     try:
         from signature_auth import verify_appliance_signature  # type: ignore
         body_bytes = await request.body()
@@ -3048,10 +3056,6 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 mac_address=mac_normalized,
                 body_bytes=body_bytes,
             )
-            # Week 4: persist only when a signature was actually
-            # presented. Absent headers are not a metric — they're
-            # just legacy daemons. The substrate invariant counts
-            # PRESENT-but-INVALID against PRESENT-AND-VALID.
             if sig_result.present:
                 try:
                     await _sigauth_conn.execute(
@@ -3066,6 +3070,20 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     )
                 except Exception:  # noqa: BLE001
                     logger.warning("sigauth_observations insert failed", exc_info=True)
+
+            # Week 5: per-appliance enforcement check. Look up the
+            # row's signature_enforcement value. Default 'observe'
+            # if the appliance row doesn't exist yet (first checkin).
+            enforce_row = await _sigauth_conn.fetchrow(
+                """
+                SELECT signature_enforcement
+                  FROM site_appliances
+                 WHERE site_id = $1 AND mac_address = $2 AND deleted_at IS NULL
+                """,
+                checkin.site_id, mac_normalized,
+            )
+            sig_mode = (enforce_row["signature_enforcement"] if enforce_row else "observe")
+
         if sig_result.present:
             logger.info(
                 "sigauth observed",
@@ -3074,7 +3092,33 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 valid=sig_result.valid,
                 reason=sig_result.reason,
                 fingerprint=sig_result.pubkey_fingerprint,
+                sig_mode=sig_mode,
             )
+
+        # Enforcement gate. Global env override wins over the per-row
+        # value so an operator can disable enforcement instantly
+        # without a DB write.
+        global_override = os.environ.get("SIGAUTH_GLOBAL_ENFORCE_OVERRIDE", "").strip().lower()
+        if global_override != "disabled" and sig_mode == "enforce":
+            if not sig_result.present or not sig_result.valid:
+                logger.warning(
+                    "sigauth enforce 401",
+                    site_id=checkin.site_id,
+                    mac=mac_normalized,
+                    present=sig_result.present,
+                    valid=sig_result.valid,
+                    reason=sig_result.reason,
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error": "appliance signature required for enforce-mode checkin",
+                        "code": "SIGAUTH_ENFORCE_REJECTED",
+                        "reason": sig_result.reason or "no_headers",
+                    },
+                )
+    except HTTPException:
+        raise
     except Exception:  # noqa: BLE001 — never let observation kill checkin
         logger.warning("sigauth observation hook raised", exc_info=True)
 
