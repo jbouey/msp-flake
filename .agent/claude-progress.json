@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
-  "session": 206,
-  "updated": "2026-04-13T21:28:48.974095Z",
+  "session": 207,
+  "updated": "2026-04-15T03:13:34.059120Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty.",
   "versions": {
     "agent": "0.4.0",
