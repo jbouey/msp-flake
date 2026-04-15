@@ -82,6 +82,13 @@ async def health_monitor_loop():
         except Exception as e:
             logger.error(f"Mesh isolation check error: {e}", exc_info=True)
 
+        try:
+            await _check_install_loops()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Install loop check error: {e}", exc_info=True)
+
         await asyncio.sleep(300)  # Every 5 minutes
 
 
@@ -1017,3 +1024,71 @@ async def _check_mesh_isolation():
                         """, site_id, alert_category, alert_severity, title, msg)
                         logger.warning(f"{alert_category}: {app['appliance_id']} at {site_id} "
                                        f"(severity={alert_severity})")
+
+
+async def _check_install_loops():
+    """Emit an incident when an appliance is stuck in install_sessions.
+
+    Symptom pattern observed 2026-04-14 on HP t740: BIOS couldn't find
+    the installed NixOS (no \\EFI\\BOOT\\BOOTX64.EFI fallback), so the
+    box rebooted into the live USB over and over. The daemon in the
+    live ISO dutifully POSTed to /api/appliances/checkin with
+    boot_source='live_usb', landing as an install_session upsert.
+    50 checkins accumulated with no site_appliances row ever appearing
+    and no visible alert anywhere — the dashboard treated it as if
+    installation was in progress forever.
+
+    Rule: a MAC with install_sessions.checkin_count > 5 is almost
+    certainly stuck. Fire a Sev-2 notification once per stuck session
+    and flag install_stage so the dashboard can surface it. Recovery
+    happens naturally when install succeeds (the install_session row
+    is superseded by a site_appliances row) or an operator pulls the
+    USB.
+    """
+    from dashboard_api.fleet import get_pool
+    from dashboard_api.tenant_middleware import admin_connection
+
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        stuck = await conn.fetch(
+            """
+            SELECT session_id, site_id, mac_address, hostname,
+                   checkin_count, first_seen, last_seen, install_stage
+            FROM install_sessions
+            WHERE checkin_count > 5
+              AND install_stage = 'live_usb'
+              AND last_seen > NOW() - INTERVAL '1 hour'
+              AND NOT EXISTS (
+                  SELECT 1 FROM notifications n
+                  WHERE n.site_id = install_sessions.site_id
+                    AND n.category = 'install_loop'
+                    AND n.message LIKE '%' || install_sessions.mac_address || '%'
+                    AND n.created_at > NOW() - INTERVAL '24 hours'
+              )
+            """
+        )
+
+        for row in stuck:
+            msg = (
+                f"Appliance MAC {row['mac_address']} (hostname={row['hostname']}) "
+                f"has checked in {row['checkin_count']} times from the live USB "
+                f"installer without completing install. First seen "
+                f"{row['first_seen']:%Y-%m-%d %H:%M}, last seen {row['last_seen']:%H:%M}. "
+                f"The raw image likely cannot boot on this hardware — check the "
+                f"v25+ BOOTX64.EFI fallback is installed and the BIOS boot order "
+                f"allows booting from internal storage."
+            )
+            title = f"Install loop: {row['hostname']} ({row['mac_address']})"
+            await conn.execute(
+                """
+                INSERT INTO notifications (
+                    site_id, category, severity, title, message, created_at
+                ) VALUES ($1::text, 'install_loop', 'warning', $2::text, $3::text, NOW())
+                """,
+                row["site_id"], title, msg,
+            )
+            logger.warning(
+                "install_loop: mac=%s hostname=%s checkins=%d site=%s",
+                row["mac_address"], row["hostname"], row["checkin_count"], row["site_id"],
+            )

@@ -177,6 +177,25 @@ async def cmd_create(args: argparse.Namespace) -> None:
                 f"Upload binary to VPS and use: https://api.osiriscare.net/updates/<filename>"
             )
 
+        # Resolve the hostname against public DNS before inserting.
+        # Prevents the class of outage where an order points at a
+        # domain that never had an A record (observed 2026-04-14 with
+        # release.osiriscare.net — appliances DNS-failed every 60s
+        # for an hour with no visible alert).
+        import socket
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or ""
+        if not host:
+            sys.exit(f"binary_url has no hostname: {url!r}")
+        try:
+            socket.gethostbyname(host)
+        except socket.gaierror as e:
+            sys.exit(
+                f"binary_url hostname {host!r} does not resolve: {e}\n"
+                f"Check the public DNS A record before issuing this order.\n"
+                f"Known-good: api.osiriscare.net"
+            )
+
     # ── Phase 14: privileged-order attestation gate ───────────────────
     if order_type in PRIVILEGED_ORDER_TYPES:
         actor_email = (args.actor_email or "").strip()
