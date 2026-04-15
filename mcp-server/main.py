@@ -1811,6 +1811,8 @@ app.include_router(appliance_trace_router)
 app.include_router(reconcile_router)
 app.include_router(reconcile_admin_router)  # /api/admin/reconcile/events
 app.include_router(provisioning_router)
+from dashboard_api.iso_ca import router as iso_ca_router  # Week 2: ISO CA + claim-v2
+app.include_router(iso_ca_router)
 app.include_router(partners_router)
 app.include_router(fleet_intelligence_router)
 app.include_router(diagnostic_api_router)
