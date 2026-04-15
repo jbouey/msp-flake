@@ -386,7 +386,118 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Sites with 2+ online appliances must form a mesh ring of size > 1",
         check=_check_mesh_ring_health,
     ),
+    Assertion(
+        name="online_implies_installed_system",
+        severity="sev2",
+        description="An appliance with status=online must NOT still be running the live USB installer",
+        check=lambda c: _check_online_implies_installed(c),
+    ),
+    Assertion(
+        name="every_online_appliance_has_active_api_key",
+        severity="sev1",
+        description="Every online appliance must have at least one active api_keys row (or fall through to a site-level key)",
+        check=lambda c: _check_online_has_active_key(c),
+    ),
+    Assertion(
+        name="auth_failure_lockout",
+        severity="sev1",
+        description="Any appliance with auth_failure_count >= 3 is locked out of the platform — operator action needed",
+        check=lambda c: _check_auth_failure_lockout(c),
+    ),
 ]
+
+
+async def _check_online_implies_installed(conn: asyncpg.Connection) -> List[Violation]:
+    """An appliance is "online" only if it's checked in within the last
+    15 min. But the daemon in the live ISO ALSO checks in — so a
+    box stuck in the install loop registers as online despite never
+    completing install. Detect this by hostname == 'osiriscare-installer'
+    AND status == 'online'."""
+    rows = await conn.fetch(
+        """
+        SELECT site_id, mac_address, hostname, agent_version, last_checkin
+          FROM site_appliances
+         WHERE deleted_at IS NULL
+           AND status = 'online'
+           AND (hostname = 'osiriscare-installer' OR hostname LIKE '%installer%')
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "hostname": r["hostname"],
+                "agent_version": r["agent_version"],
+                "interpretation": "appliance is on live USB, not installed system — install likely failed",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_online_has_active_key(conn: asyncpg.Connection) -> List[Violation]:
+    """Every online appliance must be authable. An online row with no
+    active api_keys row (and no active site-level key for its site)
+    is a ticking time-bomb — when its current bearer expires or
+    rotates it will lock out and we'll never know."""
+    rows = await conn.fetch(
+        """
+        SELECT sa.site_id, sa.mac_address, sa.hostname, sa.appliance_id
+          FROM site_appliances sa
+         WHERE sa.deleted_at IS NULL
+           AND sa.status = 'online'
+           AND NOT EXISTS (
+               SELECT 1 FROM api_keys ak
+                WHERE ak.active = true
+                  AND ak.site_id = sa.site_id
+                  AND (ak.appliance_id = sa.appliance_id OR ak.appliance_id IS NULL)
+           )
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "hostname": r["hostname"],
+                "appliance_id": r["appliance_id"],
+                "remediation": "POST /api/provision/rekey with site_id+mac_address",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_auth_failure_lockout(conn: asyncpg.Connection) -> List[Violation]:
+    """auth_failure_count >= 3 means the daemon has been bouncing
+    off the auth wall and (if it's an old daemon without
+    auto-rekey) needs operator intervention — push a fresh api_key
+    to /var/lib/msp/config.yaml or run /api/provision/rekey."""
+    rows = await conn.fetch(
+        """
+        SELECT site_id, mac_address, hostname, agent_version,
+               auth_failure_count,
+               EXTRACT(EPOCH FROM (NOW() - auth_failure_since))/60 AS minutes_failing
+          FROM site_appliances
+         WHERE deleted_at IS NULL
+           AND auth_failure_count >= 3
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "hostname": r["hostname"],
+                "agent_version": r["agent_version"],
+                "auth_failure_count": r["auth_failure_count"],
+                "minutes_failing": float(r["minutes_failing"] or 0),
+                "remediation": "Daemon < 0.3.84 lacks auto-rekey. Run /api/provision/rekey then SSH to push key.",
+            },
+        )
+        for r in rows
+    ]
 
 
 # --- Engine ----------------------------------------------------------
