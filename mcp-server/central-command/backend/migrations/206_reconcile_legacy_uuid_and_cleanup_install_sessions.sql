@@ -25,7 +25,14 @@
 
 BEGIN;
 
--- (1) Backfill legacy_uuid
+-- (1) Backfill legacy_uuid.
+-- Migration 192's row-guard trigger blocks any UPDATE on site_appliances
+-- that touches more than one row without the explicit per-tx bypass.
+-- This backfill is genuinely bulk (every NULL row across every site)
+-- so we set the bypass for THIS transaction only, then it auto-clears
+-- at COMMIT.
+SET LOCAL app.allow_multi_row = 'true';
+
 UPDATE site_appliances
 SET legacy_uuid = gen_random_uuid()
 WHERE legacy_uuid IS NULL
