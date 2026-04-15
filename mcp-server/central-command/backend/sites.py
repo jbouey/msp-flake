@@ -3034,9 +3034,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
 
     # Week 1 of the composed identity stack: observe-only signature
     # check. We capture presence + validity for the substrate engine
-    # `signature_auth_adoption_rate` invariant. Bearer auth (above)
-    # is still the enforcement path; soak observation runs alongside.
-    # No exception path — this MUST NOT regress checkin behavior.
+    # `signature_verification_failures` invariant (Week 4). Bearer
+    # auth (above) is still the enforcement path; soak observation
+    # runs alongside. No exception path — this MUST NOT regress
+    # checkin behavior.
     try:
         from signature_auth import verify_appliance_signature  # type: ignore
         body_bytes = await request.body()
@@ -3047,6 +3048,24 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 mac_address=mac_normalized,
                 body_bytes=body_bytes,
             )
+            # Week 4: persist only when a signature was actually
+            # presented. Absent headers are not a metric — they're
+            # just legacy daemons. The substrate invariant counts
+            # PRESENT-but-INVALID against PRESENT-AND-VALID.
+            if sig_result.present:
+                try:
+                    await _sigauth_conn.execute(
+                        """
+                        INSERT INTO sigauth_observations
+                              (site_id, mac_address, valid, reason, fingerprint)
+                        VALUES ($1, $2, $3, $4, $5)
+                        """,
+                        checkin.site_id, mac_normalized,
+                        sig_result.valid, sig_result.reason or "",
+                        sig_result.pubkey_fingerprint or None,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning("sigauth_observations insert failed", exc_info=True)
         if sig_result.present:
             logger.info(
                 "sigauth observed",

@@ -410,6 +410,24 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Every provisioning_claim_events row > 5min old must have chain_prev_hash + chain_hash populated (Week 3)",
         check=lambda c: _check_claim_event_unchained(c),
     ),
+    Assertion(
+        name="signature_verification_failures",
+        severity="sev1",
+        description="When a daemon presents a signature it must verify; sustained > 5% fail rate per site signals crypto drift, key compromise, or build-pipeline regression (Week 4)",
+        check=lambda c: _check_signature_verification_failures(c),
+    ),
+    Assertion(
+        name="claim_cert_expired_in_use",
+        severity="sev1",
+        description="Claims must only be accepted from CAs in their validity window; an expired/revoked CA being used means a code-path bypassed _validate_claim_cert (Week 4)",
+        check=lambda c: _check_claim_cert_expired_in_use(c),
+    ),
+    Assertion(
+        name="mac_rekeyed_recently",
+        severity="sev2",
+        description="A MAC with >= 2 claim events in 24h is either thrashing reinstall or impersonation; flag for operator review (Week 4)",
+        check=lambda c: _check_mac_rekeyed_recently(c),
+    ),
 ]
 
 
@@ -498,6 +516,107 @@ async def _check_claim_event_unchained(conn: asyncpg.Connection) -> List[Violati
                 "claim_event_id": r["id"],
                 "minutes_old": float(r["minutes_old"] or 0),
                 "remediation": "Investigate failed UPDATE in claim-v2 transaction or hand-INSERT bypass",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_signature_verification_failures(conn: asyncpg.Connection) -> List[Violation]:
+    """Per-site fail rate over the last hour of observed signatures.
+
+    Floor of 5 samples to avoid false-flagging on a fresh site that
+    happens to have its first checkin fail. Threshold of 5% — well
+    above expected noise (sigs should have a ~0% fail rate when
+    the daemon and server are in lockstep)."""
+    rows = await conn.fetch(
+        """
+        SELECT site_id,
+               COUNT(*)                                  AS total,
+               COUNT(*) FILTER (WHERE valid = false)     AS failures,
+               array_agg(DISTINCT reason) FILTER (WHERE valid = false) AS reasons
+          FROM sigauth_observations
+         WHERE observed_at > NOW() - INTERVAL '1 hour'
+      GROUP BY site_id
+        HAVING COUNT(*) >= 5
+           AND COUNT(*) FILTER (WHERE valid = false) * 100.0 / COUNT(*) > 5
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "total_samples": r["total"],
+                "failures": r["failures"],
+                "fail_rate_pct": round(r["failures"] * 100.0 / r["total"], 1),
+                "reasons": list(r["reasons"] or []),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_claim_cert_expired_in_use(conn: asyncpg.Connection) -> List[Violation]:
+    """Claims that arrived using a CA past its validity window or
+    revoked. Should be impossible — iso_ca._validate_claim_cert
+    rejects those — so a hit means a code path bypassed validation
+    (or the CA was revoked AFTER a legitimate claim landed; the
+    24h window catches the bypass case but tolerates the latter)."""
+    rows = await conn.fetch(
+        """
+        SELECT pce.site_id, pce.mac_address, pce.iso_build_sha,
+               irc.valid_until, irc.revoked_at, pce.claimed_at
+          FROM provisioning_claim_events pce
+          JOIN iso_release_ca_pubkeys irc
+            ON irc.iso_release_sha = pce.iso_build_sha
+         WHERE pce.claimed_at > NOW() - INTERVAL '1 hour'
+           AND (
+                  irc.valid_until < pce.claimed_at
+               OR (irc.revoked_at IS NOT NULL AND irc.revoked_at < pce.claimed_at)
+           )
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "iso_build_sha": r["iso_build_sha"],
+                "ca_valid_until": r["valid_until"].isoformat() if r["valid_until"] else None,
+                "ca_revoked_at": r["revoked_at"].isoformat() if r["revoked_at"] else None,
+                "claimed_at": r["claimed_at"].isoformat(),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_mac_rekeyed_recently(conn: asyncpg.Connection) -> List[Violation]:
+    """MAC that has produced multiple claim events in 24h. Likely a
+    legitimate reinstall but worth flagging — clusters point to a
+    flapping appliance OR an impersonation attempt against a real
+    fleet member."""
+    rows = await conn.fetch(
+        """
+        SELECT site_id, mac_address,
+               COUNT(*) AS claim_count,
+               MAX(claimed_at) AS latest,
+               array_agg(DISTINCT source) AS sources
+          FROM provisioning_claim_events
+         WHERE claimed_at > NOW() - INTERVAL '24 hours'
+      GROUP BY site_id, mac_address
+        HAVING COUNT(*) >= 2
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "claim_count_24h": r["claim_count"],
+                "latest_claimed_at": r["latest"].isoformat(),
+                "sources": list(r["sources"] or []),
+                "interpretation": "reinstall churn OR impersonation — verify with operator",
             },
         )
         for r in rows
@@ -627,6 +746,20 @@ async def run_assertions_once(conn: asyncpg.Connection) -> Dict[str, int]:
     return counters
 
 
+async def _ttl_sweep(conn: asyncpg.Connection) -> int:
+    """Reclaim sigauth_observations older than 24h. Bounded-volume
+    table — sweeping every 60s tick is cheap and keeps the working
+    set in cache. Returns the number of rows deleted."""
+    result = await conn.execute(
+        "DELETE FROM sigauth_observations WHERE observed_at < NOW() - INTERVAL '24 hours'"
+    )
+    # asyncpg returns 'DELETE <n>'; parse out n for observability.
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
 async def assertions_loop():
     """Background task — runs every 60s. Wired into main.py lifespan
     via health_monitor's broader background_tasks orchestration."""
@@ -642,11 +775,13 @@ async def assertions_loop():
             pool = await get_pool()
             async with admin_connection(pool) as conn:
                 counters = await run_assertions_once(conn)
-            if counters["opened"] or counters["resolved"]:
+                # TTL sweep in same conn — cheap, atomic per tick.
+                deleted = await _ttl_sweep(conn)
+            if counters["opened"] or counters["resolved"] or deleted:
                 logger.info(
-                    "assertions tick: opened=%d refreshed=%d resolved=%d errors=%d",
+                    "assertions tick: opened=%d refreshed=%d resolved=%d errors=%d sigauth_swept=%d",
                     counters["opened"], counters["refreshed"],
-                    counters["resolved"], counters["errors"],
+                    counters["resolved"], counters["errors"], deleted,
                 )
         except asyncio.CancelledError:
             raise

@@ -220,6 +220,46 @@ async def _resolve_chain_tip(conn, site_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+@router.get("/iso/{iso_sha256}/transparency")
+async def get_iso_transparency(iso_sha256: str) -> dict:
+    """Return Sigstore Rekor transparency-log lookup info for a
+    specific ISO build (Week 4 + scaffolded for full CI integration).
+
+    Today: returns the stable Rekor + Sigstore search URLs keyed
+    on the supplied SHA256. The search itself happens client-side
+    against the public log — we don't proxy because verification
+    SHOULD bypass us. That's the whole point of transparency.
+
+    Tomorrow: when sign_iso.sh runs in CI we'll ALSO record the
+    rekor log entry id alongside iso_release_ca_pubkeys so this
+    endpoint can return a direct deep-link. For now the search-by-
+    hash form is enough for an auditor.
+    """
+    sha = iso_sha256.lower().strip()
+    if len(sha) != 64 or not all(c in "0123456789abcdef" for c in sha):
+        raise HTTPException(status_code=400, detail="iso_sha256 must be 64 lowercase hex chars")
+    return {
+        "iso_sha256": sha,
+        "transparency_log": {
+            "system": "sigstore-rekor",
+            "search_url": f"https://search.sigstore.dev/?hash={sha}",
+            "rekor_cli": f"rekor-cli search --sha {sha}",
+        },
+        "verify_command": (
+            f"cosign verify-blob osiriscare-installer-{sha[:7]}.iso "
+            f"--bundle osiriscare-installer-{sha[:7]}.iso.bundle "
+            f"--certificate-identity-regexp 'github.com/jbouey/msp-flake' "
+            f"--certificate-oidc-issuer 'https://token.actions.githubusercontent.com'"
+        ),
+        "note": (
+            "Transparency lookup runs client-side against the public "
+            "Sigstore Rekor log — we deliberately do NOT proxy. If "
+            "you trust us to tell you a signature is valid you've "
+            "already lost the game; verify it yourself from the public log."
+        ),
+    }
+
+
 @router.get("/iso/ca-bundle.json", response_model=CABundleResponse)
 async def get_iso_ca_bundle() -> CABundleResponse:
     """Public endpoint listing all currently-valid ISO release CAs.
