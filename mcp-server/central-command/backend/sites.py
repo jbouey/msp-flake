@@ -3264,23 +3264,38 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     break
 
         # Method 2: IP + timing overlap (fallback for daemons that don't send all_mac_addresses)
+        # Exclude IP ranges that are NOT unique per physical machine:
+        #   - 169.254.0.0/16 link-local: every interface has one, siblings always overlap
+        #   - 10.100.0.0/16 WireGuard tunnel: shared topology, overlap is expected
+        #   - 127.0.0.0/8 loopback: identical on every machine
+        # Leaving these in the probe produced a false-positive cascade where
+        # two real appliances at the same site flip-flopped as each other's
+        # ghosts, routing fleet orders to the wrong canonical_id.
         if not _ghost_detected and checkin.ip_addresses:
-            ip_overlap = await conn.fetchrow("""
-                SELECT appliance_id, mac_address, hostname
-                FROM site_appliances
-                WHERE site_id = $1
-                  AND appliance_id != $2
-                  AND last_checkin > NOW() - INTERVAL '5 seconds'
-                  AND ip_addresses::jsonb ?| $3::text[]
-            """, checkin.site_id, appliance_id, checkin.ip_addresses)
-            if ip_overlap:
-                logger.warning(
-                    f"Multi-NIC ghost detected (IP overlap): MAC {mac_normalized} shares IP with "
-                    f"{ip_overlap['appliance_id']} (MAC {ip_overlap['mac_address']}). "
-                    f"Skipping duplicate registration — same physical machine."
-                )
-                canonical_id = ip_overlap['appliance_id']
-                _ghost_detected = True
+            probe_ips = [
+                ip for ip in checkin.ip_addresses
+                if ip
+                and not ip.startswith("169.254.")
+                and not ip.startswith("10.100.")
+                and not ip.startswith("127.")
+            ]
+            if probe_ips:
+                ip_overlap = await conn.fetchrow("""
+                    SELECT appliance_id, mac_address, hostname
+                    FROM site_appliances
+                    WHERE site_id = $1
+                      AND appliance_id != $2
+                      AND last_checkin > NOW() - INTERVAL '5 seconds'
+                      AND ip_addresses::jsonb ?| $3::text[]
+                """, checkin.site_id, appliance_id, probe_ips)
+                if ip_overlap:
+                    logger.warning(
+                        f"Multi-NIC ghost detected (IP overlap): MAC {mac_normalized} shares IP with "
+                        f"{ip_overlap['appliance_id']} (MAC {ip_overlap['mac_address']}). "
+                        f"Skipping duplicate registration — same physical machine."
+                    )
+                    canonical_id = ip_overlap['appliance_id']
+                    _ghost_detected = True
 
         if _ghost_detected:
             # Skip Steps 1-3 — use the canonical appliance from the ghost check

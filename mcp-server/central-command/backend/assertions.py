@@ -452,6 +452,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="An appliance's per-site WinRM circuit is open (≥3 recent failures, zero successes in 30min). Remediation gated locally; other customers keep remediating. Replaces migration 164 global kill-switch.",
         check=lambda c: _check_winrm_circuit_open(c),
     ),
+    Assertion(
+        name="ghost_checkin_redirect",
+        severity="sev2",
+        description="An online appliance's last_checkin lags 15+ min behind its site's latest — its checkins are likely being rewritten into another row by false-positive ghost detection (Session 207 link-local fix).",
+        check=lambda c: _check_ghost_checkin_redirect(c),
+    ),
 ]
 
 
@@ -677,6 +683,58 @@ async def _check_mac_rekeyed_recently(conn: asyncpg.Connection) -> List[Violatio
                 "latest_claimed_at": r["latest"].isoformat(),
                 "sources": list(r["sources"] or []),
                 "interpretation": "reinstall churn OR impersonation — verify with operator",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_ghost_checkin_redirect(conn: asyncpg.Connection) -> List[Violation]:
+    """Multi-NIC ghost detection is rewriting one appliance's checkins into
+    another appliance's row. This is correct when two MACs live on the same
+    box (dual-NIC daemon). It is INCORRECT when the trigger was IP overlap
+    on a non-unique range (link-local, WG, loopback) — observed in Session
+    207 when 169.254.88.1 on every appliance's second interface turned two
+    distinct boxes into each other's ghosts and misrouted a canary fleet
+    order.
+
+    Signal: two online site_appliances rows at the same site have NOT
+    updated last_checkin in more than 15 min while the site as a whole is
+    heartbeating. That gap usually means their checkins are being
+    redirected to a third row. Sev2; operator should inspect sites.py
+    Method-2 ghost-detection logs.
+    """
+    rows = await conn.fetch(
+        """
+        WITH site_heartbeat AS (
+            SELECT site_id, MAX(last_checkin) AS site_latest
+              FROM site_appliances
+             WHERE deleted_at IS NULL
+          GROUP BY site_id
+        )
+        SELECT sa.site_id, sa.mac_address, sa.hostname, sa.appliance_id,
+               sa.last_checkin,
+               EXTRACT(EPOCH FROM (sh.site_latest - sa.last_checkin))/60 AS lag_minutes,
+               sh.site_latest
+          FROM site_appliances sa
+          JOIN site_heartbeat sh ON sh.site_id = sa.site_id
+         WHERE sa.deleted_at IS NULL
+           AND sa.status = 'online'
+           AND sh.site_latest > NOW() - INTERVAL '5 minutes'
+           AND sa.last_checkin < sh.site_latest - INTERVAL '15 minutes'
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "hostname": r["hostname"],
+                "appliance_id": r["appliance_id"],
+                "lag_minutes": float(r["lag_minutes"] or 0),
+                "site_latest_checkin": r["site_latest"].isoformat() if r["site_latest"] else None,
+                "this_row_last_checkin": r["last_checkin"].isoformat() if r["last_checkin"] else None,
+                "remediation": "Check mcp-server logs for 'Multi-NIC ghost detected' entries mentioning this MAC. If the detection is false-positive (shared link-local / WG / loopback IP), review sites.py STEP 0.9 Method 2 exclusion list.",
             },
         )
         for r in rows
