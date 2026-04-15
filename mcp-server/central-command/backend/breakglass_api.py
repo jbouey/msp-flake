@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict
 
@@ -34,9 +35,13 @@ from pydantic import BaseModel, Field
 
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
-from .shared import require_appliance_bearer_full
+from .shared import require_appliance_bearer_full, check_rate_limit
 from .credential_crypto import encrypt_credential, decrypt_credential
 from .auth import require_admin
+from .privileged_access_attestation import (
+    create_privileged_access_attestation,
+    PrivilegedAccessAttestationError,
+)
 
 logger = logging.getLogger("breakglass_api")
 
@@ -95,35 +100,26 @@ async def submit_breakglass(
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         async with conn.transaction():
-            existed = await conn.fetchrow(
-                "SELECT passphrase_version FROM appliance_breakglass_passphrases "
-                "WHERE appliance_id = $1 FOR UPDATE",
-                req.appliance_id,
+            # R+S follow-up (c): INSERT…ON CONFLICT DO UPDATE collapses
+            # the prior SELECT-FOR-UPDATE + branch into one atomic write.
+            # Two simultaneous submits can no longer race into 500s.
+            # RETURNING exposes whether this was an insert or an update
+            # (xmax = 0 means fresh insert; non-zero means update).
+            row = await conn.fetchrow(
+                """
+                INSERT INTO appliance_breakglass_passphrases
+                    (site_id, appliance_id, encrypted_passphrase, passphrase_version)
+                VALUES ($1, $2, $3, 1)
+                ON CONFLICT (appliance_id) DO UPDATE
+                    SET encrypted_passphrase = EXCLUDED.encrypted_passphrase,
+                        passphrase_version   = appliance_breakglass_passphrases.passphrase_version + 1,
+                        rotated_at           = NOW()
+                RETURNING passphrase_version, (xmax = 0) AS is_insert
+                """,
+                req.site_id, req.appliance_id, enc,
             )
-            if existed:
-                new_version = int(existed["passphrase_version"]) + 1
-                await conn.execute(
-                    """
-                    UPDATE appliance_breakglass_passphrases
-                       SET encrypted_passphrase = $1,
-                           passphrase_version   = $2,
-                           rotated_at           = NOW()
-                     WHERE appliance_id = $3
-                    """,
-                    enc, new_version, req.appliance_id,
-                )
-                action = "BREAKGLASS_ROTATED"
-            else:
-                new_version = 1
-                await conn.execute(
-                    """
-                    INSERT INTO appliance_breakglass_passphrases
-                        (site_id, appliance_id, encrypted_passphrase, passphrase_version)
-                    VALUES ($1, $2, $3, $4)
-                    """,
-                    req.site_id, req.appliance_id, enc, new_version,
-                )
-                action = "BREAKGLASS_SUBMITTED"
+            new_version = int(row["passphrase_version"])
+            action = "BREAKGLASS_SUBMITTED" if row["is_insert"] else "BREAKGLASS_ROTATED"
 
             await conn.execute(
                 """
@@ -153,6 +149,43 @@ async def submit_breakglass(
     }
 
 
+# R+S follow-up (b): reject trivially low-entropy reasons. The length
+# check alone (≥20) is gameable with "aaaaaaaaaaaaaaaaaaaa". We require
+# at least one alphabetic run + ≥5 distinct characters so the operator
+# has to type something meaningful. Not a defense against lies —
+# defense against lazy copy-paste that erodes the audit trail's value.
+_REASON_ALPHANUM_RE = re.compile(r"[A-Za-z]{3,}")
+
+
+def _validate_reason(reason: str) -> str:
+    """Raise HTTPException(400) if reason fails the chain-of-custody bar.
+    Returns the stripped, validated reason on success."""
+    if not reason:
+        raise HTTPException(
+            status_code=400,
+            detail="reason query parameter required (≥20 chars) for chain-of-custody",
+        )
+    r = reason.strip()
+    if len(r) < 20:
+        raise HTTPException(
+            status_code=400,
+            detail="reason must be ≥20 chars",
+        )
+    if len(r) > 500:
+        raise HTTPException(status_code=400, detail="reason must be ≤500 chars")
+    if len(set(r)) < 5:
+        raise HTTPException(
+            status_code=400,
+            detail="reason has <5 distinct characters — describe the incident",
+        )
+    if not _REASON_ALPHANUM_RE.search(r):
+        raise HTTPException(
+            status_code=400,
+            detail="reason must contain an alphabetic word (≥3 letters)",
+        )
+    return r
+
+
 @breakglass_admin_router.get("/appliance/{appliance_id}/break-glass")
 async def retrieve_breakglass(
     appliance_id: str,
@@ -161,25 +194,57 @@ async def retrieve_breakglass(
     admin: dict = Depends(require_admin),
 ) -> Dict[str, Any]:
     """Admin retrieves the plaintext passphrase once per call. Every
-    retrieval writes to admin_audit_log (visible on the customer's
-    /api/client/privileged-actions feed via Phase H6) and bumps
-    retrieval_count + last_retrieved_at for trend visibility.
+    retrieval writes:
+      - admin_audit_log row (visible on the customer's /api/client/
+        privileged-actions feed via Phase H6)
+      - privileged_access_attestation bundle (Ed25519-signed, hash-
+        chained, OTS-anchored; flows into the auditor kit)
 
-    The retrieval is NOT rate-limited at the HTTP layer — spamming it
-    is itself an audit-log-visible signal worth surfacing. If it
-    becomes a problem, add a count-in-last-24h check here.
+    Rate limit: 5/hr per appliance_id (R+S follow-up a). Spam past that
+    returns 429 with Retry-After. Passphrase is still logged as a
+    RETRIEVAL_RATE_LIMITED admin_audit_log row so the pattern is visible
+    to the customer even when blocked.
 
-    Reason is REQUIRED (≥20 chars) per the chain-of-custody rule.
-    Passed via query string so this endpoint remains safe under
-    browser auto-retry semantics (no body → no replay).
+    Reason is REQUIRED (R+S follow-up b): ≥20 chars, ≥5 distinct chars,
+    must contain an alphabetic word. Passed via query string so browser
+    auto-retry semantics don't replay a body.
     """
     actor = admin.get("email") or admin.get("username")
     if not actor:
         raise HTTPException(status_code=403, detail="admin identity missing")
-    if not reason or len(reason.strip()) < 20:
+    reason_clean = _validate_reason(reason)
+
+    allowed, retry_after = await check_rate_limit(
+        site_id=f"breakglass:{appliance_id}",
+        action="breakglass_retrieval",
+        window_seconds=3600,
+        max_requests=5,
+    )
+    if not allowed:
+        logger.warning(
+            "BREAKGLASS_RATE_LIMITED actor=%s aid=%s retry_after=%ds",
+            actor, appliance_id, retry_after,
+        )
+        pool = await get_pool()
+        async with admin_connection(pool) as conn, conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO admin_audit_log
+                    (username, action, target, details, created_at)
+                VALUES ($1, 'BREAKGLASS_RATE_LIMITED', $2, $3::jsonb, NOW())
+                """,
+                actor,
+                f"breakglass:{appliance_id}",
+                json.dumps({
+                    "appliance_id": appliance_id,
+                    "retry_after_seconds": int(retry_after),
+                    "ip_address": request.client.host if request.client else None,
+                }),
+            )
         raise HTTPException(
-            status_code=400,
-            detail="reason query parameter required (≥20 chars) for chain-of-custody",
+            status_code=429,
+            detail=f"break-glass retrieval rate-limited (5/hr); retry in {retry_after}s",
+            headers={"Retry-After": str(retry_after)},
         )
 
     pool = await get_pool()
@@ -221,11 +286,34 @@ async def retrieve_breakglass(
                     "site_id": row["site_id"],
                     "appliance_id": appliance_id,
                     "passphrase_version": int(row["passphrase_version"]),
-                    "reason": reason.strip(),
+                    "reason": reason_clean,
                     "retrieval_count_after": int(row["retrieval_count"]) + 1,
                     "ip_address": request.client.host if request.client else None,
                 }),
             )
+
+            # R+S follow-up (d): write a privileged_access attestation
+            # bundle so this retrieval flows into the auditor kit + is
+            # cryptographically hash-chained to the site's prior
+            # evidence. Do NOT raise the retrieval if attestation fails
+            # — the admin_audit_log above is the immediate audit trail;
+            # the attestation is the durable evidence. Log and continue.
+            attestation_bundle_id = None
+            try:
+                att = await create_privileged_access_attestation(
+                    conn,
+                    site_id=row["site_id"],
+                    event_type="break_glass_passphrase_retrieval",
+                    actor_email=actor,
+                    reason=reason_clean,
+                    origin_ip=request.client.host if request.client else None,
+                )
+                attestation_bundle_id = att["bundle_id"]
+            except PrivilegedAccessAttestationError as e:
+                logger.error(
+                    "breakglass attestation failed aid=%s actor=%s err=%s",
+                    appliance_id, actor, e, exc_info=True,
+                )
 
     try:
         plaintext = decrypt_credential(bytes(row["encrypted_passphrase"]))
@@ -237,8 +325,9 @@ async def retrieve_breakglass(
         )
 
     logger.warning(
-        "BREAKGLASS_RETRIEVED actor=%s aid=%s version=%d reason=%s",
-        actor, appliance_id, int(row["passphrase_version"]), reason[:60],
+        "BREAKGLASS_RETRIEVED actor=%s aid=%s version=%d bundle=%s reason=%s",
+        actor, appliance_id, int(row["passphrase_version"]),
+        attestation_bundle_id or "none", reason_clean[:60],
     )
     return {
         "appliance_id": appliance_id,
@@ -248,5 +337,6 @@ async def retrieve_breakglass(
         "generated_at": row["generated_at"].isoformat(),
         "rotated_at": row["rotated_at"].isoformat() if row["rotated_at"] else None,
         "actor_email": actor,
-        "reason": reason.strip(),
+        "reason": reason_clean,
+        "attestation_bundle_id": attestation_bundle_id,
     }

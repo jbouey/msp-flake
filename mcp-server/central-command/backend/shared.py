@@ -150,25 +150,41 @@ def get_redis_client() -> Optional[redis.Redis]:
 # Rate Limiting
 # ============================================================================
 
-async def check_rate_limit(site_id: str, action: str = "default") -> tuple:
+async def check_rate_limit(
+    site_id: str,
+    action: str = "default",
+    window_seconds: Optional[int] = None,
+    max_requests: Optional[int] = None,
+) -> tuple:
     """
     Check if request is rate limited.
     Returns (allowed, remaining_seconds).
+
+    Optional overrides (used by sensitive endpoints like break-glass):
+      window_seconds — custom TTL (default: RATE_LIMIT_WINDOW = 300s)
+      max_requests   — custom cap (default: RATE_LIMIT_OVERRIDES[action] or RATE_LIMIT_REQUESTS)
     """
     if redis_client is None:
         return True, 0  # No Redis = no rate limiting (test/dev mode)
+
+    window = window_seconds if window_seconds is not None else RATE_LIMIT_WINDOW
+    cap = (
+        max_requests
+        if max_requests is not None
+        else RATE_LIMIT_OVERRIDES.get(action, RATE_LIMIT_REQUESTS)
+    )
 
     key = f"rate:{site_id}:{action}"
 
     count = await redis_client.incr(key)
 
     if count == 1:
-        await redis_client.expire(key, RATE_LIMIT_WINDOW)
-    elif count > RATE_LIMIT_OVERRIDES.get(action, RATE_LIMIT_REQUESTS):
+        await redis_client.expire(key, window)
+    elif count > cap:
         ttl = await redis_client.ttl(key)
         if ttl < 0:
-            await redis_client.expire(key, RATE_LIMIT_WINDOW)
-            ttl = RATE_LIMIT_WINDOW
+            await redis_client.expire(key, window)
+            ttl = window
         return False, max(0, ttl)
 
     return True, 0

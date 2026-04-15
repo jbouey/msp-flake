@@ -66,6 +66,13 @@ ALLOWED_EVENTS = {
     "watchdog_collect_diagnostics",
     # Session 207 Phase S escape hatch — see fleet_cli comment.
     "enable_recovery_shell_24h",
+    # Session 207 R+S non-blocking follow-up — break-glass passphrase
+    # retrievals flow into the attestation chain + auditor kit. Not a
+    # fleet_order type (retrieval is an admin API call, not a queued
+    # order), so intentionally absent from fleet_cli.PRIVILEGED_ORDER_
+    # TYPES + v_privileged_types. The lockstep checker requires
+    # ALLOWED_EVENTS ⊇ the other two; the reverse is not required.
+    "break_glass_passphrase_retrieval",
 }
 
 
