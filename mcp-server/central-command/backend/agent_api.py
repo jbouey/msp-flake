@@ -105,6 +105,56 @@ async def load_monitoring_only_from_registry(db) -> None:
         pass  # Table doesn't exist yet, use hardcoded fallback
 
 
+# The 11 check types that touch Windows via WinRM. When migration 164's
+# global kill-switch was removed (migration 216), these became the scope
+# of the per-appliance circuit breaker (migration 215). If one appliance's
+# WinRM is broken, only THAT appliance's dispatches for these check types
+# get gated — other customers keep remediating.
+WINRM_CHECK_TYPES = {
+    "windows_update",
+    "defender_exclusions",
+    "registry_run_persistence",
+    "screen_lock_policy",
+    "bitlocker_status",
+    "audit_policy",
+    "windows_audit_policy",
+    "rogue_scheduled_tasks",
+    "windows_defender",
+    "smb_signing",
+    "firewall_status",
+}
+
+
+async def winrm_circuit_open(db, site_id: str) -> bool:
+    """Per-site WinRM circuit-breaker check. Returns True when any appliance
+    at `site_id` has accumulated ≥3 WinRM-flavor failures (401 / "winrm" /
+    "TLS pin") in the last 30 minutes with zero successful Windows runbook
+    executions in the same window. The calling dispatch path treats an open
+    circuit identically to the monitoring-only fallback — records the
+    incident, skips remediation, returns immediately.
+
+    Auto-closes on the first successful Windows execution in the window.
+    The view `v_appliance_winrm_circuit` is defined in migration 215.
+
+    Fails CLOSED (returns False) on any query error so a broken view never
+    silently blocks every dispatch — the missing-view case simply reverts
+    to pre-circuit behaviour.
+    """
+    try:
+        result = await db.execute(
+            text(
+                "SELECT 1 FROM v_appliance_winrm_circuit "
+                "WHERE site_id = :site_id AND circuit_state = 'open' LIMIT 1"
+            ),
+            {"site_id": site_id},
+        )
+        return result.fetchone() is not None
+    except Exception:
+        logger.warning("WinRM circuit query failed — defaulting to closed",
+                       exc_info=True)
+        return False
+
+
 # ============================================================================
 # Pydantic Models
 # ============================================================================
@@ -771,8 +821,21 @@ async def report_incident(
     # Monitoring-only checks: record the incident for dashboards but skip the entire
     # L1 → L2 → L3 remediation cascade.  These check types detect drift that cannot
     # be auto-fixed (e.g. host offline, backup not configured, BitLocker needs TPM).
+    #
+    # Circuit breaker gate (migration 215): even for checks that ARE normally
+    # remediated, if this is a WinRM-touching check type AND the site's
+    # per-appliance WinRM circuit is open, fall back to the monitoring path.
+    # Protects the Flywheel from the 3194-failure 401 cascade that migration
+    # 164 was built to mask — but now scoped per-appliance so healthy
+    # customers keep getting auto-remediation.
     check_key = incident.check_type or incident.incident_type
-    if incident.incident_type in MONITORING_ONLY_CHECKS or check_key in MONITORING_ONLY_CHECKS:
+    is_winrm_check = check_key in WINRM_CHECK_TYPES or incident.incident_type in WINRM_CHECK_TYPES
+    circuit_gated = is_winrm_check and await winrm_circuit_open(db, incident.site_id)
+    if (
+        incident.incident_type in MONITORING_ONLY_CHECKS
+        or check_key in MONITORING_ONLY_CHECKS
+        or circuit_gated
+    ):
         await db.execute(
             text("""
                 UPDATE incidents SET resolution_tier = 'monitoring', status = 'open'
@@ -781,17 +844,21 @@ async def report_incident(
             {"incident_id": incident_id}
         )
         await db.commit()
-        logger.info("Monitoring-only check — skipping remediation pipeline",
-                     site_id=incident.site_id,
-                     incident_type=incident.incident_type,
-                     check_type=check_key)
+        skip_reason = "winrm_circuit_open" if circuit_gated else "monitoring_only"
+        logger.info(
+            f"Skipping remediation pipeline ({skip_reason})",
+            site_id=incident.site_id,
+            incident_type=incident.incident_type,
+            check_type=check_key,
+        )
         return {
             "status": "received",
             "incident_id": incident_id,
             "resolution_tier": "monitoring",
             "order_id": None,
             "runbook_id": None,
-            "timestamp": now.isoformat()
+            "timestamp": now.isoformat(),
+            "skip_reason": skip_reason,
         }
 
     # Try L1 rules
@@ -2231,15 +2298,31 @@ async def agent_l2_plan(
 
     # Monitoring-only guard: reject checks that can't be auto-remediated.
     # Return an escalate response without burning an LLM call.
+    #
+    # Plus the per-appliance WinRM circuit gate (migration 215): if this
+    # site's WinRM circuit is open, treat the WinRM-touching check types
+    # identically to monitoring-only and short-circuit before the LLM call.
     check_type = request.raw_data.get("check_type", request.incident_type)
-    if request.incident_type in MONITORING_ONLY_CHECKS or check_type in MONITORING_ONLY_CHECKS:
-        logger.info(f"L2 skip (monitoring-only): type={request.incident_type} check={check_type}")
+    is_winrm_check = check_type in WINRM_CHECK_TYPES or request.incident_type in WINRM_CHECK_TYPES
+    circuit_gated = is_winrm_check and await winrm_circuit_open(db, request.site_id)
+    if (
+        request.incident_type in MONITORING_ONLY_CHECKS
+        or check_type in MONITORING_ONLY_CHECKS
+        or circuit_gated
+    ):
+        skip_reason = "winrm_circuit_open" if circuit_gated else "monitoring_only"
+        reasoning = (
+            f"WinRM circuit open at site '{request.site_id}' — remediation gated"
+            if circuit_gated
+            else f"Check type '{check_type}' is monitoring-only and cannot be auto-remediated."
+        )
+        logger.info(f"L2 skip ({skip_reason}): type={request.incident_type} check={check_type}")
         return {
             "incident_id": request.incident_id,
             "recommended_action": "escalate",
             "action_params": {},
             "confidence": 0.0,
-            "reasoning": f"Check type '{check_type}' is monitoring-only and cannot be auto-remediated.",
+            "reasoning": reasoning,
             "runbook_id": "",
             "requires_approval": False,
             "escalate_to_l3": True,
@@ -2248,7 +2331,7 @@ async def agent_l2_plan(
                 "llm_latency_ms": 0,
                 "pattern_signature": "",
                 "alternative_runbooks": [],
-                "skipped_reason": "monitoring_only",
+                "skipped_reason": skip_reason,
             },
         }
 

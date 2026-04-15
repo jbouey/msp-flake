@@ -446,6 +446,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Two appliances at the same site share a display_name — operators cannot tell which physical box is which in the dashboard",
         check=lambda c: _check_display_name_collision(c),
     ),
+    Assertion(
+        name="winrm_circuit_open",
+        severity="sev2",
+        description="An appliance's per-site WinRM circuit is open (≥3 recent failures, zero successes in 30min). Remediation gated locally; other customers keep remediating. Replaces migration 164 global kill-switch.",
+        check=lambda c: _check_winrm_circuit_open(c),
+    ),
 ]
 
 
@@ -671,6 +677,53 @@ async def _check_mac_rekeyed_recently(conn: asyncpg.Connection) -> List[Violatio
                 "latest_claimed_at": r["latest"].isoformat(),
                 "sources": list(r["sources"] or []),
                 "interpretation": "reinstall churn OR impersonation — verify with operator",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_winrm_circuit_open(conn: asyncpg.Connection) -> List[Violation]:
+    """Per-appliance WinRM circuit breaker is open. Introduced alongside
+    the rollback of migration 164's global kill-switch — replaces it with
+    a per-(site,appliance) dynamic gate so only the actively-failing
+    appliance falls back to monitoring mode while siblings + other
+    customers keep remediating.
+
+    Fires when any appliance has ≥3 WinRM failures with zero successes
+    in the last 30 min (view `v_appliance_winrm_circuit`, migration 215).
+    Auto-resolves as soon as one successful Windows runbook execution
+    lands, which closes the circuit.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT site_id, appliance_id,
+               recent_winrm_fails, recent_successes,
+               last_success_at, last_fail_at
+          FROM v_appliance_winrm_circuit
+         WHERE circuit_state = 'open'
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": r["appliance_id"],
+                "recent_winrm_fails": r["recent_winrm_fails"],
+                "recent_successes": r["recent_successes"],
+                "last_success_at": (
+                    r["last_success_at"].isoformat() if r["last_success_at"] else None
+                ),
+                "last_fail_at": (
+                    r["last_fail_at"].isoformat() if r["last_fail_at"] else None
+                ),
+                "remediation": (
+                    "Investigate WinRM credentials / TLS pins on this appliance. "
+                    "Common causes: stale NTLM password after AD rotation, "
+                    "stale TLS pin after DC cert renewal, WinRM service crash "
+                    "on the target Windows host. Circuit auto-closes on first "
+                    "successful Windows runbook execution."
+                ),
             },
         )
         for r in rows
