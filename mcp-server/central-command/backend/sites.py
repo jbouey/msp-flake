@@ -4380,6 +4380,19 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         # a 5-minute window of double-coverage / dead-zones.
                         # Each sibling wrapped in a savepoint so one failure
                         # doesn't poison the outer transaction.
+                        #
+                        # Migration 222 gate (Session 207 fix): sibling
+                        # UPDATEs target OTHER appliance rows, which the
+                        # D2 cross-appliance guard rejects by default. SET
+                        # LOCAL the scoped bypass flag so the trigger
+                        # recognizes this as a legitimate reassignment —
+                        # flag is transaction-local, cleared automatically
+                        # at commit, and re-reset to 'false' immediately
+                        # after the sibling loop so later unrelated UPDATEs
+                        # in this same tx don't ride the bypass.
+                        await conn.execute(
+                            "SET LOCAL app.allow_cross_appliance_reassignment = 'true'"
+                        )
                         sibling_macs = [m for m in ring_macs if m != this_mac]
                         siblings_reassigned = 0
                         for sib_mac in sibling_macs:
@@ -4428,6 +4441,15 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                                     checkin.site_id, this_mac, sib_mac, str(_se),
                                     exc_info=True,
                                 )
+
+                        # Scope the bypass tightly: reset to 'false' so any
+                        # subsequent UPDATE in this transaction (STEP 6+
+                        # runbook config, etc.) goes through the normal
+                        # guard. Belt-and-suspenders — SET LOCAL also
+                        # clears at commit.
+                        await conn.execute(
+                            "SET LOCAL app.allow_cross_appliance_reassignment = 'false'"
+                        )
 
                         if siblings_reassigned:
                             logger.info(
