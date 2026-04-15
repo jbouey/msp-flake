@@ -1013,7 +1013,7 @@ async def get_site_compliance_health(
         incident_rows = await conn.fetch("""
             SELECT i.check_type, count(DISTINCT i.appliance_id) as devices_affected
             FROM incidents i
-            JOIN appliances a ON a.id = i.appliance_id
+            JOIN v_appliances_current a ON a.id = i.appliance_id
             WHERE a.site_id = $1 AND i.resolved_at IS NULL
             GROUP BY i.check_type
         """, site_id)

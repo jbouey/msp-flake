@@ -545,7 +545,7 @@ async def get_incident_detail(incident_id: str, db: AsyncSession = Depends(get_d
         text("""
             SELECT i.*, a.site_id, a.host_id as hostname
             FROM incidents i
-            JOIN appliances a ON a.id = i.appliance_id
+            JOIN v_appliances_current a ON a.id = i.appliance_id
             WHERE i.id = :incident_id
         """),
         {"incident_id": incident_id}
@@ -3257,7 +3257,7 @@ async def get_fleet_posture(db: AsyncSession = Depends(get_db), user: dict = Dep
                         WHERE i.resolution_tier = 'L3' AND i.reported_at > NOW() - INTERVAL '24 hours'
                     ) as l3_24h
                 FROM incidents i
-                JOIN appliances a ON a.id = i.appliance_id
+                JOIN v_appliances_current a ON a.id = i.appliance_id
                 WHERE i.reported_at > NOW() - INTERVAL '30 days'
                 GROUP BY a.site_id
             ),
@@ -3357,7 +3357,7 @@ async def get_incident_trends(
             interval_hours = 720  # 30 * 24
             trunc = "date_trunc('day', i.reported_at)"
 
-        site_join = "JOIN appliances a ON a.id = i.appliance_id" if site_id else ""
+        site_join = "JOIN v_appliances_current a ON a.id = i.appliance_id" if site_id else ""
         site_filter = "AND a.site_id = :site_id" if site_id else ""
         params = {"interval_hours": interval_hours}
         if site_id:
@@ -3412,7 +3412,7 @@ async def get_incident_breakdown(
         else:
             interval_hours = 720  # 30 * 24
 
-        site_join = "JOIN appliances a ON a.id = i.appliance_id" if site_id else ""
+        site_join = "JOIN v_appliances_current a ON a.id = i.appliance_id" if site_id else ""
         site_filter = "AND a.site_id = :site_id" if site_id else ""
         params = {"interval_hours": interval_hours}
         if site_id:
@@ -3510,7 +3510,7 @@ async def get_attention_required(db: AsyncSession = Depends(get_db), user: dict 
                 i.id, a.site_id, i.incident_type, i.check_type, i.severity,
                 i.reported_at, s.clinic_name
             FROM incidents i
-            JOIN appliances a ON a.id = i.appliance_id
+            JOIN v_appliances_current a ON a.id = i.appliance_id
             LEFT JOIN sites s ON s.site_id = a.site_id
             WHERE i.resolution_tier = 'L3'
             AND i.status != 'resolved'
@@ -3527,7 +3527,7 @@ async def get_attention_required(db: AsyncSession = Depends(get_db), user: dict 
                 MAX(i.reported_at) as latest,
                 s.clinic_name
             FROM incidents i
-            JOIN appliances a ON a.id = i.appliance_id
+            JOIN v_appliances_current a ON a.id = i.appliance_id
             LEFT JOIN sites s ON s.site_id = a.site_id
             WHERE i.reported_at > NOW() - INTERVAL '24 hours'
             AND i.resolution_tier = 'L1'
@@ -3638,7 +3638,7 @@ async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db), use
             COUNT(*) FILTER (WHERE i.resolution_tier = 'L2') as l2,
             COUNT(*) FILTER (WHERE i.resolution_tier = 'L3') as l3
         FROM incidents i
-        JOIN appliances a ON a.id = i.appliance_id
+        JOIN v_appliances_current a ON a.id = i.appliance_id
         WHERE a.site_id = :site_id
     """), {"site_id": site_id})
     inc_row = incident_result.fetchone()
@@ -5536,7 +5536,7 @@ async def get_admin_compliance_health(
         incident_rows = await conn.fetch("""
             SELECT i.check_type, count(DISTINCT i.appliance_id) as devices_affected
             FROM incidents i
-            JOIN appliances a ON a.id = i.appliance_id
+            JOIN v_appliances_current a ON a.id = i.appliance_id
             WHERE a.site_id = $1 AND i.resolved_at IS NULL
             GROUP BY i.check_type
         """, site_id)
@@ -8320,7 +8320,7 @@ async def generate_site_compliance_packet(
                 COUNT(*) FILTER (WHERE i.status = 'resolved') AS resolved_count,
                 COUNT(*) AS total
             FROM incidents i
-            JOIN appliances a ON a.id = i.appliance_id
+            JOIN v_appliances_current a ON a.id = i.appliance_id
             WHERE a.site_id = $1
               AND i.reported_at > NOW() - INTERVAL '30 days'
             GROUP BY category
@@ -8333,7 +8333,7 @@ async def generate_site_compliance_packet(
                 COUNT(*) FILTER (WHERE i.status = 'resolved') AS total_resolved,
                 COUNT(*) AS total
             FROM incidents i
-            JOIN appliances a ON a.id = i.appliance_id
+            JOIN v_appliances_current a ON a.id = i.appliance_id
             WHERE a.site_id = $1
               AND i.reported_at > NOW() - INTERVAL '30 days'
         """, site_id)

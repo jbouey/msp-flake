@@ -66,11 +66,11 @@ async def get_fleet_from_db(db: AsyncSession) -> List[Dict[str, Any]]:
             COUNT(DISTINCT i.id) FILTER (WHERE i.status = 'resolved' AND i.resolution_tier = 'L2') as l2_resolved,
             COUNT(DISTINCT i.id) FILTER (WHERE i.status = 'resolved') as total_resolved,
             COUNT(DISTINCT eb.id) as evidence_count
-        FROM appliances a
+        FROM v_appliances_current a
         LEFT JOIN incidents i ON i.appliance_id = a.id
         LEFT JOIN evidence_bundles eb ON eb.appliance_id = a.id
         WHERE a.status = 'active'
-        GROUP BY a.id
+        GROUP BY a.id, a.site_id, a.host_id, a.status, a.last_checkin
         ORDER BY a.last_checkin DESC NULLS LAST
     """)
     
@@ -135,7 +135,7 @@ async def get_incidents_from_db(
             COALESCE(i.remediation_attempts, 0) as remediation_attempts,
             COALESCE(i.remediation_exhausted, false) as remediation_exhausted
         FROM incidents i
-        JOIN appliances a ON a.id = i.appliance_id
+        JOIN v_appliances_current a ON a.id = i.appliance_id
         WHERE 1=1
     """
 
@@ -1009,7 +1009,7 @@ async def get_site_info(db: AsyncSession, site_id: str) -> Optional[Dict[str, An
             status,
             last_checkin,
             agent_version
-        FROM appliances
+        FROM v_appliances_current
         WHERE site_id = :site_id
         ORDER BY last_checkin DESC NULLS LAST
         LIMIT 1
@@ -1131,7 +1131,7 @@ async def get_evidence_bundles_for_site(
             eb.ots_anchored_at,
             a.site_id
         FROM evidence_bundles eb
-        JOIN appliances a ON a.id = eb.appliance_id
+        JOIN v_appliances_current a ON a.id = eb.appliance_id
         WHERE a.site_id = :site_id
     """
 
@@ -1250,7 +1250,7 @@ async def get_monthly_compliance_report(
             COUNT(*) FILTER (WHERE i.status = 'resolved') as resolved,
             COUNT(*) FILTER (WHERE i.resolution_tier = 'L1') as l1_resolved
         FROM incidents i
-        JOIN appliances a ON a.id = i.appliance_id
+        JOIN v_appliances_current a ON a.id = i.appliance_id
         WHERE a.site_id = :site_id
         AND i.reported_at >= :start_date
         AND i.reported_at < :end_date
@@ -1341,7 +1341,7 @@ async def get_resolved_incidents_for_site(
             i.resolved_at,
             EXTRACT(EPOCH FROM (i.resolved_at - i.reported_at)) as resolution_time_sec
         FROM incidents i
-        JOIN appliances a ON a.id = i.appliance_id
+        JOIN v_appliances_current a ON a.id = i.appliance_id
         WHERE a.site_id = :site_id
         AND i.status = 'resolved'
         AND i.reported_at > NOW() - make_interval(days => :days_param)
@@ -1386,7 +1386,7 @@ async def get_portal_kpis(db: AsyncSession, site_id: str) -> Dict[str, Any]:
             AVG(EXTRACT(EPOCH FROM (i.resolved_at - i.reported_at)))
                 FILTER (WHERE i.status = 'resolved' AND i.check_type = 'patching') as patch_mttr_sec
         FROM incidents i
-        JOIN appliances a ON a.id = i.appliance_id
+        JOIN v_appliances_current a ON a.id = i.appliance_id
         WHERE a.site_id = :site_id
         AND i.reported_at > NOW() - INTERVAL '30 days'
     """), {"site_id": site_id})
@@ -1726,7 +1726,7 @@ async def get_healing_metrics_for_site(db: AsyncSession, site_id: str) -> Dict[s
             COUNT(*) FILTER (WHERE i.reported_at > NOW() - INTERVAL '24 hours') as last_24h,
             MAX(i.reported_at) as last_incident
         FROM incidents i
-        JOIN appliances a ON a.id = i.appliance_id
+        JOIN v_appliances_current a ON a.id = i.appliance_id
         WHERE a.site_id = :site_id
     """), {"site_id": site_id})
     inc_row = incident_result.fetchone()
@@ -1777,7 +1777,7 @@ async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]
             COUNT(*) FILTER (WHERE i.reported_at > NOW() - INTERVAL '24 hours') as last_24h,
             MAX(i.reported_at) as last_incident
         FROM incidents i
-        JOIN appliances a ON a.id = i.appliance_id
+        JOIN v_appliances_current a ON a.id = i.appliance_id
         GROUP BY a.site_id
     """))
     incident_by_site = {row.site_id: row for row in incident_result.fetchall()}
@@ -1879,7 +1879,7 @@ async def get_runbook_executions_from_db(
             o.completed_at,
             EXTRACT(EPOCH FROM (o.completed_at - o.acknowledged_at)) * 1000 as execution_time_ms
         FROM orders o
-        JOIN appliances a ON a.id = o.appliance_id
+        JOIN v_appliances_current a ON a.id = o.appliance_id
         WHERE o.runbook_id = :runbook_id
         AND o.status IN ('completed', 'failed')
         ORDER BY o.completed_at DESC NULLS LAST
