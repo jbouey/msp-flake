@@ -370,14 +370,21 @@ EOF
     '';
   };
 
-  # Post-login MOTD (first-boot service overwrites this with IP-specific info)
+  # Post-login MOTD (first-boot service overwrites this with IP-specific info).
+  # Phase S: remote SSH is OFF by default. This static copy is shown at the
+  # physical console BEFORE msp-first-boot.service has rewritten /run/motd.
+  # Keep the advice consistent with the new substrate — no SSH prompt here
+  # that would mislead an operator who just flashed v32+.
   environment.etc."motd".text = ''
 
     OsirisCare MSP - Compliance Appliance
     ──────────────────────────────────────
     Dashboard:  http://osiriscare.local
-    SSH:        ssh msp@osiriscare.local
+    Beacon:     http://osiriscare.local:8443/  (local diagnostics)
     Portal:     http://osiriscare.local:8084
+    Remote SSH: DISABLED (Session 207 Phase S)
+    Break-glass: physical console, `msp` user,
+                 passphrase from /api/admin/appliance/<aid>/break-glass
 
     Agent:      journalctl -u appliance-daemon -f
     Health:     systemctl status msp-health-check
@@ -1153,31 +1160,32 @@ EOF
   environment.etc."msp/central-command.pub".text = "904b211dba3786764c3a3ab3723db8640295f390c196b8f3bc47ae0a47a0b0db";
 
   # ============================================================================
-  # SSH for emergency access
+  # Phase S — SSH DISABLED by default (Session 207)
   # ============================================================================
+  # Out-of-the-box posture is now SSH-OFF. The recovery substrate has
+  # moved to the watchdog + local status beacon + boot-diag dump (Phase
+  # W/A/D) and physical-console break-glass via the Phase R rotating
+  # passphrase. The permanent MAC-derived backdoor + the committed
+  # operator public key below are removed from the installed-system
+  # defaults.
+  #
+  # SSH can still be turned back on via the upcoming
+  # `enable_recovery_shell_24h` fleet order (tracked as a follow-up —
+  # watchdog writes a time-boxed authorized_keys file and systemd-run
+  # flips the unit on + arms a kill-timer). Until that ships, the
+  # break-glass path is: physical console login as `msp` with the
+  # rotating passphrase pulled from /api/admin/appliance/{aid}/break-
+  # glass (privileged chain, customer-visible).
   services.openssh = {
-    enable = true;
-    settings = {
-      # v22 (Session 206 close): operator recovery access.
-      # When msp-auto-provision fails (pynacl, sig, net), the console may
-      # be unstable or inputs ignored. SSH stays reachable → we can fix
-      # from the MSP operator's Mac without reflashing.
-      PermitRootLogin = lib.mkForce "yes";
-      PasswordAuthentication = lib.mkForce true;
-      KbdInteractiveAuthentication = lib.mkForce false;
-    };
+    enable = lib.mkForce false;
   };
 
-  # Emergency password for console access - baked into installed image
-  # Password: osiris2024 | Lab-only — production MUST override via SOPS
-  users.users.root.hashedPassword = lib.mkDefault "$6$w8KL8dUxFMVF4DmE$NQX0TULi8a8pSytrYP83Xu4vz6sydv0PdtZpSe5Dd7henertz6cpJHmMgTtdQ67ijLgiHkaMuhsNDn//CS8eV1";
-
-  # v22: operator key baked in so SSH works from day 1, independent of
-  # msp-auto-provision success. This is the recovery substrate — without
-  # it, a stuck appliance is physically unrecoverable short of reflash.
-  users.users.root.openssh.authorizedKeys.keys = lib.mkForce [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net"
-  ];
+  # Root password intentionally left unset (lib.mkDefault allows a
+  # top-level override for lab builds that want an override via SOPS).
+  # Default installed image = no root password, no SSH. Break-glass is
+  # via the `msp` user at the physical TTY with the Phase R passphrase.
+  users.users.root.hashedPassword = lib.mkDefault "!";
+  users.users.root.openssh.authorizedKeys.keys = lib.mkForce [];
 
   # ============================================================================
   # Reduce image size
@@ -1838,23 +1846,67 @@ JSON
         break
       done
 
-      # Generate MAC-derived emergency password (first 12 chars of SHA256)
-      # Format: osiris-XXXX where XXXX is derived from MAC
-      if [ -n "$MAC_ADDR" ]; then
-        HASH=$(echo -n "osiriscare-emergency-$MAC_ADDR" | ${pkgs.coreutils}/bin/sha256sum | cut -c1-8)
-        EMERGENCY_PASS="osiris-$HASH"
+      # ─── Phase R: rotating break-glass passphrase ────────────────
+      # Replaces the MAC-derived `osiris-<sha256…>` password. The
+      # MAC is on the sticker + in every LAN ARP cache, making that
+      # derivation a permanent backdoor. Phase R: generate a random
+      # 32-byte passphrase ONCE per provisioning, set it on `msp`,
+      # submit encrypted-at-rest to /api/provision/breakglass-submit
+      # via the main daemon's bearer. Admin retrieves through the
+      # privileged chain with reason ≥20 chars + admin_audit_log
+      # entry visible on the customer's /api/client/privileged-
+      # actions feed (Phase H6). Backend submit happens after
+      # config-yaml load below — at this stage we generate + set
+      # locally so physical-console access is never bricked by a
+      # network failure.
+      if [ ! -f "$CREDS_FILE" ]; then
+        # 32 bytes of urandom → 43 base64url chars (≥192 bits entropy)
+        EMERGENCY_PASS=$(${pkgs.openssl}/bin/openssl rand -base64 32 | ${pkgs.coreutils}/bin/tr -d '\n=' | ${pkgs.coreutils}/bin/tr '+/' '-_')
         echo "msp:$EMERGENCY_PASS" | ${pkgs.shadow}/bin/chpasswd
-        echo "$EMERGENCY_PASS" > "$CREDS_FILE"
+        printf '%s\n' "$EMERGENCY_PASS" > "$CREDS_FILE"
         chmod 600 "$CREDS_FILE"
-        echo "Emergency password set for msp user"
+        echo "Phase R: random break-glass passphrase set for msp user"
+      else
+        EMERGENCY_PASS=$(cat "$CREDS_FILE" 2>/dev/null || echo "")
+        echo "Phase R: break-glass passphrase already set (reusing existing)"
       fi
 
-      # Apply SSH keys from config.yaml
+      # Apply SSH keys from config.yaml + submit break-glass passphrase.
       if [ -f "$CONFIG_PATH" ]; then
         SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
+        API_KEY=$(${pkgs.yq}/bin/yq -r '.api_key // empty' "$CONFIG_PATH")
+        APPL_ID=$(${pkgs.yq}/bin/yq -r '.appliance_id // empty' "$CONFIG_PATH")
+        API_ENDPOINT=$(${pkgs.yq}/bin/yq -r '.api_endpoint // empty' "$CONFIG_PATH")
+        API_ENDPOINT=''${API_ENDPOINT:-https://api.osiriscare.net}
+
         if [ -n "$SITE_ID" ]; then
           ${pkgs.inetutils}/bin/hostname "$SITE_ID"
           echo "Hostname set to: $SITE_ID"
+        fi
+
+        # Phase R: submit break-glass passphrase to backend.
+        # Idempotent — the backend endpoint upserts (version++ on
+        # re-submit). Non-fatal — if submit fails the passphrase is
+        # still usable at the physical console, and msp-first-boot
+        # will retry on next cold boot if $MARKER hasn't been written.
+        if [ -n "$SITE_ID" ] && [ -n "$API_KEY" ] && [ -n "$APPL_ID" ] && [ -n "''${EMERGENCY_PASS:-}" ]; then
+          SUBMIT_PAYLOAD=$(${pkgs.jq}/bin/jq -n \
+            --arg site "$SITE_ID" \
+            --arg aid "$APPL_ID" \
+            --arg pass "$EMERGENCY_PASS" \
+            '{site_id: $site, appliance_id: $aid, passphrase: $pass}')
+          if ${pkgs.curl}/bin/curl -sSfL --max-time 20 \
+              -H "Authorization: Bearer $API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$SUBMIT_PAYLOAD" \
+              "$API_ENDPOINT/api/provision/breakglass-submit" \
+              > /dev/null 2>&1; then
+            echo "Phase R: break-glass passphrase submitted to backend"
+          else
+            echo "Phase R: WARN submit failed — local-only for now"
+          fi
+        else
+          echo "Phase R: config missing site_id/api_key/appliance_id — deferring submit"
         fi
 
         # Extract and apply SSH authorized keys
@@ -1869,7 +1921,7 @@ JSON
         fi
       fi
 
-      # Update MOTD with access info
+      # Update MOTD — Phase S: SSH is OFF by default
       IP_ADDR=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -1)
       cat > /run/motd.dynamic << MOTD
 
@@ -1878,17 +1930,28 @@ JSON
     ╚═══════════════════════════════════════════════════════════╝
 
     IP Address: $IP_ADDR
-    SSH Access: ssh msp@$IP_ADDR
     Status:     http://$IP_ADDR
+    Beacon:     http://$IP_ADDR:8443/   (local diagnostics JSON)
 
-    Emergency console access:
+    Remote SSH is DISABLED by default (Session 207 Phase S).
+    Recovery surface is the appliance-watchdog service — operators
+    issue watchdog_* fleet orders through Central Command. The order
+    catalog:
+
+      watchdog_restart_daemon
+      watchdog_refetch_config
+      watchdog_reset_pin_store
+      watchdog_reset_api_key
+      watchdog_redeploy_daemon
+      watchdog_collect_diagnostics
+
+    Physical-console break-glass:
       User: msp
-      Password: See /var/lib/msp/.emergency-credentials
-               (or derive from MAC: osiris-[first 8 chars of sha256])
+      Password: /api/admin/appliance/$HOSTNAME/break-glass?reason=…
+                (admin retrieval, privileged chain, customer-visible)
 
-    To add SSH keys:
-      1. Register MAC in dashboard with your public key
-      2. Or add to /home/msp/.ssh/authorized_keys
+    Boot diagnostics survive everything:
+      /boot/msp-boot-diag.json
 
 MOTD
 

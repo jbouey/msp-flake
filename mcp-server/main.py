@@ -53,6 +53,10 @@ from dashboard_api.audit_package_api import audit_package_router
 from dashboard_api.appliance_trace import appliance_trace_router
 from dashboard_api.watchdog_api import watchdog_api_router
 from dashboard_api.journal_api import journal_api_router
+from dashboard_api.breakglass_api import (
+    breakglass_provision_router,
+    breakglass_admin_router,
+)
 from dashboard_api.reconcile import (
     router as reconcile_router,
     admin_router as reconcile_admin_router,
@@ -1805,6 +1809,8 @@ app.include_router(audit_package_router)
 app.include_router(appliance_trace_router)
 app.include_router(watchdog_api_router)
 app.include_router(journal_api_router)
+app.include_router(breakglass_provision_router)
+app.include_router(breakglass_admin_router)
 app.include_router(reconcile_router)
 app.include_router(reconcile_admin_router)  # /api/admin/reconcile/events
 app.include_router(provisioning_router)
