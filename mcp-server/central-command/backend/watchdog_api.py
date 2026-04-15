@@ -48,6 +48,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -92,6 +93,15 @@ class WatchdogOrderComplete(BaseModel):
     status: str = Field(..., pattern="^(success|failure)$")
     output: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
+
+
+class WatchdogBootstrapRequest(BaseModel):
+    """Main daemon calls this on startup when its /etc/msp-watchdog.yaml
+    is absent/empty. No body fields required — the bearer's site_id AND
+    appliance_id are authoritative (bearer_aid is the main daemon's
+    canonical id; backend derives watchdog_aid as '<bearer_aid>-watchdog').
+    Returns plaintext key so the main daemon can write the config file."""
+    pass
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────
@@ -373,6 +383,74 @@ async def watchdog_order_complete(
             )
 
     return {"ok": True}
+
+
+@watchdog_api_router.post("/bootstrap")
+async def watchdog_bootstrap(
+    req: WatchdogBootstrapRequest,
+    bearer: tuple = Depends(require_appliance_bearer_full),
+) -> Dict[str, Any]:
+    """Phase W1.1 — main daemon provisions a watchdog api_key for itself.
+
+    Auth: MAIN daemon's bearer. Bearer_aid is authoritative — the
+    caller's claim is ignored. Backend derives watchdog_aid =
+    '<bearer_aid>-watchdog' so cross-appliance bootstrap is
+    impossible by construction. Mints a fresh 32-byte urlsafe secret,
+    hashes it, INSERTs with active=true. Migration 209 trigger
+    auto-deactivates any prior active watchdog key in the same bucket
+    and writes the structured api_key audit row.
+
+    The plaintext key is never readable after this response — lose it
+    and you re-bootstrap (safe because the re-bootstrap auto-deactivates
+    the lost one and the operator sees the rotation in admin_audit_log).
+    """
+    bearer_site, bearer_aid = bearer
+    if not bearer_aid:
+        raise HTTPException(
+            status_code=403,
+            detail="bootstrap requires per-appliance bearer (not site-level)",
+        )
+    if bearer_aid.endswith("-watchdog"):
+        raise HTTPException(
+            status_code=400,
+            detail="bootstrap must be called by the MAIN daemon bearer, not the watchdog's",
+        )
+
+    watchdog_aid = f"{bearer_aid}-watchdog"
+    new_key = secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(new_key.encode()).hexdigest()
+    key_prefix = new_key[:8]
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Migration 209 trigger auto-deactivates any prior active row
+        # for this (site_id, appliance_id) bucket + writes audit entry.
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO api_keys
+                    (site_id, key_hash, key_prefix, description,
+                     active, appliance_id)
+                VALUES ($1, $2, $3, $4, true, $5)
+                """,
+                bearer_site,
+                key_hash,
+                key_prefix,
+                f"watchdog bearer for {bearer_aid}",
+                watchdog_aid,
+            )
+
+    logger.info(
+        "watchdog bootstrap minted key site=%s main_aid=%s watchdog_aid=%s prefix=%s",
+        bearer_site, bearer_aid, watchdog_aid, key_prefix,
+    )
+
+    return {
+        "site_id": bearer_site,
+        "appliance_id": watchdog_aid,
+        "api_key": new_key,
+        "api_endpoint": "https://api.osiriscare.net",
+    }
 
 
 def _truncate(obj: Any, max_bytes: int) -> Any:

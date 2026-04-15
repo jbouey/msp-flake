@@ -469,6 +469,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	log.Printf("[daemon] site_id=%s, poll_interval=%ds, healing=%v, l2=%s",
 		d.config.SiteID, d.config.PollInterval, d.config.HealingEnabled, l2Mode)
 
+	// Phase W1.1: provision the watchdog api_key if /etc/msp-watchdog.yaml
+	// is absent/empty. Runs asynchronously — bootstrap failure is logged
+	// and doesn't block the main daemon's own startup.
+	go d.BootstrapWatchdogIfNeeded(d.runCtx)
+
 	// Initialize CA
 	if d.config.CADir != "" {
 		d.agentCA = ca.New(d.config.CADir)
