@@ -121,10 +121,9 @@ BEGIN
         );
     END IF;
 
-    INSERT INTO admin_audit_log (action, target_type, target_id, actor, details, created_at)
+    INSERT INTO admin_audit_log (action, target, username, details, created_at)
     VALUES ('api_key.' || lower(op),
-            'api_key',
-            COALESCE(NEW.id::text, OLD.id::text),
+            'api_key:' || COALESCE(NEW.id::text, OLD.id::text),
             actor,
             payload,
             NOW());
