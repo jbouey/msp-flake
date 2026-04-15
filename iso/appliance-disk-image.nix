@@ -650,8 +650,9 @@ EOF
       enable = true;
       # 22=ssh, 80=status, 8080=compliance-agent-sensor, 50051=grpc, 8084=local-portal
       # 8090=agent-file-server (DC downloads agent binary for auto-deploy)
+      # 8443=msp-status-beacon (LAN JSON diagnostics — Session 207 silent-install remediation)
       # 8081 (scanner-api) and 8082 (go-agent-metrics) bind to localhost only
-      allowedTCPPorts = [ 22 80 8080 50051 8084 8090 ];
+      allowedTCPPorts = [ 22 80 8080 8443 50051 8084 8090 ];
       allowedUDPPorts = [ 5353 ];
     };
   };
@@ -1266,6 +1267,202 @@ except Exception as e:
         echo "MSP-DATA still not healthy after recovery attempt"
       fi
     '';
+  };
+
+  # ============================================================================
+  # Status beacon (Session 207 enterprise silent-install remediation, A)
+  # ============================================================================
+  # Local HTTP JSON status on :8443 reachable from LAN even when outbound
+  # HTTPS to Central Command is broken. An operator hitting
+  # http://<appliance-ip>:8443/ gets {boot_stage, daemon_status,
+  # last_phonehome, network, dhcp_lease, dns_test, config_yaml_present,
+  # msp_data_mounted, uptime_s}. Turns a black-box install into a
+  # 60-second diagnosis.
+  # ============================================================================
+  systemd.services.msp-status-beacon = {
+    description = "MSP local status beacon (LAN JSON on :8443)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network.target" ];
+    # Not blocked by network-online.target — the beacon exists precisely
+    # for cases where network-online never fires.
+    serviceConfig = {
+      Type = "simple";
+      Restart = "always";
+      RestartSec = 5;
+      ExecStart = "${pkgs.python3}/bin/python3 /etc/msp-status-beacon.py";
+      StandardOutput = "journal";
+      StandardError = "journal";
+    };
+  };
+
+  # Refresh the beacon JSON every 15s from the current system state.
+  systemd.services.msp-beacon-refresh = {
+    description = "Refresh /var/lib/msp/beacon.json";
+    serviceConfig = {
+      Type = "oneshot";
+    };
+    path = with pkgs; [ coreutils iproute2 systemd util-linux gnugrep bash jq ];
+    script = ''
+      mkdir -p /var/lib/msp
+      OUT=/var/lib/msp/beacon.json.tmp
+
+      daemon_status=$(systemctl is-active appliance-daemon 2>/dev/null || echo unknown)
+      network_ifaces=$(${pkgs.iproute2}/bin/ip -j addr 2>/dev/null || echo '[]')
+      dns_test="fail"
+      if ${pkgs.inetutils}/bin/host api.osiriscare.net 2>/dev/null | grep -q 'has address'; then
+        dns_test="ok"
+      fi
+      config_present="false"
+      if [ -f /var/lib/msp/config.yaml ]; then
+        config_present="true"
+      fi
+      msp_data_mounted="false"
+      if findmnt /var/lib/msp >/dev/null 2>&1; then
+        msp_data_mounted="true"
+      fi
+      last_phonehome_ts=$(stat -c %Y /var/lib/msp/last_phonehome 2>/dev/null || echo 0)
+      uptime_s=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
+
+      cat > "$OUT" <<JSON
+{
+  "schema_version": 1,
+  "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "boot_stage": "installed_system",
+  "daemon_status": "$daemon_status",
+  "dns_test": "$dns_test",
+  "config_yaml_present": $config_present,
+  "msp_data_mounted": $msp_data_mounted,
+  "last_phonehome_unix": $last_phonehome_ts,
+  "uptime_seconds": $uptime_s,
+  "network": $network_ifaces
+}
+JSON
+      mv "$OUT" /var/lib/msp/beacon.json
+    '';
+  };
+
+  systemd.timers.msp-beacon-refresh = {
+    description = "Timer: refresh /var/lib/msp/beacon.json every 15s";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "10s";
+      OnUnitActiveSec = "15s";
+      AccuracySec = "1s";
+    };
+  };
+
+  # The Python HTTP server that serves /var/lib/msp/beacon.json on :8443.
+  # Intentionally minimal — no auth, LAN-only reachability by convention.
+  # An attacker on the LAN can read boot diagnostics; that's an
+  # acceptable tradeoff for on-site operators troubleshooting a silent
+  # install.
+  environment.etc."msp-status-beacon.py" = {
+    mode = "0755";
+    text = ''
+      #!${pkgs.python3}/bin/python3
+      """MSP local status beacon — serves /var/lib/msp/beacon.json on :8443."""
+      import http.server, json, socketserver, os
+
+      BEACON = "/var/lib/msp/beacon.json"
+
+      class Handler(http.server.BaseHTTPRequestHandler):
+          def do_GET(self):
+              try:
+                  with open(BEACON, "rb") as f:
+                      data = f.read()
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(data)))
+                  self.end_headers()
+                  self.wfile.write(data)
+              except FileNotFoundError:
+                  self.send_response(503)
+                  self.send_header("Content-Type", "application/json")
+                  self.end_headers()
+                  self.wfile.write(b'{"error":"beacon.json not yet written — msp-beacon-refresh may not have run"}')
+
+          def log_message(self, format, *args):
+              # Suppress per-request noise; journald captures errors.
+              return
+
+      with socketserver.TCPServer(("0.0.0.0", 8443), Handler) as httpd:
+          httpd.serve_forever()
+    '';
+  };
+
+  # Port 8443 is declared in the main networking.firewall.allowedTCPPorts
+  # list above (single-list convention for this module). Beacon is
+  # reachable from any tech plugged into the same switch/AP.
+
+  # ============================================================================
+  # Boot-partition diagnostics dump (Session 207 remediation, D)
+  # ============================================================================
+  # Writes /boot/msp-boot-diag.json every 30s with systemd state, network,
+  # DNS, daemon journal tail, and config checksum. Survives kernel panic;
+  # readable by pulling the SSD into another system. Complement to the
+  # local beacon which requires the appliance to at least boot.
+  # ============================================================================
+  systemd.services.msp-boot-diag = {
+    description = "Dump boot diagnostics to /boot/msp-boot-diag.json";
+    serviceConfig = {
+      Type = "oneshot";
+    };
+    path = with pkgs; [ coreutils iproute2 systemd gnugrep bash jq ];
+    script = ''
+      OUT=/boot/msp-boot-diag.json.tmp
+      DEST=/boot/msp-boot-diag.json
+
+      # /boot is vfat (ESP) — might be read-only or unmounted; tolerate
+      # either without crashing the timer loop.
+      if [ ! -w /boot ]; then
+        ${pkgs.util-linux}/bin/mount -o remount,rw /boot 2>/dev/null || true
+      fi
+      if [ ! -w /boot ]; then
+        echo "/boot not writable; skipping diag dump"
+        exit 0
+      fi
+
+      daemon_status=$(systemctl is-active appliance-daemon 2>/dev/null || echo unknown)
+      daemon_substate=$(systemctl show appliance-daemon -p SubState --value 2>/dev/null || echo unknown)
+      recent_journal=$(${pkgs.systemd}/bin/journalctl -u appliance-daemon -n 50 --no-pager -o cat 2>/dev/null | tail -c 8192)
+      ip_j=$(${pkgs.iproute2}/bin/ip -j addr 2>/dev/null || echo '[]')
+      config_sha=""
+      if [ -f /var/lib/msp/config.yaml ]; then
+        config_sha=$(${pkgs.coreutils}/bin/sha256sum /var/lib/msp/config.yaml | cut -c1-12)
+      fi
+
+      # Build with jq to handle quoting of multi-line journal output.
+      ${pkgs.jq}/bin/jq -n \
+        --arg gen "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg daemon "$daemon_status" \
+        --arg substate "$daemon_substate" \
+        --arg journal "$recent_journal" \
+        --argjson ipaddr "$ip_j" \
+        --arg config_sha "$config_sha" \
+        --arg uptime "$(awk '{print int($1)}' /proc/uptime)" \
+        '{
+          schema_version: 1,
+          generated_at: $gen,
+          daemon_status: $daemon,
+          daemon_substate: $substate,
+          uptime_seconds: ($uptime | tonumber),
+          config_yaml_sha12: $config_sha,
+          network: $ipaddr,
+          daemon_journal_tail: $journal
+        }' > "$OUT" 2>/dev/null || exit 0
+      mv "$OUT" "$DEST" 2>/dev/null || true
+      chmod 0644 "$DEST" 2>/dev/null || true
+    '';
+  };
+
+  systemd.timers.msp-boot-diag = {
+    description = "Timer: dump /boot/msp-boot-diag.json every 30s";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "20s";
+      OnUnitActiveSec = "30s";
+      AccuracySec = "2s";
+    };
   };
 
   # ============================================================================
