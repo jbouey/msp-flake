@@ -24,8 +24,11 @@ COPY . /app
 # Create necessary directories
 RUN mkdir -p /tmp/msp-demo-state /var/lib/msp/evidence /var/lib/mcp-server /app/secrets
 
-# Create non-root user and set ownership
-RUN useradd -r -s /bin/false -d /app appuser && \
+# Create non-root user pinned to UID 1000 to match host bind-mount
+# ownership (secrets/, runbooks/, evidence/ on VPS are all uid=1000).
+# useradd -r would assign a system uid (<1000) and break reads on
+# bind-mounted secrets.
+RUN useradd -m -u 1000 -s /bin/false appuser && \
     chown -R appuser:appuser /app /tmp/msp-demo-state /var/lib/msp /var/lib/mcp-server
 
 # Expose port
