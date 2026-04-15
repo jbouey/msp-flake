@@ -1172,25 +1172,48 @@ EOF
   environment.etc."msp/central-command.pub".text = "904b211dba3786764c3a3ab3723db8640295f390c196b8f3bc47ae0a47a0b0db";
 
   # ============================================================================
-  # Phase S — SSH DISABLED by default (Session 207)
+  # Phase S — SSH OFF by default, in closure for `enable_recovery_shell_24h`
   # ============================================================================
-  # Out-of-the-box posture is now SSH-OFF. The recovery substrate has
-  # moved to the watchdog + local status beacon + boot-diag dump (Phase
-  # W/A/D) and physical-console break-glass via the Phase R rotating
-  # passphrase. The permanent MAC-derived backdoor + the committed
-  # operator public key below are removed from the installed-system
-  # defaults.
+  # Out-of-the-box posture is SSH-OFF. The recovery substrate is watchdog
+  # + local status beacon + boot-diag dump (Phase W/A/D) and physical-
+  # console break-glass via the Phase R rotating passphrase. The
+  # permanent MAC-derived backdoor + the committed operator public key
+  # are both removed from the installed-system defaults.
   #
-  # SSH can still be turned back on via the upcoming
-  # `enable_recovery_shell_24h` fleet order (tracked as a follow-up —
-  # watchdog writes a time-boxed authorized_keys file and systemd-run
-  # flips the unit on + arms a kill-timer). Until that ships, the
-  # break-glass path is: physical console login as `msp` with the
-  # rotating passphrase pulled from /api/admin/appliance/{aid}/break-
-  # glass (privileged chain, customer-visible).
+  # The `enable_recovery_shell_24h` fleet order (Session 207 Phase S
+  # escape hatch) re-enables sshd for 1..24h when the watchdog's 6-order
+  # whitelist can't recover a wedged main daemon. For that to work, the
+  # sshd unit MUST be present in the NixOS closure. So:
+  #
+  #   - `services.openssh.enable = true` keeps the unit + binaries in
+  #     the closure on disk, BUT
+  #   - `systemd.services.sshd.wantedBy = lib.mkForce []` removes the
+  #     multi-user.target wants-link, so it does NOT auto-start on boot.
+  #
+  # The watchdog does `systemctl start sshd` when the fleet order runs;
+  # systemd-run arms a one-shot expire timer that does `systemctl stop
+  # sshd` + wipes the authorized_keys file when it fires. Timer is
+  # systemd-enforced — operator oversight can fail; the timer can't.
+  #
+  # AuthorizedKeysFile is pointed at a dedicated break-glass file —
+  # NOT /root/.ssh/authorized_keys — so the watchdog's per-session
+  # writes can't accidentally accumulate into a permanent key store.
   services.openssh = {
-    enable = lib.mkForce false;
+    enable = lib.mkForce true;
+    settings = {
+      PermitRootLogin = lib.mkForce "prohibit-password";
+      PasswordAuthentication = lib.mkForce false;
+      AuthorizedKeysFile = lib.mkForce "/etc/msp-recovery-authorized-keys";
+      # Refuse connections if the break-glass keys file is empty —
+      # defense-in-depth if the watchdog fails to clean up. (sshd rejects
+      # empty-authorized_keys anyway, but being explicit is cheap.)
+      StrictModes = true;
+    };
   };
+  # Remove the multi-user.target wants-link so sshd does NOT start on
+  # boot. `systemctl start sshd` still works, which is exactly what the
+  # watchdog's enable_recovery_shell_24h handler needs.
+  systemd.services.sshd.wantedBy = lib.mkForce [];
 
   # Root password intentionally left unset (lib.mkDefault allows a
   # top-level override for lab builds that want an override via SOPS).
