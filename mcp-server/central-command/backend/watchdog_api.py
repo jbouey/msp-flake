@@ -57,7 +57,6 @@ from pydantic import BaseModel, Field
 
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
-from .auth import require_appliance_bearer
 from .shared import require_appliance_bearer_full
 
 logger = logging.getLogger("watchdog_api")
