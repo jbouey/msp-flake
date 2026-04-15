@@ -7805,6 +7805,135 @@ async def get_system_health(
 
 
 # =============================================================================
+# SUBSTRATE INTEGRITY ENGINE — read API
+# =============================================================================
+#
+# /admin/substrate-violations           list active violations + summary
+# /admin/substrate-installation-sla     time-to-first-checkin metrics
+#
+# Both endpoints back the customer-facing "Substrate Health" panel.
+# They are intentionally cheap (single SELECT against a partial-
+# indexed table or a date-bounded scan) so the panel can poll on a
+# 60s cadence without database pressure.
+
+@router.get("/admin/substrate-violations")
+async def get_substrate_violations(
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Active substrate violations + a per-severity rollup."""
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch("SELECT * FROM v_substrate_violations_active")
+        rollup = await conn.fetch(
+            """
+            SELECT severity, COUNT(*) AS n
+              FROM substrate_violations
+             WHERE resolved_at IS NULL
+          GROUP BY severity
+            """
+        )
+        recent_resolved = await conn.fetch(
+            """
+            SELECT invariant_name, severity, site_id,
+                   detected_at, resolved_at, details
+              FROM substrate_violations
+             WHERE resolved_at IS NOT NULL
+               AND resolved_at > NOW() - INTERVAL '24 hours'
+          ORDER BY resolved_at DESC
+             LIMIT 50
+            """
+        )
+
+    return {
+        "active": [
+            {
+                "invariant": r["invariant_name"],
+                "severity": r["severity"],
+                "site_id": r["site_id"],
+                "detected_at": r["detected_at"].isoformat(),
+                "last_seen_at": r["last_seen_at"].isoformat(),
+                "minutes_open": float(r["minutes_open"] or 0),
+                "details": r["details"] or {},
+            }
+            for r in rows
+        ],
+        "rollup": {r["severity"]: r["n"] for r in rollup},
+        "active_total": sum(r["n"] for r in rollup),
+        "resolved_24h": [
+            {
+                "invariant": r["invariant_name"],
+                "severity": r["severity"],
+                "site_id": r["site_id"],
+                "detected_at": r["detected_at"].isoformat(),
+                "resolved_at": r["resolved_at"].isoformat(),
+            }
+            for r in recent_resolved
+        ],
+    }
+
+
+@router.get("/admin/substrate-installation-sla")
+async def get_installation_sla(
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Time-to-first-checkin SLA distribution.
+
+    Joins install_sessions.first_seen (when the live USB phoned home)
+    against site_appliances.first_checkin (when the installed system
+    first checked in). Difference = end-to-end provisioning latency.
+
+    Customer-facing target: 99th-percentile under 5 minutes."""
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Per-MAC SLA across the last 30 days. Live USB session start
+        # to first installed-system checkin. NULL for in-flight or
+        # ISO-only sessions (never reached the installed boot).
+        rows = await conn.fetch(
+            """
+            SELECT sa.mac_address,
+                   sa.site_id,
+                   sa.first_checkin,
+                   ist.first_seen AS install_started_at,
+                   EXTRACT(EPOCH FROM (sa.first_checkin - ist.first_seen))/60 AS minutes_to_green
+              FROM site_appliances sa
+              LEFT JOIN install_sessions ist
+                     ON LOWER(ist.mac_address) = LOWER(sa.mac_address)
+                    AND ist.site_id = sa.site_id
+             WHERE sa.first_checkin IS NOT NULL
+               AND sa.first_checkin > NOW() - INTERVAL '30 days'
+               AND ist.first_seen IS NOT NULL
+               AND sa.first_checkin >= ist.first_seen
+            """
+        )
+        samples = [float(r["minutes_to_green"]) for r in rows if r["minutes_to_green"] is not None]
+        samples.sort()
+        n = len(samples)
+
+        def percentile(p: int) -> float | None:
+            if n == 0:
+                return None
+            idx = max(0, min(n - 1, int(round((p / 100.0) * (n - 1)))))
+            return round(samples[idx], 2)
+
+        breaches_5min = sum(1 for s in samples if s > 5.0)
+
+    return {
+        "sample_count": n,
+        "target_minutes": 5,
+        "breaches_over_target": breaches_5min,
+        "p50_minutes": percentile(50),
+        "p95_minutes": percentile(95),
+        "p99_minutes": percentile(99),
+        "max_minutes": round(samples[-1], 2) if samples else None,
+        "min_minutes": round(samples[0], 2) if samples else None,
+    }
+
+
+# =============================================================================
 # AGENT HEALTH (fleet-wide Go agent status)
 # =============================================================================
 
