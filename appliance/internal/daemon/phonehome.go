@@ -3,9 +3,11 @@ package daemon
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -36,6 +38,11 @@ type PhoneHomeClient struct {
 	client                 *http.Client
 	consecutiveFailures    atomic.Int32
 	maxFailuresBeforeReset int
+	// Week 1 of the composed identity stack: when set, the client
+	// signs every outbound checkin with the device-bound Ed25519
+	// keypair. nil during the soak only when LoadOrCreateIdentity
+	// failed at startup (logged loudly; bearer auth still works).
+	identity *Identity
 }
 
 // NewPhoneHomeClient creates a new client for Central Command checkin.
@@ -118,6 +125,16 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 		},
 		maxFailuresBeforeReset: 3,
 	}
+}
+
+// NewPhoneHomeClientWithIdentity is the Week-1+ constructor used by
+// daemon.New(). It wraps NewPhoneHomeClient and attaches an Identity
+// so Checkin can sign its outbound payload. Passing a nil identity
+// is allowed — the client falls back to bearer-only behavior.
+func NewPhoneHomeClientWithIdentity(cfg *Config, id *Identity) *PhoneHomeClient {
+	c := NewPhoneHomeClient(cfg)
+	c.identity = id
+	return c
 }
 
 // RecreateClient rebuilds the HTTP client with a fresh transport to recover
@@ -459,6 +476,15 @@ func (c *PhoneHomeClient) Checkin(ctx context.Context, req *CheckinRequest) (*Ch
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.config.APIKey)
 	httpReq.Header.Set("User-Agent", "OsirisCare-Appliance/Go")
+
+	// Week 1 of the composed identity stack: when an Identity is
+	// attached, sign the request and add the three X-Appliance-*
+	// headers the server uses for observe-only verification. The
+	// canonical input format is FROZEN here and at signature_auth.py
+	// — same byte layout, same separators (no trailing newline).
+	if c.identity != nil {
+		signRequest(httpReq, body, c.identity)
+	}
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
@@ -1067,3 +1093,48 @@ func (c *execCmd) CombinedOutput() ([]byte, error) {
 
 // Ensure x509 import is referenced (used by VerifyPeerCertificate callback signature).
 var _ *x509.Certificate
+
+// signRequest attaches the Week-1 device-identity signature headers
+// to an outbound HTTP request. The canonical signing input is FROZEN
+// at this layout — the backend's signature_auth.verify_appliance_signature
+// rebuilds the same bytes and verifies. Any drift in either side
+// breaks every signature.
+//
+// canonical = METHOD\nPATH\nSHA256_HEX_LOWER(body)\nRFC3339_UTC_Z\nNONCE_HEX32
+//
+// Headers added:
+//
+//	X-Appliance-Signature: base64url(ed25519_sig)   // no padding
+//	X-Appliance-Timestamp: 2026-04-15T03:45:23Z
+//	X-Appliance-Nonce:     <32 lowercase hex chars>
+//	X-Appliance-Pubkey-Fingerprint: <16 hex chars>  // observability hint
+//
+// Failure to sign is logged but never blocks the request — bearer
+// auth still works in soak mode.
+func signRequest(req *http.Request, body []byte, id *Identity) {
+	bodyHash := sha256.Sum256(body)
+	bodyHashHex := hex.EncodeToString(bodyHash[:])
+
+	ts := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	nonceBytes := make([]byte, 16)
+	if _, err := cryptorand.Read(nonceBytes); err != nil {
+		slog.Warn("sigauth nonce gen failed — skipping signature", "component", "sigauth", "error", err)
+		return
+	}
+	nonceHex := hex.EncodeToString(nonceBytes)
+
+	canonical := []byte(strings.ToUpper(req.Method) +
+		"\n" + req.URL.Path +
+		"\n" + bodyHashHex +
+		"\n" + ts +
+		"\n" + nonceHex)
+
+	sig := id.Sign(canonical)
+	sigB64 := base64.RawURLEncoding.EncodeToString(sig)
+
+	req.Header.Set("X-Appliance-Signature", sigB64)
+	req.Header.Set("X-Appliance-Timestamp", ts)
+	req.Header.Set("X-Appliance-Nonce", nonceHex)
+	req.Header.Set("X-Appliance-Pubkey-Fingerprint", id.Fingerprint())
+}

@@ -74,6 +74,11 @@ type Daemon struct {
 	// Credential envelope encryption keypair (X25519)
 	envelopeKP *crypto.EnvelopeKeypair
 
+	// Device-bound Ed25519 identity (Week 1 of the composed identity
+	// stack). Loaded once at New(); shared with the phonehome client
+	// for signing outbound requests.
+	identity *Identity
+
 	// Auto-deploy: spread agent to discovered workstations
 	deployer *autoDeployer
 
@@ -222,9 +227,23 @@ func (d *Daemon) isSubscriptionActive() bool {
 
 // New creates a new daemon with the given configuration.
 func New(cfg *Config) *Daemon {
+	// Load (or first-boot create) the device identity BEFORE
+	// constructing the phonehome client, so the client can hold a
+	// reference and sign every outbound checkin.
+	identity, identityErr := LoadOrCreateIdentity(cfg.StateDir)
+	if identityErr != nil {
+		// Non-fatal during the soak window: identity is observe-only on
+		// the server side. We log loud and continue with bearer auth.
+		log.Printf("[daemon] WARN: identity load failed (%v) — soak-mode falls back to bearer auth", identityErr)
+	} else {
+		log.Printf("[daemon] identity loaded: fingerprint=%s pubkey=%s",
+			identity.Fingerprint(), identity.PublicKeyHex())
+	}
+
 	d := &Daemon{
 		config:        cfg,
-		phoneCli:      NewPhoneHomeClient(cfg),
+		identity:      identity,
+		phoneCli:      NewPhoneHomeClientWithIdentity(cfg, identity),
 		registry:      grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
 		state:         NewStateManager(),
 		healTracker:   newHealingRateTracker(),

@@ -3032,6 +3032,33 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     mac_clean = mac_normalized.replace(':', '')
     appliance_id = f"{checkin.site_id}-{mac_normalized}"
 
+    # Week 1 of the composed identity stack: observe-only signature
+    # check. We capture presence + validity for the substrate engine
+    # `signature_auth_adoption_rate` invariant. Bearer auth (above)
+    # is still the enforcement path; soak observation runs alongside.
+    # No exception path — this MUST NOT regress checkin behavior.
+    try:
+        from signature_auth import verify_appliance_signature  # type: ignore
+        body_bytes = await request.body()
+        async with admin_connection(pool) as _sigauth_conn:
+            sig_result = await verify_appliance_signature(
+                request, _sigauth_conn,
+                site_id=checkin.site_id,
+                mac_address=mac_normalized,
+                body_bytes=body_bytes,
+            )
+        if sig_result.present:
+            logger.info(
+                "sigauth observed",
+                site_id=checkin.site_id,
+                mac=mac_normalized,
+                valid=sig_result.valid,
+                reason=sig_result.reason,
+                fingerprint=sig_result.pubkey_fingerprint,
+            )
+    except Exception:  # noqa: BLE001 — never let observation kill checkin
+        logger.warning("sigauth observation hook raised", exc_info=True)
+
     # Session 206 D2: tag the authenticated appliance so the cross-appliance
     # audit trigger (Migration 197/199) can reject any UPDATE that touches
     # a different appliance's row.
