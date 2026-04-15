@@ -1231,10 +1231,32 @@ async def run_assertions_once(conn: asyncpg.Connection) -> Dict[str, int]:
             counters["errors"] += 1
             continue
 
-        # Build the set of (site_id) keys currently failing.
-        current_keys = {(v.site_id or "") for v in current}
+        # Phase T-B gate fix: collapse multi-Violation groups into
+        # ONE row per (invariant, site). If an invariant returns several
+        # Violations for the same site (e.g. winrm_pin_mismatch with two
+        # target hosts), merge their details into a single row with a
+        # `matches` array — not N rows that race the partial UNIQUE
+        # index and crash the engine mid-tick.
+        collapsed: Dict[str, Violation] = {}
+        for v in current:
+            site_key = v.site_id or ""
+            if site_key in collapsed:
+                existing = collapsed[site_key].details
+                if "matches" not in existing:
+                    # Lift the first violation into a matches[] entry
+                    collapsed[site_key] = Violation(
+                        site_id=v.site_id,
+                        details={"matches": [existing]},
+                    )
+                collapsed[site_key].details.setdefault("matches", []).append(v.details)
+                collapsed[site_key].details["match_count"] = len(
+                    collapsed[site_key].details["matches"]
+                )
+            else:
+                collapsed[site_key] = v
 
-        # Open rows for this assertion.
+        current_keys = set(collapsed.keys())
+
         open_rows = await conn.fetch(
             """
             SELECT id, COALESCE(site_id, '') AS site_key
@@ -1246,60 +1268,101 @@ async def run_assertions_once(conn: asyncpg.Connection) -> Dict[str, int]:
         )
         open_by_site = {r["site_key"]: r["id"] for r in open_rows}
 
-        # Insert new violations OR refresh last_seen on existing ones.
-        for v in current:
-            site_key = v.site_id or ""
+        # Phase T-B gate fix: every mutation below runs in its own
+        # savepoint so a single UniqueViolation (or any other error)
+        # doesn't abort the outer transaction + blind the remaining
+        # invariants for the tick. Each site's UPDATE/INSERT/resolve
+        # is atomic and independently retryable; one bad row touches
+        # only its own counter.
+        for site_key, v in collapsed.items():
             if site_key in open_by_site:
-                await conn.execute(
-                    """
-                    UPDATE substrate_violations
-                       SET last_seen_at = NOW(),
-                           details      = $1::jsonb
-                     WHERE id = $2
-                    """,
-                    json.dumps(v.details),
-                    open_by_site[site_key],
-                )
-                counters["refreshed"] += 1
+                try:
+                    async with conn.transaction():
+                        await conn.execute(
+                            """
+                            UPDATE substrate_violations
+                               SET last_seen_at = NOW(),
+                                   details      = $1::jsonb
+                             WHERE id = $2
+                            """,
+                            json.dumps(v.details),
+                            open_by_site[site_key],
+                        )
+                    counters["refreshed"] += 1
+                except Exception:
+                    logger.error(
+                        "substrate refresh failed: invariant=%s site=%s",
+                        a.name, site_key, exc_info=True,
+                    )
+                    counters["errors"] += 1
             else:
-                # We already proved no open row exists for this
-                # (invariant, site) combo above, so a plain INSERT
-                # is safe. The partial unique index on the table
-                # is a backstop against logic-bug double-inserts.
-                await conn.execute(
-                    """
-                    INSERT INTO substrate_violations
-                          (invariant_name, severity, site_id, details)
-                    VALUES ($1, $2, $3, $4::jsonb)
-                    """,
-                    a.name,
-                    a.severity,
-                    v.site_id,
-                    json.dumps(v.details),
-                )
-                counters["opened"] += 1
-                logger.warning(
-                    "substrate violation OPENED: invariant=%s severity=%s site=%s details=%s",
-                    a.name,
-                    a.severity,
-                    v.site_id,
-                    json.dumps(v.details),
-                )
+                try:
+                    async with conn.transaction():
+                        await conn.execute(
+                            """
+                            INSERT INTO substrate_violations
+                                  (invariant_name, severity, site_id, details)
+                            VALUES ($1, $2, $3, $4::jsonb)
+                            """,
+                            a.name,
+                            a.severity,
+                            v.site_id,
+                            json.dumps(v.details),
+                        )
+                    counters["opened"] += 1
+                    logger.warning(
+                        "substrate violation OPENED: invariant=%s severity=%s site=%s details=%s",
+                        a.name,
+                        a.severity,
+                        v.site_id,
+                        json.dumps(v.details),
+                    )
+                except Exception:
+                    # UniqueViolation here = race between two tick passes
+                    # (or a previous tick partially committed). Resolve
+                    # by treating this as a refresh on the existing row.
+                    logger.warning(
+                        "substrate INSERT raced: invariant=%s site=%s — falling back to refresh",
+                        a.name, site_key, exc_info=True,
+                    )
+                    try:
+                        async with conn.transaction():
+                            await conn.execute(
+                                """
+                                UPDATE substrate_violations
+                                   SET last_seen_at = NOW(),
+                                       details      = $1::jsonb
+                                 WHERE invariant_name = $2
+                                   AND COALESCE(site_id, '') = $3
+                                   AND resolved_at IS NULL
+                                """,
+                                json.dumps(v.details), a.name, site_key,
+                            )
+                        counters["refreshed"] += 1
+                    except Exception:
+                        counters["errors"] += 1
 
-        # Resolve any open rows whose key no longer appears.
         for site_key, row_id in open_by_site.items():
             if site_key not in current_keys:
-                await conn.execute(
-                    "UPDATE substrate_violations SET resolved_at = NOW() WHERE id = $1",
-                    row_id,
-                )
-                counters["resolved"] += 1
-                logger.info(
-                    "substrate violation RESOLVED: invariant=%s site=%s id=%s",
-                    a.name,
-                    site_key,
-                    row_id,
-                )
+                try:
+                    async with conn.transaction():
+                        await conn.execute(
+                            "UPDATE substrate_violations SET resolved_at = NOW() WHERE id = $1",
+                            row_id,
+                        )
+                    counters["resolved"] += 1
+                    logger.info(
+                        "substrate violation RESOLVED: invariant=%s site=%s id=%s",
+                        a.name,
+                        site_key,
+                        row_id,
+                    )
+                except Exception:
+                    logger.error(
+                        "substrate resolve failed: invariant=%s site=%s id=%s",
+                        a.name, site_key, row_id, exc_info=True,
+                    )
+                    counters["errors"] += 1
 
     return counters
 

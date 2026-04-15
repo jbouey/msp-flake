@@ -556,6 +556,14 @@ EOF
       ${pkgs.zstd}/bin/zstd -19 -q -o "$TMP.zst" "$TMP"
       B64=$(${pkgs.coreutils}/bin/base64 -w0 "$TMP.zst")
 
+      # Gate H4-A fix: scrubbed=false until the phiscrub Go binary is
+      # invoked here. The inline sed does 3 patterns (IP / PATIENT-* /
+      # SSN); phiscrub package has 14 (MRN, emails, phones, usernames,
+      # IPv6, DNs, MACs, etc). Shipping scrubbed=true on the 3-pattern
+      # output would bake a false compliance attestation into the
+      # immutable hash-chained ledger. Honest signal = false today +
+      # JOURNAL_UPLOAD_UNSCRUBBED audit row. Phase H4.1 wires phiscrub
+      # and flips this to true.
       PAYLOAD=$(${pkgs.jq}/bin/jq -n \
         --arg site_id "$SITE_ID" \
         --arg aid "$APPL_ID" \
@@ -567,7 +575,7 @@ EOF
         '{site_id: $site_id, appliance_id: $aid,
           batch_start: $bs, batch_end: $be,
           line_count: $n, compressed: $b64, sha256: $sha,
-          scrubbed: true}')
+          scrubbed: false}')
 
       echo "journal-upload: posting $LINE_COUNT lines ($(echo "$B64" | wc -c) bytes base64)"
       ${pkgs.curl}/bin/curl -sSfL --max-time 30 \
@@ -870,61 +878,114 @@ EOF
       # layer (TPM-sealed disk + measured boot + ingress firewall).
       # ======================================================================
       extraCommands = ''
-        # Clear any prior egress chain so this block is idempotent
+        # Gate H1-B fix: mirror the entire egress chain on both IPv4
+        # (iptables) AND IPv6 (ip6tables). The previous cut covered only
+        # v4 — any AAAA-capable LAN or IPv6-resolved api.osiriscare.net
+        # would have left default-deny default-open on v6.
+        #
+        # Gate H1-F fix: LOG rule is rate-limited (10/s burst 50) so a
+        # compromised daemon generating exfil traffic can't storm
+        # journald and corrupt the very journal-upload channel that
+        # captures the violation.
+
+        # ───────────── IPv4 chain ─────────────
         iptables -F MSP_EGRESS 2>/dev/null || true
         iptables -X MSP_EGRESS 2>/dev/null || true
         iptables -N MSP_EGRESS
 
-        # Loopback is always allowed.
         iptables -A MSP_EGRESS -o lo -j RETURN
-
-        # Established / related connections: allow their reply traffic.
         iptables -A MSP_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 
-        # Resolve api.osiriscare.net at rule-apply time. If DNS is dead
-        # here, fall back to the historical VPS IP so the rule doesn't
-        # brick outbound during an early-boot resolver race.
         API_IPS=$(${pkgs.inetutils}/bin/host -t A api.osiriscare.net 2>/dev/null | ${pkgs.gawk}/bin/awk '/has address/ {print $4}' | head -5)
         [ -z "$API_IPS" ] && API_IPS="178.156.162.116"
         for ip in $API_IPS; do
           iptables -A MSP_EGRESS -p tcp -d "$ip" --dport 443 -j RETURN
         done
 
-        # DNS — both TCP and UDP, to any LAN DNS server
         iptables -A MSP_EGRESS -p udp --dport 53 -j RETURN
         iptables -A MSP_EGRESS -p tcp --dport 53 -j RETURN
-
-        # DHCP client (UDP 67/68)
         iptables -A MSP_EGRESS -p udp --dport 67:68 -j RETURN
-
-        # NTP (UDP 123)
         iptables -A MSP_EGRESS -p udp --dport 123 -j RETURN
-
-        # LAN RFC1918 + link-local — WinRM / SSH / agent deploy
         for cidr in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16; do
           iptables -A MSP_EGRESS -d "$cidr" -j RETURN
         done
-
-        # ICMP echo (ping) for reachability
         iptables -A MSP_EGRESS -p icmp --icmp-type echo-request -j RETURN
         iptables -A MSP_EGRESS -p icmp --icmp-type echo-reply -j RETURN
 
-        # Everything else: log + drop. Log gets captured by journald
-        # → journal_upload_events so the dashboard shows egress policy
-        # violations as a first-class signal (Phase H4 feeds this).
-        iptables -A MSP_EGRESS -j LOG --log-prefix "MSP_EGRESS_DROP: " --log-level 4
+        # Rate-limited LOG (Gate H1-F)
+        iptables -A MSP_EGRESS -m limit --limit 10/sec --limit-burst 50 \
+            -j LOG --log-prefix "MSP_EGRESS_DROP: " --log-level 4
         iptables -A MSP_EGRESS -j DROP
 
-        # Hook MSP_EGRESS into the OUTPUT chain exactly once.
         iptables -D OUTPUT -j MSP_EGRESS 2>/dev/null || true
         iptables -A OUTPUT -j MSP_EGRESS
+
+        # ───────────── IPv6 chain (Gate H1-B fix) ─────────────
+        ip6tables -F MSP_EGRESS6 2>/dev/null || true
+        ip6tables -X MSP_EGRESS6 2>/dev/null || true
+        ip6tables -N MSP_EGRESS6
+
+        ip6tables -A MSP_EGRESS6 -o lo -j RETURN
+        ip6tables -A MSP_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+
+        API_V6=$(${pkgs.inetutils}/bin/host -t AAAA api.osiriscare.net 2>/dev/null | ${pkgs.gawk}/bin/awk '/has IPv6 address/ {print $5}' | head -5)
+        for ip in $API_V6; do
+          ip6tables -A MSP_EGRESS6 -p tcp -d "$ip" --dport 443 -j RETURN
+        done
+
+        # DNS + DHCPv6 + NTP + ICMPv6 (NDP is required for IPv6 to work at all)
+        ip6tables -A MSP_EGRESS6 -p udp --dport 53 -j RETURN
+        ip6tables -A MSP_EGRESS6 -p tcp --dport 53 -j RETURN
+        ip6tables -A MSP_EGRESS6 -p udp --dport 546:547 -j RETURN
+        ip6tables -A MSP_EGRESS6 -p udp --dport 123 -j RETURN
+        ip6tables -A MSP_EGRESS6 -p ipv6-icmp -j RETURN
+
+        # LAN ULA + link-local — WinRM / SSH on IPv6-capable LANs
+        for cidr in fc00::/7 fe80::/10; do
+          ip6tables -A MSP_EGRESS6 -d "$cidr" -j RETURN
+        done
+
+        ip6tables -A MSP_EGRESS6 -m limit --limit 10/sec --limit-burst 50 \
+            -j LOG --log-prefix "MSP_EGRESS6_DROP: " --log-level 4
+        ip6tables -A MSP_EGRESS6 -j DROP
+
+        ip6tables -D OUTPUT -j MSP_EGRESS6 2>/dev/null || true
+        ip6tables -A OUTPUT -j MSP_EGRESS6
       '';
-      # Reverse: when the firewall module tears down, remove our chain.
       extraStopCommands = ''
         iptables -D OUTPUT -j MSP_EGRESS 2>/dev/null || true
         iptables -F MSP_EGRESS 2>/dev/null || true
         iptables -X MSP_EGRESS 2>/dev/null || true
+        ip6tables -D OUTPUT -j MSP_EGRESS6 2>/dev/null || true
+        ip6tables -F MSP_EGRESS6 2>/dev/null || true
+        ip6tables -X MSP_EGRESS6 2>/dev/null || true
       '';
+    };
+  };
+
+  # Gate H1-D fix: daily re-apply of the egress firewall rules so DNS
+  # changes to api.osiriscare.net (VPS migration, DR failover, etc.)
+  # propagate without requiring a full nixos-rebuild. The rules are
+  # resolved at rule-apply time, so restarting the firewall service
+  # re-runs the host lookup. Without this daily tick, the hardcoded
+  # 178.156.162.116 fallback is load-bearing forever — coordinated
+  # fleet brick risk.
+  systemd.services.msp-egress-refresh = {
+    description = "Re-resolve api.osiriscare.net + re-apply egress firewall rules";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.systemd}/bin/systemctl reload-or-restart firewall.service";
+    };
+  };
+  systemd.timers.msp-egress-refresh = {
+    description = "Timer: refresh egress allowlist once per day";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "10min";
+      OnUnitActiveSec = "24h";
+      AccuracySec = "5min";
+      RandomizedDelaySec = "30min";  # scatter across the fleet
+      Persistent = true;
     };
   };
 

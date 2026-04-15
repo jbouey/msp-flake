@@ -106,66 +106,110 @@ async def upload_journal_batch(
 
     pool = await get_pool()
     async with admin_connection(pool) as conn:
-        prev_row = await conn.fetchrow(
-            "SELECT chain_hash FROM journal_upload_events "
-            "WHERE appliance_id = $1 ORDER BY id DESC LIMIT 1",
-            req.appliance_id,
-        )
-        prev = prev_row["chain_hash"] if prev_row else None
-        chain = _chain_hash(prev, payload)
-
-        async with conn.transaction():
-            await conn.execute(
-                """
-                INSERT INTO journal_upload_events (
-                    site_id, appliance_id, batch_start, batch_end,
-                    line_count, payload_bytes, payload,
-                    chain_prev_hash, chain_hash
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
-                """,
-                req.site_id,
-                req.appliance_id,
-                req.batch_start,
-                req.batch_end,
-                req.line_count,
-                payload_bytes,
-                json.dumps(payload),
-                prev,
-                chain,
-            )
-
-            # If the appliance DIDN'T claim PHI scrubbing, that's a
-            # compliance event — log explicitly so the auditor sees it.
-            if not req.scrubbed:
-                await conn.execute(
-                    """
-                    INSERT INTO admin_audit_log (username, action, target, details, created_at)
-                    VALUES (
-                        'system',
-                        'JOURNAL_UPLOAD_UNSCRUBBED',
-                        $1,
-                        jsonb_build_object(
-                            'site_id', $2,
-                            'appliance_id', $3,
-                            'batch_start', $4::text,
-                            'batch_end', $5::text,
-                            'line_count', $6,
-                            'reason', 'appliance-side scrubber did not run or reported failure'
-                        ),
-                        NOW()
+        # Gate H4-E fix: hold the SELECT+INSERT inside ONE transaction
+        # and use pg_advisory_xact_lock on the appliance_id hash so two
+        # concurrent uploads from the same box serialize on the chain
+        # instead of racing to compute identical chain_prev_hash. The
+        # advisory lock is released automatically at COMMIT — no cleanup.
+        # Backstop: migration 220 UNIQUE (appliance_id, chain_prev_hash)
+        # rejects a fork even if this transaction were to leak.
+        chain = None
+        prev = None
+        for attempt in range(3):
+            try:
+                async with conn.transaction():
+                    # Cheap xact lock scoped to (appliance_id) via sha1→bigint
+                    lock_key = int.from_bytes(
+                        hashlib.sha1(req.appliance_id.encode()).digest()[:8],
+                        byteorder="big", signed=True,
                     )
-                    """,
-                    f"appliance:{req.appliance_id}",
-                    req.site_id,
-                    req.appliance_id,
-                    req.batch_start.isoformat(),
-                    req.batch_end.isoformat(),
-                    req.line_count,
+                    await conn.execute("SELECT pg_advisory_xact_lock($1)", lock_key)
+
+                    prev_row = await conn.fetchrow(
+                        "SELECT chain_hash FROM journal_upload_events "
+                        "WHERE appliance_id = $1 ORDER BY id DESC LIMIT 1",
+                        req.appliance_id,
+                    )
+                    prev = prev_row["chain_hash"] if prev_row else None
+                    chain = _chain_hash(prev, payload)
+
+                    await conn.execute(
+                        """
+                        INSERT INTO journal_upload_events (
+                            site_id, appliance_id, batch_start, batch_end,
+                            line_count, payload_bytes, payload,
+                            chain_prev_hash, chain_hash
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+                        """,
+                        req.site_id,
+                        req.appliance_id,
+                        req.batch_start,
+                        req.batch_end,
+                        req.line_count,
+                        payload_bytes,
+                        json.dumps(payload),
+                        prev,
+                        chain,
+                    )
+                break  # success
+            except Exception as e:
+                # UniqueViolation on migration 220's index = a racing
+                # commit beat us to the same prev. Retry picks up the
+                # new chain_prev_hash and chains off it.
+                err = str(e)
+                if "journal_upload_events_no_chain_fork" in err and attempt < 2:
+                    logger.info(
+                        "journal chain race appliance=%s attempt=%d — retrying",
+                        req.appliance_id, attempt + 1,
+                    )
+                    continue
+                raise
+
+        # If the appliance DIDN'T claim full PHI scrubbing, record a
+        # compliance event — the auditor walks this audit trail to see
+        # which batches lacked full-parity scrubbing (until the phiscrub
+        # Go package, 14 patterns, is invoked from the shell uploader).
+        # Today the shell-side sed has 3 patterns; the appliance emits
+        # scrubbed=false and the audit row is NOT dead code, it's the
+        # honest attestation that parity is pending.
+        if not req.scrubbed:
+            try:
+                async with conn.transaction():
+                    await conn.execute(
+                        """
+                        INSERT INTO admin_audit_log
+                            (username, action, target, details, created_at)
+                        VALUES (
+                            'system',
+                            'JOURNAL_UPLOAD_UNSCRUBBED',
+                            $1,
+                            jsonb_build_object(
+                                'site_id', $2,
+                                'appliance_id', $3,
+                                'batch_start', $4::text,
+                                'batch_end', $5::text,
+                                'line_count', $6,
+                                'reason', 'appliance-side sed scrubber lacks full phiscrub parity (3 patterns vs 14)'
+                            ),
+                            NOW()
+                        )
+                        """,
+                        f"appliance:{req.appliance_id}",
+                        req.site_id,
+                        req.appliance_id,
+                        req.batch_start.isoformat(),
+                        req.batch_end.isoformat(),
+                        req.line_count,
+                    )
+            except Exception:
+                logger.error(
+                    "failed to write JOURNAL_UPLOAD_UNSCRUBBED audit row site=%s aid=%s",
+                    req.site_id, req.appliance_id, exc_info=True,
                 )
-                logger.warning(
-                    "journal upload unscrubbed: site=%s aid=%s lines=%d",
-                    req.site_id, req.appliance_id, req.line_count,
-                )
+            logger.info(
+                "journal upload unscrubbed site=%s aid=%s lines=%d",
+                req.site_id, req.appliance_id, req.line_count,
+            )
 
     return {
         "ok": True,
