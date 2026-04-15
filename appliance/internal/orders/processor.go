@@ -465,6 +465,11 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 	handlerCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// Pass order_id through ctx so handlers like handleUpdateDaemon can
+	// write a pending-completion marker keyed by order_id without an
+	// API change to every handler signature.
+	handlerCtx = context.WithValue(handlerCtx, ctxKeyOrderID{}, order.OrderID)
+
 	result, err := handler(handlerCtx, params)
 	if err != nil {
 		errMsg := err.Error()
@@ -483,8 +488,31 @@ func (p *Processor) Process(ctx context.Context, order *Order) *OrderResult {
 
 	log.Printf("[orders] Order %s completed successfully", order.OrderID)
 	p.recordExecuted(order.OrderID)
+
+	// Deferred-completion sentinel: handlers may return
+	// status="update_pending" to defer the /complete POST until a
+	// later condition is met (e.g. update_daemon waits for the new
+	// binary to actually run + report its version after restart).
+	// The poller in daemon.go is responsible for the eventual POST.
+	if status, ok := result["status"].(string); ok && status == "update_pending" {
+		log.Printf("[orders] Order %s deferred — completion will be posted after post-restart version verification", order.OrderID)
+		return &OrderResult{OrderID: order.OrderID, Success: true, Result: result}
+	}
+
 	p.complete(ctx, order.OrderID, true, result, "")
 	return &OrderResult{OrderID: order.OrderID, Success: true, Result: result}
+}
+
+// ctxKeyOrderID is the unexported context key that carries the
+// current order_id from Process() into handlers without requiring
+// every handler signature to change.
+type ctxKeyOrderID struct{}
+
+// orderIDFromContext returns the order_id propagated into the
+// handler context by Process(), or "" if not present.
+func orderIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(ctxKeyOrderID{}).(string)
+	return v
 }
 
 // verifySignature checks the Ed25519 signature on an order, then verifies
@@ -711,6 +739,85 @@ func (p *Processor) CompletePendingRebuild(ctx context.Context) {
 // HandlerCount returns the number of registered handlers.
 func (p *Processor) HandlerCount() int {
 	return len(p.handlers)
+}
+
+// CompletePendingUpdate handles deferred update_daemon completion at
+// startup. Reads the pending-update marker (if any) and posts the
+// /complete result based on whether the running version matches the
+// expected version.
+//
+// Timing: the original handler scheduled a 10s restart timer + a 70s
+// health check timer. The health check rolls back the binary if the
+// new daemon is unhealthy. So the window from "new daemon first
+// starts" to "health check has decided" is roughly 60s. We wait until
+// at least 90s after the marker was written before making the
+// decision, ensuring the health check has had time to run + roll back
+// if needed. If the rollback fired, the daemon currently running is
+// the OLD binary (Version != ExpectedVersion) and we report failure.
+//
+// If we crashed/restarted multiple times mid-poll, the marker
+// persists and we pick up where we left off. The TimeoutAt field is
+// an absolute wall-clock deadline; once exceeded we always report
+// failure rather than wait indefinitely.
+//
+// Runs as a background goroutine so daemon startup isn't blocked.
+func (p *Processor) CompletePendingUpdate(ctx context.Context, currentVersion string) {
+	pending := LoadPendingUpdate(p.stateDir)
+	if pending == nil {
+		return
+	}
+
+	go func() {
+		log.Printf("[orders] Found pending-update marker: order=%s expected=%s current=%s scheduled=%s",
+			pending.OrderID, pending.ExpectedVersion, currentVersion, pending.ScheduledAt.Format(time.RFC3339))
+
+		// Sleep until the health-check window (90s after scheduled
+		// restart) has elapsed. If we're already past that window,
+		// the sleep is a no-op.
+		decisionTime := pending.ScheduledAt.Add(90 * time.Second)
+		if wait := time.Until(decisionTime); wait > 0 {
+			log.Printf("[orders] Pending update: waiting %s for health-check window", wait.Round(time.Second))
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				log.Printf("[orders] Pending update: ctx cancelled before decision window")
+				return
+			}
+		}
+
+		// Check absolute timeout — even if version still doesn't
+		// match, give up and report failure rather than wait forever.
+		if time.Now().After(pending.TimeoutAt) && currentVersion != pending.ExpectedVersion {
+			errMsg := fmt.Sprintf("post-restart version verification timed out (expected=%s, current=%s, deadline=%s)",
+				pending.ExpectedVersion, currentVersion, pending.TimeoutAt.Format(time.RFC3339))
+			log.Printf("[orders] Pending update %s TIMEOUT — reporting failure: %s", pending.OrderID, errMsg)
+			p.complete(ctx, pending.OrderID, false, nil, errMsg)
+			_ = ClearPendingUpdate(p.stateDir)
+			return
+		}
+
+		if currentVersion == pending.ExpectedVersion {
+			log.Printf("[orders] Pending update %s CONFIRMED — version=%s", pending.OrderID, currentVersion)
+			result := map[string]interface{}{
+				"status":           "update_confirmed",
+				"version":          currentVersion,
+				"expected_version": pending.ExpectedVersion,
+				"verified_after":   time.Since(pending.ScheduledAt).Round(time.Second).String(),
+			}
+			p.complete(ctx, pending.OrderID, true, result, "")
+			_ = ClearPendingUpdate(p.stateDir)
+			return
+		}
+
+		// Version mismatch and we're inside the timeout window —
+		// the most likely explanation is that the 70s health check
+		// rolled back the binary. Report failure with that context.
+		errMsg := fmt.Sprintf("post-restart version mismatch — expected=%s, running=%s — health check likely rolled back",
+			pending.ExpectedVersion, currentVersion)
+		log.Printf("[orders] Pending update %s ROLLED BACK — reporting failure: %s", pending.OrderID, errMsg)
+		p.complete(ctx, pending.OrderID, false, nil, errMsg)
+		_ = ClearPendingUpdate(p.stateDir)
+	}()
 }
 
 // --- Completion helper ---
@@ -1458,12 +1565,50 @@ func (p *Processor) handleUpdateDaemon(ctx context.Context, params map[string]in
 		// Don't fail the order — restart is already scheduled. Health check is best-effort.
 	}
 
+	// Write the deferred-completion marker BEFORE returning. The
+	// processor will see status="update_pending" and skip its
+	// auto-complete call. After the scheduled restart, the new
+	// daemon's startup loads this marker and posts /complete only
+	// when its actual --version output matches the expected version
+	// (or after a 10-min wall-clock timeout, whichever comes first).
+	// Without this, the order ACK would race ahead of the restart
+	// and a rolled-back upgrade would leave the backend believing
+	// the upgrade succeeded — site_appliances.agent_version would
+	// silently lag forever.
+	orderID := orderIDFromContext(ctx)
+	if orderID != "" {
+		now := time.Now().UTC()
+		pending := PendingUpdate{
+			OrderID:         orderID,
+			ExpectedVersion: version,
+			ScheduledAt:     now,
+			TimeoutAt:       now.Add(10 * time.Minute),
+		}
+		if writeErr := WritePendingUpdate(p.stateDir, pending); writeErr != nil {
+			// If we can't persist the marker, fall back to the
+			// legacy behavior (immediate ACK) rather than failing
+			// the install — the binary is already on disk and the
+			// restart is scheduled.
+			log.Printf("[orders] WARN: could not write pending-update marker for order %s: %v — falling back to immediate ACK", orderID, writeErr)
+			return map[string]interface{}{
+				"status":      "update_installed",
+				"version":     version,
+				"binary_path": binaryPath,
+				"sha256":      actualHex,
+				"message":     "Daemon binary installed, restart scheduled in 10s (no deferred completion)",
+			}, nil
+		}
+		log.Printf("[orders] Wrote pending-update marker for order %s (expected_version=%s)", orderID, version)
+	} else {
+		log.Printf("[orders] WARN: no order_id in context — cannot defer completion for update_daemon, falling back to immediate ACK")
+	}
+
 	return map[string]interface{}{
-		"status":      "update_installed",
+		"status":      "update_pending",
 		"version":     version,
 		"binary_path": binaryPath,
 		"sha256":      actualHex,
-		"message":     "Daemon binary installed, restart scheduled in 10s",
+		"message":     "Daemon binary installed, restart scheduled in 10s, completion deferred until post-restart version verification",
 	}, nil
 }
 

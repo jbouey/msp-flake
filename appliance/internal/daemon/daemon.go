@@ -473,6 +473,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Complete any deferred NixOS rebuild orders from prior restart
 	d.orderProc.CompletePendingRebuild(ctx)
 
+	// Complete any deferred update_daemon orders. The handler writes
+	// a marker before the scheduled restart; this call observes the
+	// running version (Version is a build-time constant) against the
+	// expected version after the 70s health check has had time to
+	// roll back if needed. Reports success or failure to /complete
+	// — the backend then sees the truth instead of the racy
+	// "ACK before restart" of the legacy flow.
+	d.orderProc.CompletePendingUpdate(ctx, Version)
+
 	// Initialize agent version cache (used by both HTTP file server and gRPC heartbeat)
 	agentDir := filepath.Join(d.config.StateDir, "agent")
 	d.agentVersionCache = newAgentVersionCache(agentDir)
