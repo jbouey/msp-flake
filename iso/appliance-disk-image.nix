@@ -848,6 +848,83 @@ EOF
       # 8081 (scanner-api) and 8082 (go-agent-metrics) bind to localhost only
       allowedTCPPorts = [ 22 80 8080 8443 50051 8084 8090 ];
       allowedUDPPorts = [ 5353 ];
+
+      # ======================================================================
+      # Egress allowlist (Session 207 Phase H1) — SSH-strip precondition
+      # ======================================================================
+      # Default OUTPUT is ACCEPT on nixpkgs's firewall module, which means
+      # today a compromised daemon can exfiltrate to anywhere on the
+      # internet. Post-SSH-strip, outbound is the only remaining attack
+      # surface — narrow it to what the appliance actually needs:
+      #
+      #   - api.osiriscare.net:443        phonehome, watchdog, journal upload
+      #   - LAN DNS (UDP/TCP 53)          hostname resolution for WinRM targets
+      #   - LAN DHCP renewal (UDP 67/68)  lease maintenance
+      #   - NTP (UDP 123)                 clock sync (OTS anchoring needs accurate time)
+      #   - LAN RFC1918 (10/8, 172.16/12, 192.168/16, 169.254/16)
+      #                                    WinRM (5985/5986) + SSH + agent deploy
+      #   - ICMP echo                     reachability diagnostics
+      #
+      # Default DROP for everything else. A LAN-local attacker is out of
+      # scope for this rule — LAN-scoped attacks need a different defense
+      # layer (TPM-sealed disk + measured boot + ingress firewall).
+      # ======================================================================
+      extraCommands = ''
+        # Clear any prior egress chain so this block is idempotent
+        iptables -F MSP_EGRESS 2>/dev/null || true
+        iptables -X MSP_EGRESS 2>/dev/null || true
+        iptables -N MSP_EGRESS
+
+        # Loopback is always allowed.
+        iptables -A MSP_EGRESS -o lo -j RETURN
+
+        # Established / related connections: allow their reply traffic.
+        iptables -A MSP_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+
+        # Resolve api.osiriscare.net at rule-apply time. If DNS is dead
+        # here, fall back to the historical VPS IP so the rule doesn't
+        # brick outbound during an early-boot resolver race.
+        API_IPS=$(${pkgs.inetutils}/bin/host -t A api.osiriscare.net 2>/dev/null | ${pkgs.gawk}/bin/awk '/has address/ {print $4}' | head -5)
+        [ -z "$API_IPS" ] && API_IPS="178.156.162.116"
+        for ip in $API_IPS; do
+          iptables -A MSP_EGRESS -p tcp -d "$ip" --dport 443 -j RETURN
+        done
+
+        # DNS — both TCP and UDP, to any LAN DNS server
+        iptables -A MSP_EGRESS -p udp --dport 53 -j RETURN
+        iptables -A MSP_EGRESS -p tcp --dport 53 -j RETURN
+
+        # DHCP client (UDP 67/68)
+        iptables -A MSP_EGRESS -p udp --dport 67:68 -j RETURN
+
+        # NTP (UDP 123)
+        iptables -A MSP_EGRESS -p udp --dport 123 -j RETURN
+
+        # LAN RFC1918 + link-local — WinRM / SSH / agent deploy
+        for cidr in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16; do
+          iptables -A MSP_EGRESS -d "$cidr" -j RETURN
+        done
+
+        # ICMP echo (ping) for reachability
+        iptables -A MSP_EGRESS -p icmp --icmp-type echo-request -j RETURN
+        iptables -A MSP_EGRESS -p icmp --icmp-type echo-reply -j RETURN
+
+        # Everything else: log + drop. Log gets captured by journald
+        # → journal_upload_events so the dashboard shows egress policy
+        # violations as a first-class signal (Phase H4 feeds this).
+        iptables -A MSP_EGRESS -j LOG --log-prefix "MSP_EGRESS_DROP: " --log-level 4
+        iptables -A MSP_EGRESS -j DROP
+
+        # Hook MSP_EGRESS into the OUTPUT chain exactly once.
+        iptables -D OUTPUT -j MSP_EGRESS 2>/dev/null || true
+        iptables -A OUTPUT -j MSP_EGRESS
+      '';
+      # Reverse: when the firewall module tears down, remove our chain.
+      extraStopCommands = ''
+        iptables -D OUTPUT -j MSP_EGRESS 2>/dev/null || true
+        iptables -F MSP_EGRESS 2>/dev/null || true
+        iptables -X MSP_EGRESS 2>/dev/null || true
+      '';
     };
   };
 
