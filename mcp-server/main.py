@@ -79,6 +79,7 @@ from dashboard_api.log_ingest import router as log_ingest_router
 from dashboard_api.security_events import router as security_events_router
 from dashboard_api.email_alerts import create_notification_with_email
 from dashboard_api.health_monitor import health_monitor_loop
+from dashboard_api.assertions import assertions_loop
 from dashboard_api.alert_router import digest_sender_loop
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router, session_router as partner_session_router
@@ -1678,6 +1679,7 @@ async def lifespan(app: FastAPI):
         ("heartbeat_partition_maintainer", heartbeat_partition_maintainer_loop),
         ("phantom_detector", phantom_detector_loop),
         ("mesh_reassignment", mesh_reassignment_loop),
+        ("substrate_assertions", assertions_loop),
     ]
 
     for name, fn in task_defs:
