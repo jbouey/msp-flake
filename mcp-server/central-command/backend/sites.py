@@ -3047,7 +3047,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     # touching the DB. Phase 5C operational lever.
     sig_result = None
     try:
-        from signature_auth import verify_appliance_signature  # type: ignore
+        from .signature_auth import verify_appliance_signature
         body_bytes = await request.body()
         async with admin_connection(pool) as _sigauth_conn:
             sig_result = await verify_appliance_signature(
