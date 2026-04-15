@@ -1368,6 +1368,23 @@ JSONEND
       log "Verified: $STORE_COUNT store paths, boot=$BOOT_OK"
       ls -la /mnt/boot/ >> "$LOG_FILE" 2>/dev/null
 
+      # v25: Install systemd-boot at the UEFI "removable media" fallback
+      # path (\EFI\BOOT\BOOTX64.EFI). Raw image only populates
+      # \EFI\systemd\systemd-bootx64.efi, which HP thin clients (t740,
+      # t640) don't auto-scan because NVRAM has no boot entry
+      # (canTouchEfiVariables=false is correct for a multi-target raw
+      # image). Without the fallback, BIOS reports "no boot device"
+      # and falls through to PXE. Every UEFI firmware scans the
+      # fallback path as a last resort — fixes the post-install
+      # non-boot on HP thin clients.
+      if [ -f /mnt/boot/EFI/systemd/systemd-bootx64.efi ]; then
+        mkdir -p /mnt/boot/EFI/BOOT
+        cp /mnt/boot/EFI/systemd/systemd-bootx64.efi /mnt/boot/EFI/BOOT/BOOTX64.EFI
+        log "UEFI fallback: installed BOOTX64.EFI for removable-media auto-scan"
+      else
+        log "WARN: systemd-bootx64.efi not found at /mnt/boot/EFI/systemd/ — BOOTX64.EFI fallback NOT installed"
+      fi
+
       if [ "$BOOT_OK" != "yes" ]; then
         bounded_abandon 15 umount_mnt_fail umount -R /mnt || true
         die "Boot partition verification failed — no EFI directory found."
