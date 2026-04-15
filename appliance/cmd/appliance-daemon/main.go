@@ -35,6 +35,12 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
+	// Mesh Hardening Phase 2 (Daemon 0.4.5): detect + remove stale systemd
+	// override.conf drop-ins that pin the daemon to a missing/older binary.
+	// Runs before config load so even a broken config can't mask a stale
+	// override — diagnostics are the first thing on the journal.
+	daemon.HealStaleSystemdOverride()
+
 	cfg, err := daemon.LoadConfig(*flagConfig)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)

@@ -156,33 +156,86 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// UpdateAPIKey atomically updates the api_key in the config YAML file.
-// Writes to a temp file then renames to avoid partial writes.
+// UpdateAPIKey atomically updates the top-level api_key in the config YAML
+// file. Writes to a temp file then renames to avoid partial writes.
+//
+// Mesh Hardening Phase 2 (Daemon 0.4.5): switched from line-prefix regex to
+// yaml.Node round-trip. The prior implementation matched `api_key:` with
+// strings.HasPrefix on a trimmed line, which corrupted YAML containing
+// nested keys like `config.api_key:` — observed during the .226 rekey
+// attempt that produced invalid YAML until a manual sed patch. The Node-
+// based implementation only touches the top-level mapping, preserves
+// surrounding comments and ordering, and post-parses the result to verify
+// the new key landed where we expected.
 func UpdateAPIKey(path string, newKey string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read config for rekey: %w", err)
 	}
 
-	lines := strings.Split(string(data), "\n")
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return fmt.Errorf("parse config for rekey: %w", err)
+	}
+
+	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
+		return fmt.Errorf("config YAML is not a document node")
+	}
+	top := root.Content[0]
+	if top.Kind != yaml.MappingNode {
+		return fmt.Errorf("config YAML root is not a mapping (kind=%d)", top.Kind)
+	}
+
+	// Top-level mapping: content is [key, value, key, value, ...]. Walk in
+	// pairs and replace only the TOP-level api_key scalar — nested keys
+	// (e.g. config.api_key under a sub-map) are never touched.
 	found := false
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "api_key:") {
-			lines[i] = "api_key: " + newKey
-			found = true
-			break
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		k := top.Content[i]
+		if k.Kind != yaml.ScalarNode || k.Value != "api_key" {
+			continue
 		}
+		v := top.Content[i+1]
+		v.Kind = yaml.ScalarNode
+		v.Tag = "!!str"
+		v.Value = newKey
+		// Preserve the original scalar style when possible; fall back to
+		// double-quoted for safety since the key may contain URL-unsafe bytes.
+		if v.Style == 0 {
+			v.Style = yaml.DoubleQuotedStyle
+		}
+		found = true
+		break
 	}
 	if !found {
-		lines = append(lines, "api_key: "+newKey)
+		top.Content = append(top.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "api_key"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: newKey, Style: yaml.DoubleQuotedStyle},
+		)
+	}
+
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return fmt.Errorf("marshal config after rekey: %w", err)
+	}
+
+	// Post-verify: parse the output as a plain map and confirm the top-level
+	// api_key matches what we intended to write. Catches any silent Marshal
+	// regression before we rename the file into place.
+	var verify map[string]interface{}
+	if err := yaml.Unmarshal(out, &verify); err != nil {
+		return fmt.Errorf("post-verify parse failed: %w", err)
+	}
+	if got, _ := verify["api_key"].(string); got != newKey {
+		return fmt.Errorf("post-verify mismatch: expected api_key to be updated but got %q", got)
 	}
 
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
+	if err := os.WriteFile(tmpPath, out, 0600); err != nil {
 		return fmt.Errorf("write temp config: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("rename config: %w", err)
 	}
 	return nil

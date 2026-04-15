@@ -38,7 +38,7 @@ import (
 
 // Version is set at build time via -ldflags.
 // Default "dev" indicates an untagged development build.
-var Version = "dev"
+var Version = "0.4.5"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {

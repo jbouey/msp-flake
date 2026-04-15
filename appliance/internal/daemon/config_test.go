@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -145,5 +146,162 @@ func TestConfigPaths(t *testing.T) {
 	}
 	if cfg.RulesDir() != "/var/lib/msp/rules" {
 		t.Fatalf("unexpected rules dir: %s", cfg.RulesDir())
+	}
+}
+
+// TestUpdateAPIKey_TopLevelReplace confirms the happy path — the top-level
+// api_key is replaced and the round-trip still parses cleanly.
+func TestUpdateAPIKey_TopLevelReplace(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	original := `site_id: "abc"
+api_key: "old-key"
+poll_interval: 60
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UpdateAPIKey(cfgPath, "new-key-xyz"); err != nil {
+		t.Fatalf("UpdateAPIKey: %v", err)
+	}
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("reload after rekey: %v", err)
+	}
+	if cfg.APIKey != "new-key-xyz" {
+		t.Fatalf("expected new-key-xyz, got %q", cfg.APIKey)
+	}
+	if cfg.SiteID != "abc" {
+		t.Fatalf("site_id was clobbered: %q", cfg.SiteID)
+	}
+	if cfg.PollInterval != 60 {
+		t.Fatalf("poll_interval was clobbered: %d", cfg.PollInterval)
+	}
+}
+
+// TestUpdateAPIKey_NestedKeyNotTouched is the regression test for the .226
+// incident: the old line-prefix matcher mutated nested `config.api_key:`
+// subkeys. The yaml.Node-based implementation only touches the top level.
+func TestUpdateAPIKey_NestedKeyNotTouched(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	// A nested block that has its own api_key field inside a sub-map. The
+	// old line-prefix regex would have replaced this sub-key and corrupted
+	// indentation. The yaml.Node walk ignores it.
+	original := `site_id: "abc"
+api_key: "outer-old"
+downstream:
+  api_key: "inner-must-survive"
+  endpoint: "https://downstream.example"
+poll_interval: 60
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UpdateAPIKey(cfgPath, "outer-new"); err != nil {
+		t.Fatalf("UpdateAPIKey: %v", err)
+	}
+
+	// Re-read raw bytes and verify the nested key is untouched.
+	got, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if !strings.Contains(s, `inner-must-survive`) {
+		t.Fatalf("nested api_key was corrupted by UpdateAPIKey!\nfile:\n%s", s)
+	}
+	if !strings.Contains(s, `endpoint: "https://downstream.example"`) &&
+		!strings.Contains(s, `endpoint: https://downstream.example`) {
+		t.Fatalf("sibling key in nested block was lost:\n%s", s)
+	}
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("reload after rekey: %v", err)
+	}
+	if cfg.APIKey != "outer-new" {
+		t.Fatalf("outer api_key not replaced: %q", cfg.APIKey)
+	}
+}
+
+// TestUpdateAPIKey_AppendMissing confirms that a config without api_key gets
+// one appended rather than silently no-op'd.
+func TestUpdateAPIKey_AppendMissing(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	original := `site_id: "abc"
+poll_interval: 60
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UpdateAPIKey(cfgPath, "minted-key"); err != nil {
+		t.Fatalf("UpdateAPIKey: %v", err)
+	}
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("reload after rekey: %v", err)
+	}
+	if cfg.APIKey != "minted-key" {
+		t.Fatalf("expected minted-key, got %q", cfg.APIKey)
+	}
+}
+
+// TestUpdateAPIKey_AtomicTempCleanup confirms that even when the rename step
+// succeeds, we don't leave a .tmp file behind.
+func TestUpdateAPIKey_AtomicTempCleanup(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte("site_id: s\napi_key: k\n"), 0o644)
+
+	if err := UpdateAPIKey(cfgPath, "k2"); err != nil {
+		t.Fatalf("UpdateAPIKey: %v", err)
+	}
+	if _, err := os.Stat(cfgPath + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf(".tmp file was left behind: err=%v", err)
+	}
+}
+
+// TestParseOverrideExecStart_LastNonEmptyWins locks in the systemd override
+// format semantics: the LAST non-empty ExecStart= line defines the effective
+// command, which is the pattern update_daemon fleet orders write.
+func TestParseOverrideExecStart_LastNonEmptyWins(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "override.conf")
+	content := `[Service]
+ExecStart=
+ExecStart=/var/lib/msp/appliance-daemon --config /var/lib/msp/config.yaml
+`
+	os.WriteFile(p, []byte(content), 0o644)
+
+	got := parseOverrideExecStart(p)
+	want := "/var/lib/msp/appliance-daemon"
+	if got != want {
+		t.Fatalf("parseOverrideExecStart: got %q want %q", got, want)
+	}
+}
+
+// TestParseOverrideExecStart_EmptyFile returns "" cleanly.
+func TestParseOverrideExecStart_EmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "override.conf")
+	os.WriteFile(p, []byte(""), 0o644)
+
+	if got := parseOverrideExecStart(p); got != "" {
+		t.Fatalf("empty override.conf should return empty string, got %q", got)
+	}
+}
+
+// TestParseOverrideExecStart_MissingFile returns "" without error.
+func TestParseOverrideExecStart_MissingFile(t *testing.T) {
+	got := parseOverrideExecStart("/nonexistent/path/override.conf")
+	if got != "" {
+		t.Fatalf("missing file should return empty string, got %q", got)
 	}
 }
