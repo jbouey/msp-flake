@@ -440,6 +440,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="A multi-node site has an online appliance with 0 assigned_targets while siblings hold non-zero — ring didn't redistribute (Mesh Hardening Phase 3)",
         check=lambda c: _check_mesh_ring_deficit(c),
     ),
+    Assertion(
+        name="display_name_collision",
+        severity="sev2",
+        description="Two appliances at the same site share a display_name — operators cannot tell which physical box is which in the dashboard",
+        check=lambda c: _check_display_name_collision(c),
+    ),
 ]
 
 
@@ -665,6 +671,44 @@ async def _check_mac_rekeyed_recently(conn: asyncpg.Connection) -> List[Violatio
                 "latest_claimed_at": r["latest"].isoformat(),
                 "sources": list(r["sources"] or []),
                 "interpretation": "reinstall churn OR impersonation — verify with operator",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_display_name_collision(conn: asyncpg.Connection) -> List[Violation]:
+    """Two rows with the same (site_id, display_name) leave the dashboard
+    ambiguous — operators cannot tell which physical box is flopping
+    online/offline because they share a label. Observed on
+    `north-valley-branch-2` 2026-04-15 where the t740 install-loop box
+    and the real `.227` appliance both held `osiriscare-3`. The Step 3.3
+    generator in sites.py was hardened to enforce per-site uniqueness;
+    this invariant catches any regression OR pre-existing collisions the
+    fix didn't backfill.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT site_id, display_name,
+               COUNT(*) AS n,
+               array_agg(mac_address ORDER BY first_checkin) AS macs,
+               array_agg(hostname ORDER BY first_checkin) AS hostnames
+          FROM site_appliances
+         WHERE deleted_at IS NULL
+           AND display_name IS NOT NULL
+         GROUP BY site_id, display_name
+        HAVING COUNT(*) > 1
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "display_name": r["display_name"],
+                "colliding_count": r["n"],
+                "mac_addresses": list(r["macs"] or []),
+                "hostnames": list(r["hostnames"] or []),
+                "remediation": "UPDATE site_appliances SET display_name = <unique> WHERE mac_address = <losing-mac>. Step 3.3 generator in sites.py enforces uniqueness going forward.",
             },
         )
         for r in rows

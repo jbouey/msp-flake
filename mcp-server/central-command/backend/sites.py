@@ -3509,10 +3509,23 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 )
 
         # === STEP 3.3: Auto-generate display_name if missing ===
-        # When multiple appliances share hostname "osiriscare", the display_name
-        # differentiates them: first = hostname, subsequent = hostname-2, hostname-3.
-        # Also handles re-provisioning: if uptime < 300s and agent_version changed,
-        # this is a fresh install — reset the display_name.
+        # Uniqueness-enforced per (site_id, display_name). Prior logic counted
+        # rows sharing checkin.hostname and appended `-{count}`, which silently
+        # collided when two appliances had different hostnames (e.g. `osiriscare`
+        # and `osiriscare-installer`) but the counter produced the same `-N`
+        # suffix — observed on `north-valley-branch-2` where BOTH the t740
+        # install-loop box and the real .227 appliance ended up as
+        # `osiriscare-3`, leaving operators unable to tell which "osiriscare-3"
+        # the dashboard was showing online / offline.
+        #
+        # New logic:
+        #  - Installer-boxes (hostname contains "installer") get a MAC-suffix
+        #    label (e.g. `osiriscare-installer-1FFFE4`) so it's instantly
+        #    obvious they're on the live USB, and each mac stays stable.
+        #  - Everyone else starts with candidate=hostname and increments a
+        #    `-{N}` counter UNTIL no other row at the site has the same
+        #    display_name. Guarantees per-site uniqueness without relying
+        #    on hostname collision counting.
         if not _ghost_detected:
             try:
                 current_display = await conn.fetchval(
@@ -3520,15 +3533,27 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     canonical_id
                 )
                 if not current_display:
-                    # Count how many appliances at this site share the same hostname
-                    same_name_count = await conn.fetchval("""
-                        SELECT COUNT(*) FROM site_appliances
-                        WHERE site_id = $1 AND hostname = $2 AND deleted_at IS NULL
-                    """, checkin.site_id, checkin.hostname)
-                    if same_name_count <= 1:
-                        display = checkin.hostname
+                    host = checkin.hostname or "appliance"
+                    if "installer" in host.lower() and checkin.mac_address:
+                        mac_suffix = checkin.mac_address.replace(":", "").upper()[-6:]
+                        display = f"{host}-{mac_suffix}"
                     else:
-                        display = f"{checkin.hostname}-{same_name_count}"
+                        display = host
+
+                    # Probe + increment until unique at this site. Bounded so a
+                    # runaway count can't spin forever on a pathological dataset.
+                    for counter in range(2, 200):
+                        clash = await conn.fetchval("""
+                            SELECT 1 FROM site_appliances
+                             WHERE site_id = $1
+                               AND display_name = $2
+                               AND appliance_id != $3
+                               AND deleted_at IS NULL
+                             LIMIT 1
+                        """, checkin.site_id, display, canonical_id)
+                        if not clash:
+                            break
+                        display = f"{host}-{counter}"
                     await conn.execute(
                         "UPDATE site_appliances SET display_name = $1 WHERE appliance_id = $2",
                         display, canonical_id
