@@ -29,6 +29,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -223,6 +225,8 @@ func (w *Watchdog) executeOrder(ctx context.Context, o pendingOrder) {
 		output, execErr = w.resetAPIKey(ctx, o.Parameters)
 	case "watchdog_redeploy_daemon":
 		output, execErr = w.redeployDaemon(ctx, o.Parameters)
+	case "enable_recovery_shell_24h":
+		output, execErr = w.enableRecoveryShell(ctx, o.Parameters)
 	default:
 		execErr = fmt.Errorf("unknown watchdog order_type %q", o.OrderType)
 	}
@@ -375,6 +379,121 @@ func (w *Watchdog) resetAPIKey(_ context.Context, _ map[string]any) (map[string]
 
 func (w *Watchdog) redeployDaemon(_ context.Context, _ map[string]any) (map[string]any, error) {
 	return nil, errors.New("watchdog_redeploy_daemon: not implemented in W1 (stubbed for W1.1)")
+}
+
+// enableRecoveryShell — Session 207 Phase S escape hatch. Writes the
+// operator's SSH public key to /etc/msp-recovery-authorized-keys,
+// `systemctl start sshd`, and arms a systemd-run transient timer for
+// `duration_hours` that stops sshd + wipes the keys file when it fires.
+// The timer is systemd-enforced — operator oversight can fail; the
+// timer cannot.
+//
+// Requires the installed system's NixOS config to have sshd present
+// in the closure but wantedBy=[] (see Phase S+R+recovery wire-up in
+// iso/appliance-disk-image.nix). Without that, systemctl start will
+// fail because the unit isn't in the closure.
+//
+// Parameters (all strings in the fleet_order.parameters JSON):
+//
+//	ssh_pubkey     — single authorized_keys line (ssh-ed25519 …)
+//	duration_hours — "1".."24"; parsed + clamped. Default "4".
+func (w *Watchdog) enableRecoveryShell(ctx context.Context, params map[string]any) (map[string]any, error) {
+	pubkey, _ := params["ssh_pubkey"].(string)
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return nil, errors.New("enable_recovery_shell: ssh_pubkey parameter required")
+	}
+	// Tight validation: single-line, starts with ssh-ed25519/ssh-rsa/
+	// ecdsa-sha2-*, no shell metacharacters.
+	if strings.ContainsAny(pubkey, "\n\r;|&$`") {
+		return nil, errors.New("enable_recovery_shell: ssh_pubkey contains disallowed characters")
+	}
+	prefixOK := false
+	for _, p := range []string{"ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-"} {
+		if strings.HasPrefix(pubkey, p) {
+			prefixOK = true
+			break
+		}
+	}
+	if !prefixOK {
+		return nil, errors.New("enable_recovery_shell: ssh_pubkey must start with ssh-ed25519 / ssh-rsa / ecdsa-sha2-*")
+	}
+
+	durationHours := 4
+	if raw, ok := params["duration_hours"].(string); ok && raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil {
+			if v >= 1 && v <= 24 {
+				durationHours = v
+			}
+		}
+	} else if raw, ok := params["duration_hours"].(float64); ok {
+		v := int(raw)
+		if v >= 1 && v <= 24 {
+			durationHours = v
+		}
+	}
+
+	keyFile := "/etc/msp-recovery-authorized-keys"
+	tmp := keyFile + ".tmp"
+	if err := os.WriteFile(tmp, []byte(pubkey+"\n"), 0o600); err != nil {
+		return nil, fmt.Errorf("write authorized_keys: %w", err)
+	}
+	if err := os.Rename(tmp, keyFile); err != nil {
+		os.Remove(tmp)
+		return nil, fmt.Errorf("install authorized_keys: %w", err)
+	}
+
+	// `systemctl start sshd` — unit must be present in closure.
+	startOut, startErr := exec.CommandContext(ctx, "systemctl", "start", "sshd").CombinedOutput()
+	if startErr != nil {
+		os.Remove(keyFile)
+		return nil, fmt.Errorf("systemctl start sshd: %w: %s", startErr, string(startOut))
+	}
+
+	// Arm the systemd-run transient timer. After duration_hours:
+	//   - systemctl stop sshd
+	//   - rm /etc/msp-recovery-authorized-keys
+	// If the watchdog itself dies, the timer keeps ticking (systemd
+	// owns it). Recovery shell closes on schedule regardless.
+	unitSuffix := fmt.Sprintf("%d", time.Now().UnixMilli())
+	script := fmt.Sprintf(
+		"systemctl stop sshd; rm -f %s; echo msp-recovery-expired",
+		keyFile,
+	)
+	bash := "/run/current-system/sw/bin/bash"
+	if _, err := os.Stat(bash); err != nil {
+		bash = "/bin/bash"
+	}
+	timerCmd := exec.CommandContext(
+		ctx,
+		"systemd-run",
+		"--unit=msp-recovery-shell-expire-"+unitSuffix,
+		"--on-active="+strconv.Itoa(durationHours)+"h",
+		"--timer-property=AccuracySec=1min",
+		"--setenv=PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/bin:/bin",
+		bash, "-c", script,
+	)
+	timerOut, timerErr := timerCmd.CombinedOutput()
+	if timerErr != nil {
+		// Best-effort: try to tear down so we don't leave sshd running
+		// indefinitely on a failed timer arm.
+		_ = exec.CommandContext(ctx, "systemctl", "stop", "sshd").Run()
+		_ = os.Remove(keyFile)
+		return nil, fmt.Errorf("arm expire timer: %w: %s", timerErr, string(timerOut))
+	}
+
+	expireAt := time.Now().Add(time.Duration(durationHours) * time.Hour).UTC().Format(time.RFC3339)
+	w.log.Warn("RECOVERY SHELL ENABLED",
+		"duration_hours", durationHours,
+		"expire_at", expireAt,
+		"timer_unit", "msp-recovery-shell-expire-"+unitSuffix,
+	)
+	return map[string]any{
+		"expire_at":          expireAt,
+		"duration_hours":     durationHours,
+		"systemd_timer_unit": "msp-recovery-shell-expire-" + unitSuffix,
+		"authorized_keys":    keyFile,
+	}, nil
 }
 
 // ── Utilities ────────────────────────────────────────────────────────
