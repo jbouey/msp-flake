@@ -428,6 +428,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="A MAC with >= 2 claim events in 24h is either thrashing reinstall or impersonation; flag for operator review (Week 4)",
         check=lambda c: _check_mac_rekeyed_recently(c),
     ),
+    Assertion(
+        name="legacy_bearer_only_checkin",
+        severity="sev3",
+        description="Adoption tracker: online appliance has not produced a sigauth observation in 24h — daemon is bearer-only, blocks api_key retirement (Week 6)",
+        check=lambda c: _check_legacy_bearer_only_checkin(c),
+    ),
 ]
 
 
@@ -516,6 +522,42 @@ async def _check_claim_event_unchained(conn: asyncpg.Connection) -> List[Violati
                 "claim_event_id": r["id"],
                 "minutes_old": float(r["minutes_old"] or 0),
                 "remediation": "Investigate failed UPDATE in claim-v2 transaction or hand-INSERT bypass",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_legacy_bearer_only_checkin(conn: asyncpg.Connection) -> List[Violation]:
+    """Adoption tracker for the Week-6 api_key retirement.
+
+    Online appliances that haven't produced any sigauth observations
+    in 24h are running daemons too old to sign (pre-0.4.4) — they
+    block flipping the platform to signature-only auth. Sev-3
+    informational so it appears on the dashboard without paging
+    anyone, and operators can plan upgrades for the long tail."""
+    rows = await conn.fetch(
+        """
+        SELECT sa.site_id, sa.mac_address, sa.hostname, sa.agent_version
+          FROM site_appliances sa
+         WHERE sa.deleted_at IS NULL
+           AND sa.status = 'online'
+           AND NOT EXISTS (
+                 SELECT 1 FROM sigauth_observations o
+                  WHERE o.site_id = sa.site_id
+                    AND UPPER(o.mac_address) = UPPER(sa.mac_address)
+                    AND o.observed_at > NOW() - INTERVAL '24 hours'
+           )
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "hostname": r["hostname"],
+                "agent_version": r["agent_version"],
+                "remediation": "Push daemon update to 0.4.4+ (signature-capable). Once all appliances clear this invariant, api_key retirement is safe.",
             },
         )
         for r in rows

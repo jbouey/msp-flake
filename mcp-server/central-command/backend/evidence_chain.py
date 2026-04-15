@@ -4084,6 +4084,74 @@ fi
 '''
 
 
+# Week 6 — Auditor Kit v2 — identity-chain verifier.
+# Companion to verify.sh. Walks identity_chain.json + iso_ca_bundle.json
+# and confirms each claim event's chain_hash recomputes from its
+# canonical event JSON. Pure jq + sha256sum + base64 — no vendor
+# binary needed.
+_AUDITOR_KIT_VERIFY_IDENTITY_SH = '''#!/usr/bin/env bash
+# verify_identity.sh — Auditor Kit v2.
+# Recomputes the chain_hash of every claim event in identity_chain.json
+# and compares to the stored value. Drift = tampering.
+#
+# Requires: jq, sha256sum (or shasum on macOS).
+set -euo pipefail
+KIT_DIR="${1:-.}"
+IDENTITY="$KIT_DIR/identity_chain.json"
+[ -f "$IDENTITY" ] || { echo "missing $IDENTITY"; exit 2; }
+
+# Pick the right sha256 cli for the OS.
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA() { sha256sum | awk '{print $1}'; }
+else
+    SHA() { shasum -a 256 | awk '{print $1}'; }
+fi
+
+GENESIS=$(printf '0%.0s' {1..64})
+events_count=$(jq '.events | length' "$IDENTITY")
+echo "Verifying $events_count claim event(s) from $IDENTITY ..."
+fail=0
+prev_expected="$GENESIS"
+for i in $(seq 0 $((events_count - 1))); do
+    ev=$(jq ".events[$i]" "$IDENTITY")
+
+    # Build canonical event JSON the same way the server does:
+    # sort_keys=True, separators=(',',':'). jq's `--sort-keys -c`
+    # produces exactly that.
+    canonical=$(jq --sort-keys -c '{
+        agent_pubkey_hex: (.agent_pubkey_hex | ascii_downcase),
+        claim_event_id:   .claim_event_id,
+        claimed_at:       .claimed_at,
+        iso_release_sha:  (.iso_release_sha // ""),
+        mac_address:      (.mac_address | ascii_upcase),
+        site_id:          ($SITE),
+        source:           .source
+    }' --arg SITE "$(jq -r .site_id "$IDENTITY")" <<< "$ev")
+
+    prev=$(jq -r .chain_prev_hash <<< "$ev")
+    stored=$(jq -r .chain_hash <<< "$ev")
+
+    expected=$(printf "%s:%s" "$prev" "$canonical" | SHA)
+
+    if [ "$expected" != "$stored" ]; then
+        echo "  FAIL idx=$i  expected=$expected  stored=$stored"
+        fail=$((fail + 1))
+    elif [ "$prev" != "$prev_expected" ]; then
+        echo "  FAIL idx=$i  chain break — prev=$prev  expected_prev=$prev_expected"
+        fail=$((fail + 1))
+    fi
+    prev_expected="$stored"
+done
+
+if [ "$fail" -eq 0 ]; then
+    echo "[PASS] all $events_count claim events recompute + chain to genesis"
+else
+    echo "[FAIL] $fail of $events_count failed"
+    exit 1
+fi
+'''
+
+
 @router.get("/sites/{site_id}/auditor-kit")
 async def download_auditor_kit(
     site_id: str,
@@ -4272,6 +4340,92 @@ async def download_auditor_kit(
         bundles_jsonl_lines.append(_json.dumps(bundle_obj))
 
     # 6. Build the ZIP in memory
+    # Week 6 — Auditor Kit v2 additions:
+    #   identity_chain.json — provisioning_claim_events for the site
+    #   iso_ca_bundle.json  — ISO release CAs that signed any claim
+    #   verify_identity.sh  — recompute claim event chain hashes
+    # These extend the legacy v1 contents (chain.json + bundles.jsonl
+    # + verify.sh + pubkeys.json + ots/*) — auditors with v1 tooling
+    # ignore them harmlessly. Both halves live in one ZIP so the
+    # legal contractor's "non-repudiable customer-authorized
+    # device-executed action chain" lands in one artifact.
+    identity_chain_rows = (await db.execute(text("""
+        SELECT id, mac_address, agent_pubkey_hex, agent_pubkey_fingerprint,
+               iso_build_sha, hardware_id, claimed_at, source,
+               supersedes_id, ots_bundle_id,
+               chain_prev_hash, chain_hash
+          FROM provisioning_claim_events
+         WHERE site_id = :sid
+         ORDER BY claimed_at ASC
+    """), {"sid": site_id})).fetchall()
+
+    identity_chain_payload = {
+        "kit_version": "2.0",
+        "site_id": site_row.site_id,
+        "generated_at": generated_at,
+        "events": [
+            {
+                "claim_event_id": r.id,
+                "mac_address": r.mac_address,
+                "agent_pubkey_hex": r.agent_pubkey_hex,
+                "agent_pubkey_fingerprint": r.agent_pubkey_fingerprint,
+                "iso_release_sha": r.iso_build_sha,
+                "hardware_id": r.hardware_id,
+                "claimed_at": r.claimed_at.isoformat() if r.claimed_at else None,
+                "source": r.source,
+                "supersedes_claim_event_id": r.supersedes_id,
+                "ots_bundle_id": r.ots_bundle_id,
+                "chain_prev_hash": r.chain_prev_hash,
+                "chain_hash": r.chain_hash,
+            }
+            for r in identity_chain_rows
+        ],
+        "verification_note": (
+            "Each event's chain_hash MUST equal "
+            "sha256(chain_prev_hash + ':' + canonical_event_json), "
+            "where canonical_event_json is JSON with sort_keys=True, "
+            "separators=(',',':') over fields: agent_pubkey_hex (lower), "
+            "claim_event_id, claimed_at (RFC3339-Z), iso_release_sha "
+            "('' if NULL), mac_address (UPPER), site_id, source. "
+            "Genesis chain_prev_hash = '0' * 64."
+        ),
+    }
+
+    iso_ca_rows = (await db.execute(text("""
+        SELECT iso_release_sha, ca_pubkey_hex, valid_from, valid_until,
+               revoked_at, revoked_reason
+          FROM iso_release_ca_pubkeys
+         WHERE iso_release_sha IN (
+             SELECT DISTINCT iso_build_sha FROM provisioning_claim_events
+              WHERE site_id = :sid AND iso_build_sha IS NOT NULL
+         )
+    """), {"sid": site_id})).fetchall()
+
+    iso_ca_payload = {
+        "kit_version": "2.0",
+        "generated_at": generated_at,
+        "cas": [
+            {
+                "iso_release_sha": r.iso_release_sha,
+                "ca_pubkey_hex": r.ca_pubkey_hex,
+                "fingerprint": hashlib.sha256(bytes.fromhex(r.ca_pubkey_hex)).hexdigest()[:16],
+                "valid_from": r.valid_from.isoformat() if r.valid_from else None,
+                "valid_until": r.valid_until.isoformat() if r.valid_until else None,
+                "revoked_at": r.revoked_at.isoformat() if r.revoked_at else None,
+                "revoked_reason": r.revoked_reason,
+            }
+            for r in iso_ca_rows
+        ],
+        "verification_note": (
+            "Each ISO release CA's pubkey signed the claim cert that "
+            "provisioned an appliance. Cross-check against "
+            "https://api.osiriscare.net/api/iso/ca-bundle.json to confirm "
+            "the same pubkey is still registered (drift means a CA was "
+            "rotated — historic claim events remain valid against the "
+            "pubkey active at their claimed_at time)."
+        ),
+    }
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("README.md", _AUDITOR_KIT_README.format(
@@ -4284,7 +4438,7 @@ async def download_auditor_kit(
         zf.writestr("bundles.jsonl", "\n".join(bundles_jsonl_lines) + "\n")
         zf.writestr("pubkeys.json", _json.dumps({
             "site_id": site_row.site_id,
-            "kit_version": "1.0",
+            "kit_version": "2.0",
             "public_keys": pubkeys,
             "verification_note": (
                 "Pin these public keys offline before verification. The fingerprint "
@@ -4292,6 +4446,10 @@ async def download_auditor_kit(
                 "stable across kit downloads — record it in your audit working papers."
             ),
         }, indent=2))
+        # v2 additions:
+        zf.writestr("identity_chain.json", _json.dumps(identity_chain_payload, indent=2))
+        zf.writestr("iso_ca_bundle.json", _json.dumps(iso_ca_payload, indent=2))
+        zf.writestr("verify_identity.sh", _AUDITOR_KIT_VERIFY_IDENTITY_SH)
         for filename, data in ots_files.items():
             zf.writestr(f"ots/{filename}", data)
 
