@@ -123,7 +123,7 @@ BEGIN
     RAISE EXCEPTION
         'DELETE blocked on provisioning_claim_events (append-only ledger). '
         'Set LOCAL app.allow_claim_mutation=''true'' as admin role if '
-        'truly necessary (audit required).',
+        'truly necessary (audit required).'
         USING ERRCODE = 'raise_exception',
               HINT = 'Migration 210 — the identity chain is immutable by design.';
 END;
@@ -151,7 +151,7 @@ BEGIN
         RAISE EXCEPTION
             'UPDATE on provisioning_claim_events is restricted to post-hoc '
             'signature, hash-chain, and OTS anchor columns. Core identity '
-            'fields are immutable.',
+            'fields are immutable.'
             USING ERRCODE = 'raise_exception',
                   HINT = 'Migration 210.';
     END IF;
@@ -160,7 +160,7 @@ BEGIN
     IF OLD.claim_signature_b64 IS NOT NULL
        AND OLD.claim_signature_b64 IS DISTINCT FROM NEW.claim_signature_b64 THEN
         RAISE EXCEPTION
-            'claim_signature_b64 is write-once on provisioning_claim_events',
+            'claim_signature_b64 is write-once on provisioning_claim_events'
             USING ERRCODE = 'raise_exception';
     END IF;
 
