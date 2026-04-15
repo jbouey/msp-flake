@@ -61,6 +61,7 @@ from pydantic import BaseModel, Field
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
 from . import iso_ca_helpers as helpers
+from . import identity_chain as chain
 
 logger = logging.getLogger("iso_ca")
 
@@ -186,6 +187,34 @@ def _fingerprint(pub_hex: str) -> str:
     return helpers.fingerprint(pub_hex)
 
 
+async def _resolve_chain_tip(conn, site_id: str) -> str:
+    """Return the most recent chain_hash for `site_id` across BOTH
+    compliance_bundles and provisioning_claim_events. The two tables
+    share one cryptographic chain — auditors verify them as one
+    sequence — so the tip is whichever has the latest insertion
+    timestamp. GENESIS if neither table has a row yet.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT chain_hash FROM (
+            SELECT chain_hash, created_at AS ts
+              FROM compliance_bundles
+             WHERE site_id = $1 AND chain_hash IS NOT NULL
+            UNION ALL
+            SELECT chain_hash, claimed_at AS ts
+              FROM provisioning_claim_events
+             WHERE site_id = $1 AND chain_hash IS NOT NULL
+        ) AS combined
+        ORDER BY ts DESC
+        LIMIT 1
+        """,
+        site_id,
+    )
+    if row and row["chain_hash"]:
+        return row["chain_hash"]
+    return chain.GENESIS_HASH
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -300,7 +329,7 @@ async def claim_v2(req: ClaimV2Request, request: Request) -> ClaimV2Response:
                 $7, NOW(),
                 'claim', $8::jsonb
             )
-            RETURNING id
+            RETURNING id, claimed_at
             """,
             req.site_id,
             mac_norm,
@@ -317,6 +346,33 @@ async def claim_v2(req: ClaimV2Request, request: Request) -> ClaimV2Response:
             }),
         )
         claim_event_id = claim_event["id"]
+        claimed_at = claim_event["claimed_at"]
+
+        # 3b. Week 3 — extend the joined hash chain. Resolve the
+        # current tip (across compliance_bundles + provisioning_claim_events
+        # for this site), compute new chain_hash, and UPDATE the row
+        # we just inserted. The Migration 210 immutability trigger
+        # explicitly permits chain_prev_hash + chain_hash to be set
+        # post-INSERT.
+        prev_hash = await _resolve_chain_tip(conn, req.site_id)
+        event_canonical = chain.canonical_event_bytes(
+            claim_event_id=claim_event_id,
+            site_id=req.site_id,
+            mac_address=mac_norm,
+            agent_pubkey_hex=req.agent_pubkey_hex.lower(),
+            iso_release_sha=req.claim_cert.payload.iso_release_sha,
+            claimed_at_iso=claimed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            source="claim",
+        )
+        new_hash = chain.chain_hash(prev_hash, event_canonical)
+        await conn.execute(
+            """
+            UPDATE provisioning_claim_events
+               SET chain_prev_hash = $1, chain_hash = $2
+             WHERE id = $3
+            """,
+            prev_hash, new_hash, claim_event_id,
+        )
 
         # 4. Upsert site_appliances row + register the pubkey. This
         #    intentionally happens AFTER the claim event so the

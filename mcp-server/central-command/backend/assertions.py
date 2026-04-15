@@ -404,6 +404,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Any appliance with auth_failure_count >= 3 is locked out of the platform — operator action needed",
         check=lambda c: _check_auth_failure_lockout(c),
     ),
+    Assertion(
+        name="claim_event_unchained",
+        severity="sev2",
+        description="Every provisioning_claim_events row > 5min old must have chain_prev_hash + chain_hash populated (Week 3)",
+        check=lambda c: _check_claim_event_unchained(c),
+    ),
 ]
 
 
@@ -463,6 +469,35 @@ async def _check_online_has_active_key(conn: asyncpg.Connection) -> List[Violati
                 "hostname": r["hostname"],
                 "appliance_id": r["appliance_id"],
                 "remediation": "POST /api/provision/rekey with site_id+mac_address",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_claim_event_unchained(conn: asyncpg.Connection) -> List[Violation]:
+    """Every claim event > 5min old must have chain_prev_hash +
+    chain_hash populated. The transactional path in claim-v2
+    populates them; an unchained row means the post-INSERT UPDATE
+    failed silently (or a row was hand-inserted by a DBA without
+    chain extension)."""
+    rows = await conn.fetch(
+        """
+        SELECT site_id, mac_address, id,
+               EXTRACT(EPOCH FROM (NOW() - claimed_at))/60 AS minutes_old
+          FROM provisioning_claim_events
+         WHERE (chain_prev_hash IS NULL OR chain_hash IS NULL)
+           AND claimed_at < NOW() - INTERVAL '5 minutes'
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "claim_event_id": r["id"],
+                "minutes_old": float(r["minutes_old"] or 0),
+                "remediation": "Investigate failed UPDATE in claim-v2 transaction or hand-INSERT bypass",
             },
         )
         for r in rows
