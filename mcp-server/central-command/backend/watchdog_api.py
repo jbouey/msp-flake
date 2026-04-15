@@ -57,6 +57,7 @@ from pydantic import BaseModel, Field
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
 from .auth import require_appliance_bearer
+from .shared import require_appliance_bearer_full
 
 logger = logging.getLogger("watchdog_api")
 
@@ -96,19 +97,41 @@ class WatchdogOrderComplete(BaseModel):
 # ─── Helpers ──────────────────────────────────────────────────────────
 
 
-def _enforce_watchdog_id(auth_site_id: str, request_site_id: str, request_aid: str) -> None:
-    """Per-appliance bearer guard — every watchdog endpoint asserts that
-    the caller's bearer site matches the request's site AND the request's
-    appliance_id ends in '-watchdog' (otherwise the main daemon is trying
-    to use a watchdog endpoint, which would let it bypass the narrower
-    fleet-order whitelist).
+def _enforce_watchdog_id(
+    bearer_site: str, bearer_aid: Optional[str],
+    request_site: str, request_aid: str,
+) -> None:
+    """Per-appliance bearer guard. All four conditions must hold:
+
+      1. bearer's site_id matches the request body's site_id
+      2. request body's appliance_id ends in '-watchdog'
+         (otherwise the main daemon's bearer is being reused for the
+         watchdog surface — wrong whitelist)
+      3. bearer_aid is NOT None (legacy site-level keys cannot post
+         to /api/watchdog/*; only per-appliance keys issued to the
+         watchdog itself)
+      4. bearer_aid == request.appliance_id
+         (you cannot claim to be an appliance other than the one your
+         bearer is bound to — closes the Phase-W-gate security bug
+         where a compromised main-daemon bearer could poison
+         watchdog_events for ghost appliances)
     """
-    if auth_site_id != request_site_id:
+    if bearer_site != request_site:
         raise HTTPException(status_code=403, detail="auth_site_id mismatch")
     if not request_aid.endswith("-watchdog"):
         raise HTTPException(
             status_code=403,
             detail="appliance_id must end in '-watchdog' (watchdog-only surface)",
+        )
+    if not bearer_aid:
+        raise HTTPException(
+            status_code=403,
+            detail="bearer is site-level; watchdog surface requires per-appliance bearer",
+        )
+    if bearer_aid != request_aid:
+        raise HTTPException(
+            status_code=403,
+            detail=f"bearer_aid {bearer_aid!r} != request appliance_id {request_aid!r}",
         )
 
 
@@ -209,12 +232,13 @@ async def _pending_watchdog_orders(conn, site_id: str, watchdog_aid: str) -> Lis
 async def watchdog_checkin(
     req: WatchdogCheckinRequest,
     request: Request,
-    auth_site_id: str = Depends(require_appliance_bearer),
+    bearer: tuple = Depends(require_appliance_bearer_full),
 ) -> Dict[str, Any]:
     """2-minute heartbeat from the appliance-watchdog service. Records a
     `checkin` event in watchdog_events (hash-chained), returns the list
     of pending watchdog_* orders."""
-    _enforce_watchdog_id(auth_site_id, req.site_id, req.appliance_id)
+    bearer_site, bearer_aid = bearer
+    _enforce_watchdog_id(bearer_site, bearer_aid, req.site_id, req.appliance_id)
 
     client_ip = request.client.host if request.client else None
     payload = {
@@ -243,13 +267,14 @@ async def watchdog_checkin(
 @watchdog_api_router.post("/diagnostics")
 async def watchdog_diagnostics(
     req: WatchdogDiagnosticsRequest,
-    auth_site_id: str = Depends(require_appliance_bearer),
+    bearer: tuple = Depends(require_appliance_bearer_full),
 ) -> Dict[str, Any]:
     """Diagnostic bundle upload. Either triggered by a
     `watchdog_collect_diagnostics` order (with order_id) or posted ad-hoc
     on startup / error. Payload is stored inline on watchdog_events so
     the operator can read it from the dashboard without pulling logs."""
-    _enforce_watchdog_id(auth_site_id, req.site_id, req.appliance_id)
+    bearer_site, bearer_aid = bearer
+    _enforce_watchdog_id(bearer_site, bearer_aid, req.site_id, req.appliance_id)
 
     payload_shape = {"order_id": req.order_id, "bundle_keys": sorted(list((req.bundle or {}).keys()))}
     logger.info("watchdog diagnostics uploaded site=%s aid=%s keys=%s",
@@ -276,8 +301,9 @@ async def watchdog_diagnostics(
 async def watchdog_order_complete(
     order_id: str,
     req: WatchdogOrderComplete,
-    auth_site_id: str = Depends(require_appliance_bearer),
+    bearer: tuple = Depends(require_appliance_bearer_full),
 ) -> Dict[str, Any]:
+    bearer_site, bearer_aid = bearer
     """Watchdog acknowledges an order's outcome. Writes the completion
     row (reuses existing fleet_order_completions) AND records an event
     in watchdog_events so the operator sees the watchdog-specific chain
@@ -303,12 +329,17 @@ async def watchdog_order_complete(
         params = order_row["parameters"] if isinstance(order_row["parameters"], dict) else json.loads(order_row["parameters"] or "{}")
         aid = params.get("appliance_id", "")
         site_id = params.get("site_id", "")
-        if auth_site_id != site_id:
+        if bearer_site != site_id:
             raise HTTPException(status_code=403, detail="auth_site_id ≠ order site")
         if not aid.endswith("-watchdog"):
             raise HTTPException(
                 status_code=403,
                 detail="order not targeted at a -watchdog appliance_id",
+            )
+        if not bearer_aid or bearer_aid != aid:
+            raise HTTPException(
+                status_code=403,
+                detail=f"bearer_aid {bearer_aid!r} != order target {aid!r}",
             )
 
         async with conn.transaction():

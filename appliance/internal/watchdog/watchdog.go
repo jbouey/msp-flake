@@ -135,7 +135,7 @@ func (w *Watchdog) Run(ctx context.Context) error {
 // is logged and otherwise swallowed — the watchdog's job is to stay
 // alive so it can retry on the next tick.
 func (w *Watchdog) tick(ctx context.Context) {
-	payload := w.collectHealthPayload()
+	payload := w.collectHealthPayload(ctx)
 	pending, err := w.postCheckin(ctx, payload)
 	if err != nil {
 		w.log.Warn("checkin failed", "err", err)
@@ -147,9 +147,9 @@ func (w *Watchdog) tick(ctx context.Context) {
 }
 
 // collectHealthPayload produces the JSON sent in /checkin.
-func (w *Watchdog) collectHealthPayload() map[string]any {
-	status := runCmd("systemctl", "is-active", "appliance-daemon")
-	substate := runCmd("systemctl", "show", "appliance-daemon", "-p", "SubState", "--value")
+func (w *Watchdog) collectHealthPayload(ctx context.Context) map[string]any {
+	status := runCmd(ctx, "systemctl", "is-active", "appliance-daemon")
+	substate := runCmd(ctx, "systemctl", "show", "appliance-daemon", "-p", "SubState", "--value")
 	return map[string]any{
 		"site_id":              w.cfg.SiteID,
 		"appliance_id":         w.cfg.ApplianceID,
@@ -285,12 +285,12 @@ func (w *Watchdog) collectDiagnostics(ctx context.Context, orderID string) (map[
 	bundle := map[string]any{
 		"watchdog_version": Version,
 		"wall_time":        time.Now().UTC().Format(time.RFC3339),
-		"systemd_status":   runCmd("systemctl", "status", "appliance-daemon", "--no-pager"),
-		"daemon_journal":   runCmd("journalctl", "-u", "appliance-daemon", "-n", "100", "--no-pager", "-o", "cat"),
-		"ip_addr":          runCmd("ip", "-j", "addr"),
-		"dns_resolve":      runCmd("host", "api.osiriscare.net"),
+		"systemd_status":   runCmd(ctx, "systemctl", "status", "appliance-daemon", "--no-pager"),
+		"daemon_journal":   runCmd(ctx, "journalctl", "-u", "appliance-daemon", "-n", "100", "--no-pager", "-o", "cat"),
+		"ip_addr":          runCmd(ctx, "ip", "-j", "addr"),
+		"dns_resolve":      runCmd(ctx, "host", "api.osiriscare.net"),
 		"pin_store_exists": fileExists(pinStorePath),
-		"config_yaml_sha":  sha256File("/var/lib/msp/config.yaml"),
+		"config_yaml_sha":  sha256File(ctx, "/var/lib/msp/config.yaml"),
 	}
 	if d, err := os.ReadFile(diagBootPath); err == nil {
 		bundle["boot_diag_json"] = string(d)
@@ -379,8 +379,17 @@ func (w *Watchdog) redeployDaemon(_ context.Context, _ map[string]any) (map[stri
 
 // ── Utilities ────────────────────────────────────────────────────────
 
-func runCmd(name string, args ...string) string {
-	out, err := exec.Command(name, args...).CombinedOutput()
+// runCmd wraps exec.CommandContext with a 10-second per-call timeout.
+// The 10s cap is critical: without it, a hung journalctl / host /
+// systemctl on a broken-network box will pin the watchdog's tick
+// forever — the very failure mode the watchdog exists to surface.
+func runCmd(parent context.Context, name string, args ...string) string {
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Sprintf("ERR: %s timed out after 10s\n%s", name, string(out))
+	}
 	if err != nil {
 		return fmt.Sprintf("ERR: %v\n%s", err, string(out))
 	}
@@ -392,10 +401,13 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func sha256File(path string) string {
+func sha256File(parent context.Context, path string) string {
 	// Cheap hash via external sha256sum to avoid pulling crypto package
 	// into this already-minimal binary. Fails soft — return empty.
-	out, err := exec.Command("sha256sum", path).Output()
+	// Context-bounded so a stuck disk read can't wedge the tick.
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sha256sum", path).Output()
 	if err != nil {
 		return ""
 	}

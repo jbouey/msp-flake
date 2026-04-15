@@ -309,12 +309,32 @@ def load_runbooks():
 # Auth Dependencies
 # ============================================================================
 
+async def require_appliance_bearer_full(request: Request) -> tuple[str, Optional[str]]:
+    """Same as require_appliance_bearer but returns both the site_id AND
+    the bearer-bound appliance_id. The appliance_id MAY be None for
+    legacy site-level keys — callers that need per-appliance binding
+    MUST treat a None return as a failure.
+
+    Session 207 Phase W gate: the watchdog_api surface uses this
+    to bind request.appliance_id to the bearer's owning appliance, so
+    a compromised main-daemon bearer cannot claim to be a non-existent
+    watchdog and poison watchdog_events chains.
+    """
+    site_id = await require_appliance_bearer(request)
+    # The flow above sets `_bearer_aid` on the request state when the
+    # bearer binds a specific appliance_id. See the shim below.
+    aid = getattr(request.state, "_bearer_aid", None)
+    return site_id, aid
+
+
 async def require_appliance_bearer(request: Request) -> str:
     """Validate appliance Bearer token from Authorization header.
 
     Auth lookup: api_keys table keyed by key_hash. The appliance_id column
     distinguishes per-appliance keys from legacy site-level keys.
-    Returns the site_id associated with the key.
+    Returns the site_id associated with the key. Also stashes the
+    bearer-bound appliance_id (nullable) in request.state._bearer_aid
+    for callers that upgrade to `require_appliance_bearer_full`.
 
     On failure for a known appliance (identifiable by site_id + mac_address in
     the request body), tracks auth_failure_count so the dashboard can show
@@ -343,6 +363,12 @@ async def require_appliance_bearer(request: Request) -> str:
         row = result.fetchone()
 
     if row:
+        # Stash bearer-bound appliance_id so callers can upgrade to the
+        # _full variant without re-running the lookup.
+        try:
+            request.state._bearer_aid = row.appliance_id
+        except Exception:
+            pass  # Non-fatal; _full callers will see None and 403.
         # Clear auth failure tracking on successful auth
         if row.appliance_id:
             try:
