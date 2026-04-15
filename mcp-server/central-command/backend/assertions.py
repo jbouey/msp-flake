@@ -476,6 +476,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Watchdog is alive but reports the main daemon is not active. Issue watchdog_restart_daemon fleet order to remediate.",
         check=lambda c: _check_watchdog_reports_daemon_down(c),
     ),
+    Assertion(
+        name="winrm_pin_mismatch",
+        severity="sev2",
+        description="≥2 TLS pin check failures for the same Windows target in the last hour. Either the target's cert legitimately rotated (issue watchdog_reset_pin_store) or it's an in-progress MITM (investigate first).",
+        check=lambda c: _check_winrm_pin_mismatch(c),
+    ),
 ]
 
 
@@ -701,6 +707,62 @@ async def _check_mac_rekeyed_recently(conn: asyncpg.Connection) -> List[Violatio
                 "latest_claimed_at": r["latest"].isoformat(),
                 "sources": list(r["sources"] or []),
                 "interpretation": "reinstall churn OR impersonation — verify with operator",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_winrm_pin_mismatch(conn: asyncpg.Connection) -> List[Violation]:
+    """A Windows target's WinRM TLS certificate fingerprint differs from
+    the pin the appliance stored on first TOFU. Common causes:
+    (a) DC cert was renewed/rotated, (b) the target VM was rebuilt with
+    a fresh cert, (c) a box on the target's IP is impersonating it
+    (MITM / DNS hijack). First two are legitimate — fix by issuing a
+    host-scoped `watchdog_reset_pin_store` fleet order (handler shipped
+    in appliance-watchdog v0.1.0). The third is a genuine attack and
+    the pin mismatch IS the expected detection.
+
+    Fires when ≥2 TLS-pin failures for the same (appliance_id, hostname)
+    pair in the last hour — single transient hiccups don't trigger,
+    sustained mismatch does. Auto-resolves as soon as WinRM succeeds
+    again (post-reset-or-attacker-vanished).
+    """
+    rows = await conn.fetch(
+        """
+        SELECT site_id, appliance_id, hostname,
+               COUNT(*) AS recent_pin_fails,
+               MAX(created_at) AS latest_fail_at,
+               array_agg(DISTINCT runbook_id) AS runbooks_affected
+          FROM execution_telemetry
+         WHERE created_at > NOW() - INTERVAL '1 hour'
+           AND NOT success
+           AND (error_message ILIKE '%TLS pin%'
+                OR error_message ILIKE '%pin check%')
+         GROUP BY site_id, appliance_id, hostname
+        HAVING COUNT(*) >= 2
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": r["appliance_id"],
+                "target_hostname": r["hostname"],
+                "recent_pin_fails": r["recent_pin_fails"],
+                "latest_fail_at": r["latest_fail_at"].isoformat(),
+                "runbooks_affected": list(r["runbooks_affected"] or []),
+                "remediation": (
+                    "Verify the target's cert fingerprint is the one you "
+                    "expect (DC renewed? VM rebuilt? Or a real MITM?). "
+                    "If legitimate, issue a host-scoped fleet order: "
+                    "fleet_cli create watchdog_reset_pin_store "
+                    "--param site_id=<site> --param appliance_id=<aid>-watchdog "
+                    "--param host=<target_hostname> "
+                    "--actor-email <you> --reason 'DC cert renewed <date>'. "
+                    "If attack, DO NOT reset — investigate DNS / ARP / "
+                    "route tables on the appliance first."
+                ),
             },
         )
         for r in rows
