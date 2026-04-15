@@ -255,6 +255,18 @@ in
     kernelParams = [
       "quiet" "loglevel=3" "console=tty1" "console=ttyS0,115200"
       "clocksource=hpet" "nowatchdog" "tsc=reliable"
+      # Phase H2 (Session 207): kernel lockdown in `integrity` mode.
+      # Blocks (a) loading unsigned kernel modules, (b) /dev/mem +
+      # /dev/kmem + /dev/port raw access, (c) kexec_load_file,
+      # (d) writes to MSR registers, (e) arbitrary module parameters,
+      # (f) BPF calls that could read kernel memory. `integrity`
+      # (not `confidentiality`) — narrower guarantee but doesn't
+      # break eBPF observability, kprobes, or /proc/kcore which the
+      # watchdog's diagnostic collector may need. Hardens the last
+      # attack path left after Phase S removes remote SSH: a
+      # compromised daemon with root can no longer patch the kernel
+      # or modify boot-integrity signals to cover its tracks.
+      "lockdown=integrity"
     ];
     blacklistedKernelModules = [
       "hid_logitech_hidpp"
