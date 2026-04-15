@@ -64,7 +64,7 @@ async def get_stats(db: AsyncSession = Depends(get_db), user: dict = Depends(req
     """Get server statistics."""
     stats = {}
 
-    result = await db.execute(text("SELECT COUNT(*) FROM appliances WHERE status = 'active'"))
+    result = await db.execute(text("SELECT COUNT(*) FROM v_appliances_current WHERE status = 'online'"))
     stats["active_appliances"] = result.scalar()
 
     result = await db.execute(text("""

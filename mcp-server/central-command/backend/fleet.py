@@ -189,11 +189,11 @@ async def get_fleet_overview() -> List[ClientOverview]:
             SELECT
                 a.site_id,
                 COUNT(*) as appliance_count,
-                COUNT(*) FILTER (WHERE a.is_online = true) as online_count,
+                COUNT(*) FILTER (WHERE a.status = 'online') as online_count,
                 MAX(a.last_checkin) as last_checkin
-            FROM appliances a
+            FROM site_appliances a
             JOIN sites s ON s.site_id = a.site_id
-            WHERE s.status != 'inactive'
+            WHERE s.status != 'inactive' AND a.deleted_at IS NULL
             GROUP BY a.site_id
             ORDER BY a.site_id
         """)
@@ -207,9 +207,9 @@ async def get_fleet_overview() -> List[ClientOverview]:
 
             # Get appliances for this site
             appliances = await conn.fetch("""
-                SELECT id, last_checkin
-                FROM appliances
-                WHERE site_id = $1
+                SELECT legacy_uuid AS id, last_checkin
+                FROM site_appliances
+                WHERE site_id = $1 AND deleted_at IS NULL
             """, site_id)
 
             # Calculate health for each appliance
@@ -225,7 +225,7 @@ async def get_fleet_overview() -> List[ClientOverview]:
             incident_count = await conn.fetchval("""
                 SELECT COUNT(*)
                 FROM incidents i
-                JOIN appliances a ON i.appliance_id = a.id
+                JOIN v_appliances_current a ON i.appliance_id = a.id
                 WHERE a.site_id = $1
                 AND i.created_at > NOW() - INTERVAL '24 hours'
             """, site_id)
@@ -234,7 +234,7 @@ async def get_fleet_overview() -> List[ClientOverview]:
             last_incident = await conn.fetchval("""
                 SELECT MAX(i.created_at)
                 FROM incidents i
-                JOIN appliances a ON i.appliance_id = a.id
+                JOIN v_appliances_current a ON i.appliance_id = a.id
                 WHERE a.site_id = $1
             """, site_id)
 
@@ -270,12 +270,19 @@ async def get_client_detail(site_id: str) -> Optional[ClientDetail]:
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
-        # Get all appliances for this site
+        # Get all appliances for this site.
+        # ip_addresses is jsonb array; take first entry as the singular ip_address
+        # the Appliance model expects. Tier is no longer an appliance attribute —
+        # it lives on sites.tier. is_online derives from status='online'.
         appliance_rows = await conn.fetch("""
-            SELECT id, site_id, hostname, ip_address, agent_version,
-                   tier, is_online, last_checkin, created_at
-            FROM appliances
-            WHERE site_id = $1
+            SELECT legacy_uuid AS id, site_id, hostname,
+                   (ip_addresses->>0)::inet AS ip_address,
+                   agent_version,
+                   'standard'::text AS tier,
+                   (status = 'online') AS is_online,
+                   last_checkin, first_checkin AS created_at
+            FROM site_appliances
+            WHERE site_id = $1 AND deleted_at IS NULL
             ORDER BY hostname
         """, site_id)
 
@@ -295,14 +302,17 @@ async def get_client_detail(site_id: str) -> Optional[ClientDetail]:
         # Aggregate health
         aggregated_health = aggregate_health_scores(health_list)
 
-        # Get tier (from first appliance)
-        tier = appliance_rows[0].get("tier", "standard")
+        # Get tier from sites table (single source of truth)
+        site_tier_row = await conn.fetchrow(
+            "SELECT tier FROM sites WHERE site_id = $1", site_id
+        )
+        tier = (site_tier_row["tier"] if site_tier_row else None) or "standard"
 
         # Get recent incidents
         incident_rows = await conn.fetch("""
             SELECT i.*, a.hostname
             FROM incidents i
-            JOIN appliances a ON i.appliance_id = a.id
+            JOIN v_appliances_current a ON i.appliance_id = a.id
             WHERE a.site_id = $1
             ORDER BY i.created_at DESC
             LIMIT 20
@@ -344,10 +354,14 @@ async def get_client_appliances(site_id: str) -> List[Appliance]:
 
     async with admin_connection(pool) as conn:
         appliance_rows = await conn.fetch("""
-            SELECT id, site_id, hostname, ip_address, agent_version,
-                   tier, is_online, last_checkin, created_at
-            FROM appliances
-            WHERE site_id = $1
+            SELECT legacy_uuid AS id, site_id, hostname,
+                   (ip_addresses->>0)::inet AS ip_address,
+                   agent_version,
+                   'standard'::text AS tier,
+                   (status = 'online') AS is_online,
+                   last_checkin, first_checkin AS created_at
+            FROM site_appliances
+            WHERE site_id = $1 AND deleted_at IS NULL
             ORDER BY hostname
         """, site_id)
 

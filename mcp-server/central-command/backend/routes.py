@@ -5199,7 +5199,7 @@ async def get_organization_devices(
                    a_owner.site_id as owner_site_id
             FROM discovered_devices d
             JOIN sites s ON d.site_id = s.site_id
-            LEFT JOIN appliances a_owner ON d.owner_appliance_id = a_owner.id
+            LEFT JOIN v_appliances_current a_owner ON d.owner_appliance_id = a_owner.id
             WHERE d.site_id = ANY($1)
             ORDER BY d.ip_address
             LIMIT $2 OFFSET $3

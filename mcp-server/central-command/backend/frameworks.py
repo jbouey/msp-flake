@@ -342,7 +342,7 @@ async def update_appliance_frameworks(
         )
 
     # Get site_id from appliance (appliance_id is actually site_id in our schema)
-    site_query = text("SELECT site_id FROM appliances WHERE site_id = :appliance_id")
+    site_query = text("SELECT site_id FROM v_appliances_current WHERE site_id = :appliance_id")
     result = await db.execute(site_query, {"appliance_id": appliance_id})
     row = result.fetchone()
 
