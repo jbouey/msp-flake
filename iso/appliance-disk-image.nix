@@ -67,6 +67,7 @@ let
 
     subPackages = [
       "cmd/appliance-daemon"
+      "cmd/appliance-watchdog"
       "cmd/grpc-server"
       "cmd/checkin-receiver"
     ];
@@ -481,6 +482,78 @@ EOF
       MemoryMax = "256M";
     };
   };
+
+  # ============================================================================
+  # Appliance Watchdog (Session 207 Phase W2) — SSH-strip precondition
+  # ============================================================================
+  # Second systemd unit that runs ALONGSIDE appliance-daemon with its own
+  # Ed25519 bearer + 2-minute checkin loop against /api/watchdog/*. When
+  # the main daemon wedges, operators issue one of six signed fleet-
+  # order types (watchdog_restart_daemon, watchdog_refetch_config,
+  # watchdog_reset_pin_store, watchdog_reset_api_key,
+  # watchdog_redeploy_daemon, watchdog_collect_diagnostics) and the
+  # watchdog executes the recovery. Closes the brick scenarios that
+  # today still require SSH.
+  #
+  # Intentionally isolated from the main daemon:
+  #   - distinct ExecStart binary
+  #   - distinct config file (/etc/msp-watchdog.yaml)
+  #   - distinct bearer (api_keys row with appliance_id '<aid>-watchdog')
+  #   - starts IF present but never Requires= the main daemon, so a
+  #     crashed main daemon cannot cascade-stop the watchdog
+  # ============================================================================
+  systemd.services.appliance-daemon-watchdog = {
+    description = "OsirisCare Appliance Watchdog (Go) — SSH-free recovery surface";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network.target" ];
+    # NOTE: intentionally NOT `after = network-online.target` — the
+    # watchdog must be able to run even when network-online never
+    # fires, so it can collect diagnostics about why network is broken.
+
+    # Coreutils + systemd + iproute2 + inetutils cover the diagnostic
+    # collectors (journalctl, ip addr, host <name>). The watchdog shells
+    # out rather than pulling in a Go sysctl dependency.
+    path = with pkgs; [ coreutils systemd iproute2 inetutils ];
+
+    serviceConfig = {
+      Type = "simple";
+      ExecStart = "${appliance-daemon-go}/bin/appliance-watchdog --config /etc/msp-watchdog.yaml";
+      Restart = "on-failure";
+      RestartSec = "15s";
+      StartLimitIntervalSec = 300;
+      StartLimitBurst = 10;
+      WorkingDirectory = "/var/lib/msp";
+      StandardOutput = "journal";
+      StandardError = "journal";
+      SyslogIdentifier = "appliance-watchdog";
+
+      # Hardening — tighter than the main daemon because the watchdog
+      # only needs to shell out to systemctl + read /var/lib/msp.
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      NoNewPrivileges = true;
+      ReadWritePaths = [ "/var/lib/msp" ];
+
+      # Intentionally modest memory cap — watchdog shouldn't grow.
+      MemoryMax = "64M";
+    };
+  };
+
+  # Placeholder config so the unit doesn't fail-start the first boot.
+  # msp-first-boot.service populates real values after the main daemon's
+  # config.yaml lands; until then, the watchdog `idles silently until
+  # signal` per its LoadConfig error path.
+  environment.etc."msp-watchdog.yaml".text = ''
+    # Populated by msp-first-boot.service on first provisioning.
+    # The appliance-watchdog service boots into idle mode when these
+    # are empty, and picks up values on its next restart after
+    # msp-first-boot rewrites the file.
+    site_id: ""
+    appliance_id: ""
+    api_key: ""
+    api_endpoint: "https://api.osiriscare.net"
+  '';
 
   # ============================================================================
   # Daemon Zombie Watchdog (Session 205)

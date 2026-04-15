@@ -81,6 +81,7 @@ let
 
     subPackages = [
       "cmd/appliance-daemon"
+      "cmd/appliance-watchdog"
       "cmd/grpc-server"
       "cmd/checkin-receiver"
     ];
@@ -166,7 +167,7 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v29";
+    installer_version = "v30";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
@@ -406,7 +407,7 @@ EOF
       exec 2> >(tee -a "$LOG_FILE" >&2)
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v29"
+      INSTALLER_VERSION="v30"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
