@@ -36,7 +36,41 @@ env:
   CURRENT_LINK: /opt/mcp-server/current
 
 jobs:
+  # ============================================================================
+  # smoke-import — fast-fail canary.
+  # ============================================================================
+  # Independent job (NOT a step inside `test`) so it shows up as its own
+  # required-status-check in branch protection. Runs in ~30s and dies
+  # immediately on any ImportError / syntax error / missing dep. This is
+  # the guardrail that would have caught the 2026-04-15 17:16Z typo that
+  # kicked off an 11-deploy streak of silent failures.
+  #
+  # `test` + `privileged-chain-pg-tests` + `deploy` all `needs: smoke-import`
+  # so a broken main can never consume ~5 minutes of the 400-test matrix
+  # before surfacing.
+  smoke-import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend deps
+        working-directory: mcp-server/central-command/backend
+        run: |
+          pip install -r requirements.txt
+
+      - name: Import sanity — backend loads clean
+        working-directory: mcp-server
+        run: |
+          python -c "import main; print('mcp-server/main.py loads clean')"
+
   test:
+    needs: smoke-import
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -52,21 +86,6 @@ jobs:
         run: |
           pip install pytest==8.3.4 pytest-asyncio==0.24.0 httpx==0.27.0
           pip install -r requirements.txt
-
-      # Fast-fail import sanity check. Catches the class of bug that
-      # silently blocked 8 consecutive deploys on 2026-04-15 when Phase
-      # W0 imported `require_appliance_bearer` from the wrong module:
-      # pytest's per-file try/except swallowed the collection-time
-      # ImportError, 400+ tests "passed", deploy step still ran exit-1,
-      # and the ACTUAL error only appeared halfway through a 20 000-line
-      # log. A single `import main` here fails in <1s with a clear
-      # stacktrace, before any test runs. `main.py` lives at
-      # mcp-server/main.py and pulls in every dashboard_api.* submodule
-      # used by the live service, so this is the right load check.
-      - name: Import sanity — backend loads clean
-        working-directory: mcp-server
-        run: |
-          python -c "import main; print('mcp-server/main.py loads clean')"
 
       - name: Run backend tests
         working-directory: mcp-server/central-command/backend
@@ -105,6 +124,7 @@ jobs:
         run: npx vitest run
 
   privileged-chain-pg-tests:
+    needs: smoke-import
     # Phase 15 A-spec hygiene: end-to-end tests against real Postgres
     # for the Session 205 privileged-access security primitives:
     #   - chain enforcement triggers (migrations 175 + 176)

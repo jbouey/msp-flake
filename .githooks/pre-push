@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# .githooks/pre-push — runs before `git push`.
+#
+# Single job: catch the 2026-04-15 class of failure locally before it
+# eats 11 CI cycles. `python -c "import main"` resolves every transitive
+# import in mcp-server/main.py; a typo in any imported module fails in
+# under a second with a clear stacktrace.
+#
+# Activate on a fresh clone:
+#
+#     scripts/setup-hooks.sh
+#
+# Skip in emergencies (DOESN'T happen often; the hook runs fast enough
+# that the Normal path is always cheaper than the bypass):
+#
+#     git push --no-verify
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Only run when pushing work that actually touches the backend import
+# graph. Infra-only pushes (docs, tests for other subsystems, iso/)
+# don't need the load check.
+CHANGED=$(git diff --name-only "@{u}..HEAD" 2>/dev/null || git diff --name-only "HEAD~5..HEAD")
+RELEVANT=0
+for f in $CHANGED; do
+    case "$f" in
+        mcp-server/*) RELEVANT=1 ;;
+    esac
+done
+
+if [ "$RELEVANT" -eq 0 ]; then
+    exit 0
+fi
+
+echo "[pre-push] smoke-import check..."
+cd "$REPO_ROOT/mcp-server"
+if ! python3 -c "import main" >/dev/null 2>&1; then
+    echo "[pre-push] ❌ import main failed — push blocked"
+    echo ""
+    python3 -c "import main" 2>&1 | sed -n '/Traceback\|Error/,/^$/p' | head -20
+    echo ""
+    echo "[pre-push] Fix the import error, then re-push."
+    echo "[pre-push] Bypass (emergency only): git push --no-verify"
+    exit 1
+fi
+echo "[pre-push] ✓ import main clean"
