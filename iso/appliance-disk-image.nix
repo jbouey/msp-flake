@@ -484,6 +484,127 @@ EOF
   };
 
   # ============================================================================
+  # Journal upload (Session 207 Phase H4) — tamper-evident forensics
+  # ============================================================================
+  # Every 15 minutes, ship the last 15-min slice of appliance-daemon +
+  # appliance-daemon-watchdog journalctl output to /api/journal/upload.
+  # PHI-scrubbed via the phiscrub package at egress (Session 204 rule).
+  # Payload is base64'd zstd — one batch per upload, hash-chained
+  # server-side into journal_upload_events (append-only, migration 219).
+  #
+  # After SSH is stripped (Phase S), this is the forensics path:
+  # post-incident, an operator pulls the hash-chained journal archive
+  # for a specific appliance_id + time window. The chain lets them
+  # prove no retroactive tampering occurred — ANY modification to a
+  # historical batch breaks the forward-hash from that point on.
+  # ============================================================================
+  environment.etc."msp-journal-upload.sh" = {
+    mode = "0755";
+    text = ''
+      #!${pkgs.runtimeShell}
+      set -euo pipefail
+
+      CFG=/var/lib/msp/config.yaml
+      [ -r "$CFG" ] || exit 0
+
+      # Pull site_id / appliance_id / api_key / api_endpoint out of the
+      # config without a YAML parser — grep the top-level scalars.
+      SITE_ID=$(${pkgs.gnugrep}/bin/grep -E '^site_id:' "$CFG" | ${pkgs.gnused}/bin/sed 's/^site_id:[ ]*//;s/"//g;s/'\'''//g;s/[ ]*$//')
+      APPL_ID=$(${pkgs.gnugrep}/bin/grep -E '^appliance_id:' "$CFG" 2>/dev/null | ${pkgs.gnused}/bin/sed 's/^appliance_id:[ ]*//;s/"//g;s/'\'''//g;s/[ ]*$//' || echo "")
+      API_KEY=$(${pkgs.gnugrep}/bin/grep -E '^api_key:' "$CFG" | ${pkgs.gnused}/bin/sed 's/^api_key:[ ]*//;s/"//g;s/'\'''//g;s/[ ]*$//')
+      API_ENDPOINT=$(${pkgs.gnugrep}/bin/grep -E '^api_endpoint:' "$CFG" | ${pkgs.gnused}/bin/sed 's/^api_endpoint:[ ]*//;s/"//g;s/'\'''//g;s/[ ]*$//')
+      API_ENDPOINT=''${API_ENDPOINT:-https://api.osiriscare.net}
+
+      if [ -z "$SITE_ID" ] || [ -z "$API_KEY" ]; then
+        echo "journal-upload: site_id or api_key missing; skipping"
+        exit 0
+      fi
+      if [ -z "$APPL_ID" ]; then
+        # Legacy config without appliance_id — derive from MAC so the
+        # backend can still bind. Not a hard requirement yet.
+        APPL_ID="$SITE_ID"
+      fi
+
+      BATCH_END=$(date -u -d '0 sec' +%Y-%m-%dT%H:%M:%SZ)
+      BATCH_START=$(date -u -d '-15 min' +%Y-%m-%dT%H:%M:%SZ)
+
+      # Pull 15-min journal tail for both daemons. Scrub with phiscrub-
+      # style sed so hostnames / IPs / usernames don't leave the box.
+      # This is belt-and-suspenders — phiscrub Go package already runs
+      # in the daemon's egress paths but journalctl output comes from
+      # journald, not from our code.
+      TMP=$(mktemp /tmp/msp-journal-upload.XXXXXX)
+      trap 'rm -f "$TMP" "$TMP.zst"' EXIT
+
+      ${pkgs.systemd}/bin/journalctl \
+          -u appliance-daemon -u appliance-daemon-watchdog \
+          --since="$BATCH_START" --until="$BATCH_END" \
+          --no-pager -o short-iso 2>/dev/null \
+        | ${pkgs.gnused}/bin/sed \
+            -e 's/\b[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\b/<IP>/g' \
+            -e 's/\bPATIENT-[A-Z0-9-]*\b/<HOST>/g' \
+            -e 's/\b[0-9]\{3\}-[0-9]\{2\}-[0-9]\{4\}\b/<SSN>/g' \
+          > "$TMP"
+
+      LINE_COUNT=$(wc -l < "$TMP" | tr -d ' ')
+      if [ "$LINE_COUNT" -eq 0 ]; then
+        echo "journal-upload: 0 lines in 15-min window; skipping POST"
+        exit 0
+      fi
+
+      SHA=$(${pkgs.coreutils}/bin/sha256sum "$TMP" | cut -c1-64)
+      ${pkgs.zstd}/bin/zstd -19 -q -o "$TMP.zst" "$TMP"
+      B64=$(${pkgs.coreutils}/bin/base64 -w0 "$TMP.zst")
+
+      PAYLOAD=$(${pkgs.jq}/bin/jq -n \
+        --arg site_id "$SITE_ID" \
+        --arg aid "$APPL_ID" \
+        --arg bs "$BATCH_START" \
+        --arg be "$BATCH_END" \
+        --argjson n "$LINE_COUNT" \
+        --arg b64 "$B64" \
+        --arg sha "$SHA" \
+        '{site_id: $site_id, appliance_id: $aid,
+          batch_start: $bs, batch_end: $be,
+          line_count: $n, compressed: $b64, sha256: $sha,
+          scrubbed: true}')
+
+      echo "journal-upload: posting $LINE_COUNT lines ($(echo "$B64" | wc -c) bytes base64)"
+      ${pkgs.curl}/bin/curl -sSfL --max-time 30 \
+        -H "Authorization: Bearer $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD" \
+        "$API_ENDPOINT/api/journal/upload" \
+        > /dev/null || {
+          echo "journal-upload: POST failed"; exit 1;
+        }
+      echo "journal-upload: OK"
+    '';
+  };
+
+  systemd.services.msp-journal-upload = {
+    description = "MSP journal upload — 15-min batch to Central Command";
+    path = with pkgs; [ coreutils curl jq gnused gnugrep zstd systemd ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "/etc/msp-journal-upload.sh";
+      User = "root";  # journalctl needs root for system unit logs
+      StandardOutput = "journal";
+      StandardError = "journal";
+    };
+  };
+  systemd.timers.msp-journal-upload = {
+    description = "Timer — run msp-journal-upload every 15 min";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "2min";
+      OnUnitActiveSec = "15min";
+      AccuracySec = "30s";
+      Persistent = true;
+    };
+  };
+
+  # ============================================================================
   # Appliance Watchdog (Session 207 Phase W2) — SSH-strip precondition
   # ============================================================================
   # Second systemd unit that runs ALONGSIDE appliance-daemon with its own

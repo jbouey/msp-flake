@@ -482,6 +482,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="≥2 TLS pin check failures for the same Windows target in the last hour. Either the target's cert legitimately rotated (issue watchdog_reset_pin_store) or it's an in-progress MITM (investigate first).",
         check=lambda c: _check_winrm_pin_mismatch(c),
     ),
+    Assertion(
+        name="journal_upload_stale",
+        severity="sev2",
+        description="A previously-uploading appliance has not shipped a journal batch in >90 min (3x the 15-min cadence). Timer broken, egress blocked, or box offline.",
+        check=lambda c: _check_journal_upload_stale(c),
+    ),
 ]
 
 
@@ -707,6 +713,50 @@ async def _check_mac_rekeyed_recently(conn: asyncpg.Connection) -> List[Violatio
                 "latest_claimed_at": r["latest"].isoformat(),
                 "sources": list(r["sources"] or []),
                 "interpretation": "reinstall churn OR impersonation — verify with operator",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_journal_upload_stale(conn: asyncpg.Connection) -> List[Violation]:
+    """An appliance that previously uploaded a journal batch has gone
+    silent for >90 min (3x the 15-min cadence). Either the journal-
+    upload timer is broken on-box, outbound HTTPS to /api/journal/
+    upload is blocked by the egress allowlist (Phase H1 regression),
+    or the box is genuinely offline.
+
+    Does NOT fire for appliances that have never uploaded — same
+    pattern as `watchdog_silent`, avoids spurious violations during
+    the v30 rollout window.
+    """
+    rows = await conn.fetch(
+        """
+        WITH latest AS (
+            SELECT DISTINCT ON (appliance_id)
+                   site_id, appliance_id, received_at
+              FROM journal_upload_events
+          ORDER BY appliance_id, received_at DESC
+        )
+        SELECT site_id, appliance_id, received_at,
+               EXTRACT(EPOCH FROM (NOW() - received_at))/60 AS minutes_stale
+          FROM latest
+         WHERE received_at < NOW() - INTERVAL '90 minutes'
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": r["appliance_id"],
+                "last_upload_at": r["received_at"].isoformat(),
+                "minutes_stale": float(r["minutes_stale"] or 0),
+                "remediation": (
+                    "Check appliance's msp-journal-upload.timer status. "
+                    "Common causes: daemon crash-loop (see watchdog_reports"
+                    "_daemon_down), egress allowlist blocking /api/journal/"
+                    "upload (see Phase H1 config), or full LAN outage."
+                ),
             },
         )
         for r in rows
