@@ -145,8 +145,8 @@ async def deploy_sensor_to_host(site_id: str, hostname: str):
     async with admin_connection(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
-            SELECT appliance_id FROM appliances
-            WHERE site_id = $1 AND status = 'online'
+            SELECT appliance_id FROM site_appliances
+            WHERE site_id = $1 AND status = 'online' AND deleted_at IS NULL
             LIMIT 1
         """, site_id)
 
@@ -180,8 +180,8 @@ async def remove_sensor_from_host(site_id: str, hostname: str):
     async with admin_connection(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
-            SELECT appliance_id FROM appliances
-            WHERE site_id = $1 AND status = 'online'
+            SELECT appliance_id FROM site_appliances
+            WHERE site_id = $1 AND status = 'online' AND deleted_at IS NULL
             LIMIT 1
         """, site_id)
 
@@ -456,8 +456,8 @@ async def deploy_linux_sensor_to_host(site_id: str, hostname: str):
     async with admin_connection(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
-            SELECT appliance_id FROM appliances
-            WHERE site_id = $1 AND status = 'online'
+            SELECT appliance_id FROM site_appliances
+            WHERE site_id = $1 AND status = 'online' AND deleted_at IS NULL
             LIMIT 1
         """, site_id)
 
@@ -492,8 +492,8 @@ async def remove_linux_sensor_from_host(site_id: str, hostname: str):
     async with admin_connection(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
-            SELECT appliance_id FROM appliances
-            WHERE site_id = $1 AND status = 'online'
+            SELECT appliance_id FROM site_appliances
+            WHERE site_id = $1 AND status = 'online' AND deleted_at IS NULL
             LIMIT 1
         """, site_id)
 

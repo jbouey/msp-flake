@@ -139,7 +139,7 @@ class TestEvidenceSubmission:
             query_str = str(query) if not isinstance(query, str) else query
 
             # Appliance lookup
-            if "SELECT id FROM appliances WHERE site_id" in query_str:
+            if "SELECT id FROM v_appliances_current WHERE site_id" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             return FakeResult([], rowcount=1)
 
@@ -196,7 +196,7 @@ class TestEvidenceSubmission:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances WHERE site_id" in query_str:
+            if "SELECT id FROM v_appliances_current WHERE site_id" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT id FROM orders WHERE order_id" in query_str:
                 return FakeResult([FakeRow([order_uuid])])
@@ -247,7 +247,7 @@ class TestEvidenceSubmission:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances WHERE site_id" in query_str:
+            if "SELECT id FROM v_appliances_current WHERE site_id" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT id FROM orders WHERE order_id" in query_str:
                 return FakeResult([FakeRow([order_uuid])])
@@ -294,7 +294,7 @@ class TestEvidenceSubmission:
 
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
-            if "SELECT id FROM appliances WHERE site_id" in query_str:
+            if "SELECT id FROM v_appliances_current WHERE site_id" in query_str:
                 return FakeResult([])
             return FakeResult([], rowcount=0)
 
@@ -356,7 +356,7 @@ class TestEvidenceSubmission:
 
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
-            if "SELECT id FROM appliances WHERE site_id" in query_str:
+            if "SELECT id FROM v_appliances_current WHERE site_id" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             return FakeResult([], rowcount=1)
 
@@ -570,7 +570,7 @@ class TestWORMRetention:
 
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
-            if "SELECT id FROM appliances WHERE site_id" in query_str:
+            if "SELECT id FROM v_appliances_current WHERE site_id" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             return FakeResult([], rowcount=1)
 

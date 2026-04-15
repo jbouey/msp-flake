@@ -631,7 +631,7 @@ async def get_pending_orders(site_id: str, appliance_id: str, auth_site_id: str 
                 SELECT o.order_id, o.runbook_id, o.parameters, o.issued_at, o.expires_at,
                        i.id as incident_id
                 FROM orders o
-                JOIN appliances a ON o.appliance_id = a.id
+                JOIN v_appliances_current a ON o.appliance_id = a.id
                 LEFT JOIN incidents i ON i.order_id = o.id
                 WHERE a.site_id = $1
                 AND o.status = 'pending'
@@ -1161,8 +1161,9 @@ async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dic
 
             credential_id = str(row['id'])
 
-            # Upsert into discovered_devices for inventory visibility
-            # Use appliances.id (UUID) not site_appliances.appliance_id (compound string)
+            # Upsert into discovered_devices for inventory visibility.
+            # appliance_id is a UUID — prefer legacy_uuid (matches pre-M1 rows)
+            # and fall back to the site_appliances.id PK for new appliances.
             await conn.execute("""
                 INSERT INTO discovered_devices (
                     appliance_id, site_id, local_device_id, hostname, ip_address,
@@ -1170,11 +1171,11 @@ async def _add_manual_device(pool, site_id: str, device: ManualDeviceAdd) -> dic
                     first_seen_at, last_seen_at
                 )
                 SELECT
-                    a.id, $1, $2, $3, $4,
+                    COALESCE(sa.legacy_uuid, sa.id), $1, $2, $3, $4,
                     $5, $6, 'manual', 'unknown',
                     NOW(), NOW()
-                FROM appliances a
-                WHERE a.site_id = $1
+                FROM site_appliances sa
+                WHERE sa.site_id = $1 AND sa.deleted_at IS NULL
                 LIMIT 1
                 ON CONFLICT (appliance_id, local_device_id) DO UPDATE
                 SET hostname = EXCLUDED.hostname, ip_address = EXCLUDED.ip_address,
@@ -1285,7 +1286,9 @@ async def _add_network_device(pool, site_id: str, device: NetworkDeviceAdd) -> d
 
             credential_id = str(row['id'])
 
-            # Register in discovered_devices with device_type = 'network'
+            # Register in discovered_devices with device_type = 'network'.
+            # Prefer legacy_uuid to match existing FK/ON CONFLICT semantics,
+            # fall back to site_appliances.id for new appliances post-M1.
             await conn.execute("""
                 INSERT INTO discovered_devices (
                     appliance_id, site_id, local_device_id, hostname, ip_address,
@@ -1293,11 +1296,11 @@ async def _add_network_device(pool, site_id: str, device: NetworkDeviceAdd) -> d
                     first_seen_at, last_seen_at
                 )
                 SELECT
-                    a.id, $1, $2, $3, $4,
+                    COALESCE(sa.legacy_uuid, sa.id), $1, $2, $3, $4,
                     'network', $5, 'manual', 'unknown',
                     NOW(), NOW()
-                FROM appliances a
-                WHERE a.site_id = $1
+                FROM site_appliances sa
+                WHERE sa.site_id = $1 AND sa.deleted_at IS NULL
                 LIMIT 1
                 ON CONFLICT (appliance_id, local_device_id) DO UPDATE
                 SET hostname = EXCLUDED.hostname, ip_address = EXCLUDED.ip_address,
@@ -1926,21 +1929,17 @@ async def move_appliance(
         if not existing:
             raise HTTPException(status_code=404, detail=f"Appliance {appliance_id} not found in site {site_id}")
 
-        # Update the site_id
+        # Update the site_id. Per-row filter (appliance_id is PK) satisfies
+        # migration 192 row-guard without needing app.allow_multi_row.
         await conn.execute(
             "UPDATE site_appliances SET site_id = $1 WHERE appliance_id = $2",
             body.target_site_id, appliance_id,
         )
 
-        # Also update the appliances table if it has a site_id column
-        await conn.execute(
-            "UPDATE appliances SET site_id = $1 WHERE appliance_id = $2",
-            body.target_site_id, appliance_id,
-        )
-
-        # Update appliance_provisioning by MAC address
+        # Update appliance_provisioning by MAC address.
+        # MAC lives on site_appliances (M1: legacy appliances table dropped).
         mac_row = await conn.fetchrow(
-            "SELECT mac_address FROM appliances WHERE appliance_id = $1",
+            "SELECT mac_address FROM site_appliances WHERE appliance_id = $1",
             appliance_id,
         )
         if mac_row and mac_row["mac_address"]:
@@ -2155,7 +2154,7 @@ async def acknowledge_order(order_id: str, request: Request, auth_site_id: str =
                 UPDATE orders o
                 SET status = 'acknowledged',
                     acknowledged_at = $1
-                FROM appliances a
+                FROM v_appliances_current a
                 WHERE o.order_id = $2
                 AND o.status = 'pending'
                 AND o.appliance_id = a.id
@@ -2266,7 +2265,7 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site
                 SET status = $1,
                     completed_at = $2,
                     result = $3::jsonb
-                FROM appliances a
+                FROM v_appliances_current a
                 WHERE o.order_id = $4
                 AND o.status IN ('pending', 'acknowledged')
                 AND o.appliance_id = a.id
@@ -3595,38 +3594,13 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             except Exception as e:
                 logger.debug(f"Subnet change check skipped: {e}")
 
-        # === STEP 3.5: Also update appliances table for Fleet Updates ===
-        # CRITICAL: filter by host_id (= appliance_id), not just site_id.
-        # The old version pushed every checkin's last_checkin onto every
-        # row in `appliances` for the site, which then propagated through
-        # reconciliation_loop into site_appliances and made offline
-        # appliances look online (Session 206 audit).
-        try:
-            async with conn.transaction():
-                await conn.execute("""
-                    UPDATE appliances SET
-                        last_checkin = $2,
-                        agent_version = $3,
-                        nixos_version = $4,
-                        ip_address = $5::inet,
-                        status = 'active',
-                        updated_at = $2
-                    WHERE site_id = $1
-                      AND host_id = $6
-                """,
-                    checkin.site_id,
-                    now,
-                    checkin.agent_version,
-                    checkin.nixos_version,
-                    checkin.ip_addresses[0] if checkin.ip_addresses else None,
-                    canonical_id,
-                )
-        except Exception as e:
-            # Session 205: transactional step failures escalated from warning to
-            # error. Silent savepoint failures previously caused the 2026-04-12
-            # 90-min fleet-order outage — the log shipper's alert rule fires
-            # on ERROR not WARNING.
-            logger.error(f"Failed to update appliances table: {e}")
+        # === STEP 3.5: legacy appliances-table sync — REMOVED in M1 ===
+        # Pre-M1 we mirrored checkin state into the legacy `appliances` table
+        # for Fleet Updates compatibility. The reconciliation_loop copied it
+        # back to site_appliances (see Session 206 audit for how that masked
+        # offline state). M1 drops the legacy table: site_appliances is
+        # already updated earlier in the checkin flow, so no second write
+        # is needed here.
 
         # === STEP 3.5b: Persist time-travel state (Session 205 Phase 2) ===
         # Store the daemon's reported boot_counter + generation_uuid. The
@@ -4036,7 +4010,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                            o.nonce, o.signature, o.signed_payload,
                            i.id as incident_id
                     FROM orders o
-                    JOIN appliances a ON o.appliance_id = a.id
+                    JOIN v_appliances_current a ON o.appliance_id = a.id
                     LEFT JOIN incidents i ON i.order_id = o.id
                     WHERE a.site_id = $1
                     AND o.status = 'pending'

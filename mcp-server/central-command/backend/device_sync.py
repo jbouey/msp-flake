@@ -149,10 +149,11 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
         # was part of what made phantom appliances look online).
         appliance_row = await conn.fetchrow(
             """
-            SELECT id FROM appliances
+            SELECT COALESCE(legacy_uuid, id) AS id FROM site_appliances
             WHERE site_id = $1
-              AND (host_id = $2 OR $2 IS NULL)
-            ORDER BY (host_id = $2) DESC, last_checkin DESC NULLS LAST
+              AND (appliance_id = $2 OR $2 IS NULL)
+              AND deleted_at IS NULL
+            ORDER BY (appliance_id = $2) DESC, last_checkin DESC NULLS LAST
             LIMIT 1
             """,
             report.site_id,
@@ -489,18 +490,9 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
             except Exception as e:
                 errors.append(f"Device {device.device_id}: {str(e)}")
 
-        # Update appliance last check-in timestamp
-        await conn.execute(
-            """
-            UPDATE appliances SET
-                last_checkin = NOW()
-            WHERE id = $1
-            """,
-            appliance_db_id,
-        )
-
-        # Also update site_appliances so dashboard status stays accurate
-        # even when the dedicated checkin endpoint fails.
+        # Update site_appliances so dashboard status stays accurate even when
+        # the dedicated checkin endpoint fails. M1: the legacy appliances-table
+        # mirror UPDATE was removed — site_appliances is the single source.
         # CRITICAL (Session 206): target ONLY the reporting appliance — the
         # old site-wide UPDATE was marking every appliance at the site as
         # online whenever any single appliance reported devices, which
@@ -583,7 +575,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                         # by looking at the DB record
                         prev = await cred_conn.fetchrow("""
                             SELECT d.ip_address FROM discovered_devices d
-                            JOIN appliances a ON d.appliance_id = a.id
+                            JOIN v_appliances_current a ON d.appliance_id = a.id
                             WHERE a.site_id = $1 AND d.mac_address = $2
                               AND d.ip_address != $3
                             ORDER BY d.last_seen_at DESC LIMIT 1
@@ -630,7 +622,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                             continue
                         prev = await org_conn.fetchrow("""
                             SELECT d.ip_address FROM discovered_devices d
-                            JOIN appliances a ON d.appliance_id = a.id
+                            JOIN v_appliances_current a ON d.appliance_id = a.id
                             WHERE a.site_id = $1 AND d.mac_address = $2
                               AND d.ip_address != $3
                             ORDER BY d.last_seen_at DESC LIMIT 1
@@ -737,7 +729,7 @@ async def get_site_devices(
             w.compliance_percentage as ws_compliance_pct,
             w.last_compliance_check as ws_last_check
         FROM discovered_devices d
-        JOIN appliances a ON d.appliance_id = a.id
+        JOIN v_appliances_current a ON d.appliance_id = a.id
         LEFT JOIN workstations w ON w.site_id = a.site_id
             AND (w.ip_address = d.ip_address OR UPPER(w.hostname) = UPPER(d.hostname))
         WHERE a.site_id = $1
@@ -794,10 +786,14 @@ async def get_site_devices(
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-        # Determine managed subnets from appliance IPs (/24)
+        # Determine managed subnets from appliance IPs (/24).
+        # ip_addresses is a jsonb array on site_appliances; take the first.
         appliance_subnets = set()
         appliance_rows = await conn.fetch(
-            "SELECT ip_address FROM appliances WHERE site_id = $1", site_id
+            """SELECT (ip_addresses->>0) AS ip_address
+               FROM site_appliances
+               WHERE site_id = $1 AND deleted_at IS NULL""",
+            site_id,
         )
         for ar in appliance_rows:
             aip = str(ar["ip_address"] or "")
@@ -866,9 +862,13 @@ async def get_site_device_counts(site_id: str) -> dict:
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
-        # Get managed subnets for filtering
+        # Get managed subnets for filtering.
+        # ip_addresses jsonb array → take first entry.
         appliance_rows = await conn.fetch(
-            "SELECT ip_address FROM appliances WHERE site_id = $1", site_id
+            """SELECT (ip_addresses->>0) AS ip_address
+               FROM site_appliances
+               WHERE site_id = $1 AND deleted_at IS NULL""",
+            site_id,
         )
         managed_prefixes = []
         for ar in appliance_rows:
@@ -889,7 +889,7 @@ async def get_site_device_counts(site_id: str) -> dict:
                 COUNT(*) FILTER (WHERE d.device_type = 'network') as network_devices,
                 COUNT(*) FILTER (WHERE d.device_type = 'printer') as printers
             FROM discovered_devices d
-            JOIN appliances a ON d.appliance_id = a.id
+            JOIN v_appliances_current a ON d.appliance_id = a.id
             WHERE a.site_id = $1
             """,
             site_id,
@@ -1130,7 +1130,7 @@ async def list_medical_devices(
                 d.*,
                 a.host_id as appliance_hostname
             FROM discovered_devices d
-            JOIN appliances a ON d.appliance_id = a.id
+            JOIN v_appliances_current a ON d.appliance_id = a.id
             WHERE a.site_id = $1 AND d.medical_device = true
             ORDER BY d.last_seen_at DESC
             LIMIT $2 OFFSET $3
@@ -1144,7 +1144,7 @@ async def list_medical_devices(
             """
             SELECT COUNT(*)
             FROM discovered_devices d
-            JOIN appliances a ON d.appliance_id = a.id
+            JOIN v_appliances_current a ON d.appliance_id = a.id
             WHERE a.site_id = $1 AND d.medical_device = true
             """,
             site_id,
@@ -1175,7 +1175,7 @@ async def get_device_compliance_details(site_id: str, device_id: int, user: dict
             """
             SELECT d.id, d.hostname, d.ip_address, d.compliance_status
             FROM discovered_devices d
-            JOIN appliances a ON d.appliance_id = a.id
+            JOIN v_appliances_current a ON d.appliance_id = a.id
             WHERE d.id = $1 AND a.site_id = $2
             """,
             device_id,
@@ -1226,7 +1226,7 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
                d.os_name, d.os_version, d.compliance_status,
                d.last_seen_at, d.device_type
         FROM discovered_devices d
-        JOIN appliances a ON d.appliance_id = a.id
+        JOIN v_appliances_current a ON d.appliance_id = a.id
         WHERE a.site_id = $1
         AND d.device_type IN ('workstation', 'server')
         AND d.ip_address IS NOT NULL

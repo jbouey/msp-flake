@@ -112,7 +112,8 @@ class TestLegacyCheckin:
             query_str = str(query) if not isinstance(query, str) else query
 
             # Appliance lookup - not found (new)
-            if "SELECT id FROM appliances WHERE site_id" in query_str:
+            if ("SELECT id FROM v_appliances_current WHERE site_id" in query_str
+                    or "SELECT legacy_uuid FROM site_appliances" in query_str):
                 return FakeResult([])
             # Pending orders lookup
             if "SELECT order_id" in query_str and "orders o" in query_str:
@@ -154,7 +155,8 @@ class TestLegacyCheckin:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances WHERE site_id" in query_str:
+            if ("SELECT id FROM v_appliances_current WHERE site_id" in query_str
+                    or "SELECT legacy_uuid FROM site_appliances" in query_str):
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT order_id" in query_str and "orders o" in query_str:
                 return FakeResult([])
@@ -205,7 +207,8 @@ class TestLegacyCheckin:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances WHERE site_id" in query_str:
+            if ("SELECT id FROM v_appliances_current WHERE site_id" in query_str
+                    or "SELECT legacy_uuid FROM site_appliances" in query_str):
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT order_id" in query_str and "orders o" in query_str:
                 return FakeResult([order_row])

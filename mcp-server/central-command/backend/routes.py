@@ -1842,21 +1842,16 @@ async def transfer_appliance(
     })
     prov_row = prov_result.fetchone()
 
-    # 2. Update appliances table (match by mac_address and from_site_id)
-    await execute_with_retry(db,text("""
-        UPDATE appliances
-        SET site_id = :to_site_id
-        WHERE UPPER(mac_address) = :mac AND site_id = :from_site_id
-    """), {"to_site_id": to_site_id, "mac": mac_address, "from_site_id": from_site_id})
-
-    # 3. Update site_appliances (match by mac in appliance_id or by site)
+    # 2. Update site_appliances table (match by mac_address and from_site_id).
+    # Per-row filter on (site_id, mac_address) satisfies migration 192
+    # row-guard — mac_address is unique per site so this affects at most one row.
+    # M1: the legacy `appliances` table was dropped; site_appliances is canonical.
     await execute_with_retry(db,text("""
         UPDATE site_appliances
         SET site_id = :to_site_id
-        WHERE site_id = :from_site_id
-          AND appliance_id IN (
-              SELECT appliance_id FROM appliances WHERE UPPER(mac_address) = :mac
-          )
+        WHERE UPPER(mac_address) = :mac
+          AND site_id = :from_site_id
+          AND deleted_at IS NULL
     """), {"to_site_id": to_site_id, "mac": mac_address, "from_site_id": from_site_id})
 
     await db.commit()

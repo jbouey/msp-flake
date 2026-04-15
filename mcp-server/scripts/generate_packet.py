@@ -132,7 +132,7 @@ async def generate_packet(site_id: str, month: str = None):
         result = await db.execute(text("""
             SELECT bundle_id, check_type, outcome, s3_uri, timestamp_start
             FROM evidence_bundles e
-            JOIN appliances a ON e.appliance_id = a.id
+            JOIN v_appliances_current a ON e.appliance_id = a.id
             WHERE a.site_id = :site_id
             ORDER BY timestamp_start DESC
             LIMIT 10

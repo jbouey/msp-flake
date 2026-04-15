@@ -127,7 +127,7 @@ class TestIncidentPipelineL1Match:
 
         # Configure mock DB responses in order of execute() calls:
         # 1. Rate limit check (redis) - patch separately
-        # 2. SELECT id FROM appliances WHERE site_id = ...
+        # 2. SELECT id FROM v_appliances_current WHERE site_id = ...
         # 3. SELECT appliance_id FROM site_appliances ...
         # 4. SELECT id, status FROM incidents WHERE ... (dedup check)
         # 5. INSERT INTO incidents
@@ -147,7 +147,7 @@ class TestIncidentPipelineL1Match:
             query_str = str(query) if not isinstance(query, str) else query
 
             # Appliance lookup
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             # Canonical appliance_id lookup
             if "SELECT appliance_id FROM site_appliances" in query_str:
@@ -207,7 +207,7 @@ class TestIncidentPipelineL1Match:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["test-site-002-aa:bb:cc:dd:ee:ff"])])
@@ -258,7 +258,7 @@ class TestIncidentPipelineL3Escalation:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["test-site-003-ff:ff:ff:ff:ff:ff"])])
@@ -311,7 +311,7 @@ class TestIncidentDeduplication:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["test-site-004-aa:bb:cc:dd:ee:ff"])])
@@ -352,7 +352,7 @@ class TestIncidentDeduplication:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["test-site-005-aa:bb:cc:dd:ee:ff"])])
@@ -399,7 +399,7 @@ class TestIncidentKeywordFallback:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["test-site-006-aa:bb:cc:dd:ee:ff"])])
@@ -450,7 +450,7 @@ class TestIncidentUnregisteredAppliance:
 
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([])  # No appliance found
             return FakeResult([], rowcount=0)
 

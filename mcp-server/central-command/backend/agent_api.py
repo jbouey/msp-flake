@@ -295,8 +295,14 @@ async def checkin(
 
     client_ip = request.client.host if request.client else None
 
+    # Lookup existing by (site_id, appliance_id) — host_id maps 1:1 to appliance_id
+    # on the site_appliances canonical schema. ip_addresses is jsonb array.
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id AND host_id = :host_id"),
+        text("""
+            SELECT legacy_uuid FROM site_appliances
+            WHERE site_id = :site_id AND appliance_id = :host_id
+              AND deleted_at IS NULL
+        """),
         {"site_id": req.site_id, "host_id": req.host_id}
     )
     existing = result.fetchone()
@@ -304,20 +310,21 @@ async def checkin(
     now = datetime.now(timezone.utc)
 
     if existing:
+        # Per-row UPDATE filtered by (site_id, appliance_id) — satisfies
+        # migration 192 row-guard without needing app.allow_multi_row.
         await db.execute(
             text("""
-                UPDATE appliances SET
+                UPDATE site_appliances SET
                     deployment_mode = :deployment_mode,
                     reseller_id = :reseller_id,
                     policy_version = :policy_version,
                     nixos_version = :nixos_version,
                     agent_version = :agent_version,
-                    public_key = :public_key,
-                    ip_address = :ip_address,
-                    last_checkin = :last_checkin,
-                    updated_at = :updated_at
+                    agent_public_key = :public_key,
+                    ip_addresses = :ip_addresses,
+                    last_checkin = :last_checkin
                 WHERE site_id = :site_id
-                  AND host_id = :host_id
+                  AND appliance_id = :host_id
             """),
             {
                 "site_id": req.site_id,
@@ -328,26 +335,28 @@ async def checkin(
                 "nixos_version": req.nixos_version,
                 "agent_version": req.agent_version,
                 "public_key": req.public_key,
-                "ip_address": client_ip,
+                "ip_addresses": json.dumps([client_ip] if client_ip else []),
                 "last_checkin": now,
-                "updated_at": now
             }
         )
-        appliance_id = existing[0]
+        appliance_id = str(existing[0]) if existing[0] else req.host_id
         action = "updated"
     else:
-        appliance_id = str(uuid.uuid4())
+        # INSERT the site_appliances row. legacy_uuid left NULL by default —
+        # post-M1 DROP of the legacy appliances table makes it historical only.
         await db.execute(
             text("""
-                INSERT INTO appliances (id, site_id, host_id, deployment_mode, reseller_id,
-                    policy_version, nixos_version, agent_version, public_key, ip_address,
-                    last_checkin, created_at, updated_at)
-                VALUES (:id, :site_id, :host_id, :deployment_mode, :reseller_id,
-                    :policy_version, :nixos_version, :agent_version, :public_key, :ip_address,
-                    :last_checkin, :created_at, :updated_at)
+                INSERT INTO site_appliances (
+                    site_id, appliance_id, hostname, deployment_mode, reseller_id,
+                    policy_version, nixos_version, agent_version, agent_public_key,
+                    ip_addresses, status, first_checkin, last_checkin, created_at
+                ) VALUES (
+                    :site_id, :host_id, :host_id, :deployment_mode, :reseller_id,
+                    :policy_version, :nixos_version, :agent_version, :public_key,
+                    :ip_addresses, 'online', :first_checkin, :last_checkin, :created_at
+                )
             """),
             {
-                "id": appliance_id,
                 "site_id": req.site_id,
                 "host_id": req.host_id,
                 "deployment_mode": req.deployment_mode,
@@ -356,12 +365,13 @@ async def checkin(
                 "nixos_version": req.nixos_version,
                 "agent_version": req.agent_version,
                 "public_key": req.public_key,
-                "ip_address": client_ip,
+                "ip_addresses": json.dumps([client_ip] if client_ip else []),
+                "first_checkin": now,
                 "last_checkin": now,
                 "created_at": now,
-                "updated_at": now
             }
         )
+        appliance_id = req.host_id
         action = "registered"
 
     await db.commit()
@@ -387,7 +397,7 @@ async def checkin(
             SELECT order_id, runbook_id, parameters, nonce, signature, ttl_seconds,
                    issued_at, expires_at, signed_payload
             FROM orders o
-            JOIN appliances a ON o.appliance_id = a.id
+            JOIN v_appliances_current a ON o.appliance_id = a.id
             WHERE a.site_id = :site_id
             AND o.status = 'pending'
             AND o.expires_at > NOW()
@@ -445,7 +455,7 @@ async def get_orders(
             SELECT order_id, runbook_id, parameters, nonce, signature, ttl_seconds,
                    issued_at, expires_at
             FROM orders o
-            JOIN appliances a ON o.appliance_id = a.id
+            JOIN v_appliances_current a ON o.appliance_id = a.id
             WHERE a.site_id = :site_id
             AND o.status = 'pending'
             AND o.expires_at > NOW()
@@ -523,7 +533,7 @@ async def report_incident(
     client_ip = request.client.host if request.client else None
 
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        text("SELECT id FROM v_appliances_current WHERE site_id = :site_id"),
         {"site_id": incident.site_id}
     )
     appliance = result.fetchone()
@@ -1401,7 +1411,7 @@ async def resolve_incident_by_type(
         raise HTTPException(status_code=400, detail="site_id, host_id, and check_type are required")
 
     app_result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        text("SELECT id FROM v_appliances_current WHERE site_id = :site_id"),
         {"site_id": site_id}
     )
     appliance = app_result.fetchone()
@@ -1495,7 +1505,7 @@ async def submit_evidence(
         )
 
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        text("SELECT id FROM v_appliances_current WHERE site_id = :site_id"),
         {"site_id": evidence.site_id}
     )
     appliance = result.fetchone()
@@ -1673,7 +1683,7 @@ async def list_evidence(
             SELECT e.bundle_id, e.check_type, e.outcome, e.timestamp_start, e.timestamp_end,
                    e.hipaa_controls, e.s3_uri, e.signature
             FROM evidence_bundles e
-            JOIN appliances a ON e.appliance_id = a.id
+            JOIN v_appliances_current a ON e.appliance_id = a.id
             WHERE a.site_id = :site_id
             ORDER BY e.timestamp_start DESC
             LIMIT :limit OFFSET :offset
@@ -2449,7 +2459,7 @@ async def upload_evidence_worm(
         )
 
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        text("SELECT id FROM v_appliances_current WHERE site_id = :site_id"),
         {"site_id": x_client_id}
     )
     appliance = result.fetchone()

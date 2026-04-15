@@ -111,7 +111,7 @@ class TestCrossApplianceDedup:
         async def mock_execute(query, params=None):
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["site-001-aa:bb:cc:dd:ee:ff"])])
@@ -156,7 +156,7 @@ class TestCrossApplianceDedup:
             nonlocal update_called
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["site-002-aa:bb:cc:dd:ee:ff"])])
@@ -204,7 +204,7 @@ class TestCrossApplianceDedup:
             nonlocal fallback_query_used
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["site-003-aa:bb:cc:dd:ee:ff"])])
@@ -248,7 +248,7 @@ class TestCrossApplianceDedup:
             nonlocal insert_called
             query_str = str(query) if not isinstance(query, str) else query
 
-            if "SELECT id FROM appliances" in query_str:
+            if "SELECT id FROM v_appliances_current" in query_str:
                 return FakeResult([FakeRow([appliance_uuid])])
             if "SELECT appliance_id FROM site_appliances" in query_str:
                 return FakeResult([FakeRow(["site-004-aa:bb:cc:dd:ee:ff"])])

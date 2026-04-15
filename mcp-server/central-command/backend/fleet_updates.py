@@ -58,7 +58,7 @@ async def _create_update_orders_for_appliances(conn, rollout_id: UUID, stage: in
         """
         SELECT DISTINCT sa.appliance_id, sa.site_id, au.id as update_id
         FROM appliance_updates au
-        JOIN appliances a ON au.appliance_id = a.id
+        JOIN v_appliances_current a ON au.appliance_id = a.id
         JOIN site_appliances sa ON sa.site_id = a.site_id
         WHERE au.rollout_id = $1 AND au.stage_assigned = $2 AND au.status = 'notified'
         """,
@@ -486,9 +486,12 @@ async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTas
             rollout.auto_rollback,
         )
 
-        # Get all appliances to include in rollout
+        # Get all appliances to include in rollout.
+        # v_appliances_current already filters deleted_at IS NULL; status='online'
+        # is the site_appliances canonical enum value (old appliances table used
+        # 'active' — enum drift, fixed in M1).
         appliance_query = """
-            SELECT id FROM appliances WHERE status = 'active'
+            SELECT id FROM v_appliances_current WHERE status = 'online'
         """
         if rollout.target_filter:
             if "site_ids" in rollout.target_filter:
@@ -717,7 +720,7 @@ async def list_rollout_appliances(
                    au.reboot_at, au.completed_at, au.error_message, au.boot_attempts,
                    au.created_at, au.updated_at
             FROM appliance_updates au
-            JOIN appliances a ON au.appliance_id = a.id
+            JOIN v_appliances_current a ON au.appliance_id = a.id
             WHERE au.rollout_id = $1
             AND ($2::text IS NULL OR au.status = $2)
             ORDER BY au.stage_assigned, au.created_at
@@ -765,7 +768,7 @@ async def get_pending_update(appliance_id: str, user: dict = Depends(require_adm
         except ValueError:
             # Look up by site_id
             app_row = await conn.fetchrow(
-                "SELECT id FROM appliances WHERE site_id = $1",
+                "SELECT id FROM v_appliances_current WHERE site_id = $1",
                 appliance_id
             )
             if not app_row:
@@ -826,7 +829,7 @@ async def update_appliance_status(appliance_id: str, status_update: ApplianceUpd
         except ValueError:
             # Look up by site_id
             app_row = await conn.fetchrow(
-                "SELECT id FROM appliances WHERE site_id = $1",
+                "SELECT id FROM v_appliances_current WHERE site_id = $1",
                 appliance_id
             )
             if not app_row:

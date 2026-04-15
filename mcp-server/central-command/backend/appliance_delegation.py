@@ -218,13 +218,16 @@ def generate_key_id() -> str:
 async def verify_appliance_ownership(conn, appliance_id: str, site_id: str) -> bool:
     """Verify that an appliance belongs to a site.
 
-    Note: appliances table uses 'id' (UUID) as primary key and 'site_id' for site relationship.
-    The appliance_id parameter can be either the UUID or the site_id (which is unique per appliance).
+    Note: post-M1 ownership is resolved via site_appliances. Both the legacy
+    UUID (legacy_uuid) and the canonical appliance_id string PK are accepted
+    as the incoming identifier.
     """
-    # First try matching by id (UUID)
+    # First try matching by legacy UUID or the canonical appliance_id string
     result = await conn.fetchrow("""
-        SELECT 1 FROM appliances
-        WHERE (id::text = $1 OR site_id = $1) AND site_id = $2
+        SELECT 1 FROM site_appliances
+        WHERE (legacy_uuid::text = $1 OR appliance_id = $1 OR site_id = $1)
+          AND site_id = $2
+          AND deleted_at IS NULL
     """, appliance_id, site_id)
 
     if result:
@@ -232,8 +235,8 @@ async def verify_appliance_ownership(conn, appliance_id: str, site_id: str) -> b
 
     # Also check if site_id matches (appliance_id might be the site_id)
     result = await conn.fetchrow("""
-        SELECT 1 FROM appliances
-        WHERE site_id = $1
+        SELECT 1 FROM site_appliances
+        WHERE site_id = $1 AND deleted_at IS NULL
     """, site_id)
     return result is not None
 
@@ -655,9 +658,12 @@ async def get_escalation_history(
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         # Get appliance's site for filtering
-        # Note: appliance_id can be UUID or site_id
+        # Note: appliance_id can be legacy UUID, canonical appliance_id, or site_id
         appliance = await conn.fetchrow("""
-            SELECT site_id FROM appliances WHERE id::text = $1 OR site_id = $1
+            SELECT site_id FROM site_appliances
+            WHERE (legacy_uuid::text = $1 OR appliance_id = $1 OR site_id = $1)
+              AND deleted_at IS NULL
+            LIMIT 1
         """, appliance_id)
 
         if not appliance:

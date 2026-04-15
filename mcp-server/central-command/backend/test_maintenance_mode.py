@@ -160,7 +160,7 @@ class TestIncidentSuppression:
         future_time = datetime.now(timezone.utc) + timedelta(hours=4)
 
         db = FakeSASession()
-        # Result 1: appliance lookup (SELECT id FROM appliances)
+        # Result 1: appliance lookup (SELECT id FROM v_appliances_current)
         db.add_result(FakeSAResult(rows=[("appliance-uuid-123",)]))
         # Result 2: maintenance check (SELECT maintenance_until FROM sites)
         db.add_result(FakeSAResult(rows=[(future_time,)]))

@@ -1335,30 +1335,22 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(300)  # Every 5 minutes
 
     async def _reconciliation_loop():
-        """Periodically sync site_appliances from appliances when diverged (every 5 min)."""
-        await asyncio.sleep(180)  # Wait 3 min after startup
+        """Reconciliation loop — DISABLED in M1.
+
+        Pre-M1 this loop kept site_appliances in sync with the legacy
+        appliances table. M1 dropped the legacy table; site_appliances is
+        the single source, so there is nothing to reconcile. Kept as a
+        heartbeat-emitting no-op so the supervisor topology doesn't change.
+        """
+        await asyncio.sleep(180)
         while True:
             _hb("reconciliation")
             try:
-                pool = await get_pool()
-                async with pool.acquire() as conn:
-                    synced = await conn.fetch("""
-                        UPDATE site_appliances sa SET
-                            last_checkin = a.last_checkin,
-                            agent_version = a.agent_version,
-                            status = CASE WHEN a.last_checkin > NOW() - INTERVAL '15 minutes' THEN 'online' ELSE sa.status END
-                        FROM appliances a
-                        WHERE sa.site_id = a.site_id
-                        AND a.last_checkin > sa.last_checkin + INTERVAL '5 minutes'
-                        RETURNING sa.site_id
-                    """)
-                    if synced:
-                        logger.info(f"Reconciliation: synced {len(synced)} stale site_appliances rows")
+                await asyncio.sleep(3600)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.warning(f"Reconciliation loop error: {e}")
-            await asyncio.sleep(300)  # 5 minutes
+                logger.warning(f"Reconciliation loop (no-op) error: {e}")
 
     async def _compliance_packet_loop():
         """Auto-generate + persist monthly compliance packets.
@@ -2210,31 +2202,36 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
     
     client_ip = request.client.host if request.client else None
     
-    # Check if appliance exists (scoped to host_id — Session 206).
+    # Check if appliance exists (scoped to appliance_id — Session 206 /
+    # M1 canonical: site_appliances is the single source).
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id AND host_id = :host_id"),
+        text("""
+            SELECT legacy_uuid FROM site_appliances
+            WHERE site_id = :site_id AND appliance_id = :host_id
+              AND deleted_at IS NULL
+        """),
         {"site_id": req.site_id, "host_id": req.host_id}
     )
     existing = result.fetchone()
-    
+
     now = datetime.now(timezone.utc)
-    
+
     if existing:
-        # Update existing appliance (Session 206: per-host, not per-site).
+        # Update existing appliance (per-row filter on (site_id, appliance_id)
+        # satisfies migration 192 row-guard).
         await db.execute(
             text("""
-                UPDATE appliances SET
+                UPDATE site_appliances SET
                     deployment_mode = :deployment_mode,
                     reseller_id = :reseller_id,
                     policy_version = :policy_version,
                     nixos_version = :nixos_version,
                     agent_version = :agent_version,
-                    public_key = :public_key,
-                    ip_address = :ip_address,
-                    last_checkin = :last_checkin,
-                    updated_at = :updated_at
+                    agent_public_key = :public_key,
+                    ip_addresses = :ip_addresses,
+                    last_checkin = :last_checkin
                 WHERE site_id = :site_id
-                  AND host_id = :host_id
+                  AND appliance_id = :host_id
             """),
             {
                 "site_id": req.site_id,
@@ -2245,27 +2242,28 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
                 "nixos_version": req.nixos_version,
                 "agent_version": req.agent_version,
                 "public_key": req.public_key,
-                "ip_address": client_ip,
+                "ip_addresses": json.dumps([client_ip] if client_ip else []),
                 "last_checkin": now,
-                "updated_at": now
             }
         )
-        appliance_id = existing[0]
+        appliance_id = str(existing[0]) if existing[0] else req.host_id
         action = "updated"
     else:
-        # Create new appliance
-        appliance_id = str(uuid.uuid4())
+        # Create new appliance in site_appliances. legacy_uuid is left NULL —
+        # post-M1 the legacy appliances table is gone.
         await db.execute(
             text("""
-                INSERT INTO appliances (id, site_id, host_id, deployment_mode, reseller_id,
-                    policy_version, nixos_version, agent_version, public_key, ip_address,
-                    last_checkin, created_at, updated_at)
-                VALUES (:id, :site_id, :host_id, :deployment_mode, :reseller_id,
-                    :policy_version, :nixos_version, :agent_version, :public_key, :ip_address,
-                    :last_checkin, :created_at, :updated_at)
+                INSERT INTO site_appliances (
+                    site_id, appliance_id, hostname, deployment_mode, reseller_id,
+                    policy_version, nixos_version, agent_version, agent_public_key,
+                    ip_addresses, status, first_checkin, last_checkin, created_at
+                ) VALUES (
+                    :site_id, :host_id, :host_id, :deployment_mode, :reseller_id,
+                    :policy_version, :nixos_version, :agent_version, :public_key,
+                    :ip_addresses, 'online', :first_checkin, :last_checkin, :created_at
+                )
             """),
             {
-                "id": appliance_id,
                 "site_id": req.site_id,
                 "host_id": req.host_id,
                 "deployment_mode": req.deployment_mode,
@@ -2274,12 +2272,13 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
                 "nixos_version": req.nixos_version,
                 "agent_version": req.agent_version,
                 "public_key": req.public_key,
-                "ip_address": client_ip,
+                "ip_addresses": json.dumps([client_ip] if client_ip else []),
+                "first_checkin": now,
                 "last_checkin": now,
                 "created_at": now,
-                "updated_at": now
             }
         )
+        appliance_id = req.host_id
         action = "registered"
     
     await db.commit()
@@ -2307,7 +2306,7 @@ async def checkin(req: CheckinRequest, request: Request, db: AsyncSession = Depe
             SELECT order_id, runbook_id, parameters, nonce, signature, ttl_seconds,
                    issued_at, expires_at, signed_payload
             FROM orders o
-            JOIN appliances a ON o.appliance_id = a.id
+            JOIN v_appliances_current a ON o.appliance_id = a.id
             WHERE a.site_id = :site_id
             AND o.status = 'pending'
             AND o.expires_at > NOW()
@@ -2375,7 +2374,7 @@ async def get_orders(site_id: str, db: AsyncSession = Depends(get_db), auth_site
             SELECT order_id, runbook_id, parameters, nonce, signature, ttl_seconds,
                    issued_at, expires_at
             FROM orders o
-            JOIN appliances a ON o.appliance_id = a.id
+            JOIN v_appliances_current a ON o.appliance_id = a.id
             WHERE a.site_id = :site_id
             AND o.status = 'pending'
             AND o.expires_at > NOW()
@@ -2446,7 +2445,7 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
     
     # Get appliance UUID (for FK in orders table) and canonical ID (for signing)
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        text("SELECT id FROM v_appliances_current WHERE site_id = :site_id"),
         {"site_id": incident.site_id}
     )
     appliance = result.fetchone()
@@ -3297,7 +3296,7 @@ async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(
 
     # Find the appliance
     app_result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        text("SELECT id FROM v_appliances_current WHERE site_id = :site_id"),
         {"site_id": site_id}
     )
     appliance = app_result.fetchone()
@@ -3438,7 +3437,7 @@ async def submit_evidence(evidence: EvidenceSubmission, db: AsyncSession = Depen
     
     # Get appliance
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        text("SELECT id FROM v_appliances_current WHERE site_id = :site_id"),
         {"site_id": evidence.site_id}
     )
     appliance = result.fetchone()
@@ -3619,7 +3618,7 @@ async def list_evidence(
             SELECT e.bundle_id, e.check_type, e.outcome, e.timestamp_start, e.timestamp_end,
                    e.hipaa_controls, e.s3_uri, e.signature
             FROM evidence_bundles e
-            JOIN appliances a ON e.appliance_id = a.id
+            JOIN v_appliances_current a ON e.appliance_id = a.id
             WHERE a.site_id = :site_id
             ORDER BY e.timestamp_start DESC
             LIMIT :limit OFFSET :offset
@@ -4278,7 +4277,7 @@ async def upload_evidence_worm(
 
     # Verify appliance exists
     result = await db.execute(
-        text("SELECT id FROM appliances WHERE site_id = :site_id"),
+        text("SELECT id FROM v_appliances_current WHERE site_id = :site_id"),
         {"site_id": x_client_id}
     )
     appliance = result.fetchone()
@@ -4522,7 +4521,7 @@ async def get_stats(db: AsyncSession = Depends(get_db), user: dict = Depends(req
     stats = {}
     
     # Appliance count
-    result = await db.execute(text("SELECT COUNT(*) FROM appliances WHERE status = 'active'"))
+    result = await db.execute(text("SELECT COUNT(*) FROM v_appliances_current WHERE status = 'online'"))
     stats["active_appliances"] = result.scalar()
     
     # Orders stats

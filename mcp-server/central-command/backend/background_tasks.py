@@ -1743,65 +1743,22 @@ async def unregistered_device_alert_loop():
 
 
 async def reconciliation_loop():
-    """Periodically sync site_appliances from appliances when diverged (every 5 min)."""
-    from dashboard_api.fleet import get_pool
-    await asyncio.sleep(180)
+    """Reconciliation loop — DISABLED in M1.
+
+    Pre-M1 this loop kept site_appliances in sync with the legacy `appliances`
+    table (which accumulated state via a secondary checkin path). M1 dropped
+    that table: site_appliances is now the single write destination, so there
+    is nothing left to reconcile. Keeping the symbol so existing startup
+    wiring stays happy; the body is a long-interval no-op.
+    """
+    await asyncio.sleep(3600)
     while True:
         try:
-            pool = await get_pool()
-            async with pool.acquire() as conn:
-                async with conn.transaction():
-                    # Set admin context for RLS bypass
-                    await conn.execute("SET LOCAL app.is_admin = 'true'")
-                    # Insert missing site_appliances rows for appliances that have no entry
-                    inserted = await conn.fetch("""
-                        INSERT INTO site_appliances (site_id, appliance_id, hostname, mac_address, agent_version, status, first_checkin, last_checkin)
-                        SELECT
-                            a.site_id,
-                            a.host_id,
-                            SPLIT_PART(a.host_id, '-', 1),
-                            CASE WHEN a.host_id LIKE '%-%:%' THEN SUBSTRING(a.host_id FROM '[0-9A-Fa-f:]{17}$') ELSE NULL END,
-                            a.agent_version,
-                            CASE WHEN a.last_checkin > NOW() - INTERVAL '15 minutes' THEN 'online' ELSE 'offline' END,
-                            a.created_at,
-                            a.last_checkin
-                        FROM appliances a
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM site_appliances sa WHERE sa.site_id = a.site_id
-                        )
-                        RETURNING site_id
-                    """)
-                    if inserted:
-                        logger.info(f"Reconciliation: created {len(inserted)} missing site_appliances rows from appliances table")
-
-                    # Update existing site_appliances rows from appliances when diverged.
-                    #
-                    # CRITICAL: join on (site_id, host_id == appliance_id) NOT just site_id.
-                    # The old version pushed a single appliance's last_checkin onto every
-                    # site_appliances row at that site, including soft-deleted phantoms.
-                    # That made offline appliances look online and masked the user's actual
-                    # "0 checkins are not working" complaint (Session 206 audit).
-                    #
-                    # Also skip soft-deleted rows entirely — once retired, do not resurrect.
-                    synced = await conn.fetch("""
-                        UPDATE site_appliances sa SET
-                            last_checkin = a.last_checkin,
-                            agent_version = a.agent_version,
-                            status = CASE WHEN a.last_checkin > NOW() - INTERVAL '15 minutes' THEN 'online' ELSE sa.status END
-                        FROM appliances a
-                        WHERE sa.site_id = a.site_id
-                          AND sa.appliance_id = a.host_id
-                          AND sa.deleted_at IS NULL
-                          AND a.last_checkin > sa.last_checkin + INTERVAL '5 minutes'
-                        RETURNING sa.site_id, sa.appliance_id
-                    """)
-                    if synced:
-                        logger.info(f"Reconciliation: synced {len(synced)} stale site_appliances rows")
+            await asyncio.sleep(3600)
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning(f"Reconciliation loop error: {e}")
-        await asyncio.sleep(300)
+            logger.warning(f"Reconciliation loop (no-op) error: {e}")
 
 
 # ============================================================================
