@@ -226,7 +226,18 @@ in
   # ============================================================================
   boot = {
     loader = {
-      systemd-boot.enable = true;
+      systemd-boot = {
+        enable = true;
+        # v25: place the bootloader at \EFI\BOOT\BOOTX64.EFI (the UEFI
+        # "removable media" fallback path) in addition to the usual
+        # \EFI\systemd\ location. Required because this image is dd'd
+        # onto many different machines — we MUST NOT touch the build
+        # host's EFI NVRAM (canTouchEfiVariables=false) and we CANNOT
+        # rely on the target's firmware auto-scanning ESP for entries
+        # without an NVRAM boot variable. HP t740/t640 thin clients
+        # fall through to PXE / "no boot device" without this.
+        installAsRemovable = true;
+      };
       efi.canTouchEfiVariables = false;
       timeout = 3;
     };
