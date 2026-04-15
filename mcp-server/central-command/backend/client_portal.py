@@ -3799,6 +3799,192 @@ async def list_client_audit_log(
 
 
 # =============================================================================
+# PRIVILEGED-ACTION CHAIN VIEW — HIPAA §164.308(a)(4) customer self-serve
+# =============================================================================
+#
+# Phase H6. Complements the disclosure-accounting view by unifying every
+# privileged action taken on the client's appliances into ONE chronological
+# feed — regardless of which pipeline produced it:
+#
+#   compliance_bundles  (check_type='privileged_access')   = attestations
+#   watchdog_events     (SSH-strip replacement recovery)   = watchdog actions
+#   fleet_orders        (privileged order_type list)       = triggering orders
+#
+# The customer sees: who (actor_email, human-named), when, WHY (reason ≥20
+# chars from the attestation bundle), what (order_type + target appliance),
+# and the attestation bundle ID so they can cross-check against any audit
+# kit handed off to them. §164.308(a)(4) says the covered entity must be
+# able to see every access to their systems — today that requires emailing
+# the MSP; this endpoint closes that gap.
+#
+# Scoped to the caller's org through the orgs → sites → appliances JOIN.
+# No cross-tenant leakage; RLS applies in addition.
+
+
+@auth_router.get("/privileged-actions")
+async def list_privileged_actions(
+    days: int = Query(90, ge=1, le=2555, description="1..2555 days lookback"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(require_client_user),
+):
+    """Return every privileged action on the caller's org's appliances in
+    reverse chronological order. Row shape:
+
+        {
+          "kind":              "attestation" | "watchdog_event" | "fleet_order",
+          "event_time":        "<ISO8601>",
+          "actor_email":       "<human email or None>",
+          "reason":            "<operator-provided reason, ≥20 chars>",
+          "action":            "<enable_emergency_access / watchdog_restart_daemon / ...>",
+          "target_appliance":  "<appliance_id or -watchdog id>",
+          "site_id":           "<site>",
+          "attestation_bundle_id": "<bundle_id when available>",
+          "source":            "<table name>",
+        }
+
+    Pagination + day window mirror /audit-log so frontends reuse the same
+    chrome. The feed can be filtered client-side or server-side on `kind`
+    if needed.
+    """
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    # Union over the three event tables, constrained to sites this org
+    # owns. compliance_bundles.check_type='privileged_access' is the
+    # attestation catalog — the source of truth for every actor/reason.
+    # watchdog_events gives the execution record. fleet_orders gives the
+    # order shape before the daemon acks.
+    async with org_connection(pool, org_id=org_id) as conn:
+        rows = await conn.fetch(
+            """
+            WITH org_sites AS (
+                SELECT s.site_id
+                  FROM sites s
+                 WHERE s.org_id = $1::uuid
+            ),
+            attestations AS (
+                SELECT 'attestation'::text AS kind,
+                       cb.checked_at AS event_time,
+                       cb.summary->>'actor' AS actor_email,
+                       cb.summary->>'reason' AS reason,
+                       cb.summary->>'event_type' AS action,
+                       cb.summary->>'target' AS target_appliance,
+                       cb.site_id,
+                       cb.bundle_id AS attestation_bundle_id,
+                       'compliance_bundles'::text AS source
+                  FROM compliance_bundles cb
+                 WHERE cb.check_type = 'privileged_access'
+                   AND cb.site_id IN (SELECT site_id FROM org_sites)
+                   AND cb.checked_at > NOW() - make_interval(days => $2)
+            ),
+            watchdog AS (
+                SELECT 'watchdog_event'::text AS kind,
+                       we.created_at AS event_time,
+                       NULL::text AS actor_email,
+                       NULL::text AS reason,
+                       COALESCE(we.watchdog_order_type, we.event_type) AS action,
+                       we.appliance_id AS target_appliance,
+                       we.site_id,
+                       we.order_id::text AS attestation_bundle_id,
+                       'watchdog_events'::text AS source
+                  FROM watchdog_events we
+                 WHERE we.site_id IN (SELECT site_id FROM org_sites)
+                   AND we.created_at > NOW() - make_interval(days => $2)
+                   AND we.event_type IN ('order_executed', 'order_failed')
+            ),
+            orders AS (
+                SELECT 'fleet_order'::text AS kind,
+                       fo.created_at AS event_time,
+                       NULL::text AS actor_email,
+                       NULL::text AS reason,
+                       fo.order_type AS action,
+                       fo.parameters->>'appliance_id' AS target_appliance,
+                       fo.parameters->>'site_id' AS site_id,
+                       fo.parameters->>'attestation_bundle_id' AS attestation_bundle_id,
+                       'fleet_orders'::text AS source
+                  FROM fleet_orders fo
+                 WHERE fo.parameters->>'site_id' IN (SELECT site_id FROM org_sites)
+                   AND fo.created_at > NOW() - make_interval(days => $2)
+                   AND fo.order_type IN (
+                        'enable_emergency_access',
+                        'disable_emergency_access',
+                        'bulk_remediation',
+                        'signing_key_rotation',
+                        'watchdog_restart_daemon',
+                        'watchdog_refetch_config',
+                        'watchdog_reset_pin_store',
+                        'watchdog_reset_api_key',
+                        'watchdog_redeploy_daemon',
+                        'watchdog_collect_diagnostics'
+                   )
+            )
+            SELECT * FROM (
+                SELECT * FROM attestations
+                UNION ALL SELECT * FROM watchdog
+                UNION ALL SELECT * FROM orders
+            ) combined
+            ORDER BY event_time DESC
+            LIMIT $3 OFFSET $4
+            """,
+            org_id, days, limit, offset,
+        )
+
+        # For the total count, re-run the shape without paging.
+        total_row = await conn.fetchrow(
+            """
+            WITH org_sites AS (
+                SELECT s.site_id FROM sites s WHERE s.org_id = $1::uuid
+            )
+            SELECT
+              (SELECT COUNT(*) FROM compliance_bundles
+                WHERE check_type='privileged_access'
+                  AND site_id IN (SELECT site_id FROM org_sites)
+                  AND checked_at > NOW() - make_interval(days => $2)) +
+              (SELECT COUNT(*) FROM watchdog_events
+                WHERE event_type IN ('order_executed','order_failed')
+                  AND site_id IN (SELECT site_id FROM org_sites)
+                  AND created_at > NOW() - make_interval(days => $2)) +
+              (SELECT COUNT(*) FROM fleet_orders
+                WHERE parameters->>'site_id' IN (SELECT site_id FROM org_sites)
+                  AND created_at > NOW() - make_interval(days => $2)
+                  AND order_type IN (
+                        'enable_emergency_access','disable_emergency_access',
+                        'bulk_remediation','signing_key_rotation',
+                        'watchdog_restart_daemon','watchdog_refetch_config',
+                        'watchdog_reset_pin_store','watchdog_reset_api_key',
+                        'watchdog_redeploy_daemon','watchdog_collect_diagnostics'
+                  ))
+            AS total
+            """,
+            org_id, days,
+        )
+        total = int(total_row["total"]) if total_row else 0
+
+    return {
+        "org_id": str(org_id),
+        "events": [
+            {
+                "kind": r["kind"],
+                "event_time": r["event_time"].isoformat() if r["event_time"] else None,
+                "actor_email": r["actor_email"],
+                "reason": r["reason"],
+                "action": r["action"],
+                "target_appliance": r["target_appliance"],
+                "site_id": r["site_id"],
+                "attestation_bundle_id": r["attestation_bundle_id"],
+                "source": r["source"],
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "days": days,
+    }
+
+
+# =============================================================================
 # ESCALATION PREFERENCES + TICKET MANAGEMENT
 # =============================================================================
 
