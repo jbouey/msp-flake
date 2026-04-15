@@ -434,6 +434,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Adoption tracker: online appliance has not produced a sigauth observation in 24h — daemon is bearer-only, blocks api_key retirement (Week 6)",
         check=lambda c: _check_legacy_bearer_only_checkin(c),
     ),
+    Assertion(
+        name="mesh_ring_deficit",
+        severity="sev2",
+        description="A multi-node site has an online appliance with 0 assigned_targets while siblings hold non-zero — ring didn't redistribute (Mesh Hardening Phase 3)",
+        check=lambda c: _check_mesh_ring_deficit(c),
+    ),
 ]
 
 
@@ -659,6 +665,62 @@ async def _check_mac_rekeyed_recently(conn: asyncpg.Connection) -> List[Violatio
                 "latest_claimed_at": r["latest"].isoformat(),
                 "sources": list(r["sources"] or []),
                 "interpretation": "reinstall churn OR impersonation — verify with operator",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_mesh_ring_deficit(conn: asyncpg.Connection) -> List[Violation]:
+    """An online appliance at a multi-node site must be holding some
+    fraction of that site's targets. If a sibling has non-zero targets
+    but this node has 0, the consistent-hash ring didn't redistribute
+    when membership changed — Phase 3 of Mesh Hardening is supposed
+    to prevent this by reassigning siblings in-line with any checkin,
+    so a violation here means either STEP 3.8c errored (caught by the
+    outer try/except in sites.py) OR a stale assignment never got
+    refreshed. 3-minute grace to avoid flagging the sub-second gap
+    between STEP 3 (last_checkin update) and STEP 3.8c (assignment
+    write) during a brand-new checkin.
+    """
+    rows = await conn.fetch(
+        """
+        WITH site_totals AS (
+            SELECT site_id,
+                   COUNT(*) AS online_count,
+                   MAX(COALESCE(jsonb_array_length(assigned_targets), 0)) AS max_tgts
+              FROM site_appliances
+             WHERE deleted_at IS NULL AND status = 'online'
+          GROUP BY site_id
+            HAVING COUNT(*) >= 2
+        )
+        SELECT sa.site_id, sa.mac_address, sa.hostname, sa.appliance_id,
+               sa.agent_version, sa.assignment_epoch,
+               COALESCE(jsonb_array_length(sa.assigned_targets), 0) AS my_target_count,
+               st.max_tgts, st.online_count
+          FROM site_appliances sa
+          JOIN site_totals st ON st.site_id = sa.site_id
+         WHERE sa.deleted_at IS NULL
+           AND sa.status = 'online'
+           AND COALESCE(jsonb_array_length(sa.assigned_targets), 0) = 0
+           AND st.max_tgts > 0
+           AND (sa.assignment_epoch IS NULL
+                OR EXTRACT(EPOCH FROM NOW())::bigint - sa.assignment_epoch > 180)
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "hostname": r["hostname"],
+                "appliance_id": r["appliance_id"],
+                "agent_version": r["agent_version"],
+                "my_target_count": r["my_target_count"],
+                "peer_max_target_count": r["max_tgts"],
+                "online_count_at_site": r["online_count"],
+                "assignment_epoch": r["assignment_epoch"],
+                "remediation": "Force a checkin on any sibling (systemctl restart appliance-daemon) — STEP 3.8c reassigns all online siblings in-line. If it re-opens, check mcp-server logs for target_assignment_failed or sibling_reassignment_failed.",
             },
         )
         for r in rows

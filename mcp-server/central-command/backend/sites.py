@@ -4259,11 +4259,14 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # === STEP 3.8c: Server-side target assignment ===
         # Backend-authoritative: compute which targets this appliance should scan
         # using the same consistent hash ring algorithm as the Go daemon.
+        # Also reassigns ALL other online siblings in the same transaction so
+        # mesh membership changes propagate instantly instead of waiting for
+        # each sibling's own checkin (avoids up-to-5-minute imbalance windows).
         target_assignments = {}
         try:
             async with conn.transaction():
                 online_appliances = await conn.fetch("""
-                    SELECT mac_address
+                    SELECT appliance_id, mac_address
                     FROM site_appliances
                     WHERE site_id = $1
                     AND status = 'online'
@@ -4274,6 +4277,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 if online_appliances:
                     from .hash_ring import HashRing, normalize_mac_for_ring
                     ring_macs = [normalize_mac_for_ring(r['mac_address']) for r in online_appliances if r['mac_address']]
+                    mac_to_aid = {
+                        normalize_mac_for_ring(r['mac_address']): r['appliance_id']
+                        for r in online_appliances if r['mac_address']
+                    }
                     this_mac = normalize_mac_for_ring(checkin.mac_address) if checkin.mac_address else ""
 
                     if ring_macs and this_mac in ring_macs:
@@ -4350,8 +4357,78 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                             len(ring_macs),
                             epoch,
                         )
+
+                        # === Sibling reassignment ===
+                        # Recompute + persist each other online sibling's
+                        # assignment in this same transaction. Without this,
+                        # a new node joining the ring doesn't redistribute
+                        # targets until each sibling's next checkin — up to
+                        # a 5-minute window of double-coverage / dead-zones.
+                        # Each sibling wrapped in a savepoint so one failure
+                        # doesn't poison the outer transaction.
+                        sibling_macs = [m for m in ring_macs if m != this_mac]
+                        siblings_reassigned = 0
+                        for sib_mac in sibling_macs:
+                            sib_aid = mac_to_aid.get(sib_mac)
+                            if not sib_aid:
+                                continue
+                            try:
+                                async with conn.transaction():
+                                    sib_targets = ring.targets_for_node(sib_mac, sorted(all_target_ips))
+                                    await conn.execute("""
+                                        UPDATE site_appliances
+                                        SET assigned_targets = $1::jsonb, assignment_epoch = $2
+                                        WHERE appliance_id = $3
+                                    """, json.dumps(sib_targets), epoch, sib_aid)
+
+                                    sib_last = await conn.fetchrow("""
+                                        SELECT assigned_targets, ring_members
+                                        FROM mesh_assignment_audit
+                                        WHERE appliance_id = $1
+                                        ORDER BY created_at DESC
+                                        LIMIT 1
+                                    """, sib_aid)
+                                    sib_prev_t = _as_sorted_list(sib_last["assigned_targets"]) if sib_last else None
+                                    sib_prev_r = _as_sorted_list(sib_last["ring_members"]) if sib_last else None
+                                    sib_new_t = sorted(sib_targets)
+
+                                    if sib_prev_t != sib_new_t or sib_prev_r != new_ring_sorted:
+                                        await conn.execute("""
+                                            INSERT INTO mesh_assignment_audit (
+                                                site_id, appliance_id, appliance_mac, assignment_epoch,
+                                                ring_size, ring_members, assigned_targets, target_count
+                                            ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)
+                                        """,
+                                            checkin.site_id, sib_aid, sib_mac, epoch,
+                                            len(ring_macs), json.dumps(ring_macs),
+                                            json.dumps(sib_targets), len(sib_targets),
+                                        )
+                                        logger.info(
+                                            "sibling_reassignment site_id=%s trigger_mac=%s sibling_mac=%s target_count=%d epoch=%d",
+                                            checkin.site_id, this_mac, sib_mac, len(sib_targets), epoch,
+                                        )
+                                    siblings_reassigned += 1
+                            except Exception as _se:
+                                logger.error(
+                                    "sibling_reassignment_failed site_id=%s trigger_mac=%s sibling_mac=%s error=%s",
+                                    checkin.site_id, this_mac, sib_mac, str(_se),
+                                    exc_info=True,
+                                )
+
+                        if siblings_reassigned:
+                            logger.info(
+                                "mesh_rebalance_complete site_id=%s trigger_mac=%s siblings_reassigned=%d ring_size=%d epoch=%d",
+                                checkin.site_id, this_mac, siblings_reassigned, len(ring_macs), epoch,
+                            )
         except Exception as e:
-            logger.warning("target_assignment_failed site_id=%s error=%s", checkin.site_id, str(e))
+            # Logged at ERROR (not WARNING) per the project's "no silent write
+            # failures" rule — target assignment is a delivery contract and a
+            # failure here equals an imbalanced mesh that the dashboard needs
+            # to surface, not quietly eat.
+            logger.error(
+                "target_assignment_failed site_id=%s error=%s", checkin.site_id, str(e),
+                exc_info=True,
+            )
 
         # === STEP 6: Get enabled runbooks (runbook config pull) ===
         enabled_runbooks = []
