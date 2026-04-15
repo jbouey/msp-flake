@@ -458,6 +458,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="An online appliance's last_checkin lags 15+ min behind its site's latest — its checkins are likely being rewritten into another row by false-positive ghost detection (Session 207 link-local fix).",
         check=lambda c: _check_ghost_checkin_redirect(c),
     ),
+    Assertion(
+        name="installed_but_silent",
+        severity="sev1",
+        description="An appliance completed the live-USB install phase but the installed system has never phoned home. Check the local status beacon at :8443 or the /boot/msp-boot-diag.json dump for per-boot diagnostics.",
+        check=lambda c: _check_installed_but_silent(c),
+    ),
 ]
 
 
@@ -683,6 +689,87 @@ async def _check_mac_rekeyed_recently(conn: asyncpg.Connection) -> List[Violatio
                 "latest_claimed_at": r["latest"].isoformat(),
                 "sources": list(r["sources"] or []),
                 "interpretation": "reinstall churn OR impersonation — verify with operator",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_installed_but_silent(conn: asyncpg.Connection) -> List[Violation]:
+    """An appliance made it through the live-USB phase (install_sessions
+    checkin_count ≥ 5) but the installed system has never phoned home.
+    This is the "install appeared to complete, box reboots, daemon
+    never talks" class of failure — observed on the t740 where the
+    install completed cleanly from the operator's perspective but
+    site_appliances.last_checkin stayed frozen at the live-USB-era
+    timestamp. Previously invisible; the operator had no signal.
+
+    Semantics:
+      - install_sessions had enough boots to show install ran (≥5
+        checkins from the live USB)
+      - install_sessions.last_seen is now stale > 20 min (the box is
+        no longer on the live USB — it's either installed, bricked,
+        or dd'd by a fresh USB)
+      - site_appliances.last_checkin is older than the appliance's
+        install_sessions.first_seen + 15 min (the installed system
+        has never produced a fresh heartbeat after the install
+        window)
+
+    Paired with the local status beacon on :8443 and the
+    /boot/msp-boot-diag.json dump, an operator with LAN access can
+    diagnose the specific failure in 60 seconds.
+    """
+    rows = await conn.fetch(
+        """
+        WITH install_peak AS (
+            SELECT mac_address, site_id,
+                   MAX(checkin_count) AS peak_count,
+                   MAX(last_seen) AS last_live_usb_checkin,
+                   MIN(first_seen) AS first_live_usb_checkin
+              FROM install_sessions
+             GROUP BY mac_address, site_id
+        )
+        SELECT sa.site_id, sa.mac_address, sa.hostname, sa.appliance_id,
+               sa.agent_version, sa.last_checkin,
+               ip.peak_count,
+               ip.last_live_usb_checkin,
+               ip.first_live_usb_checkin,
+               EXTRACT(EPOCH FROM (NOW() - ip.last_live_usb_checkin))/60 AS minutes_since_usb
+          FROM site_appliances sa
+          JOIN install_peak ip
+            ON UPPER(ip.mac_address) = UPPER(sa.mac_address)
+           AND ip.site_id = sa.site_id
+         WHERE sa.deleted_at IS NULL
+           AND ip.peak_count >= 5
+           AND ip.last_live_usb_checkin < NOW() - INTERVAL '20 minutes'
+           AND (
+                 sa.last_checkin IS NULL
+              OR sa.last_checkin < ip.first_live_usb_checkin + INTERVAL '15 minutes'
+           )
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "hostname": r["hostname"],
+                "appliance_id": r["appliance_id"],
+                "agent_version": r["agent_version"],
+                "peak_install_checkins": r["peak_count"],
+                "minutes_since_last_usb_checkin": float(r["minutes_since_usb"] or 0),
+                "last_site_appliances_checkin": (
+                    r["last_checkin"].isoformat() if r["last_checkin"] else None
+                ),
+                "remediation": (
+                    "Install completed but installed-system daemon has never "
+                    "phoned home. LAN-scan for the local status beacon at "
+                    "http://<appliance-ip>:8443/ for per-boot diagnostics, "
+                    "OR attach the SSD to another system and read "
+                    "/boot/msp-boot-diag.json. Common causes: MSP-DATA not "
+                    "mounted, no DHCP lease, config.yaml missing, daemon "
+                    "crash-loop, outbound HTTPS blocked."
+                ),
             },
         )
         for r in rows
