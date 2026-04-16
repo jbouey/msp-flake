@@ -91,6 +91,7 @@ from dashboard_api.oauth_login import public_router as oauth_public_router, rout
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router, session_router as partner_session_router
 from dashboard_api.billing import router as billing_router
 from dashboard_api.client_signup import router as client_signup_router
+from dashboard_api.client_billing import router as client_billing_router
 from dashboard_api.exceptions_api import router as exceptions_router
 from dashboard_api.appliance_delegation import router as appliance_delegation_router
 from dashboard_api.learning_api import partner_learning_router
@@ -1853,6 +1854,7 @@ app.include_router(partner_session_router, prefix="/api/partner-auth")  # Partne
 app.include_router(partner_admin_router, prefix="/api")  # Partner admin endpoints (pending, oauth-config)
 app.include_router(billing_router)  # Stripe billing for partners
 app.include_router(client_signup_router)  # Client self-serve signup (pilot + paid tiers)
+app.include_router(client_billing_router)  # Logged-in client self-serve billing (status + Stripe Portal)
 app.include_router(exceptions_router)  # Compliance exceptions management
 app.include_router(appliance_delegation_router)  # Appliance delegation (signing keys, audit, escalations)
 app.include_router(partner_learning_router)  # Partner learning management (promotions, rules)

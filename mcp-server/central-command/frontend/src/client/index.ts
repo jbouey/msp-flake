@@ -15,3 +15,4 @@ export { ClientEscalations } from './ClientEscalations';
 export { ClientCompliance } from './ClientCompliance';
 export { ClientDriftConfig } from './ClientDriftConfig';
 export { ClientAuditLog } from './ClientAuditLog';
+export { ClientBilling } from './ClientBilling';
