@@ -7815,8 +7815,36 @@ async def get_system_health(
 async def get_substrate_violations(
     user: dict = Depends(auth_module.require_auth),
 ):
-    """Active substrate violations + a per-severity rollup."""
+    """Active substrate violations + a per-severity rollup.
+
+    v36: every row includes display_name + recommended_action pulled
+    from assertions._DISPLAY_METADATA so the frontend can render the
+    human-facing surface ("Install stuck — DNS filter blocking us") +
+    the recommended one-sentence remediation ("Whitelist api.
+    osiriscare.net on your DNS filter"). Dashboard picks the human
+    text as the primary headline; raw engineering name + details JSONB
+    stay available via expand."""
     from .fleet import get_pool
+    try:
+        from .assertions import ALL_ASSERTIONS
+    except ImportError:
+        from assertions import ALL_ASSERTIONS  # type: ignore
+
+    # Build a name-keyed map once so the per-row lookup is O(1)
+    meta_by_name: Dict[str, Dict[str, str]] = {
+        a.name: {
+            "display_name": a.display_name or a.name,
+            "recommended_action": a.recommended_action or "",
+            "description": a.description,
+        }
+        for a in ALL_ASSERTIONS
+    }
+
+    def _meta(name: str) -> Dict[str, str]:
+        return meta_by_name.get(
+            name,
+            {"display_name": name, "recommended_action": "", "description": ""},
+        )
 
     pool = await get_pool()
     async with admin_connection(pool) as conn:
@@ -7851,6 +7879,9 @@ async def get_substrate_violations(
                 "last_seen_at": r["last_seen_at"].isoformat(),
                 "minutes_open": float(r["minutes_open"] or 0),
                 "details": r["details"] or {},
+                "display_name": _meta(r["invariant_name"])["display_name"],
+                "recommended_action": _meta(r["invariant_name"])["recommended_action"],
+                "description": _meta(r["invariant_name"])["description"],
             }
             for r in rows
         ],
@@ -7863,6 +7894,7 @@ async def get_substrate_violations(
                 "site_id": r["site_id"],
                 "detected_at": r["detected_at"].isoformat(),
                 "resolved_at": r["resolved_at"].isoformat(),
+                "display_name": _meta(r["invariant_name"])["display_name"],
             }
             for r in recent_resolved
         ],

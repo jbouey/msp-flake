@@ -52,13 +52,22 @@ CheckFn = Callable[[asyncpg.Connection], Awaitable[List[Violation]]]
 @dataclass
 class Assertion:
     """A single named invariant. severity drives alert routing.
-    description is shown in the dashboard tooltip + the notification
-    body — write it as a human-actionable sentence."""
+    description is the engineering explanation (shown in the dashboard
+    tooltip + notification body). display_name + recommended_action
+    are the OPERATOR-facing surface — 1-sentence human names + single-
+    action-to-take, rendered prominently in /admin/substrate-health.
+
+    v36 round-table: every invariant MUST provide both display_name
+    and recommended_action. Blank string = TODO, the dashboard falls
+    back to the engineering name + description, but the goal is to
+    have nothing blank."""
 
     name: str
     severity: str  # 'sev1' | 'sev2' | 'sev3'
     description: str
     check: CheckFn
+    display_name: str = ""            # e.g., "Install stuck — network blocked"
+    recommended_action: str = ""      # e.g., "Whitelist api.osiriscare.net on your DNS filter"
 
 
 # --- The invariants ---------------------------------------------------
@@ -501,6 +510,189 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_provisioning_stalled(c),
     ),
 ]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# v36 round-table mandate: every invariant has a human name +
+# recommended action. The `description` field is engineering prose;
+# display_name + recommended_action are operator-facing. Dashboard
+# renders:
+#
+#     [SEV2] <display_name>
+#     <N> appliance(s) affected: <host1>, <host2>, ...
+#     Recommended: <recommended_action>
+#     [ View raw details ]
+#
+# The map below is the single source of truth. Populated into each
+# Assertion object at module-load time by _populate_display_metadata().
+# Any invariant missing from the map logs a loud warning at startup
+# (enforced by a unit test so CI catches omissions before production).
+# ──────────────────────────────────────────────────────────────────────
+
+_DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
+    "legacy_uuid_populated": {
+        "display_name": "Legacy appliance UUID missing",
+        "recommended_action": "Run the one-time UUID backfill: "
+            "python3 mcp-server/central-command/backend/scripts/backfill_legacy_uuids.py",
+    },
+    "install_loop": {
+        "display_name": "Box is reboot-looping at install stage",
+        "recommended_action": "Physical inspection: BIOS boot order, corrupt install USB, "
+            "or internal disk dying. Check /boot/msp-boot-diag.json on the appliance for details.",
+    },
+    "offline_appliance_over_1h": {
+        "display_name": "Appliance offline > 1 hour",
+        "recommended_action": "Check power and network at the appliance. "
+            "If persistent, run scripts/recover_legacy_appliance.sh <site_id> <mac> <ip>.",
+    },
+    "agent_version_lag": {
+        "display_name": "Agent version is behind fleet",
+        "recommended_action": "Issue an update_daemon fleet order: "
+            "fleet_cli update --site <id> --binary-url https://api.osiriscare.net/updates/appliance-daemon-<latest>",
+    },
+    "fleet_order_url_resolvable": {
+        "display_name": "Pending fleet order points at a dead URL",
+        "recommended_action": "Cancel the order and re-issue with a resolvable "
+            "api.osiriscare.net URL. release.osiriscare.net does NOT exist — use api.osiriscare.net/updates/...",
+    },
+    "discovered_devices_freshness": {
+        "display_name": "Network-scan data is stale",
+        "recommended_action": "Run a netscan: fleet_cli orders run_netscan --site <id>. "
+            "If persistent, check the appliance's network-scanner.service.",
+    },
+    "install_session_ttl": {
+        "display_name": "Install session past TTL",
+        "recommended_action": "Clean up stale install_sessions: routine maintenance, usually self-heals. "
+            "If a real appliance is blocked from checking in, investigate DNS/network first.",
+    },
+    "mesh_ring_size": {
+        "display_name": "Mesh hash-ring underpopulated",
+        "recommended_action": "Verify all expected appliances are online and checking in. "
+            "Cross-reference dashboard fleet count vs. configured site appliances.",
+    },
+    "online_implies_installed_system": {
+        "display_name": "Online appliance is still running live-USB",
+        "recommended_action": "Install to disk: pull USB and hit F9/boot-menu to confirm "
+            "the internal disk is booting. If dd didn't complete, reflash the USB and try again.",
+    },
+    "every_online_appliance_has_active_api_key": {
+        "display_name": "Online appliance has no active API key",
+        "recommended_action": "Force rekey: fleet_cli orders rekey --site <id> --mac <mac>. "
+            "Also check api_keys table for zombie/deactivated rows.",
+    },
+    "auth_failure_lockout": {
+        "display_name": "Account locked out after auth failures",
+        "recommended_action": "Admin unlock via UPDATE partners SET failed_login_attempts=0, locked_until=NULL "
+            "(or client_users for client portal accounts). Investigate source of failures.",
+    },
+    "claim_event_unchained": {
+        "display_name": "Provisioning claim chain broken",
+        "recommended_action": "Forensics required — evidence chain integrity failure. "
+            "Check claim_events table ordering + signatures. Do NOT UPDATE without investigating.",
+    },
+    "signature_verification_failures": {
+        "display_name": "Agent signature verification failing",
+        "recommended_action": "Likely mesh / Vault flip skew. Verify signing_backend matches deployed mesh pubkey. "
+            "During Vault cutover, check multi-trust rollover is complete (both keys in trust set).",
+    },
+    "claim_cert_expired_in_use": {
+        "display_name": "Expired claim cert still being used",
+        "recommended_action": "Rotate the claim cert: revoke old, issue new, redeploy to affected appliances. "
+            "See docs/security/key-rotation-runbook.md.",
+    },
+    "mac_rekeyed_recently": {
+        "display_name": "MAC rekeyed recently",
+        "recommended_action": "Usually benign after legitimate recovery. If unexpected, investigate — "
+            "could indicate a spoofing attempt or a misconfigured auto-rekey loop.",
+    },
+    "legacy_bearer_only_checkin": {
+        "display_name": "Appliance on legacy bearer auth only",
+        "recommended_action": "Upgrade appliance to agent version with Heartbeat-Signature support "
+            "(v0.4.0+). Issue update_daemon fleet order.",
+    },
+    "mesh_ring_deficit": {
+        "display_name": "Mesh has fewer nodes than expected",
+        "recommended_action": "Check which appliances are offline / unregistered. "
+            "Substrate lists them in the details.matches array. Bring each online or de-register intentionally.",
+    },
+    "display_name_collision": {
+        "display_name": "Duplicate display names within a site",
+        "recommended_action": "Run the site-wide display-name reassignment via sites.py STEP 3.8c, "
+            "OR manually update site_appliances.display_name for the colliding rows.",
+    },
+    "winrm_circuit_open": {
+        "display_name": "WinRM credential circuit tripped",
+        "recommended_action": "Check Windows target credentials in site_credentials. "
+            "Re-test via fleet_cli winrm-test, then fleet_cli reset-circuit --host <hostname>.",
+    },
+    "ghost_checkin_redirect": {
+        "display_name": "Multi-NIC ghost checkin being redirected",
+        "recommended_action": "Known multi-NIC behavior — verify the correct MAC is primary. "
+            "Check sites.py multi-NIC ghost detection logs for the appliance.",
+    },
+    "installed_but_silent": {
+        "display_name": "Install ran but installed system never phoned home",
+        "recommended_action": "LAN-scan for the local status beacon at http://<appliance-ip>:8443/ "
+            "OR attach the SSD to another system and read /boot/msp-boot-diag.json. "
+            "Common causes: MSP-DATA not mounted, no DHCP lease, config.yaml missing, "
+            "daemon crash-loop, outbound HTTPS blocked.",
+    },
+    "watchdog_silent": {
+        "display_name": "Appliance watchdog not checking in",
+        "recommended_action": "Check appliance-watchdog.service on the appliance. "
+            "May need fleet_cli orders watchdog_redeploy_daemon --site <id> --appliance <id>.",
+    },
+    "watchdog_reports_daemon_down": {
+        "display_name": "Watchdog reports main daemon is down",
+        "recommended_action": "Issue a watchdog_restart_daemon fleet order. "
+            "If repeated, escalate to watchdog_redeploy_daemon or physical inspection.",
+    },
+    "winrm_pin_mismatch": {
+        "display_name": "Windows target TLS cert changed",
+        "recommended_action": "Re-pin the cert after operator verification: "
+            "fleet_cli orders watchdog_reset_pin_store (then re-run the drift scan).",
+    },
+    "journal_upload_stale": {
+        "display_name": "Journal uploads stopped",
+        "recommended_action": "Check msp-journal-upload.timer on the appliance. "
+            "Common causes: egress firewall blocking, timer unit broken, or the appliance silently offline.",
+    },
+    "vps_disk_pressure": {
+        "display_name": "VPS database disk > 50 GB",
+        "recommended_action": "SSH to the VPS, run nix-collect-garbage + /opt ISO cleanup. "
+            "See .agent/scripts/vps_housekeeping.sh for the idempotent script (runs daily via timer).",
+    },
+    "provisioning_stalled": {
+        "display_name": "Install stuck — DNS filter likely blocking us",
+        "recommended_action": "Whitelist api.osiriscare.net (port 443) on the site's "
+            "DNS filter / web proxy / firewall (Pi-hole, Umbrella, Fortinet, Sophos, Barracuda). "
+            "Verify per-device rules if your filter has them — by-MAC whitelisting is common and easy to miss.",
+    },
+}
+
+
+def _populate_display_metadata() -> None:
+    """Apply _DISPLAY_METADATA onto every Assertion in ALL_ASSERTIONS.
+    Any invariant without an entry in the map logs a WARNING so CI
+    (and the test_assertion_metadata_complete test) catch it.
+
+    Runs once at module import, so runtime ALL_ASSERTIONS objects
+    always have display_name + recommended_action populated before the
+    first substrate tick reads them."""
+    for a in ALL_ASSERTIONS:
+        meta = _DISPLAY_METADATA.get(a.name)
+        if meta is None:
+            logger.warning(
+                "assertion %r missing display_name + recommended_action "
+                "in _DISPLAY_METADATA — dashboard will fall back to raw name",
+                a.name,
+            )
+            continue
+        a.display_name = meta["display_name"]
+        a.recommended_action = meta["recommended_action"]
+
+
+_populate_display_metadata()
 
 
 async def _check_online_implies_installed(conn: asyncpg.Connection) -> List[Violation]:
