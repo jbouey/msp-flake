@@ -76,6 +76,22 @@ export const ApplianceCard: React.FC<ApplianceCardProps> = ({ appliance, latestV
   // Check if agent is outdated (only if we know the latest version)
   const isOutdated = latestVersion && appliance.agent_version && appliance.agent_version !== latestVersion;
 
+  // Session 207: when the appliance is not currently online, IP / version /
+  // uptime fields are FROZEN at the last checkin — not live values. Mark
+  // them visually stale so an operator doesn't get misled by "Uptime: 2m"
+  // next to "Last Checkin: 41m ago". Backend `live_status` is the source
+  // of truth for staleness; don't re-derive client-side.
+  const isStale = appliance.live_status !== 'online';
+  const minutesSinceCheckin = appliance.last_checkin
+    ? Math.floor((Date.now() - new Date(appliance.last_checkin).getTime()) / 60000)
+    : null;
+  const staleHint = isStale && minutesSinceCheckin !== null
+    ? `frozen ${minutesSinceCheckin}m ago`
+    : null;
+  const staleFieldClass = isStale
+    ? 'text-label-tertiary line-through decoration-1'
+    : 'text-label-secondary';
+
   const statusColors = {
     online: 'bg-health-healthy',
     stale: 'bg-health-warning',
@@ -145,26 +161,38 @@ export const ApplianceCard: React.FC<ApplianceCardProps> = ({ appliance, latestV
           <p className="text-label-secondary font-mono">{appliance.mac_address || '-'}</p>
         </div>
         <div>
-          <p className="text-label-tertiary">IP Addresses</p>
-          <p className="text-label-secondary font-mono">
+          <p className="text-label-tertiary">
+            IP Addresses
+            {staleHint && <span className="ml-1 text-[10px] font-normal opacity-75">({staleHint})</span>}
+          </p>
+          <p className={`${staleFieldClass} font-mono`}>
             {appliance.ip_addresses.length > 0 ? appliance.ip_addresses.join(', ') : '-'}
           </p>
         </div>
         <div>
-          <p className="text-label-tertiary">Agent Version</p>
-          <p className="text-label-secondary">{appliance.agent_version || '-'}</p>
+          <p className="text-label-tertiary">
+            Agent Version
+            {staleHint && <span className="ml-1 text-[10px] font-normal opacity-75">({staleHint})</span>}
+          </p>
+          <p className={staleFieldClass}>{appliance.agent_version || '-'}</p>
         </div>
         <div>
-          <p className="text-label-tertiary">System Version</p>
-          <p className="text-label-secondary">{appliance.nixos_version || '-'}</p>
+          <p className="text-label-tertiary">
+            System Version
+            {staleHint && <span className="ml-1 text-[10px] font-normal opacity-75">({staleHint})</span>}
+          </p>
+          <p className={staleFieldClass}>{appliance.nixos_version || '-'}</p>
         </div>
         <div>
           <p className="text-label-tertiary">Last Checkin</p>
           <p className="text-label-secondary">{formatRelativeTime(appliance.last_checkin)}</p>
         </div>
         <div>
-          <p className="text-label-tertiary">Uptime</p>
-          <p className="text-label-secondary">{formatUptime(appliance.uptime_seconds)}</p>
+          <p className="text-label-tertiary">
+            Uptime
+            {staleHint && <span className="ml-1 text-[10px] font-normal opacity-75">({staleHint})</span>}
+          </p>
+          <p className={staleFieldClass}>{formatUptime(appliance.uptime_seconds)}</p>
         </div>
       </div>
 

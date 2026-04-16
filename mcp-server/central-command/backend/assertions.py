@@ -494,6 +494,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Postgres database size > 50 GB (proxy for host disk pressure). 2026-04-15 incident: disk filled up silently, postgres crash-looped for 30min, 8 deploys failed. Run nix-collect-garbage + /opt ISO cleanup.",
         check=lambda c: _check_vps_disk_pressure(c),
     ),
+    Assertion(
+        name="provisioning_stalled",
+        severity="sev2",
+        description="Installer phoned home (install_sessions fresh) but installed system never did (site_appliances stale or missing). 2026-04-15 t740 incident: Pi-hole blocked api.osiriscare.net → installed-system daemon couldn't resolve → silent brick. Most likely a DNS filter (Pi-hole / Umbrella / Fortinet / Sophos / Barracuda) on the site's network. Whitelist api.osiriscare.net.",
+        check=lambda c: _check_provisioning_stalled(c),
+    ),
 ]
 
 
@@ -1053,6 +1059,90 @@ async def _check_installed_but_silent(conn: asyncpg.Connection) -> List[Violatio
         )
         for r in rows
     ]
+
+
+async def _check_provisioning_stalled(conn: asyncpg.Connection) -> List[Violation]:
+    """Fires when an installer is actively phoning home (install_sessions
+    fresh within the last hour, ≥3 checkins) but the installed system
+    has not produced a fresh heartbeat in site_appliances within the
+    last 15 minutes.
+
+    This catches the "Pi-hole / DNS filter blocks api.osiriscare.net for
+    the installed system but not the installer" pattern observed on the
+    t740 2026-04-15. Sibling invariant to installed_but_silent, which
+    fires later (≥20 min after installer stops looping). This one fires
+    EARLIER so the operator sees the issue within 15 min of the first
+    failed install-system checkin, not 20+ min after the installer has
+    already given up.
+
+    When both fire for the same MAC: trust this one's hint — DNS filter
+    is the most common cause when the installer worked but the installed
+    system didn't.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT
+            iss.site_id,
+            iss.mac_address,
+            iss.hostname,
+            iss.ip_addresses,
+            iss.checkin_count AS installer_checkins,
+            iss.last_seen     AS installer_last_seen,
+            sa.last_checkin   AS site_appliance_last_checkin,
+            EXTRACT(EPOCH FROM (NOW() - iss.last_seen))/60 AS installer_age_min,
+            EXTRACT(EPOCH FROM (NOW() - sa.last_checkin))/60 AS appliance_age_min
+          FROM install_sessions iss
+          LEFT JOIN site_appliances sa
+            ON UPPER(sa.mac_address) = UPPER(iss.mac_address)
+           AND sa.site_id = iss.site_id
+           AND sa.deleted_at IS NULL
+         WHERE iss.last_seen > NOW() - INTERVAL '1 hour'
+           AND iss.checkin_count >= 3
+           AND (
+                 sa.last_checkin IS NULL
+              OR sa.last_checkin < NOW() - INTERVAL '15 minutes'
+           )
+        """
+    )
+    out: List[Violation] = []
+    for r in rows:
+        out.append(
+            Violation(
+                site_id=r["site_id"],
+                details={
+                    "mac_address": r["mac_address"],
+                    "hostname": r["hostname"],
+                    "ip_addresses": list(r["ip_addresses"] or []),
+                    "installer_checkin_count": int(r["installer_checkins"]),
+                    "installer_last_seen": (
+                        r["installer_last_seen"].isoformat()
+                        if r["installer_last_seen"] else None
+                    ),
+                    "installer_age_min": round(float(r["installer_age_min"] or 0), 1),
+                    "site_appliance_last_checkin": (
+                        r["site_appliance_last_checkin"].isoformat()
+                        if r["site_appliance_last_checkin"] else None
+                    ),
+                    "site_appliance_age_min": (
+                        round(float(r["appliance_age_min"]), 1)
+                        if r["appliance_age_min"] is not None else None
+                    ),
+                    "hint": (
+                        "Installer reached Central Command but the installed "
+                        "system has not. Most likely a DNS filter (Pi-hole, "
+                        "Umbrella, Fortinet, Sophos, Barracuda, etc.) on this "
+                        "site's network is blocking api.osiriscare.net for the "
+                        "installed system's MAC. Fix: whitelist "
+                        "api.osiriscare.net (port 443) on the site's DNS "
+                        "filter / web proxy / firewall, then reboot the "
+                        "appliance. Verify with the local status beacon on "
+                        "the appliance at http://<ip>:8443/ for per-boot "
+                        "diagnostics."
+                    ),
+                },
+            )
+        )
+    return out
 
 
 async def _check_ghost_checkin_redirect(conn: asyncpg.Connection) -> List[Violation]:
