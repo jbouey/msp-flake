@@ -1547,33 +1547,43 @@ JSONEND
       # and falls through to PXE. Every UEFI firmware scans the
       # fallback path as a last resort — fixes the post-install
       # non-boot on HP thin clients.
-      if [ -f /mnt/boot/EFI/systemd/systemd-bootx64.efi ]; then
-        mkdir -p /mnt/boot/EFI/BOOT
-        cp /mnt/boot/EFI/systemd/systemd-bootx64.efi /mnt/boot/EFI/BOOT/BOOTX64.EFI
-        # v36 fix: explicit sync + verify-read-back. FAT32 (ESP) is
-        # notoriously bad about dirty buffers; without this, the `cp`
-        # can land in the kernel page cache and NEVER reach the disk
-        # before `umount -R /mnt` runs later. Observed 2026-04-16 on
-        # t740: first boot worked from USB, reboot hit PXE because
-        # BOOTX64.EFI hadn't actually persisted to the internal ESP.
-        sync /mnt/boot/EFI/BOOT/BOOTX64.EFI 2>/dev/null || sync
-        # Verify the copy actually landed by reading it back.
-        if [ -f /mnt/boot/EFI/BOOT/BOOTX64.EFI ] && \
-           [ "$(stat -c %s /mnt/boot/EFI/BOOT/BOOTX64.EFI 2>/dev/null || echo 0)" -gt 0 ]; then
-          log "UEFI fallback: installed BOOTX64.EFI for removable-media auto-scan (size=$(stat -c %s /mnt/boot/EFI/BOOT/BOOTX64.EFI))"
-        else
-          log "ERROR: BOOTX64.EFI copy failed verification — ESP may not be writable or sync incomplete"
-          # Retry once with explicit O_SYNC-style dd. Matches the dd
-          # pattern we use for the raw image write itself.
-          dd if=/mnt/boot/EFI/systemd/systemd-bootx64.efi \
-             of=/mnt/boot/EFI/BOOT/BOOTX64.EFI \
-             bs=4K conv=fsync 2>>"$LOG_FILE" && \
-          log "UEFI fallback: BOOTX64.EFI re-copied via dd+fsync"
-        fi
-        sync
-      else
-        log "WARN: systemd-bootx64.efi not found at /mnt/boot/EFI/systemd/ — BOOTX64.EFI fallback NOT installed"
+      # v36 HARD REQUIREMENT: customer appliances NEVER have a USB plugged
+      # in post-install — box MUST boot reliably from internal disk. A
+      # missing or half-written BOOTX64.EFI means PXE on reboot; that's
+      # a deployment killer. So this step does:
+      #
+      #   1) Check source exists  → die with clear error if not
+      #   2) Copy via `dd conv=fsync` (not `cp`) so the write is
+      #      persisted before the syscall returns — no reliance on
+      #      FAT32 kernel-buffer flush behavior
+      #   3) sync the directory and the filesystem
+      #   4) verify-read-back via stat + size comparison
+      #   5) If ANY step fails → die the install. Better to force
+      #      operator re-flash than ship an unbootable box.
+      SRC_EFI=/mnt/boot/EFI/systemd/systemd-bootx64.efi
+      DST_EFI=/mnt/boot/EFI/BOOT/BOOTX64.EFI
+      if [ ! -f "$SRC_EFI" ]; then
+        log "FATAL: systemd-bootx64.efi missing at $SRC_EFI — installed image lacks UEFI bootloader"
+        bounded_abandon 15 umount_bootx64_fail umount -R /mnt || true
+        die "systemd-bootx64.efi missing — image build is broken; contact support"
       fi
+      SRC_SIZE=$(stat -c %s "$SRC_EFI" 2>/dev/null || echo 0)
+      mkdir -p /mnt/boot/EFI/BOOT
+      # dd conv=fsync: every block write is synced before the next.
+      # Bypasses the page-cache race that bit us on the t740.
+      if ! dd if="$SRC_EFI" of="$DST_EFI" bs=4K conv=fsync 2>>"$LOG_FILE"; then
+        log "FATAL: BOOTX64.EFI dd failed (source $SRC_SIZE bytes)"
+        bounded_abandon 15 umount_bootx64_dd_fail umount -R /mnt || true
+        die "BOOTX64.EFI write failed — internal disk ESP may be read-only or corrupt"
+      fi
+      sync
+      DST_SIZE=$(stat -c %s "$DST_EFI" 2>/dev/null || echo 0)
+      if [ "$DST_SIZE" != "$SRC_SIZE" ] || [ "$DST_SIZE" -lt 1024 ]; then
+        log "FATAL: BOOTX64.EFI verification failed — src=$SRC_SIZE dst=$DST_SIZE"
+        bounded_abandon 15 umount_bootx64_verify_fail umount -R /mnt || true
+        die "BOOTX64.EFI post-write verify failed (src=$SRC_SIZE dst=$DST_SIZE) — internal disk write did not persist"
+      fi
+      log "UEFI fallback: installed BOOTX64.EFI for removable-media auto-scan (size=$DST_SIZE, verified)"
 
       if [ "$BOOT_OK" != "yes" ]; then
         bounded_abandon 15 umount_mnt_fail umount -R /mnt || true
