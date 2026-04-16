@@ -58,7 +58,20 @@ func NewPhoneHomeClient(cfg *Config) *PhoneHomeClient {
 	pinPath := filepath.Join(cfg.StateDir, "server_cert_pin.hex")
 	spkiPinHash := cfg.TLSPinHash // empty string = not configured
 
+	// v36: IPv4-explicit + DNS fallback to avoid broken-IPv6-dual-stack
+	// hangs and local-DNS failures. Opt out via env for explicit IPv6
+	// deployments (OSIRIS_DAEMON_IPV6=1) or to disable DoH fallback
+	// (OSIRIS_DAEMON_DISABLE_DOH=1).
+	//
+	// Failure mode tonight (2026-04-16 t740): if a Pi-hole / DNS filter
+	// goes down or returns NXDOMAIN for api.osiriscare.net, the daemon
+	// bricks silently even though the public internet is reachable. DoH
+	// fallback resolves via 1.1.1.1 over HTTPS so local resolver outages
+	// can't isolate us from Central Command.
+	dialer := newDaemonDialer(cfg)
+
 	transport := &http.Transport{
+		DialContext: dialer.DialContext,
 		TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
