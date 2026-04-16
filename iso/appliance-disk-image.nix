@@ -1180,6 +1180,31 @@ EOF
     mkdir -p /var/lib/msp/ca
     mkdir -p /etc/msp/certs
     chmod 700 /var/lib/msp /var/lib/msp/ca /etc/msp/certs
+
+    # v37: ensure the status beacon has something to serve the instant
+    # the HTTP listener binds, even before msp-beacon-refresh has fired.
+    # Closes the "curl :8443 → 503 beacon.json not yet written" window
+    # that confused the t740 install debug. This stub is overwritten by
+    # the first beacon-refresh tick; operator never sees it after ~15s.
+    if [ ! -f /var/lib/msp/beacon.json ]; then
+      cat > /var/lib/msp/beacon.json <<'STUB'
+    {
+      "schema_version": 2,
+      "state": "initializing",
+      "last_error": "beacon-refresh has not yet run; this is the installed-system stub written at activation",
+      "boot_stage": "installed_system",
+      "daemon_status": "unknown",
+      "dns_test": "unknown",
+      "config_yaml_present": false,
+      "msp_data_mounted": false,
+      "last_phonehome_unix": 0,
+      "uptime_seconds": 0,
+      "network": [],
+      "net_survey": null,
+      "provision_log_tail": null
+    }
+    STUB
+    fi
   '';
 
   # Central Command Ed25519 public key — used to verify provisioning config signatures
@@ -1760,7 +1785,15 @@ except Exception as e:
   systemd.services.msp-status-beacon = {
     description = "MSP local status beacon (LAN JSON on :8443)";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network.target" ];
+    # v37: also pull in msp-beacon-refresh so a fresh boot has real state
+    # in beacon.json before the listener starts serving. Without this
+    # ordering, the first ~10s window (OnBootSec on the refresh timer)
+    # returned HTTP 503 "beacon.json not yet written" to an operator
+    # actively curling for diagnostics. `wants` (not `requires`) so a
+    # refresh-script failure doesn't take the listener down — the
+    # activation-script stub below keeps the service serving useful JSON.
+    wants = [ "msp-beacon-refresh.service" ];
+    after = [ "network.target" "msp-beacon-refresh.service" ];
     # Not blocked by network-online.target — the beacon exists precisely
     # for cases where network-online never fires.
     serviceConfig = {

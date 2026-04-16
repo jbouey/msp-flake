@@ -407,7 +407,7 @@ EOF
       exec 2> >(tee -a "$LOG_FILE" >&2)
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v36"
+      INSTALLER_VERSION="v37"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
@@ -1497,27 +1497,42 @@ JSONEND
         fi
       done
 
-      if [ -n "$CONFIG_SRC" ]; then
-        # MSP-DATA is partition 3 — mount it to copy config
-        case "$INTERNAL_DEV" in
-          *nvme*|*mmcblk*) DATA_PART="''${INTERNAL_DEV}p3" ;;
-          *)               DATA_PART="''${INTERNAL_DEV}3" ;;
-        esac
-        mkdir -p /mnt/var/lib/msp
-        # Abandonable: mount can hang in state D on a fresh partition that
-        # hasn't settled. 30s budget, then skip the config copy.
-        if bounded_abandon 30 mount_data mount "$DATA_PART" /mnt/var/lib/msp; then
+      # v37: ALWAYS mount MSP-DATA to wipe prior-install state, regardless
+      # of whether the USB carries a config. Prior appliance's config.yaml /
+      # last_phonehome / beacon.json on reused hardware would otherwise
+      # silently persist — causing the fresh daemon to auth as the old
+      # appliance and get rejected by Central Command. Clean-slate policy:
+      # reinstall = new identity unless config.yaml is explicitly provided.
+      case "$INTERNAL_DEV" in
+        *nvme*|*mmcblk*) DATA_PART="''${INTERNAL_DEV}p3" ;;
+        *)               DATA_PART="''${INTERNAL_DEV}3" ;;
+      esac
+      mkdir -p /mnt/var/lib/msp
+      # Abandonable: mount can hang in state D on a fresh partition that
+      # hasn't settled. 30s budget, then skip cleanup.
+      if bounded_abandon 30 mount_data mount "$DATA_PART" /mnt/var/lib/msp; then
+        # Wipe stale credential / state files from any prior install.
+        # MSP-DATA is a survivor partition, so dd-over-root does not
+        # touch it. Without this wipe, an appliance reflashed for a
+        # different site inherits the previous site's credentials.
+        for stale in config.yaml last_phonehome beacon.json net-survey.json provision.log; do
+          if [ -f "/mnt/var/lib/msp/$stale" ]; then
+            log "Clearing stale /var/lib/msp/$stale from prior install"
+            rm -f "/mnt/var/lib/msp/$stale"
+          fi
+        done
+        if [ -n "$CONFIG_SRC" ]; then
           cp "$CONFIG_SRC" /mnt/var/lib/msp/config.yaml
           chmod 600 /mnt/var/lib/msp/config.yaml
           log "Copied config from $CONFIG_SRC to MSP-DATA partition"
           set_step 92 "''${GREEN}Config copied from USB''${RESET}"
         else
-          log "WARNING: could not mount $DATA_PART to copy config — will provision via MAC"
-          set_step 92 "''${DIM}Config copy skipped — will provision via MAC''${RESET}"
+          log "No USB config found (will provision via MAC on first boot)"
+          set_step 92 "''${DIM}No USB config — will provision via MAC''${RESET}"
         fi
       else
-        log "No USB config found (will provision via MAC on first boot)"
-        set_step 92 "''${DIM}No USB config — will provision via MAC''${RESET}"
+        log "WARNING: could not mount $DATA_PART — stale state may persist; first-boot recovery service will retry"
+        set_step 92 "''${DIM}MSP-DATA mount skipped — first-boot recovery will retry''${RESET}"
       fi
 
       # ── Step 6: Verify ─────────────────────────────────────────
