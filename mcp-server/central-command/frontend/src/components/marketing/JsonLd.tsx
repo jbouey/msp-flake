@@ -10,8 +10,19 @@ import React from 'react';
  * Use one <JsonLd> per schema object. Search engines parse each
  * <script> block independently.
  */
+/**
+ * Defense-in-depth: even though JSON.stringify escapes strings, it does
+ * NOT escape literal `</` sequences. If any schema field ever contained
+ * the exact string `</script>`, the browser would close the script
+ * element prematurely. Replace `<` with its unicode escape so payloads
+ * are never able to break out of the script tag regardless of contents.
+ */
+function safeJsonLd(data: object): string {
+  return JSON.stringify(data).replace(/</g, '\\u003c');
+}
+
 export const JsonLd: React.FC<{ data: object }> = ({ data }) => (
-  <script type="application/ld+json">{JSON.stringify(data)}</script>
+  <script type="application/ld+json">{safeJsonLd(data)}</script>
 );
 
 export default JsonLd;

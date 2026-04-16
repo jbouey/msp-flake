@@ -15,7 +15,17 @@
       name="keywords"
       content="HIPAA compliance, 2026 HIPAA Security Rule, HIPAA NPRM, healthcare IT, MSP, DSO compliance, multi-site compliance, drift detection, cryptographic audit evidence, medical practice IT, HIPAA audit, healthcare cybersecurity, automated remediation, dental compliance, behavioral health compliance"
     />
-    <link rel="canonical" href="https://www.osiriscare.net/" />
+    <!--
+      IMPORTANT: no <link rel="canonical"> here. Every React page component
+      sets its own canonical via the shared setCanonicalAndDescription
+      helper (pages/Hipaa2026Update.tsx, pages/ForMsps.tsx, etc.),
+      AND LandingPage.tsx sets "/" on mount. A hardcoded canonical here
+      would override route-specific ones during Google's first-pass
+      (pre-JS) crawl, causing every marketing URL to be treated as a
+      duplicate of the homepage. Removing it lets the first pass see
+      "no canonical" (Google defaults to crawled URL) and the second
+      pass pick up the route-specific canonical injected by useEffect.
+    -->
 
     <!-- Structured Data: SoftwareApplication -->
     <script type="application/ld+json">

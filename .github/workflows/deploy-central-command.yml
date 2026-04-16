@@ -398,6 +398,19 @@ jobs:
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/app/ /opt/mcp-server/app/
             rsync -a --delete ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/ /opt/mcp-server/frontend_dist/
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend/nginx.conf /opt/mcp-server/frontend/nginx.conf
+
+            # Caddy serves /sitemap.xml and /robots.txt from /opt/mcp-server/static/,
+            # NOT from frontend_dist/. If we only rsync frontend_dist these files
+            # silently go stale (recurring Session 206 + Session 207 failure).
+            # Keep both paths in lockstep so public/ assets always reach the
+            # Caddy-served location in one atomic release step.
+            mkdir -p /opt/mcp-server/static
+            for f in sitemap.xml robots.txt; do
+              if [ -f "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/\$f" ]; then
+                rsync -a "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/\$f" "/opt/mcp-server/static/\$f"
+                echo "Synced public asset: \$f"
+              fi
+            done
             # RELEASE_SHA travels INSIDE the dashboard_api/ rsync
             # source tree (see Stamp step), so the atomic rsync above
             # already placed it at
@@ -521,6 +534,40 @@ jobs:
           fi
           echo "Deploy verified: process running ${EXPECTED:0:7}"
 
+          # SEO smoke test: sitemap.xml and robots.txt are served by Caddy
+          # from /opt/mcp-server/static/, NOT from frontend_dist. Without
+          # this check we repeat the Session 206 + Session 207 + bfcefe6
+          # regression where new public/ assets silently go stale at the
+          # serving layer while the atomic release places them correctly
+          # in frontend_dist.
+          echo "---- SEO smoke test ----"
+          SITEMAP=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "curl -sf http://localhost/sitemap.xml" || true)
+          ROBOTS=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "curl -sf http://localhost/robots.txt" || true)
+
+          if [ -z "$SITEMAP" ]; then
+            echo "WARN: /sitemap.xml did not respond — skipping content check"
+          else
+            SITEMAP_FD=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "cat /opt/mcp-server/frontend_dist/sitemap.xml 2>/dev/null | wc -c")
+            SITEMAP_STATIC=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "cat /opt/mcp-server/static/sitemap.xml 2>/dev/null | wc -c")
+            if [ "$SITEMAP_FD" != "$SITEMAP_STATIC" ]; then
+              echo "FATAL: /opt/mcp-server/frontend_dist/sitemap.xml ($SITEMAP_FD bytes) differs from"
+              echo "       /opt/mcp-server/static/sitemap.xml ($SITEMAP_STATIC bytes)."
+              echo "       Caddy-served sitemap will go stale. Check the rsync step above."
+              exit 1
+            fi
+            echo "Sitemap check: frontend_dist and static are in lockstep ($SITEMAP_FD bytes)"
+          fi
+
+          if [ -n "$ROBOTS" ]; then
+            ROBOTS_FD=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "cat /opt/mcp-server/frontend_dist/robots.txt 2>/dev/null | wc -c")
+            ROBOTS_STATIC=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "cat /opt/mcp-server/static/robots.txt 2>/dev/null | wc -c")
+            if [ "$ROBOTS_FD" != "$ROBOTS_STATIC" ]; then
+              echo "FATAL: robots.txt drift between frontend_dist and static. See sitemap note."
+              exit 1
+            fi
+            echo "robots.txt check: frontend_dist and static are in lockstep ($ROBOTS_FD bytes)"
+          fi
+
       - name: Retention — prune old releases + compose backups
         # Session 206 deploy-cleanup: without retention, releases/
         # grows unbounded (each ~10MB) and docker-compose.yml.bak.*
@@ -564,6 +611,13 @@ jobs:
               rsync -a "$PREV/app/" /opt/mcp-server/app/
               rsync -a --delete "$PREV/frontend_dist/" /opt/mcp-server/frontend_dist/
               rsync -a "$PREV/frontend/nginx.conf" /opt/mcp-server/frontend/nginx.conf
+              # Rollback also restores sitemap.xml + robots.txt from the previous release's
+              # frontend_dist so the Caddy-served static assets match the rolled-back code.
+              for f in sitemap.xml robots.txt; do
+                if [ -f "$PREV/frontend_dist/$f" ]; then
+                  rsync -a "$PREV/frontend_dist/$f" "/opt/mcp-server/static/$f"
+                fi
+              done
               ln -sfn "$PREV" /opt/mcp-server/current
               chmod -R 755 /opt/mcp-server/dashboard_api_mount/
               cd /opt/mcp-server && docker compose restart pgbouncer && sleep 3 && docker compose restart mcp-server frontend

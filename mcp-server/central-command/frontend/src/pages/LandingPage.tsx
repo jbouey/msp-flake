@@ -1,7 +1,25 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { OsirisCareLeaf } from '../components/shared';
 import { DISCLAIMERS, BRANDING } from '../constants';
+
+/**
+ * Since index.html no longer ships a hardcoded <link rel="canonical">
+ * (every SPA route sets its own to avoid cross-route canonical collision),
+ * the homepage must explicitly declare itself as the canonical for "/"
+ * on mount. This mirrors the setCanonicalAndDescription helper used by
+ * the marketing cluster (Hipaa2026Update.tsx etc.).
+ */
+function setHomepageCanonical() {
+  if (typeof document === 'undefined') return;
+  let canonical = document.querySelector('link[rel="canonical"]');
+  if (!canonical) {
+    canonical = document.createElement('link');
+    canonical.setAttribute('rel', 'canonical');
+    document.head.appendChild(canonical);
+  }
+  canonical.setAttribute('href', 'https://www.osiriscare.net/');
+}
 
 /* ─────────────────────────────────────────────────────────
    OsirisCare Landing Page
@@ -27,6 +45,10 @@ const SectionDivider: React.FC = () => (
 );
 
 export const LandingPage: React.FC = () => {
+  useEffect(() => {
+    setHomepageCanonical();
+  }, []);
+
   return (
     <div className="min-h-screen bg-white" style={{ fontFamily: "'DM Sans', 'Helvetica Neue', system-ui, sans-serif" }}>
       {/* Google Fonts — DM Sans for body, DM Serif Display for headings */}
