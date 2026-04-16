@@ -101,7 +101,13 @@ from cryptography.exceptions import InvalidSignature
 
 # Rate-limit helper (Redis-backed; returns True,0 in test/dev without Redis).
 # Used to cap auditor-kit downloads per site. Source: dashboard_api/shared.py:153.
-from .shared import check_rate_limit
+# Try/except lets pytest (which loads this module outside the package context)
+# and uvicorn (which loads it as part of dashboard_api package) both succeed —
+# mirrors the pattern used by auth.py:22-24.
+try:
+    from .shared import check_rate_limit
+except ImportError:
+    from shared import check_rate_limit  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
