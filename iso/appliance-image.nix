@@ -407,7 +407,7 @@ EOF
       exec 2> >(tee -a "$LOG_FILE" >&2)
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v34"
+      INSTALLER_VERSION="v35"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
@@ -1059,6 +1059,9 @@ JSONEND
       echo -e "  ''${WHITE}  MSP Compliance Platform — Appliance Installer ''${INSTALLER_VERSION}''${RESET}"
       echo -e "  ''${DIM}  Offline install — no network required''${RESET}"
       echo -e "  ''${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━''${RESET}"
+      echo ""
+      echo -e "  ''${YELLOW}Network requirement:''${RESET} whitelist ''${WHITE}api.osiriscare.net''${RESET} (port 443)"
+      echo -e "  ''${DIM}in any DNS filter, web proxy, or firewall on this network.''${RESET}"
       echo ""
       echo -e "  ''${DIM}Scanning hardware...''${RESET}"
       sleep 2

@@ -1278,7 +1278,9 @@ EOF
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "local-fs.target" ];
     wants = [ "network-online.target" ];
-    before = [ "appliance-daemon.service" ];
+    # NOTE: no "before = appliance-daemon" — daemon starts regardless
+    # and retries its own auth. This avoids blocking boot when
+    # provisioning is delayed (DNS filter, offline subnet, etc.).
 
     serviceConfig = {
       Type = "oneshot";
@@ -1286,7 +1288,7 @@ EOF
     };
 
     script = ''
-      set -e
+      set -euo pipefail
       CONFIG_PATH="/var/lib/msp/config.yaml"
       LOG_FILE="/var/lib/msp/provision.log"
       API_URL="https://api.osiriscare.net"
@@ -1507,8 +1509,69 @@ except Exception as e:
         done
       fi
 
-      log "Auto-provisioning failed - manual configuration required"
-      log "Options: 1) Insert USB with config.yaml  2) Register MAC in dashboard"
+      # ──────────────────────────────────────────────────────────────
+      # Phase 3: Persistent retry on network failure (Session 207).
+      #
+      # If Phase 1 exhausted all 6 fast retries without reaching Central
+      # Command at all (HTTP 000 = curl connect failed = DNS/network),
+      # we don't give up — we enter a slow retry loop (every 5 min,
+      # indefinitely). Common in healthcare deployments where the
+      # network has a DNS filter (Pi-hole, Fortinet, Umbrella, Sophos)
+      # that blocks api.osiriscare.net until the IT admin whitelists it.
+      #
+      # Once DNS is whitelisted and the next retry succeeds, config is
+      # written and appliance-daemon is restarted to pick it up.
+      # ──────────────────────────────────────────────────────────────
+      if [ ! -f "$CONFIG_PATH" ]; then
+        SLOW_DELAY=300  # 5 minutes
+        log "================================================================"
+        log "PROVISIONING DELAYED — entering persistent retry (every 5 min)"
+        log ""
+        log "  Most likely cause: DNS filter blocking api.osiriscare.net"
+        log ""
+        log "  FIX: whitelist api.osiriscare.net (178.156.162.116) on port 443"
+        log "  in your DNS filter / web proxy / firewall."
+        log ""
+        log "  Appliance MAC: $MAC_ADDR"
+        log "  Provisioning URL: $PROVISION_URL"
+        log "================================================================"
+
+        SLOW_ATTEMPT=0
+        while [ ! -f "$CONFIG_PATH" ]; do
+          sleep $SLOW_DELAY
+          SLOW_ATTEMPT=$((SLOW_ATTEMPT + 1))
+
+          HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
+            --connect-timeout 15 --max-time 45 "$PROVISION_URL" 2>/dev/null || echo "000")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
+              if verify_provision_signature /tmp/provision-response.json; then
+                ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
+                chmod 600 "$CONFIG_PATH"
+                write_ssh_key /tmp/provision-response.json
+                log "SUCCESS: Provisioning complete via persistent retry (attempt #$SLOW_ATTEMPT)"
+                rm -f /tmp/provision-response.json
+                # Kick the daemon so it picks up the new config immediately
+                systemctl restart appliance-daemon 2>/dev/null || true
+                exit 0
+              fi
+            else
+              # 200 without site_id = unclaimed. Switch to Phase 2 polling.
+              log "Appliance reachable, registered but unclaimed (attempt #$SLOW_ATTEMPT)"
+              log "Claim MAC $MAC_ADDR in Central Command dashboard"
+            fi
+          fi
+          rm -f /tmp/provision-response.json
+
+          if [ $((SLOW_ATTEMPT % 12)) -eq 0 ]; then
+            HOURS=$((SLOW_ATTEMPT * 5 / 60))
+            log "Still waiting for provisioning (''${HOURS}h elapsed)... whitelist api.osiriscare.net"
+          fi
+        done
+      fi
+
+      log "Auto-provisioning exited"
     '';
   };
 

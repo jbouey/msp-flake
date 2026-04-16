@@ -450,14 +450,24 @@ func (w *Watchdog) enableRecoveryShell(ctx context.Context, params map[string]an
 		return nil, fmt.Errorf("systemctl start sshd: %w: %s", startErr, string(startOut))
 	}
 
+	// Open port 22 in the NixOS INPUT firewall. The installed system's
+	// networking.firewall blocks all inbound TCP by default (Phase S
+	// hardening). Without this rule, sshd listens but clients can't
+	// connect — discovered during Session 207 t740 debugging.
+	_ = exec.CommandContext(ctx, "iptables", "-I", "INPUT", "-p", "tcp", "--dport", "22", "-j", "ACCEPT").Run()
+	_ = exec.CommandContext(ctx, "ip6tables", "-I", "INPUT", "-p", "tcp", "--dport", "22", "-j", "ACCEPT").Run()
+
 	// Arm the systemd-run transient timer. After duration_hours:
+	//   - close firewall port 22
 	//   - systemctl stop sshd
 	//   - rm /etc/msp-recovery-authorized-keys
 	// If the watchdog itself dies, the timer keeps ticking (systemd
 	// owns it). Recovery shell closes on schedule regardless.
 	unitSuffix := fmt.Sprintf("%d", time.Now().UnixMilli())
 	script := fmt.Sprintf(
-		"systemctl stop sshd; rm -f %s; echo msp-recovery-expired",
+		"iptables -D INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null; "+
+			"ip6tables -D INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null; "+
+			"systemctl stop sshd; rm -f %s; echo msp-recovery-expired",
 		keyFile,
 	)
 	bash := "/run/current-system/sw/bin/bash"
