@@ -60,12 +60,17 @@ echo "[recover] new api_key minted (prefix: ${NEW_KEY:0:8}...)"
 # 3. Push the new key into the appliance's config.yaml and restart
 #    the daemon. The yq replace is idempotent — re-running just
 #    overwrites the same field.
+#
+# The appliance's `msp` user has wheelNeedsPassword=true (HIPAA
+# requirement in appliance-disk-image.nix). We pipe the emergency
+# password to sudo -S so the script remains non-interactive and
+# zero-friction.
 echo "[recover] SSHing to msp@${IP} to push new key..."
 sshpass -p "${EMERGENCY_PASS}" ssh \
   -o StrictHostKeyChecking=accept-new \
   -o ConnectTimeout=10 \
   msp@"${IP}" \
-  "sudo /run/current-system/sw/bin/sh -c '
+  "echo '${EMERGENCY_PASS}' | sudo -S /run/current-system/sw/bin/bash -c '
     set -e
     cd /var/lib/msp
     cp config.yaml config.yaml.bak.\$(date -u +%Y%m%dT%H%M%SZ)

@@ -1,16 +1,16 @@
 {
   "schema_version": "2.0",
-  "session": 207,
-  "updated": "2026-04-15T03:13:34.059120Z",
+  "session": 208,
+  "updated": "2026-04-16T16:56:51.121592Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty.",
   "versions": {
-    "agent": "0.4.0",
-    "iso": "v57",
-    "disk_image": "v56",
+    "agent": "0.4.6",
+    "iso": "v37",
+    "disk_image": "v37",
     "daemon_fleet": {
-      "installer": "0.3.92",
-      "north-valley-branch-2": "0.4.0",
-      "osiriscare-3": "0.4.0"
+      "installer": "0.4.6",
+      "north-valley-branch-2": "0.4.6",
+      "osiriscare-3": "0.4.6"
     }
   },
   "system_health": [
@@ -78,6 +78,38 @@
   "active_tasks": [],
   "recent_milestones": [
     {
+      "when": "2026-04-16",
+      "what": "Session 208: provisioning_stalled invariant + ApplianceCard staleness (t740 debug round-table)"
+    },
+    {
+      "when": "2026-04-16",
+      "what": "Landing page rework \u2014 humans now see 2026-ready narrative (LandingPage.tsx + SEO cluster)"
+    },
+    {
+      "when": "2026-04-16",
+      "what": "OTS blockchain-stamping audit + remediation \u2014 rate-limit kit download, upgrade-loop error visibility, 13 property tamper tests"
+    },
+    {
+      "when": "2026-04-16",
+      "what": "2026 HIPAA SEO content cluster \u2014 12 marketing pages, JSON-LD hardened, canonical collision fixed, deploy pipeline static/ gap closed"
+    },
+    {
+      "when": "2026-04-15",
+      "what": "Session 207: recovery-shell escape hatch (ISO v34 + mig 223) + Stripe billing PHI-free (mig 224) + BAA append-only"
+    },
+    {
+      "when": "2026-04-14",
+      "what": "Session 207: Substrate Integrity Engine (mig 207) \u2014 11 invariants asserted every 60s, /admin/substrate-health"
+    },
+    {
+      "when": "2026-04-14",
+      "what": "Daemon 0.4.3 deferred completion + fleet_cli URL DNS validation + install-loop alert + migrations 208/209"
+    },
+    {
+      "when": "2026-04-13",
+      "what": "Session 206: Flywheel Spine (mig 181) + deploy-restart fix + pgbouncer prepared-stmt flush"
+    },
+    {
       "when": "2026-04-13",
       "what": "Phase 15 enterprise hygiene \u2014 158 new tests, Vault Transit shadow mode live, migration 179 hardening"
     },
@@ -106,5 +138,30 @@
     "archived_sessions": ".agent/archive/",
     "user_memory": "~/.claude/projects/-Users-dad-Documents-Msp-Flakes/memory/"
   },
-  "completed_this_session": []
+  "completed_this_session": [
+    {
+      "when": "2026-04-16",
+      "what": "provisioning_stalled substrate invariant (commit 96ce738)"
+    },
+    {
+      "when": "2026-04-16",
+      "what": "ApplianceCard staleness marking when live_status != online"
+    },
+    {
+      "when": "2026-04-16",
+      "what": "OTS audit remediation \u2014 rate-limit + error visibility + 13 tamper tests (commits eed0958 + 821edca)"
+    },
+    {
+      "when": "2026-04-16",
+      "what": "SEO content cluster \u2014 12 marketing pages, SEO audit remediation (commits bfcefe6 + e5f95db)"
+    },
+    {
+      "when": "2026-04-16",
+      "what": "LandingPage.tsx rework \u2014 2026 HIPAA NPRM callout, scale-tier section, mesh positioning (commit ebc4ee4)"
+    },
+    {
+      "when": "2026-04-16",
+      "what": "v37 ISO SHA verified + shipped to lab USB"
+    }
+  ]
 }
