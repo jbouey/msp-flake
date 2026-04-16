@@ -21,6 +21,12 @@ interface ActiveViolation {
   last_seen_at: string;
   minutes_open: number;
   details: Record<string, unknown>;
+  // v36: human-facing taxonomy pulled from assertions._DISPLAY_METADATA.
+  // When present, the UI renders display_name + recommended_action as
+  // the primary row; invariant + details collapse behind a "View raw".
+  display_name?: string;
+  recommended_action?: string;
+  description?: string;
 }
 
 interface ResolvedViolation {
@@ -29,6 +35,7 @@ interface ResolvedViolation {
   site_id: string | null;
   detected_at: string;
   resolved_at: string;
+  display_name?: string;
 }
 
 interface ViolationsPayload {
@@ -146,26 +153,47 @@ export const AdminSubstrateHealth: React.FC = () => {
             <table className="w-full text-sm">
               <thead className="text-white/60 text-left">
                 <tr>
-                  <th className="py-2 pr-4">Severity</th>
-                  <th className="py-2 pr-4">Invariant</th>
-                  <th className="py-2 pr-4">Site</th>
-                  <th className="py-2 pr-4">Open for</th>
-                  <th className="py-2 pr-4">Details</th>
+                  <th className="py-2 pr-4 w-24">Severity</th>
+                  <th className="py-2 pr-4" colSpan={4}>Issue · recommended action</th>
                 </tr>
               </thead>
               <tbody>
                 {violations.active.map((v, i) => (
                   <tr key={i} className="border-t border-white/5">
-                    <td className="py-2 pr-4">
+                    <td className="py-2 pr-4 align-top">
                       <span className={`px-2 py-0.5 rounded text-xs border ${SEVERITY_COLOR[v.severity] || ''}`}>
                         {v.severity}
                       </span>
                     </td>
-                    <td className="py-2 pr-4 text-white font-mono text-xs">{v.invariant}</td>
-                    <td className="py-2 pr-4 text-white/70 text-xs">{v.site_id || '—'}</td>
-                    <td className="py-2 pr-4 text-white/70 text-xs">{Math.round(v.minutes_open)}m</td>
-                    <td className="py-2 pr-4 text-white/60 text-xs">
-                      <pre className="whitespace-pre-wrap break-all">{JSON.stringify(v.details)}</pre>
+                    <td className="py-2 pr-4 align-top" colSpan={4}>
+                      {/* v36: human-facing row. display_name + recommended_action
+                          render as the primary content; engineering name +
+                          raw details live behind a collapsible for the auditor /
+                          engineer who wants the full picture. */}
+                      <div className="text-white font-medium">
+                        {v.display_name ?? v.invariant}
+                      </div>
+                      {v.recommended_action && (
+                        <div className="mt-1 text-emerald-200/80 text-xs leading-relaxed">
+                          <span className="font-semibold text-emerald-300">Recommended:</span>{' '}
+                          {v.recommended_action}
+                        </div>
+                      )}
+                      <div className="mt-2 flex items-center gap-3 text-[11px] text-white/50">
+                        <span className="font-mono">{v.invariant}</span>
+                        <span>·</span>
+                        <span>{v.site_id || 'global'}</span>
+                        <span>·</span>
+                        <span>open {Math.round(v.minutes_open)}m</span>
+                      </div>
+                      <details className="mt-2 text-white/60 text-xs">
+                        <summary className="cursor-pointer select-none text-white/50 hover:text-white/80">
+                          View raw details
+                        </summary>
+                        <pre className="whitespace-pre-wrap break-all mt-2 p-2 rounded bg-black/30">
+                          {JSON.stringify(v.details, null, 2)}
+                        </pre>
+                      </details>
                     </td>
                   </tr>
                 ))}
