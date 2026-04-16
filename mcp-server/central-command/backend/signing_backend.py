@@ -120,6 +120,28 @@ class FileSigningBackend:
         self._load()
         return bytes(self._cached_vk)
 
+    def public_keys_all(self) -> "list[bytes]":
+        """Return all keys that appliances should trust from this backend.
+        Current + previous (when a .key.previous file exists during a
+        file-mode rotation). Used by the checkin response's
+        server_public_keys array so daemons trust the entire rotation
+        window, not just the latest key."""
+        self._load()
+        out: list[bytes] = [bytes(self._cached_vk)]
+        prev_path = pathlib.Path(str(self._path) + ".previous")
+        if prev_path.exists():
+            try:
+                from nacl.signing import SigningKey
+                from nacl.encoding import HexEncoder
+                prev_hex = prev_path.read_bytes().strip()
+                prev_sk = SigningKey(prev_hex, encoder=HexEncoder)
+                prev_vk = bytes(prev_sk.verify_key)
+                if prev_vk != out[0]:
+                    out.append(prev_vk)
+            except Exception as e:
+                logger.warning("FileSigningBackend .previous read failed: %s", e)
+        return out
+
 
 # ─── Vault Transit backend ────────────────────────────────────────
 
@@ -215,6 +237,16 @@ class VaultSigningBackend:
                 self._cached_pubkey = self._public_key_fresh()
         return self._cached_pubkey
 
+    def public_keys_all(self) -> "list[bytes]":
+        """Vault transit keys are single-version-per-name from the
+        daemon-trust perspective — we always sign with latest. If Vault
+        rotation happens (key version bump), the previous version's
+        pubkey is NOT returned here; appliances would lose trust on
+        orders signed with the OLD version. For rotations, use the
+        shadow-backend layering or issue a pre-rotation checkin pulse
+        with BOTH versions surfaced explicitly. Phase-16 concern."""
+        return [self.public_key()]
+
     def sign(self, data: bytes) -> SignResult:
         self._login_if_needed()
         input_b64 = base64.b64encode(data).decode()
@@ -298,6 +330,27 @@ class ShadowSigningBackend:
 
     def public_key(self) -> bytes:
         return self._primary.public_key()
+
+    def public_keys_all(self) -> "list[bytes]":
+        """Union of primary + shadow trust sets, deduped. This is what
+        makes the multi-trust rollover work: during shadow-mode, every
+        checkin response lists BOTH the file key AND the Vault key, so
+        daemons accept orders signed by either. When the flip day
+        arrives (primary=vault), the file key stays in the trust set
+        for a retention window, then gets retired."""
+        primary_keys = self._primary.public_keys_all() \
+            if hasattr(self._primary, "public_keys_all") \
+            else [self._primary.public_key()]
+        shadow_keys = self._shadow.public_keys_all() \
+            if hasattr(self._shadow, "public_keys_all") \
+            else [self._shadow.public_key()]
+        seen: set[bytes] = set()
+        out: list[bytes] = []
+        for k in (*primary_keys, *shadow_keys):
+            if k and k not in seen:
+                seen.add(k)
+                out.append(k)
+        return out
 
     def sign(self, data: bytes) -> SignResult:
         primary_result = None

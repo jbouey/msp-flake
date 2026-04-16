@@ -246,7 +246,37 @@ def get_public_key_hex() -> str:
 
 
 def get_all_public_keys_hex() -> list:
-    """Return all valid public keys (current + previous) for multi-key verification."""
+    """Return ALL public keys appliances should trust.
+
+    Session 207 Phase C prep: in shadow mode (primary=file, shadow=vault)
+    this returns BOTH the file key AND the Vault key, so every
+    appliance picks up the Vault key on its next checkin BEFORE we
+    flip primary=vault. When the flip happens the Vault key is
+    already trusted fleet-wide — zero-downtime cutover.
+
+    Source-of-truth precedence:
+      1. signing_backend.get_signing_backend().public_keys_all() when
+         available — this is the authoritative view (shadow backend
+         returns union, Vault backend its own key, file backend
+         current + previous).
+      2. Fall back to the top-level verify_key + previous_verify_key
+         vars in this module (pre-Phase-B behaviour).
+    """
+    try:
+        try:
+            from .signing_backend import get_signing_backend, SigningBackendError
+        except ImportError:
+            from signing_backend import get_signing_backend, SigningBackendError
+        backend = get_signing_backend()
+        if hasattr(backend, "public_keys_all"):
+            raw = backend.public_keys_all()
+            if raw:
+                return [k.hex() for k in raw]
+    except Exception as e:
+        # Fall through to the pre-Phase-B path — signing_backend import
+        # failures must not break checkins.
+        logger.warning("get_all_public_keys_hex via backend failed, using local keys: %s", e)
+
     keys = [get_public_key_hex()]
     if previous_verify_key:
         keys.append(previous_verify_key.encode(encoder=HexEncoder).decode())
