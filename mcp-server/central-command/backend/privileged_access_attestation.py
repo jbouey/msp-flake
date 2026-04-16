@@ -73,6 +73,14 @@ ALLOWED_EVENTS = {
     # TYPES + v_privileged_types. The lockstep checker requires
     # ALLOWED_EVENTS ⊇ the other two; the reverse is not required.
     "break_glass_passphrase_retrieval",
+    # v36 (Session 207 post-t740 round-table) — appliance physical-move
+    # compliance chain. Detection half is written automatically via
+    # appliance_relocation.detect_and_record_relocation (system-signed,
+    # not a privileged_access attestation). Acknowledgment half uses
+    # this privileged path: admin records reason, chain links to the
+    # detection bundle. HIPAA §164.310(d)(1).
+    # Not a fleet_order — admin API call only, like break_glass_passphrase_retrieval.
+    "appliance_relocation_acknowledged",
 }
 
 

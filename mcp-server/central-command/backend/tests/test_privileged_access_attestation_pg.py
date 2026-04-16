@@ -332,6 +332,9 @@ def test_allowed_events_matches_privileged_order_types():
         # Session 207 R+S non-blocking follow-up — break-glass retrievals
         # write an attestation bundle; NOT a fleet_order type.
         "break_glass_passphrase_retrieval",
+        # v36 post-t740 round-table — appliance physical-move compliance
+        # chain. Admin acknowledgment of a detected move; NOT a fleet_order.
+        "appliance_relocation_acknowledged",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted. Got {paa.ALLOWED_EVENTS}. Update "

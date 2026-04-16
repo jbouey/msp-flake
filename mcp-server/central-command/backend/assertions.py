@@ -509,6 +509,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Installer phoned home (install_sessions fresh) but installed system never did (site_appliances stale or missing). 2026-04-15 t740 incident: Pi-hole blocked api.osiriscare.net → installed-system daemon couldn't resolve → silent brick. Most likely a DNS filter (Pi-hole / Umbrella / Fortinet / Sophos / Barracuda) on the site's network. Whitelist api.osiriscare.net.",
         check=lambda c: _check_provisioning_stalled(c),
     ),
+    Assertion(
+        name="appliance_moved_unack",
+        severity="sev2",
+        description="Appliance physical relocation detected > 24h ago but no operator acknowledgment bundle has chained to the detection. HIPAA §164.310(d)(1) requires movement tracking with reason; unacknowledged moves could indicate theft, tampering, or shadow IT. Surface in the admin panel until acknowledged via POST /api/admin/appliances/{id}/acknowledge-relocation.",
+        check=lambda c: _check_appliance_moved_unack(c),
+    ),
 ]
 
 
@@ -667,6 +673,14 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
         "recommended_action": "Whitelist api.osiriscare.net (port 443) on the site's "
             "DNS filter / web proxy / firewall (Pi-hole, Umbrella, Fortinet, Sophos, Barracuda). "
             "Verify per-device rules if your filter has them — by-MAC whitelisting is common and easy to miss.",
+    },
+    "appliance_moved_unack": {
+        "display_name": "Appliance physically relocated — unacknowledged",
+        "recommended_action": "Acknowledge the move via the admin panel (or POST "
+            "/api/admin/appliances/{appliance_id}/acknowledge-relocation) with a reason "
+            "category + free-text detail. If this move was NOT expected, treat as a security "
+            "incident: verify physical location, check for tampering, investigate shadow IT. "
+            "HIPAA §164.310(d)(1) audit trail.",
     },
 }
 
@@ -1335,6 +1349,89 @@ async def _check_provisioning_stalled(conn: asyncpg.Connection) -> List[Violatio
             )
         )
     return out
+
+
+async def _check_appliance_moved_unack(conn: asyncpg.Connection) -> List[Violation]:
+    """Relocation detection bundle > 24h old with no matching ack bundle.
+
+    An `appliance_relocation` detection bundle is written automatically
+    when an appliance's primary subnet changes (sites.py STEP 3.4,
+    appliance_relocation.detect_and_record_relocation).
+
+    An `appliance_relocation_acknowledged` attestation bundle is
+    written when an operator acknowledges the move via
+    POST /api/admin/appliances/{id}/acknowledge-relocation. The ack
+    bundle's approvals array contains `detection_bundle_id` pointing
+    at the matching detection bundle.
+
+    We fire when:
+      - a detection bundle exists in the last 30 days
+      - it's been > 24 hours since detection
+      - no ack bundle references this detection_bundle_id
+
+    30-day lookback avoids flooding the dashboard with ancient moves
+    that nobody cares about anymore; 24h gives the operator time to
+    notice + respond to a planned move before it becomes a false alarm.
+    """
+    rows = await conn.fetch(
+        """
+        WITH detections AS (
+            SELECT cb.bundle_id, cb.site_id, cb.checked_at,
+                   cb.summary->>'from_subnet' AS from_subnet,
+                   cb.summary->>'to_subnet'   AS to_subnet,
+                   cb.checks->0->>'appliance_id'  AS appliance_id,
+                   cb.checks->0->>'mac_address'   AS mac_address,
+                   cb.checks->0->>'hostname'      AS hostname
+              FROM compliance_bundles cb
+             WHERE cb.check_type = 'appliance_relocation'
+               AND cb.checked_at > NOW() - INTERVAL '30 days'
+               AND cb.checked_at < NOW() - INTERVAL '24 hours'
+        ),
+        acks AS (
+            SELECT
+              jsonb_array_elements(
+                coalesce(cb.checks->0->'approvals', '[]'::jsonb)
+              )->>'detection_bundle_id' AS detection_bundle_id
+              FROM compliance_bundles cb
+             WHERE cb.check_type = 'privileged_access'
+               AND cb.checks::text LIKE '%appliance_relocation_acknowledged%'
+        )
+        SELECT d.*
+          FROM detections d
+          LEFT JOIN acks a ON a.detection_bundle_id = d.bundle_id
+         WHERE a.detection_bundle_id IS NULL
+         ORDER BY d.checked_at DESC
+         LIMIT 200
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "detection_bundle_id": r["bundle_id"],
+                "appliance_id": r["appliance_id"],
+                "mac_address": r["mac_address"],
+                "hostname": r["hostname"],
+                "from_subnet": r["from_subnet"],
+                "to_subnet": r["to_subnet"],
+                "detected_at": r["checked_at"].isoformat(),
+                "hours_unacknowledged": round(
+                    (datetime.now(timezone.utc) - r["checked_at"]).total_seconds() / 3600, 1
+                ),
+                "hint": (
+                    "Physical relocation of this appliance was detected but "
+                    "no operator acknowledgment has been recorded. HIPAA "
+                    "§164.310(d)(1) requires movement tracking with reason. "
+                    "Acknowledge via the admin panel (or POST "
+                    "/api/admin/appliances/{appliance_id}/acknowledge-relocation) "
+                    "with a reason_category + free-text detail. If this move "
+                    "was NOT expected, treat as a security incident: verify "
+                    "physical location, check for tampering, investigate."
+                ),
+            },
+        )
+        for r in rows
+    ]
 
 
 async def _check_ghost_checkin_redirect(conn: asyncpg.Connection) -> List[Violation]:

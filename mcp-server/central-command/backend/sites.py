@@ -3580,6 +3580,14 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # When an appliance moves subnets (e.g., 192.168.88.x → 192.168.1.x),
         # devices discovered on the old subnet become unreachable phantoms.
         # Detect subnet change by comparing IP prefixes and mark old devices stale.
+        #
+        # v36 addition: also write a compliance_bundle for the move
+        # (HIPAA §164.310(d)(1) — hardware movement tracking). The bundle
+        # is the DETECTION half of the chain; an operator ACKNOWLEDGMENT
+        # bundle with reason is added via
+        # POST /api/admin/appliances/{id}/acknowledge-relocation.
+        # If not acknowledged within 24h, the substrate invariant
+        # `appliance_moved_unack` fires on the admin panel.
         if not _ghost_detected and last_checkin_time and checkin.ip_addresses:
             try:
                 old_ips_row = await conn.fetchval(
@@ -3606,6 +3614,29 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                                   AND ip_address LIKE $2
                                   AND device_status NOT IN ('ignored', 'stale_subnet_move')
                             """, checkin.site_id, f"{subnet}.%")
+
+                        # v36: attestation half — write the detection
+                        # compliance_bundle. Separate savepoint because
+                        # signing-backend hiccups must not poison the
+                        # parent checkin transaction.
+                        try:
+                            from dashboard_api.appliance_relocation import (
+                                detect_and_record_relocation,
+                            )
+                        except ImportError:
+                            from appliance_relocation import (  # type: ignore
+                                detect_and_record_relocation,
+                            )
+                        async with conn.transaction():
+                            await detect_and_record_relocation(
+                                conn,
+                                site_id=checkin.site_id,
+                                appliance_id=canonical_id,
+                                mac_address=checkin.mac_address or "",
+                                hostname=checkin.hostname,
+                                previous_ips=list(old_ips or []),
+                                current_ips=list(checkin.ip_addresses or []),
+                            )
             except Exception as e:
                 logger.debug(f"Subnet change check skipped: {e}")
 
