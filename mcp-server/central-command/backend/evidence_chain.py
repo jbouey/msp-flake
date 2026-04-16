@@ -99,6 +99,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
 
+# Rate-limit helper (Redis-backed; returns True,0 in test/dev without Redis).
+# Used to cap auditor-kit downloads per site. Source: dashboard_api/shared.py:153.
+from .shared import check_rate_limit
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/evidence", tags=["evidence"])
@@ -791,7 +795,21 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
                         """), {"bundle_id": proof.bundle_id, "error": last_error})
 
             except Exception as e:
-                logger.warning(f"Failed to upgrade proof {proof.bundle_id[:8]}: {e}")
+                # Per CLAUDE.md: OTS upgrade failures MUST log at error level
+                # with full exception traceback. "logger.warning on DB failures
+                # BANNED → logger.error(exc_info=True)". The upgrade loop is
+                # the only signal the substrate has that an OTS anchor is
+                # silently failing; swallowing the traceback makes diagnosis
+                # impossible.
+                logger.error(
+                    "OTS proof upgrade failed",
+                    extra={
+                        "bundle_id": proof.bundle_id,
+                        "calendar_url": getattr(proof, "calendar_url", None),
+                        "exception_class": type(e).__name__,
+                    },
+                    exc_info=True,
+                )
                 try:
                     async with db.begin_nested():  # Separate savepoint for error recording
                         await db.execute(text("""
@@ -800,9 +818,22 @@ async def upgrade_pending_proofs(db: AsyncSession, limit: int = 500):
                                 upgrade_attempts = upgrade_attempts + 1,
                                 error = :error
                             WHERE bundle_id = :bundle_id
-                        """), {"bundle_id": proof.bundle_id, "error": str(e)[:500]})
-                except Exception:
-                    logger.warning(f"Could not record error for {proof.bundle_id[:8]}")
+                        """), {"bundle_id": proof.bundle_id, "error": f"{type(e).__name__}: {str(e)[:480]}"})
+                except Exception as inner_exc:
+                    # Double failure: outer upgrade failed AND error-recording
+                    # also failed. This is operationally important because the
+                    # proof will keep being retried with no visible error-state
+                    # on the row. Raise to error with both tracebacks so the
+                    # on-call engineer can see what recovery path to take.
+                    logger.error(
+                        "OTS error-recording also failed — proof state will lag reality",
+                        extra={
+                            "bundle_id": proof.bundle_id,
+                            "original_exception": type(e).__name__,
+                            "inner_exception": type(inner_exc).__name__,
+                        },
+                        exc_info=True,
+                    )
 
     await db.commit()
 
@@ -4160,6 +4191,28 @@ async def download_auditor_kit(
     db: AsyncSession = Depends(get_db),
     _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
+    # Per-site rate limit: legitimate auditor use is a handful of kit downloads
+    # per day, not bulk-export pressure. Cap at 10 per hour per site to make
+    # it hard to use this endpoint as a memory-pressure vector against the
+    # process (each call materializes up to 5,000 bundles into an in-memory
+    # ZIP). Honors the authenticated caller's auth context — this is abuse
+    # prevention, NOT an auth gate.
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=site_id,
+        action="auditor_kit_download",
+        window_seconds=3600,
+        max_requests=10,
+    )
+    if not allowed:
+        logger.warning(
+            "auditor kit download rate-limited",
+            extra={"site_id": site_id, "retry_after_s": retry_after_s},
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Auditor kit download limit reached (10/hr). Retry in {retry_after_s}s.",
+            headers={"Retry-After": str(retry_after_s)},
+        )
     """Download a self-contained ZIP an auditor can verify offline.
 
     Session 203 Tier 1.1 — the centerpiece of OsirisCare's "recovery
