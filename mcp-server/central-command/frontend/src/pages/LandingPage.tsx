@@ -85,12 +85,12 @@ export const LandingPage: React.FC = () => {
             </span>
           </div>
 
-          <div className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-500 font-body">
+          <div className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-500 font-body">
+            <Link to="/2026-hipaa-update" className="hover:text-slate-900 transition-colors">2026 HIPAA Rule</Link>
+            <Link to="/for-msps" className="hover:text-slate-900 transition-colors">For MSPs</Link>
             <a href="#how-it-works" className="hover:text-slate-900 transition-colors">How It Works</a>
-            <a href="#practices" className="hover:text-slate-900 transition-colors">For Practices</a>
-            <a href="#partners" className="hover:text-slate-900 transition-colors">For Partners</a>
             <Link to="/pricing" className="hover:text-slate-900 transition-colors">Pricing</Link>
-            <a href="#contact" className="hover:text-slate-900 transition-colors">Contact</a>
+            <Link to="/blog" className="hover:text-slate-900 transition-colors">Blog</Link>
           </div>
 
           <div className="flex items-center gap-3">
@@ -136,38 +136,51 @@ export const LandingPage: React.FC = () => {
               <OsirisCareLeaf className="w-9 h-9" color="white" />
             </div>
 
+            {/* 2026-Ready ribbon — visible tag; links to the full NPRM page */}
+            <Link
+              to="/2026-hipaa-update"
+              className="inline-flex items-center gap-2 mb-6 px-3 py-1.5 rounded-full bg-teal-50 border border-teal-200 text-xs font-semibold text-teal-800 tracking-wider uppercase hover:bg-teal-100 transition-colors font-body"
+            >
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-teal-600" />
+              2026-Ready HIPAA Platform · NPRM mapped
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </Link>
+
             <h1 className="font-display text-4xl md:text-5xl lg:text-6xl text-slate-900 leading-[1.1] mb-6">
               Always audit-ready.{' '}
               <span className="block" style={{ color: '#0d9488' }}>With proof — not paperwork.</span>
             </h1>
 
             <p className="text-lg md:text-xl text-slate-500 leading-relaxed max-w-2xl mb-4 font-body font-light">
-              Continuous HIPAA compliance monitoring, automated remediation, and
-              verifiable evidence — designed for practices with 1–50 providers.
+              Continuous HIPAA compliance for healthcare — from a single clinic
+              to a multi-site provider network or DSO. Cryptographically
+              verifiable evidence your auditor confirms on their own laptop.
             </p>
             <p className="text-lg md:text-xl text-slate-600 leading-relaxed max-w-2xl mb-10 font-body font-medium">
-              Stop discovering compliance issues during audits.
+              Built for the 2026 HIPAA Security Rule. Nine controls monitored continuously.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4">
               <Link
-                to="/client/login"
+                to="/signup"
                 className="inline-flex items-center justify-center px-6 py-3.5 text-sm font-semibold rounded-lg text-white transition-all font-body"
                 style={{
                   background: 'linear-gradient(135deg, #14A89E 0%, #0d9488 100%)',
                   boxShadow: '0 2px 12px rgba(20, 168, 158, 0.3)',
                 }}
               >
-                For Healthcare Practices
+                Start a 90-day pilot
                 <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
                 </svg>
               </Link>
               <Link
-                to="/partner/login"
+                to="/2026-hipaa-update"
                 className="inline-flex items-center justify-center px-6 py-3.5 text-sm font-semibold rounded-lg text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all font-body"
               >
-                For MSP Partners
+                Read the 2026 HIPAA guide
                 <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
                 </svg>
@@ -184,6 +197,11 @@ export const LandingPage: React.FC = () => {
                 </svg>
               </a>
             </div>
+
+            <p className="text-xs text-slate-400 mt-6 font-body">
+              Trusted from solo clinics to multi-location groups and DSOs. Nine frameworks supported:
+              HIPAA, SOC 2, PCI DSS, NIST CSF, CIS, SOX, GDPR, CMMC, ISO 27001.
+            </p>
           </div>
 
           {/* Decorative element — animated vital-sign line */}
@@ -211,6 +229,116 @@ export const LandingPage: React.FC = () => {
 
       <SectionDivider />
 
+      {/* ═══════════════ 2026 HIPAA NPRM CALLOUT ═══════════════ */}
+      <section className="py-16 md:py-20 bg-teal-50/40 border-y border-teal-100/60">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
+            <div className="md:col-span-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] mb-3 font-body" style={{ color: '#0d9488' }}>
+                2026 HIPAA Security Rule
+              </p>
+              <h2 className="font-display text-2xl md:text-3xl text-slate-900 mb-4 leading-snug">
+                Built for the new rule —<br />not retrofitted later.
+              </h2>
+              <p className="text-slate-600 font-body text-sm leading-relaxed mb-5">
+                HHS published the first substantive Security Rule update in over twenty years
+                in December 2024. Nine controls move from "addressable" to "required." We
+                monitor every one of them today.
+              </p>
+              <Link
+                to="/2026-hipaa-update"
+                className="inline-flex items-center text-sm font-semibold text-teal-700 hover:text-teal-900 font-body"
+              >
+                Read the full 9-requirement guide
+                <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                </svg>
+              </Link>
+            </div>
+            <div className="md:col-span-2 grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm font-body">
+              {[
+                { k: 'Multi-factor authentication', v: 'required, continuously verified' },
+                { k: 'Encryption at rest + in transit', v: 'BitLocker, FileVault, LUKS, TLS' },
+                { k: 'Network segmentation', v: 'cross-subnet device discovery' },
+                { k: 'Asset inventory', v: 'annual review, signed' },
+                { k: 'Vulnerability scans / 6 mo', v: 'NEW in NPRM' },
+                { k: 'Penetration test / year', v: 'NEW in NPRM' },
+                { k: 'Patching timelines', v: 'measured, per host, per CVE' },
+                { k: 'Incident response + BA coord', v: 'append-only attested chain' },
+                { k: 'Tested contingency plan', v: 'backup validation on cadence' },
+              ].map((c) => (
+                <div key={c.k} className="p-3 rounded-lg bg-white border border-teal-100">
+                  <div className="text-xs font-semibold text-slate-900">{c.k}</div>
+                  <div className="text-[11px] text-slate-500 mt-1 leading-snug">{c.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <SectionDivider />
+
+      {/* ═══════════════ ONE PLATFORM · EVERY SCALE ═══════════════ */}
+      <section className="py-16 md:py-20">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="max-w-3xl mx-auto text-center mb-12">
+            <p className="text-sm font-semibold uppercase tracking-widest mb-4 font-body" style={{ color: '#0d9488' }}>
+              One platform · every scale
+            </p>
+            <h2 className="font-display text-3xl md:text-4xl text-slate-900 mb-4">
+              From single clinics to multi-site DSOs
+            </h2>
+            <p className="text-lg text-slate-500 font-body font-light leading-relaxed">
+              Backend-authoritative mesh coordination means adding a location is
+              provisioning, not architecture. Add a second appliance at a flagship
+              site for redundancy — hash-ring target assignment rebalances
+              automatically when one is offline.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[
+              {
+                label: 'Single clinic',
+                head: 'One appliance · owner-led',
+                body: '90-day pilot at $299. Practice manager as the designated Security Officer. Most solo clinics online within 30 min of the appliance arriving.',
+              },
+              {
+                label: 'Multi-location group',
+                head: 'One appliance per site',
+                body: 'Fleet-wide dashboard with per-site drill-down. Cross-subnet discovery handles multi-VLAN healthcare LANs. No per-seat metering.',
+              },
+              {
+                label: 'DSO / health-system IT',
+                head: 'Multiple appliances per site',
+                body: 'Hash-ring deterministic failover. Nine-framework crosswalk (HIPAA, SOC 2, PCI, NIST CSF, CIS, SOX, GDPR, CMMC, ISO 27001). One evidence chain for all.',
+              },
+            ].map((tier) => (
+              <div key={tier.label} className="p-6 rounded-xl border border-slate-100 bg-white">
+                <p className="text-xs uppercase tracking-widest text-slate-400 font-semibold font-body mb-2">{tier.label}</p>
+                <h3 className="font-display text-xl text-slate-900 mb-3">{tier.head}</h3>
+                <p className="text-sm text-slate-500 leading-relaxed font-body">{tier.body}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="text-center mt-10">
+            <Link
+              to="/for-msps"
+              className="inline-flex items-center text-sm font-semibold text-teal-700 hover:text-teal-900 font-body"
+            >
+              For MSPs and compliance partners — fleet pricing + 20% partner margin
+              <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+              </svg>
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <SectionDivider />
+
       {/* ═══════════════ THE PROBLEM ═══════════════ */}
       <section className="py-20 md:py-28">
         <div className="max-w-7xl mx-auto px-6">
@@ -222,9 +350,10 @@ export const LandingPage: React.FC = () => {
               Compliance issues don't wait for your next audit
             </h2>
             <p className="text-lg text-slate-500 leading-relaxed font-body font-light">
-              HIPAA compliance is a continuous obligation, not an annual checkbox. But the
-              tooling available to small practices was built for large health systems —
-              complex, expensive, and reactive.
+              HIPAA compliance is a continuous obligation, not an annual checkbox.
+              Multi-site groups and DSOs face compounded complexity: per-site
+              drift, cross-location incident coordination, and audit-trail
+              reconciliation at scale.
             </p>
           </div>
 
@@ -232,23 +361,23 @@ export const LandingPage: React.FC = () => {
             {[
               {
                 num: '01',
-                title: 'Underserved market',
-                desc: 'Practices with 1–50 providers lack access to compliance infrastructure that large health systems take for granted.',
+                title: 'Fleet drift',
+                desc: 'Controls drift per location. A 20-location DSO has, statistically, multiple sites out of compliance on multiple controls at any given moment — and the regional IT director cannot see it.',
               },
               {
                 num: '02',
-                title: 'Manual processes',
-                desc: 'Spreadsheet-based tracking and periodic audits leave gaps in visibility between review cycles.',
+                title: 'Evidence fragmentation',
+                desc: 'Each site tracks compliance differently. When the auditor arrives, reconciling fifteen locations of screenshots, logs, and policy docs is a weeks-long project.',
               },
               {
                 num: '03',
                 title: 'Silent failures',
-                desc: 'Configuration changes, missed patches, and policy deviations accumulate undetected — silent failures that become audit findings.',
+                desc: 'Configuration changes, missed patches, policy deviations — silent failures that accumulate undetected and become audit findings across every site at once.',
               },
               {
                 num: '04',
-                title: 'Reactive posture',
-                desc: 'Issues are discovered after they become compliance violations. By then, the exposure window is already on the record.',
+                title: 'Trust-the-vendor auditing',
+                desc: 'Platform-signed reports look authoritative — until the vendor\'s integrity is questioned. Auditors are migrating to independently verifiable evidence as the new bar.',
               },
             ].map((item) => (
               <div key={item.num} className="p-6 rounded-xl border border-slate-100 bg-slate-50/50">
@@ -627,16 +756,21 @@ export const LandingPage: React.FC = () => {
             <div>
               <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4 font-body">Platform</h4>
               <ul className="space-y-2.5">
-                <li><Link to="/client/login" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">For Practices</Link></li>
-                <li><Link to="/partner/login" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">For Partners</Link></li>
+                <li><Link to="/pricing" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Pricing</Link></li>
+                <li><Link to="/for-msps" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">For MSPs</Link></li>
+                <li><Link to="/signup" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Start Pilot</Link></li>
                 <li><a href="#how-it-works" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">How It Works</a></li>
               </ul>
             </div>
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4 font-body">Legal</h4>
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4 font-body">Resources</h4>
               <ul className="space-y-2.5">
-                <li><Link to="/legal/privacy" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Privacy Policy</Link></li>
-                <li><Link to="/legal/terms" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Terms of Service</Link></li>
+                <li><Link to="/2026-hipaa-update" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">2026 HIPAA Rule</Link></li>
+                <li><Link to="/blog" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Blog</Link></li>
+                <li><Link to="/compare/vanta" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">vs Vanta</Link></li>
+                <li><Link to="/compare/drata" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">vs Drata</Link></li>
+                <li><Link to="/changelog" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Changelog</Link></li>
+                <li><Link to="/legal/privacy" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">Privacy</Link></li>
                 <li><Link to="/legal/baa" className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-body">BAA</Link></li>
               </ul>
             </div>
