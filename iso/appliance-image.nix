@@ -1550,7 +1550,27 @@ JSONEND
       if [ -f /mnt/boot/EFI/systemd/systemd-bootx64.efi ]; then
         mkdir -p /mnt/boot/EFI/BOOT
         cp /mnt/boot/EFI/systemd/systemd-bootx64.efi /mnt/boot/EFI/BOOT/BOOTX64.EFI
-        log "UEFI fallback: installed BOOTX64.EFI for removable-media auto-scan"
+        # v36 fix: explicit sync + verify-read-back. FAT32 (ESP) is
+        # notoriously bad about dirty buffers; without this, the `cp`
+        # can land in the kernel page cache and NEVER reach the disk
+        # before `umount -R /mnt` runs later. Observed 2026-04-16 on
+        # t740: first boot worked from USB, reboot hit PXE because
+        # BOOTX64.EFI hadn't actually persisted to the internal ESP.
+        sync /mnt/boot/EFI/BOOT/BOOTX64.EFI 2>/dev/null || sync
+        # Verify the copy actually landed by reading it back.
+        if [ -f /mnt/boot/EFI/BOOT/BOOTX64.EFI ] && \
+           [ "$(stat -c %s /mnt/boot/EFI/BOOT/BOOTX64.EFI 2>/dev/null || echo 0)" -gt 0 ]; then
+          log "UEFI fallback: installed BOOTX64.EFI for removable-media auto-scan (size=$(stat -c %s /mnt/boot/EFI/BOOT/BOOTX64.EFI))"
+        else
+          log "ERROR: BOOTX64.EFI copy failed verification — ESP may not be writable or sync incomplete"
+          # Retry once with explicit O_SYNC-style dd. Matches the dd
+          # pattern we use for the raw image write itself.
+          dd if=/mnt/boot/EFI/systemd/systemd-bootx64.efi \
+             of=/mnt/boot/EFI/BOOT/BOOTX64.EFI \
+             bs=4K conv=fsync 2>>"$LOG_FILE" && \
+          log "UEFI fallback: BOOTX64.EFI re-copied via dd+fsync"
+        fi
+        sync
       else
         log "WARN: systemd-bootx64.efi not found at /mnt/boot/EFI/systemd/ — BOOTX64.EFI fallback NOT installed"
       fi
