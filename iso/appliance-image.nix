@@ -65,7 +65,7 @@ let
   # Build the Go appliance daemon (replaces Python compliance-agent)
   # Single source of truth for the installer-ISO daemon version. Bump here
   # AND in appliance-disk-image.nix when the daemon binary version changes.
-  daemonVersion = "0.4.5";
+  daemonVersion = "0.4.6";
 
   appliance-daemon-go = pkgs.buildGoModule {
     pname = "appliance-daemon";
