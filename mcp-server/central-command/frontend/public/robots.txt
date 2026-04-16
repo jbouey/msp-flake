@@ -20,6 +20,13 @@ User-agent: *
 Allow: /
 Allow: /pricing
 Allow: /for-msps
+Allow: /2026-hipaa-update
+Allow: /compare/
+Allow: /compare/vanta
+Allow: /compare/drata
+Allow: /compare/delve
+Allow: /blog
+Allow: /blog/
 Allow: /legal/privacy
 Allow: /legal/terms
 Allow: /legal/baa

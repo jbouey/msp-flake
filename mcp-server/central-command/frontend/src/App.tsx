@@ -55,6 +55,16 @@ const AdminOAuthSettings = lazy(() => import('./pages/AdminOAuthSettings'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const RecoveryLanding = lazy(() => import('./pages/RecoveryLanding'));
 const PublicChangelog = lazy(() => import('./pages/PublicChangelog'));
+const Hipaa2026Update = lazy(() => import('./pages/Hipaa2026Update'));
+const ForMsps = lazy(() => import('./pages/ForMsps'));
+const CompareVanta = lazy(() => import('./pages/CompareVanta'));
+const CompareDrata = lazy(() => import('./pages/CompareDrata'));
+const CompareDelve = lazy(() => import('./pages/CompareDelve'));
+const Blog = lazy(() => import('./pages/Blog'));
+const BlogHipaa2026Ops = lazy(() => import('./pages/blog/BlogHipaa2026Ops'));
+const BlogProveFast = lazy(() => import('./pages/blog/BlogProveFast'));
+const BlogEvidenceVsPolicy = lazy(() => import('./pages/blog/BlogEvidenceVsPolicy'));
+const BlogMultiSiteDso = lazy(() => import('./pages/blog/BlogMultiSiteDso'));
 const Legal = lazy(() => import('./pages/Legal'));
 const Pricing = lazy(() => import('./pages/Pricing'));
 const Signup = lazy(() => import('./pages/Signup'));
@@ -506,6 +516,33 @@ const App: React.FC = () => {
                     changes with dates, categories, and links to security
                     advisories. Read by auditors. */}
                 <Route path="/changelog" element={<PublicChangelog />} />
+
+                {/* Marketing content cluster — 2026 HIPAA guide, MSP page,
+                    comparisons, blog. All live on www.osiriscare.net and
+                    are accessible on dashboard.osiriscare.net as well
+                    (same URLs, same content) for internal linking. */}
+                <Route path="/2026-hipaa-update" element={<Hipaa2026Update />} />
+                <Route path="/for-msps" element={<ForMsps />} />
+                <Route path="/compare/vanta" element={<CompareVanta />} />
+                <Route path="/compare/drata" element={<CompareDrata />} />
+                <Route path="/compare/delve" element={<CompareDelve />} />
+                <Route path="/blog" element={<Blog />} />
+                <Route
+                  path="/blog/2026-hipaa-rule-for-healthcare-operations"
+                  element={<BlogHipaa2026Ops />}
+                />
+                <Route
+                  path="/blog/prove-hipaa-compliance-to-your-auditor-in-minutes"
+                  element={<BlogProveFast />}
+                />
+                <Route
+                  path="/blog/cryptographic-evidence-vs-policy-documents"
+                  element={<BlogEvidenceVsPolicy />}
+                />
+                <Route
+                  path="/blog/multi-site-hipaa-compliance-at-dso-scale"
+                  element={<BlogMultiSiteDso />}
+                />
 
                 {/* Public status page (Session 206 #144). Unauthenticated
                     per-site status at /status/{unguessable-slug}. */}
