@@ -167,7 +167,7 @@ in
   environment.etc."osiriscare-build.json".text = builtins.toJSON {
     git_sha = builtFrom.git_sha;
     git_dirty = builtFrom.dirty;
-    installer_version = "v33";
+    installer_version = "v38";
     builder = "nix";
     note = "Run `cat /etc/osiriscare-build.json` from the live TTY shell on a failed install — the git_sha tells us which source tree to debug.";
   };
@@ -407,7 +407,7 @@ EOF
       exec 2> >(tee -a "$LOG_FILE" >&2)
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v37"
+      INSTALLER_VERSION="v38"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
@@ -689,6 +689,38 @@ JSONEND
           -H "X-Install-Token: ''${INSTALL_TOKEN}" \
           --data @/tmp/msp-install-complete.json \
           "''${API_BASE}/api/install/report/complete" >> "$LOG_FILE" 2>&1 || log "post_complete_report: curl failed (non-fatal)"
+      }
+
+      # v38 (Session 208): POST install halt telemetry. Non-blocking, best-effort.
+      # Fires BEFORE any sleep 86400 so the operator doesn't stare at a cyan
+      # screen while Central Command thinks the box just fell off the network.
+      # Args: halt_stage halt_reason
+      post_halt_report() {
+        [ "''${NET_API:-false}" = "true" ] || return 0
+        local halt_stage="''${1:-unknown}"
+        local halt_reason="''${2:-unknown}"
+        local log_tail
+        log_tail=$(tail -20 "$LOG_FILE" 2>/dev/null | sed 's/"/\\"/g; s/$/\\n/' | tr -d '\n' || echo "")
+        local body
+        body=$(cat <<JSONEND
+{
+  "installer_id": "''${INSTALLER_ID}",
+  "installer_version": "''${INSTALLER_VERSION}",
+  "halt_stage": "''${halt_stage}",
+  "halt_reason": "''${halt_reason}",
+  "hw_product": "''${HW_PRODUCT}",
+  "bios_vendor": "''${HW_BIOS_VENDOR}",
+  "bios_version": "''${HW_BIOS_VERSION}",
+  "log_tail": "''${log_tail}"
+}
+JSONEND
+)
+        echo "$body" > /tmp/msp-install-halt.json
+        curl -sS --connect-timeout 5 -m 10 -X POST \
+          -H "Content-Type: application/json" \
+          -H "X-Install-Token: ''${INSTALL_TOKEN}" \
+          --data @/tmp/msp-install-halt.json \
+          "''${API_BASE}/api/install/report/halt" >> "$LOG_FILE" 2>&1 || log "post_halt_report: curl failed (non-fatal)"
       }
 
       # Verify the image was written correctly by reading back and computing SHA256.
@@ -976,10 +1008,60 @@ JSONEND
           log "HW compat: dmidecode product unknown — skipping check"
           return 0
         fi
-        local entry
+
+        # v38: relaxed match. Try exact first (preserves existing yaml keys),
+        # then trim-and-lowercase (handles trailing whitespace + case drift),
+        # then substring against a known-model token list.
+        # Observed in the wild: "HP t740 Thin Client " (trailing space),
+        # "HP T740 Thin Client" (case diff). Exact-match dropped all of these.
+        local entry=""
+        local matched_key="$HW_PRODUCT"
         entry=$(${pkgs.yq}/bin/yq -r --arg k "$HW_PRODUCT" '.models[$k] // empty' "$hw_yaml" 2>/dev/null || echo "")
         if [ -z "$entry" ]; then
+          local product_norm
+          product_norm=$(echo "$HW_PRODUCT" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+          local candidate_key
+          candidate_key=$(${pkgs.yq}/bin/yq -r '.models | keys[]' "$hw_yaml" 2>/dev/null | while read -r k; do
+            local k_norm
+            k_norm=$(echo "$k" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+            if [ "$k_norm" = "$product_norm" ]; then
+              echo "$k"; break
+            fi
+          done | head -1)
+          if [ -n "$candidate_key" ]; then
+            entry=$(${pkgs.yq}/bin/yq -r --arg k "$candidate_key" '.models[$k] // empty' "$hw_yaml" 2>/dev/null || echo "")
+            matched_key="$candidate_key"
+            log "HW compat: matched via normalized fallback — '$HW_PRODUCT' → '$candidate_key'"
+          fi
+        fi
+        if [ -z "$entry" ]; then
+          # Substring fallback against known-model tokens. Lets a future
+          # matrix expansion include aliases without another ISO cut.
+          local product_lc
+          product_lc=$(echo "$HW_PRODUCT" | tr '[:upper:]' '[:lower:]')
+          for token in t740 t640 t630 t730; do
+            if echo "$product_lc" | grep -q "$token"; then
+              local candidate_key
+              candidate_key=$(${pkgs.yq}/bin/yq -r '.models | keys[]' "$hw_yaml" 2>/dev/null | while read -r k; do
+                local k_lc
+                k_lc=$(echo "$k" | tr '[:upper:]' '[:lower:]')
+                if echo "$k_lc" | grep -q "$token"; then echo "$k"; break; fi
+              done | head -1)
+              if [ -n "$candidate_key" ]; then
+                entry=$(${pkgs.yq}/bin/yq -r --arg k "$candidate_key" '.models[$k] // empty' "$hw_yaml" 2>/dev/null || echo "")
+                matched_key="$candidate_key"
+                log "HW compat: matched via token fallback — '$HW_PRODUCT' contains '$token' → '$candidate_key'"
+                break
+              fi
+            fi
+          done
+        fi
+
+        if [ -z "$entry" ]; then
           log "HW compat: $HW_PRODUCT NOT on certified list — halting install"
+          # v38: tell Central Command BEFORE the 24h sleep so the halt is
+          # visible in fleet UI instead of appearing as a silent install_loop.
+          post_halt_report "check_hardware_compat" "unknown_product"
           # Pretty halt screen — operator can read it on tty1.
           clear_screen
           echo ""
@@ -1005,9 +1087,10 @@ JSONEND
           exit 1
         fi
         local tested
-        tested=$(${pkgs.yq}/bin/yq -r --arg k "$HW_PRODUCT" '.models[$k].tested' "$hw_yaml" 2>/dev/null || echo "false")
+        tested=$(${pkgs.yq}/bin/yq -r --arg k "$matched_key" '.models[$k].tested' "$hw_yaml" 2>/dev/null || echo "false")
         if [ "$tested" != "true" ]; then
           log "HW compat: $HW_PRODUCT listed but tested=false — halting install"
+          post_halt_report "check_hardware_compat" "tested_false"
           clear_screen
           echo ""
           echo -e "  ''${YELLOW}HARDWARE PARTIALLY KNOWN, NOT YET CERTIFIED''${RESET}"
@@ -1017,7 +1100,7 @@ JSONEND
           sleep 86400
           exit 1
         fi
-        log "HW compat: $HW_PRODUCT certified (tested=true) — proceeding"
+        log "HW compat: $HW_PRODUCT certified (tested=true, matched=$matched_key) — proceeding"
       }
       check_hardware_compat
 

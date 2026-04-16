@@ -267,6 +267,15 @@ in
       # compromised daemon with root can no longer patch the kernel
       # or modify boot-integrity signals to cover its tracks.
       "lockdown=integrity"
+      # v38 (Session 208): disable kernel audit. modules/compliance-agent.nix
+      # used to enable auditd with execve rules on the installed system, which
+      # produced events faster than kauditd could drain → backlog overflow →
+      # console spam → userspace starved → sshd + daemon never came up.
+      # The live ISO already sets this (iso/appliance-image.nix:178). Every
+      # box installed from v25–v37 inherited the bug; v38 fixes the installed
+      # system to match. Evidence-chain + OTS proofs cover compliance
+      # attestation without needing in-kernel audit.
+      "audit=0"
     ];
     blacklistedKernelModules = [
       "hid_logitech_hidpp"

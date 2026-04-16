@@ -841,8 +841,15 @@ in
     # Ensure systemd-timesyncd is enabled for NTP
     services.timesyncd.enable = mkDefault true;
 
-    # Enable auditd for logging systemd-journald restarts
-    security.auditd.enable = mkDefault true;
+    # v38 (Session 208): auditd disabled by default.
+    # When enabled with execve rules (prior default), kauditd backlog
+    # overflows at boot on the appliance hardware → console spam →
+    # userspace starves → sshd + appliance-daemon never come up.
+    # Every installed system shipped from v25–v37 inherited this bug.
+    # Evidence chain + OTS proofs cover compliance attestation; no
+    # in-kernel audit required. Re-enable explicitly + set
+    # kernel.audit_backlog_limit=8192 if you actually need it.
+    security.auditd.enable = mkDefault false;
 
     # Daily evidence pruner
     systemd.timers.compliance-agent-prune-evidence = {

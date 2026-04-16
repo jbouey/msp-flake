@@ -104,6 +104,24 @@ class InstallReportComplete(BaseModel):
     duration_s: Optional[int] = None
 
 
+class InstallReportHalt(BaseModel):
+    """Installer halted BEFORE complete — HW-compat gate, disk eligibility, etc.
+
+    Session 208 v38: the HW-compat gate used to `sleep 86400` without ever
+    posting anything to Central Command, so an uncertified box showed as
+    a silent install_loop. Now every bounded-halt path calls this first.
+    """
+
+    installer_id: str
+    installer_version: Optional[str] = None
+    halt_stage: str = Field(..., description="installer function name, e.g. check_hardware_compat")
+    halt_reason: str = Field(..., description="short machine code, e.g. unknown_product")
+    hw_product: Optional[str] = None
+    bios_vendor: Optional[str] = None
+    bios_version: Optional[str] = None
+    log_tail: Optional[str] = None
+
+
 @router.post("/report/start", dependencies=[Depends(require_install_token)])
 async def post_install_start(
     report: InstallReportStart,
@@ -223,6 +241,97 @@ async def post_install_complete(
             "success": report.success,
             "error_step": report.error_step,
             "duration_s": report.duration_s,
+        },
+    )
+    return {"status": "recorded"}
+
+
+@router.post("/report/halt", dependencies=[Depends(require_install_token)])
+async def post_install_halt(
+    report: InstallReportHalt,
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Record a halt from the installer before it could complete.
+
+    Idempotent — updating is fine, the column set only grows. If the
+    installer posted /report/start first we UPDATE; if it halted before
+    post_start_report could fire (unusual but possible), we INSERT a
+    minimal row keyed by installer_id.
+    """
+    result = await execute_with_retry(
+        db,
+        text(
+            """
+            UPDATE install_reports SET
+                halted_at = NOW(),
+                halt_stage = :stage,
+                halt_reason = :reason,
+                halt_log_tail = :log_tail,
+                product_name = COALESCE(:hw_product, product_name),
+                bios_vendor = COALESCE(:bios_vendor, bios_vendor),
+                bios_version = COALESCE(:bios_version, bios_version),
+                installer_version = COALESCE(:version, installer_version),
+                updated_at = NOW()
+            WHERE installer_id = :installer_id
+            """
+        ),
+        {
+            "installer_id": report.installer_id,
+            "stage": report.halt_stage,
+            "reason": report.halt_reason,
+            "log_tail": report.log_tail,
+            "hw_product": report.hw_product,
+            "bios_vendor": report.bios_vendor,
+            "bios_version": report.bios_version,
+            "version": report.installer_version,
+        },
+    )
+    # If no row was matched, the halt beat the start post — insert the
+    # minimum set so the event is never lost.
+    if getattr(result, "rowcount", 0) == 0:
+        await execute_with_retry(
+            db,
+            text(
+                """
+                INSERT INTO install_reports (
+                    installer_id, installer_version,
+                    product_name, bios_vendor, bios_version,
+                    halted_at, halt_stage, halt_reason, halt_log_tail,
+                    install_started_at
+                ) VALUES (
+                    :installer_id, :version,
+                    :hw_product, :bios_vendor, :bios_version,
+                    NOW(), :stage, :reason, :log_tail,
+                    NOW()
+                )
+                ON CONFLICT (installer_id) DO UPDATE SET
+                    halted_at = EXCLUDED.halted_at,
+                    halt_stage = EXCLUDED.halt_stage,
+                    halt_reason = EXCLUDED.halt_reason,
+                    halt_log_tail = EXCLUDED.halt_log_tail,
+                    updated_at = NOW()
+                """
+            ),
+            {
+                "installer_id": report.installer_id,
+                "version": report.installer_version,
+                "hw_product": report.hw_product,
+                "bios_vendor": report.bios_vendor,
+                "bios_version": report.bios_version,
+                "stage": report.halt_stage,
+                "reason": report.halt_reason,
+                "log_tail": report.log_tail,
+            },
+        )
+    await db.commit()
+
+    logger.warning(
+        "Install halt recorded",
+        extra={
+            "installer_id": report.installer_id,
+            "halt_stage": report.halt_stage,
+            "halt_reason": report.halt_reason,
+            "hw_product": report.hw_product,
         },
     )
     return {"status": "recorded"}
