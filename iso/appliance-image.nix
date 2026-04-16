@@ -407,7 +407,7 @@ EOF
       exec 2> >(tee -a "$LOG_FILE" >&2)
       export TERM=linux
       export LANG=en_US.UTF-8
-      INSTALLER_VERSION="v35"
+      INSTALLER_VERSION="v36"
       INSTALL_TOKEN="${installerToken}"
       API_BASE="${installerApiBase}"
       # v17 (Session 206): enterprise install flow — NEVER blocks on network.
@@ -571,11 +571,21 @@ EOF
         # DHCP success = we got an IP
         if [ -n "$NET_IP" ]; then NET_DHCP="true"; else NET_DHCP="false"; fi
 
-        # NTP sync — try once, best-effort
+        # NTP sync — try once, best-effort.
+        # v36: actually SET the system clock, not just probe. Thin
+        # clients with dead RTC batteries boot with wildly wrong time
+        # and then all TLS cert validation fails (x509: certificate
+        # has expired or is not yet valid). One sync = avoids that
+        # whole class of "install looks broken" reports.
         if timeout 15 ntpdate -u pool.ntp.org >/dev/null 2>&1; then
           NET_NTP="true"
+          log "NTP sync: clock now $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        elif timeout 15 ntpdate -u time.nist.gov >/dev/null 2>&1; then
+          NET_NTP="true"
+          log "NTP sync via NIST fallback: clock now $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         else
           NET_NTP="false"
+          log "WARNING: NTP sync failed — TLS calls may fail on boxes with dead RTC batteries"
         fi
 
         # API reachability — tries curl with short timeout, accepts any 2xx/3xx/4xx

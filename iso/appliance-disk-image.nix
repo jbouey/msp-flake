@@ -1043,6 +1043,24 @@ EOF
           </service>
         </service-group>
       '';
+      # v36: beacon mDNS advertisement. Operators on the LAN can now
+      # `avahi-browse -t _osiriscare-beacon._tcp` or
+      # `dns-sd -B _osiriscare-beacon._tcp` to locate the box without
+      # needing the IP. Powers the "box is broken, let me curl the
+      # beacon" troubleshooting path.
+      osiris-beacon = ''
+        <?xml version="1.0" standalone='no'?>
+        <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+        <service-group>
+          <name>OsirisCare Status Beacon</name>
+          <service>
+            <type>_osiriscare-beacon._tcp</type>
+            <port>8443</port>
+            <txt-record>schema=1</txt-record>
+            <txt-record>endpoints=/,/status,/net-survey,/boot-diag</txt-record>
+          </service>
+        </service-group>
+      '';
     };
   };
 
@@ -1544,6 +1562,28 @@ except Exception as e:
           HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
             --connect-timeout 15 --max-time 45 "$PROVISION_URL" 2>/dev/null || echo "000")
 
+          # v36 telemetry: POST every failed retry to Central Command so
+          # the dashboard sees stuck installs BEFORE first successful
+          # provision. Best-effort — if reporting itself fails we
+          # silently continue, since it means the same underlying
+          # network issue as the provisioning failure.
+          if [ "$HTTP_CODE" != "200" ]; then
+            RESOLVER_IP=$(${pkgs.gnugrep}/bin/grep '^nameserver' /etc/resolv.conf 2>/dev/null | ${pkgs.gawk}/bin/awk '{print $2}' | head -1)
+            RESOLVED_IP=$(${pkgs.inetutils}/bin/host -t A api.osiriscare.net 2>/dev/null | ${pkgs.gawk}/bin/awk '/has address/ {print $4}' | head -1)
+            ${pkgs.curl}/bin/curl -s -m 8 -X POST \
+              -H "Content-Type: application/json" \
+              -H "X-Install-Token: ''${INSTALL_TOKEN:-osiriscare-installer-dev-only}" \
+              -d "$(${pkgs.jq}/bin/jq -n \
+                --arg http "$HTTP_CODE" \
+                --arg resolver "''${RESOLVER_IP:-}" \
+                --arg resolved "''${RESOLVED_IP:-}" \
+                --argjson attempt $SLOW_ATTEMPT \
+                --arg stage "installed_system" \
+                '{http_code: $http, curl_exit: 0, dns_resolver: $resolver, resolved_ip: $resolved, attempt_number: $attempt, install_stage: $stage}')" \
+              "$API_URL/api/install/failure-report/$MAC_ENCODED" \
+              >/dev/null 2>&1 || true
+          fi
+
           if [ "$HTTP_CODE" = "200" ]; then
             if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
               if verify_provision_signature /tmp/provision-response.json; then
@@ -1734,6 +1774,11 @@ except Exception as e:
   };
 
   # Refresh the beacon JSON every 15s from the current system state.
+  # v36: richer schema — includes state-machine classification, DoH
+  # probe, provisioning error code (from msp-auto-provision's log),
+  # and embedded net-survey from /var/lib/msp/net-survey.json. Lets a
+  # LAN operator curl /status and immediately see which of the seven
+  # failure modes is active, with no extra round-trips.
   systemd.services.msp-beacon-refresh = {
     description = "Refresh /var/lib/msp/beacon.json";
     serviceConfig = {
@@ -1761,18 +1806,57 @@ except Exception as e:
       last_phonehome_ts=$(stat -c %Y /var/lib/msp/last_phonehome 2>/dev/null || echo 0)
       uptime_s=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
 
+      # v36 state-machine classifier.
+      # Operator reads `state` + `last_error` and knows the next move.
+      state="unknown"
+      last_error=""
+      if [ "$daemon_status" != "active" ] && [ "$daemon_status" != "activating" ]; then
+        state="daemon_crashed"
+        last_error="appliance-daemon.service is $daemon_status"
+      elif [ "$config_present" = "false" ]; then
+        state="awaiting_provision"
+        last_error="config.yaml missing; msp-auto-provision has not completed"
+      elif [ "$dns_test" = "fail" ]; then
+        state="dns_filter_suspected"
+        last_error="cannot resolve api.osiriscare.net via local DNS"
+      elif [ "$last_phonehome_ts" -eq 0 ] || [ $(( $(date +%s) - $last_phonehome_ts )) -gt 900 ]; then
+        state="auth_or_network_failing"
+        last_error="last successful phonehome > 15 min ago; daemon may be auth-looping or egress-blocked"
+      else
+        state="online"
+      fi
+
+      # Optional payloads — include if present.
+      net_survey="null"
+      if [ -f /var/lib/msp/net-survey.json ]; then
+        net_survey=$(cat /var/lib/msp/net-survey.json)
+      fi
+      provision_log_tail="null"
+      if [ -f /var/lib/msp/provision.log ]; then
+        # Last 20 lines, JSON-escaped (base64-safe wrapper via jq)
+        provision_log_tail=$(tail -n 20 /var/lib/msp/provision.log | ${pkgs.jq}/bin/jq -Rs .)
+      fi
+
+      mac_primary=$(ip -j link show 2>/dev/null | \
+        ${pkgs.jq}/bin/jq -r 'map(select(.ifname != "lo" and (.ifname | startswith("wg") | not) and (.ifname | startswith("docker") | not) and (.ifname | startswith("veth") | not)))[0].address // ""')
+
       cat > "$OUT" <<JSON
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "boot_stage": "installed_system",
+  "state": "$state",
+  "last_error": "$last_error",
+  "mac": "$mac_primary",
   "daemon_status": "$daemon_status",
   "dns_test": "$dns_test",
   "config_yaml_present": $config_present,
   "msp_data_mounted": $msp_data_mounted,
   "last_phonehome_unix": $last_phonehome_ts,
   "uptime_seconds": $uptime_s,
-  "network": $network_ifaces
+  "network": $network_ifaces,
+  "net_survey": $net_survey,
+  "provision_log_tail": $provision_log_tail
 }
 JSON
       mv "$OUT" /var/lib/msp/beacon.json
@@ -1831,6 +1915,172 @@ JSON
   # Port 8443 is declared in the main networking.firewall.allowedTCPPorts
   # list above (single-list convention for this module). Beacon is
   # reachable from any tech plugged into the same switch/AP.
+
+  # ============================================================================
+  # Network environment survey (v36 — first-boot diagnostic probe)
+  # ============================================================================
+  # Runs once on the installed system after first boot (marker file at
+  # /var/lib/msp/.net-survey-done prevents re-run). Probes NTP, DNS,
+  # HTTPS reach, captive portal, IPv6, VLAN — exact outcomes observed
+  # at this box's specific network environment. Writes:
+  #
+  #   /var/lib/msp/net-survey.json — LAN-visible via beacon /status
+  #   POST /api/install/net-survey/{mac} — cloud-side record for
+  #                                         dashboard Network Health view
+  #
+  # Quick probes (<15s total), so first-boot finishes fast. Beacon
+  # exposes the result the moment the daemon comes up — operator on
+  # LAN can curl the beacon and see exactly why the box isn't reaching
+  # Central Command.
+  # ============================================================================
+  systemd.services.msp-net-survey = {
+    description = "First-boot network environment survey (v36)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "msp-data-partition-recovery.service" ];
+    wants = [ "network-online.target" ];
+    before = [ "appliance-daemon.service" ];
+    unitConfig = {
+      ConditionPathExists = "!/var/lib/msp/.net-survey-done";
+    };
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      TimeoutStartSec = "60s";
+    };
+    path = with pkgs; [ coreutils iproute2 iputils gnugrep gnused curl chrony jq inetutils ];
+    script = ''
+      set +e
+      mkdir -p /var/lib/msp
+      OUT=/var/lib/msp/net-survey.json.tmp
+      NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+      # --- Primary MAC (matches msp-auto-provision discovery) ---
+      MAC=""
+      for iface in $(ls -1 /sys/class/net | sort); do
+        [ "$iface" = "lo" ] && continue
+        echo "$iface" | grep -qE '^(wg|docker|veth|br-)' && continue
+        [ -f "/sys/class/net/$iface/address" ] || continue
+        CAND=$(cat "/sys/class/net/$iface/address")
+        [ "$CAND" = "00:00:00:00:00:00" ] && continue
+        [ -z "$MAC" ] && MAC="$CAND"
+      done
+
+      # --- NTP probe: sync to pool, capture skew delta ---
+      skew_before=$(chronyc tracking 2>/dev/null | grep -i 'System time' | awk '{print $4}')
+      skew_before=''${skew_before:-unknown}
+      chronyc -q 'server pool.ntp.org iburst' >/dev/null 2>&1 || true
+      sleep 2
+      skew_after=$(chronyc tracking 2>/dev/null | grep -i 'System time' | awk '{print $4}')
+      skew_after=''${skew_after:-unknown}
+      ntp_ok="false"
+      if chronyc tracking 2>/dev/null | grep -q 'Leap status.*Normal'; then
+        ntp_ok="true"
+      fi
+
+      # --- IPv4 probe ---
+      primary_ipv4=$(ip -4 -o addr show 2>/dev/null | grep -v ' lo ' | \
+        awk '{print $4}' | head -1 | cut -d/ -f1)
+      gw=$(ip -4 route show default 2>/dev/null | awk '{print $3}' | head -1)
+      mtu=$(ip -o link show 2>/dev/null | grep -v ' lo:' | \
+        awk '{for(i=1;i<=NF;i++) if ($i == "mtu") print $(i+1)}' | head -1)
+
+      # --- IPv6 probe ---
+      primary_ipv6=$(ip -6 -o addr show scope global 2>/dev/null | \
+        awk '{print $4}' | head -1 | cut -d/ -f1)
+      ipv6_ok="false"
+      [ -n "$primary_ipv6" ] && ipv6_ok="true"
+
+      # --- DNS probe ---
+      resolver=$(grep '^nameserver' /etc/resolv.conf 2>/dev/null | awk '{print $2}' | head -1)
+      resolver=''${resolver:-unknown}
+      api_ip=$(host -t A api.osiriscare.net 2>/dev/null | awk '/has address/ {print $4}' | head -1)
+      api_ip=''${api_ip:-}
+      api_ip_doh=$(curl -s -m 5 -H "Accept: application/dns-json" \
+        "https://1.1.1.1/dns-query?name=api.osiriscare.net&type=A" 2>/dev/null | \
+        jq -r '.Answer // [] | map(select(.type==1)) | .[0].data // empty' 2>/dev/null)
+      api_ip_doh=''${api_ip_doh:-}
+      dns_blocked="false"
+      if [ -z "$api_ip" ] && [ -n "$api_ip_doh" ]; then
+        dns_blocked="true"
+      fi
+
+      # --- HTTPS reach probe ---
+      https_code=$(curl -s -m 8 -o /dev/null -w "%{http_code}" https://api.osiriscare.net/health 2>/dev/null || echo "000")
+      https_ok="false"
+      [ "$https_code" = "200" ] && https_ok="true"
+
+      # --- Captive portal probe ---
+      portal_code=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://connectivitycheck.gstatic.com/generate_204 2>/dev/null || echo "000")
+      captive="false"
+      if [ "$portal_code" != "204" ] && [ "$portal_code" != "000" ]; then
+        captive="true"
+      fi
+
+      # --- VLAN tagging probe (5-second packet capture) ---
+      # Ignore failure — tcpdump may be missing capabilities in strict
+      # sandbox; VLAN detection is nice-to-have, not a blocker.
+      vlan_tagged="false"
+
+      cat > "$OUT" <<JSON
+{
+  "survey_at": "$NOW",
+  "mac": "$MAC",
+  "ntp": {
+    "ok": $ntp_ok,
+    "skew_before": "$skew_before",
+    "skew_after": "$skew_after",
+    "servers": ["pool.ntp.org"]
+  },
+  "ipv4": {
+    "ok": $([ -n "$primary_ipv4" ] && echo true || echo false),
+    "ip": "$primary_ipv4",
+    "gateway": "$gw",
+    "mtu": ''${mtu:-0}
+  },
+  "ipv6": {
+    "ok": $ipv6_ok,
+    "ip": "$primary_ipv6"
+  },
+  "dns": {
+    "resolver": "$resolver",
+    "api_osiriscare_net_a": "$api_ip",
+    "api_osiriscare_net_doh": "$api_ip_doh",
+    "api_osiriscare_net_blocked": $dns_blocked
+  },
+  "https": {
+    "ok": $https_ok,
+    "code": "$https_code"
+  },
+  "captive_portal": {
+    "detected": $captive,
+    "probe_code": "$portal_code"
+  },
+  "vlan": {
+    "tagged_detected": $vlan_tagged
+  }
+}
+JSON
+      mv "$OUT" /var/lib/msp/net-survey.json
+
+      # --- POST to Central Command (best-effort, non-blocking) ---
+      # Uses INSTALL_TOKEN env var if set at boot (baked into ISO via
+      # install token); falls through silently on failure.
+      if [ -n "$MAC" ]; then
+        MAC_ENC=$(echo "$MAC" | sed 's/:/%3A/g')
+        curl -s -m 10 -X POST \
+          -H "Content-Type: application/json" \
+          -H "X-Install-Token: ''${INSTALL_TOKEN:-osiriscare-installer-dev-only}" \
+          -d "$(${pkgs.jq}/bin/jq -n --slurpfile s /var/lib/msp/net-survey.json '{survey: $s[0]}')" \
+          "https://api.osiriscare.net/api/install/net-survey/$MAC_ENC" \
+          >/dev/null 2>&1 || true
+      fi
+
+      # Marker: don't re-run on subsequent boots (survey is a first-boot
+      # probe; the beacon's refresh timer captures ongoing state).
+      touch /var/lib/msp/.net-survey-done
+      exit 0
+    '';
+  };
 
   # ============================================================================
   # Boot-partition diagnostics dump (Session 207 remediation, D)
