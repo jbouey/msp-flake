@@ -113,6 +113,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/devices/sync",     # Device inventory sync from appliances (API-key auth)
         "/api/logs/",            # Log ingestion from appliances (API-key auth)
         "/api/install/report/",  # Installer telemetry /start + /complete (X-Install-Token auth, pre-checkin)
+        "/api/install/failure-report/",  # v36: per-MAC provisioning failure reports (X-Install-Token)
+        "/api/install/net-survey/",      # v36: per-MAC first-boot network environment survey (X-Install-Token)
         "/incidents/",           # Incident resolve from appliances (machine-to-machine)
         "/api/escalations",      # Agent L3 escalations from appliances (machine-to-machine)
         # --- Webhooks (external service callbacks with their own auth) ---
