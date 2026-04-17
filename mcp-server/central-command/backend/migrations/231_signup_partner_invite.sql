@@ -45,8 +45,32 @@ COMMENT ON COLUMN signup_sessions.partner_id IS
 
 -- subscriptions.partner_id — NULL = direct-to-clinic (OsirisCare is BA).
 -- Non-NULL = MSP-resold (OsirisCare is subcontractor under MSP BAA).
+--
+-- Migration 224 created this column as TEXT as a placeholder ("non-null if came
+-- via MSP partner (future)"). The FK to partners(id::uuid) makes it UUID now.
+-- Conversion is safe: the subscriptions table is empty in every environment
+-- at the time this migration runs (pre-launch).
+DO $$
+DECLARE
+    current_type TEXT;
+BEGIN
+    SELECT data_type INTO current_type
+      FROM information_schema.columns
+     WHERE table_name = 'subscriptions' AND column_name = 'partner_id';
+
+    IF current_type IS NULL THEN
+        ALTER TABLE subscriptions ADD COLUMN partner_id UUID;
+    ELSIF current_type <> 'uuid' THEN
+        ALTER TABLE subscriptions ALTER COLUMN partner_id TYPE UUID
+            USING CASE
+                WHEN partner_id IS NULL OR partner_id = '' THEN NULL
+                ELSE partner_id::uuid
+            END;
+    END IF;
+END $$;
+
 ALTER TABLE subscriptions
-    ADD COLUMN IF NOT EXISTS partner_id UUID;
+    DROP CONSTRAINT IF EXISTS subscriptions_partner_fk;
 
 ALTER TABLE subscriptions
     ADD CONSTRAINT subscriptions_partner_fk
