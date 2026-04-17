@@ -90,6 +90,42 @@ def test_get_heartbeat_returns_none_for_missing():
     assert bg_heartbeat.get_heartbeat("nothing_recorded") is None
 
 
+def test_drain_loops_are_always_fresh():
+    """Drain loops (e.g. ots_resubmit) heartbeat when work arrives, not
+    on a fixed clock. The staleness classifier must never flag them
+    stale, even when their last heartbeat is hours old."""
+    import bg_heartbeat
+    bg_heartbeat._heartbeats.clear()
+
+    for name in bg_heartbeat.DRAIN_LOOPS:
+        bg_heartbeat.record_heartbeat(name)
+        # Backdate beyond any conceivable clock-based threshold
+        bg_heartbeat._heartbeats[name]["last_seen"] = time.time() - 86400 * 365
+        snap = bg_heartbeat.get_all_heartbeats()
+        assert bg_heartbeat.assess_staleness(snap[name]) == "fresh", (
+            f"drain loop {name!r} should classify 'fresh' even when idle"
+        )
+
+
+def test_drain_loops_not_in_expected_intervals():
+    """A loop must be EITHER clock-driven (in EXPECTED_INTERVAL_S) OR
+    drain-driven (in DRAIN_LOOPS), never both. Both = ambiguous
+    classification under a deep idle."""
+    import bg_heartbeat
+    overlap = bg_heartbeat.DRAIN_LOOPS & set(bg_heartbeat.EXPECTED_INTERVAL_S.keys())
+    assert not overlap, (
+        f"loops classified as both clock-driven and drain-driven: {overlap}"
+    )
+
+
+def test_phantom_detector_calibrated():
+    """phantom_detector_healthy substrate invariant depends on this
+    calibration; if it's missing, the invariant returns 'unknown' and
+    a silent-crash of the detector goes undetected."""
+    import bg_heartbeat
+    assert bg_heartbeat.EXPECTED_INTERVAL_S.get("phantom_detector") == 300
+
+
 def test_thread_safety_basic():
     """Smoke test — many concurrent record calls don't drop iterations."""
     import bg_heartbeat

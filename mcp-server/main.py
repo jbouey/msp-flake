@@ -585,11 +585,12 @@ async def _ots_resubmit_expired_loop():
 
                 if not expired_proofs:
                     logger.info(
-                        "OTS resubmission drain complete",
+                        "OTS resubmission drain idle",
                         total_resubmitted=total_resubmitted,
                         total_failed=total_failed,
                     )
-                    return
+                    await asyncio.sleep(3600)
+                    continue
 
                 batch_ok = 0
                 batch_fail = 0

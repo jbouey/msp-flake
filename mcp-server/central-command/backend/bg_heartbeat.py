@@ -76,18 +76,20 @@ def get_heartbeat(loop_name: str) -> Dict[str, Any] | None:
 
 # Expected iteration interval per loop. Used by the health endpoint
 # to decide if a loop is "stale" (last_seen older than 3x interval).
+# MUST match the `await asyncio.sleep(...)` cadence of the actual loop.
+# A miscalibrated entry produces a permanent false positive — classified
+# "stale" forever — which hides real stuck loops in the noise.
 # Add new loops here as you instrument them.
 EXPECTED_INTERVAL_S: Dict[str, int] = {
     "privileged_notifier": 60,
     "chain_tamper_detector": 3600,
     "retention_verifier": 2592000,  # 30d
     "fleet_order_expiry": 300,
-    "merkle_batch": 600,
+    "merkle_batch": 3600,  # main.py:1593 sleeps 3600
     "audit_log_retention": 86400,
     "health_monitor": 60,
     "ots_upgrade": 1800,
-    "ots_resubmit": 3600,
-    "evidence_chain_check": 1800,
+    "evidence_chain_check": 86400,  # main.py:1571 sleeps 86400 (daily)
     "alert_digest": 600,
     "compliance_packets": 3600,
     "healing_sla": 600,
@@ -98,12 +100,28 @@ EXPECTED_INTERVAL_S: Dict[str, int] = {
     "regime_change_detector": 3600,
     "threshold_tuner": 86400,
     "exemplar_miner": 86400,
+    "phantom_detector": 300,
+    "heartbeat_rollup": 60,
+}
+
+
+# Loops whose job is to drain-and-idle rather than tick on a schedule.
+# They wake up, consume work if any exists, and then sleep a long time.
+# Their heartbeat cadence is driven by *work arriving*, not by a clock,
+# so the 3x-expected threshold doesn't apply. The health classifier
+# treats them as 'fresh' as long as the loop is still registered.
+DRAIN_LOOPS: set = {
+    "ots_resubmit",
 }
 
 
 def assess_staleness(entry: Dict[str, Any]) -> str:
     """Returns 'fresh' | 'stale' | 'unknown' for a heartbeat entry."""
-    expected = EXPECTED_INTERVAL_S.get(entry["loop_name"])
+    name = entry["loop_name"]
+    if name in DRAIN_LOOPS:
+        # Drain loops heartbeat when work shows up; idle is healthy.
+        return "fresh"
+    expected = EXPECTED_INTERVAL_S.get(name)
     if expected is None:
         return "unknown"
     return "stale" if entry["age_s"] > 3 * expected else "fresh"

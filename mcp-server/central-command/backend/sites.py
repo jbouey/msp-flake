@@ -7,6 +7,7 @@ that modify site data directly.
 import json
 import os
 import time
+import ipaddress
 import secrets
 import logging
 import uuid as _uuid
@@ -83,6 +84,57 @@ async def require_appliance_auth(request: Request) -> str:
         logger.warning(f"Appliance auth REJECTED: site={site_id} invalid API key")
 
     raise HTTPException(status_code=401, detail="Invalid API key for site")
+
+
+def _is_routable_ip(raw: str, *, allow_anycast: bool = True) -> bool:
+    """False for unintentional APIPA (169.254/16 except the engineered
+    mesh anycast 169.254.88.1), IPv6 link-local (fe80::/10), loopback,
+    multicast, unspecified, and unparseable garbage. True for RFC1918
+    + WireGuard + public addresses AND for the anycast sentinel.
+
+    IMPORTANT: 169.254.88.1 is the mesh anycast address intentionally
+    assigned to every online appliance. Stripping it would break the
+    `missing_anycast` anomaly detector and make every healthy appliance
+    look broken. The whitelist is explicit so a future refactor can't
+    silently remove it.
+
+    Rationale for the rest: an appliance whose only *other* IPs are
+    APIPA has NOT successfully re-joined the network post-outage; we
+    must not persist those as the current address or the admin console
+    shows a ghost. The rollup + subnet-drift heuristics also
+    mis-classify APIPA as a real move, causing site re-segmentation
+    alerts.
+    """
+    if not raw or not isinstance(raw, str):
+        return False
+    s = raw.strip()
+    if allow_anycast and s == ANYCAST_LINK_LOCAL:
+        return True
+    try:
+        addr = ipaddress.ip_address(s)
+    except (ValueError, TypeError):
+        return False
+    if addr.is_link_local:          # covers 169.254/16 AND fe80::/10
+        return False
+    if addr.is_loopback or addr.is_unspecified or addr.is_multicast:
+        return False
+    return True
+
+
+def filter_routable_ips(raw_ips) -> list:
+    """Drop unintentional APIPA + IPv6 link-local + junk. Preserves the
+    engineered mesh anycast 169.254.88.1. Returns list in original
+    order, deduplicated. Empty list is a legitimate answer (caller
+    must decide).
+    """
+    ips = parse_ip_addresses(raw_ips)
+    seen: set = set()
+    out: list = []
+    for ip in ips:
+        if _is_routable_ip(ip) and ip not in seen:
+            seen.add(ip)
+            out.append(ip)
+    return out
 
 
 def parse_ip_addresses(raw_ips) -> list:
@@ -3020,6 +3072,24 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     # SECURITY: Use auth_site_id from Bearer token, not checkin.site_id from body.
     # This prevents an appliance from spoofing another site's checkin.
     checkin.site_id = auth_site_id
+
+    # HYGIENE (Session 209): drop APIPA / IPv6 link-local / junk IPs.
+    # An appliance emerging from a DHCP outage may briefly carry a
+    # 169.254.x address before a lease returns; persisting it makes
+    # the admin console show the stale APIPA as "current" even after
+    # recovery. Filter once at the edge so every downstream consumer
+    # (rollup matview, heartbeat row, subnet-drift detector, mesh
+    # target assigner) sees only routable IPs.
+    if checkin.ip_addresses:
+        _raw = list(checkin.ip_addresses)
+        _clean = filter_routable_ips(_raw)
+        if len(_clean) != len(_raw):
+            logger.info(
+                "checkin_ip_sanitize site=%s mac=%s dropped=%s kept=%s",
+                checkin.site_id, checkin.mac_address,
+                [ip for ip in _raw if ip not in _clean], _clean,
+            )
+        checkin.ip_addresses = _clean
 
     pool = await get_pool()
     now = datetime.now(timezone.utc)

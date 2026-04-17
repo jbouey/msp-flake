@@ -2730,8 +2730,8 @@ async def _raise_liveness_lie_if_not_suppressed(conn, row):
 
     import json as _json
     await conn.execute("""
-        INSERT INTO admin_audit_log (username, action, target, details, success)
-        VALUES ('system:phantom_detector', 'APPLIANCE_LIVENESS_LIE', $1, $2::jsonb, true)
+        INSERT INTO admin_audit_log (username, action, target, details)
+        VALUES ('system:phantom_detector', 'APPLIANCE_LIVENESS_LIE', $1, $2::jsonb)
     """, row['appliance_id'], _json.dumps(details))
 
     # D3 claim ledger: cite the (missing) heartbeat that should have existed.

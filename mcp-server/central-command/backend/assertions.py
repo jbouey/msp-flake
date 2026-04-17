@@ -344,6 +344,96 @@ async def _check_mesh_ring_health(conn: asyncpg.Connection) -> List[Violation]:
     return []
 
 
+async def _check_phantom_detector_healthy(conn: asyncpg.Connection) -> List[Violation]:
+    """The phantom detector is an orthogonal liveness verifier — it
+    cross-checks heartbeats against other signals and flags appliances
+    that CLAIM online but lie. If it stops running, a whole layer of
+    the liveness defense silently disappears. 2026-04-16 incident:
+    schema drift made phantom_detector_loop crash every 5 min for
+    hours with no external signal. In-process heartbeat registry +
+    this invariant turn silent-crash into a Sev1 within two ticks.
+    """
+    # Triple-fallback import: relative when run as part of the
+    # `dashboard_api` package (production + CI), absolute when tests
+    # or scripts poke assertions.py directly.
+    try:
+        from .bg_heartbeat import get_heartbeat
+    except ImportError:
+        try:
+            from dashboard_api.bg_heartbeat import get_heartbeat  # pragma: no cover
+        except ImportError:
+            from bg_heartbeat import get_heartbeat  # type: ignore
+    hb = get_heartbeat("phantom_detector")
+    if hb is None:
+        # Process just started — give the loop a cycle to register.
+        return []
+    if hb["age_s"] > 900:  # 3x the 300s cadence
+        return [
+            Violation(
+                site_id=None,
+                details={
+                    "loop": "phantom_detector",
+                    "age_s": hb["age_s"],
+                    "iterations": hb["iterations"],
+                    "errors": hb["errors"],
+                    "interpretation": "phantom_detector loop has not heartbeat "
+                    "in > 15 min; orthogonal liveness verification is silently "
+                    "disabled. Check mcp-server logs for an exception traceback.",
+                },
+            )
+        ]
+    return []
+
+
+async def _check_heartbeat_write_divergence(conn: asyncpg.Connection) -> List[Violation]:
+    """site_appliances.last_checkin is maintained by the UPSERT in the
+    checkin handler. appliance_heartbeats is maintained by a SEPARATE
+    INSERT wrapped in a savepoint. If the INSERT silently fails (bad
+    partition, schema drift, constraint), last_checkin stays fresh
+    but heartbeat history stops — every downstream consumer that
+    reads heartbeats (rollup MV, SLA, cadence anomaly) quietly
+    drifts. This invariant closes the loop."""
+    rows = await conn.fetch(
+        """
+        SELECT
+            sa.site_id,
+            sa.appliance_id,
+            sa.hostname,
+            sa.last_checkin,
+            (SELECT MAX(observed_at)
+               FROM appliance_heartbeats
+              WHERE appliance_id = sa.appliance_id) AS last_heartbeat
+          FROM site_appliances sa
+         WHERE sa.deleted_at IS NULL
+           AND sa.status = 'online'
+           AND sa.last_checkin > NOW() - INTERVAL '10 minutes'
+        """
+    )
+    out: List[Violation] = []
+    for r in rows:
+        lc = r["last_checkin"]
+        lh = r["last_heartbeat"]
+        # No heartbeat ever, OR last_checkin > 10 min ahead of last_heartbeat
+        if lh is None or (lc - lh).total_seconds() > 600:
+            out.append(
+                Violation(
+                    site_id=r["site_id"],
+                    details={
+                        "appliance_id": r["appliance_id"],
+                        "hostname": r["hostname"],
+                        "last_checkin": lc.isoformat() if lc else None,
+                        "last_heartbeat": lh.isoformat() if lh else None,
+                        "lag_s": (lc - lh).total_seconds() if lh else None,
+                        "interpretation": "checkin UPSERT is succeeding but "
+                        "heartbeat INSERT is failing (likely missing monthly "
+                        "partition, schema drift, or constraint violation). "
+                        "Check mcp-server logs for 'heartbeat insert failed'.",
+                    },
+                )
+            )
+    return out
+
+
 # Ordered list of registered assertions. Add new ones at the bottom.
 ALL_ASSERTIONS: List[Assertion] = [
     Assertion(
@@ -515,6 +605,18 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Appliance physical relocation detected > 24h ago but no operator acknowledgment bundle has chained to the detection. HIPAA §164.310(d)(1) requires movement tracking with reason; unacknowledged moves could indicate theft, tampering, or shadow IT. Surface in the admin panel until acknowledged via POST /api/admin/appliances/{id}/acknowledge-relocation.",
         check=lambda c: _check_appliance_moved_unack(c),
     ),
+    Assertion(
+        name="phantom_detector_healthy",
+        severity="sev1",
+        description="The phantom_detector_loop (orthogonal liveness verifier) must heartbeat within 15 min. Silent crash = entire layer of phantom-appliance-online defense silently disabled. 2026-04-16 incident: schema drift crashed it for hours undetected.",
+        check=_check_phantom_detector_healthy,
+    ),
+    Assertion(
+        name="heartbeat_write_divergence",
+        severity="sev1",
+        description="site_appliances.last_checkin fresh but appliance_heartbeats lags 10+ min behind OR is NULL. Checkin UPSERT succeeding but heartbeat INSERT savepoint is being silently caught — every downstream consumer (rollup MV, SLA, cadence anomaly detector) is drifting.",
+        check=_check_heartbeat_write_divergence,
+    ),
 ]
 
 
@@ -681,6 +783,20 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "category + free-text detail. If this move was NOT expected, treat as a security "
             "incident: verify physical location, check for tampering, investigate shadow IT. "
             "HIPAA §164.310(d)(1) audit trail.",
+    },
+    "phantom_detector_healthy": {
+        "display_name": "Phantom-appliance detector is not running",
+        "recommended_action": "Grep mcp-server logs for 'phantom_detector' or "
+            "'APPLIANCE_LIVENESS_LIE'. Most likely cause is a schema drift between the "
+            "INSERT statement and admin_audit_log columns. Re-deploy after fixing, "
+            "then verify via /api/admin/health/loops.",
+    },
+    "heartbeat_write_divergence": {
+        "display_name": "Heartbeat INSERT failing silently",
+        "recommended_action": "Grep mcp-server logs for 'heartbeat insert failed'. "
+            "Usually caused by a missing monthly partition on appliance_heartbeats. "
+            "Run the partition-creation migration or extend the monthly cron. "
+            "Until fixed, cadence anomaly + uptime SLA metrics are unreliable.",
     },
 }
 
