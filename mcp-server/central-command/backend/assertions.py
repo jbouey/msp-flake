@@ -617,6 +617,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="site_appliances.last_checkin fresh but appliance_heartbeats lags 10+ min behind OR is NULL. Checkin UPSERT succeeding but heartbeat INSERT savepoint is being silently caught — every downstream consumer (rollup MV, SLA, cadence anomaly detector) is drifting.",
         check=_check_heartbeat_write_divergence,
     ),
+    Assertion(
+        name="journal_upload_never_received",
+        severity="sev3",
+        description="An appliance has been checking in continuously for >24h but has never POSTed a journal batch. Either the msp-journal-upload.timer is not deployed on the host (older ISO predating Session 207), or the very first attempt is failing silently. Forensics path is broken for this appliance — incident investigation cannot use the hash-chained journal archive.",
+        check=lambda c: _check_journal_upload_never_received(c),
+    ),
 ]
 
 
@@ -797,6 +803,14 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "Usually caused by a missing monthly partition on appliance_heartbeats. "
             "Run the partition-creation migration or extend the monthly cron. "
             "Until fixed, cadence anomaly + uptime SLA metrics are unreliable.",
+    },
+    "journal_upload_never_received": {
+        "display_name": "Appliance has never shipped a journal batch",
+        "recommended_action": "Re-image the appliance with the current ISO "
+            "(post-Session-207 builds include msp-journal-upload.timer). Verify "
+            "/api/journal/upload is reachable from the site's egress allowlist. "
+            "Without this, forensics after an incident cannot use the hash-chained "
+            "journal archive for that appliance.",
     },
 }
 
@@ -1090,6 +1104,60 @@ async def _check_journal_upload_stale(conn: asyncpg.Connection) -> List[Violatio
                     "Common causes: daemon crash-loop (see watchdog_reports"
                     "_daemon_down), egress allowlist blocking /api/journal/"
                     "upload (see Phase H1 config), or full LAN outage."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_journal_upload_never_received(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """An appliance has been alive >24h but has never shipped a journal
+    batch. Complements `journal_upload_stale` — which only fires for
+    appliances that uploaded once and then stopped.
+
+    The two together cover:
+      never uploaded    → `journal_upload_never_received` (deploy gap)
+      uploaded once+    → `journal_upload_stale`          (runtime gap)
+
+    Without this check, a fleet can silently lack forensics forever
+    as long as the very first upload never lands (older ISO, broken
+    egress allowlist, endpoint misconfig). Post-mortem: 2026-04-17
+    found journal_upload_events=0 in production across 4 appliances.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT sa.site_id, sa.appliance_id, sa.hostname, sa.agent_version,
+               sa.first_checkin,
+               EXTRACT(EPOCH FROM (NOW() - sa.first_checkin))/3600 AS alive_hours
+          FROM site_appliances sa
+          LEFT JOIN journal_upload_events j
+                 ON j.appliance_id = sa.appliance_id
+         WHERE sa.deleted_at IS NULL
+           AND sa.first_checkin IS NOT NULL
+           AND sa.first_checkin < NOW() - INTERVAL '24 hours'
+           AND sa.last_checkin > NOW() - INTERVAL '1 hour'
+         GROUP BY sa.site_id, sa.appliance_id, sa.hostname,
+                  sa.agent_version, sa.first_checkin
+        HAVING COUNT(j.id) = 0
+         LIMIT 200
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": r["appliance_id"],
+                "hostname": r["hostname"],
+                "agent_version": r["agent_version"],
+                "alive_hours": float(r["alive_hours"] or 0),
+                "remediation": (
+                    "Appliance lacks msp-journal-upload.timer — re-image "
+                    "with current ISO (post-Session-207) or verify the "
+                    "timer unit is enabled and /api/journal/upload is "
+                    "reachable from the appliance egress allowlist."
                 ),
             },
         )

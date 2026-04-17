@@ -2529,22 +2529,35 @@ async def heartbeat_rollup_loop():
         await asyncio.sleep(HEARTBEAT_ROLLUP_REFRESH_SECONDS)
 
 
+def _migration_db_url() -> str:
+    """Return the superuser-scoped URL for DDL. Falls back to DATABASE_URL
+    so dev environments without the extra env var still work (and surface
+    the permission error loudly if the app user can't CREATE)."""
+    url = os.getenv("MIGRATION_DATABASE_URL") or os.getenv("DATABASE_URL", "")
+    if "+asyncpg" in url:
+        url = url.replace("postgresql+asyncpg://", "postgresql://")
+    return url
+
+
 async def heartbeat_partition_maintainer_loop():
     """Ensure next N months of appliance_heartbeats partitions exist.
 
-    Runs hourly. Creates missing partitions for today + lookahead
-    months ahead. Idempotent — CREATE TABLE IF NOT EXISTS.
+    Runs hourly. Idempotent — CREATE TABLE IF NOT EXISTS.
+
+    Opens a direct asyncpg connection to MIGRATION_DATABASE_URL (superuser,
+    bypasses PgBouncer) rather than using the app pool. The app role
+    (mcp_app) lacks CREATE on schema public, so DDL must run as the
+    migration superuser. The connection is single-shot — opened, used,
+    closed — so we never hold a long-lived superuser socket open.
     """
-    from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    import asyncpg as _asyncpg
 
     await asyncio.sleep(120)
     while True:
         _hb("heartbeat_partition_maintainer")
         try:
-            pool = await get_pool()
-            async with admin_connection(pool) as conn:
-                # Compute the month ranges we need and ensure partitions.
+            conn = await _asyncpg.connect(_migration_db_url())
+            try:
                 await conn.execute(f"""
                     DO $$
                     DECLARE
@@ -2565,6 +2578,8 @@ async def heartbeat_partition_maintainer_loop():
                     END
                     $$;
                 """)
+            finally:
+                await conn.close()
         except asyncio.CancelledError:
             break
         except Exception as e:

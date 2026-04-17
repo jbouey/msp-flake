@@ -215,3 +215,129 @@ def test_heartbeat_divergence_multiple_appliances():
     result = asyncio.run(a._check_heartbeat_write_divergence(StubConn(fetch_rows=rows)))
     assert len(result) == 1
     assert result[0].details["appliance_id"] == "bad"
+
+
+# ── journal_upload_never_received ───────────────────────────────────────
+
+def test_journal_never_received_empty_is_quiet():
+    """No appliances that fit the criteria. Must not fire."""
+    a = _load_assertions()
+    result = asyncio.run(
+        a._check_journal_upload_never_received(StubConn(fetch_rows=[]))
+    )
+    assert result == []
+
+
+def test_journal_never_received_fires_per_row():
+    """Appliance alive >24h, zero uploads → one violation per row.
+    The SQL handles the filtering; the check function just maps rows
+    to Violation objects. Verify the mapping is correct."""
+    a = _load_assertions()
+    rows = [
+        {
+            "site_id": "site-a",
+            "appliance_id": "a1",
+            "hostname": "osiriscare-1",
+            "agent_version": "0.4.4",
+            "first_checkin": datetime.now(timezone.utc) - timedelta(days=3),
+            "alive_hours": 72.5,
+        },
+        {
+            "site_id": "site-b",
+            "appliance_id": "b1",
+            "hostname": "osiriscare-2",
+            "agent_version": "0.4.5",
+            "first_checkin": datetime.now(timezone.utc) - timedelta(days=10),
+            "alive_hours": 240.0,
+        },
+    ]
+    result = asyncio.run(
+        a._check_journal_upload_never_received(StubConn(fetch_rows=rows))
+    )
+    assert len(result) == 2
+    assert {v.site_id for v in result} == {"site-a", "site-b"}
+    for v in result:
+        assert "hostname" in v.details
+        assert "agent_version" in v.details
+        assert "alive_hours" in v.details
+        assert v.details["alive_hours"] > 0
+        assert "remediation" in v.details
+
+
+def test_journal_never_received_carries_version_for_triage():
+    """The violation MUST include agent_version — without it, an
+    operator can't tell whether re-imaging is the right action (old
+    agent = feature missing, new agent = real bug)."""
+    a = _load_assertions()
+    rows = [{
+        "site_id": "site-a",
+        "appliance_id": "a1",
+        "hostname": "h1",
+        "agent_version": "0.4.4",
+        "first_checkin": datetime.now(timezone.utc) - timedelta(days=3),
+        "alive_hours": 72.0,
+    }]
+    result = asyncio.run(
+        a._check_journal_upload_never_received(StubConn(fetch_rows=rows))
+    )
+    assert result[0].details["agent_version"] == "0.4.4"
+
+
+# ── heartbeat_partition_maintainer URL plumbing ─────────────────────────
+
+def test_partition_maintainer_uses_migration_url_when_set(monkeypatch):
+    """The maintainer MUST use MIGRATION_DATABASE_URL (superuser) for
+    DDL. Using the app-pool DATABASE_URL (mcp_app) fails with
+    InsufficientPrivilegeError — the exact bug this fix addresses."""
+    try:
+        from dashboard_api import background_tasks as bt
+    except Exception:
+        import background_tasks as bt  # type: ignore
+
+    monkeypatch.setenv(
+        "MIGRATION_DATABASE_URL",
+        "postgresql://mcp:pw@mcp-postgres:5432/mcp",
+    )
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://mcp_app:pw@pgbouncer:6432/mcp",
+    )
+    got = bt._migration_db_url()
+    assert got == "postgresql://mcp:pw@mcp-postgres:5432/mcp", (
+        "DDL must go direct to postgres as mcp superuser, not through "
+        "PgBouncer as mcp_app"
+    )
+
+
+def test_partition_maintainer_falls_back_to_database_url(monkeypatch):
+    """Dev environments without the extra env var should still boot —
+    the permission error will fire loudly at runtime, not at startup."""
+    try:
+        from dashboard_api import background_tasks as bt
+    except Exception:
+        import background_tasks as bt  # type: ignore
+
+    monkeypatch.delenv("MIGRATION_DATABASE_URL", raising=False)
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql://mcp:pw@localhost:5432/mcp"
+    )
+    got = bt._migration_db_url()
+    assert got.startswith("postgresql://")
+
+
+def test_partition_maintainer_strips_asyncpg_dialect(monkeypatch):
+    """SQLAlchemy-dialect URLs must be rewritten before asyncpg.connect
+    — otherwise asyncpg raises UnknownProtocolError."""
+    try:
+        from dashboard_api import background_tasks as bt
+    except Exception:
+        import background_tasks as bt  # type: ignore
+
+    monkeypatch.delenv("MIGRATION_DATABASE_URL", raising=False)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://mcp:pw@localhost:5432/mcp",
+    )
+    got = bt._migration_db_url()
+    assert got == "postgresql://mcp:pw@localhost:5432/mcp"
+    assert "+asyncpg" not in got
