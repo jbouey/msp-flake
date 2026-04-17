@@ -143,9 +143,4 @@ BEGIN
     END IF;
 END $$;
 
-
-INSERT INTO schema_migrations (version, applied_at, checksum)
-VALUES ('230_partner_tables_rls', NOW(), 'n/a')
-ON CONFLICT (version) DO NOTHING;
-
 COMMIT;

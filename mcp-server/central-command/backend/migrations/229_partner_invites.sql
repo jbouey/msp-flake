@@ -93,9 +93,4 @@ COMMENT ON TABLE partner_invites IS
     'partner must have active MSA+BAA+Reseller to create. Plaintext token '
     'returned only at create-time; subsequent lookups use SHA256 hash.';
 
-
-INSERT INTO schema_migrations (version, applied_at, checksum)
-VALUES ('229_partner_invites', NOW(), 'n/a')
-ON CONFLICT (version) DO NOTHING;
-
 COMMIT;

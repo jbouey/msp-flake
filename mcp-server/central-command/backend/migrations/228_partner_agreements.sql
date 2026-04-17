@@ -118,9 +118,4 @@ SELECT DISTINCT ON (partner_id, agreement_type)
  WHERE effective_until IS NULL OR effective_until > NOW()
  ORDER BY partner_id, agreement_type, signed_at DESC;
 
-
-INSERT INTO schema_migrations (version, applied_at, checksum)
-VALUES ('228_partner_agreements', NOW(), 'n/a')
-ON CONFLICT (version) DO NOTHING;
-
 COMMIT;

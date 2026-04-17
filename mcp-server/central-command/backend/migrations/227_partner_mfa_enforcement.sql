@@ -80,10 +80,4 @@ CREATE INDEX IF NOT EXISTS idx_partner_users_mfa_grace
 COMMENT ON COLUMN partner_users.mfa_required IS
     'Enforced by partner_auth gate. Grace window governed by mfa_grace_period_until.';
 
-
--- Record in schema_migrations (standard pattern since Session 205)
-INSERT INTO schema_migrations (version, applied_at, checksum)
-VALUES ('227_partner_mfa_enforcement', NOW(), 'n/a')
-ON CONFLICT (version) DO NOTHING;
-
 COMMIT;

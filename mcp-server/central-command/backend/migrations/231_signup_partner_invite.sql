@@ -62,9 +62,4 @@ COMMENT ON COLUMN subscriptions.partner_id IS
     'consumption). NULL = direct-to-clinic. Non-NULL = MSP is the BA '
     'and OsirisCare is subcontractor under Migration 228 MSA+BAA chain.';
 
-
-INSERT INTO schema_migrations (version, applied_at, checksum)
-VALUES ('231_signup_partner_invite', NOW(), 'n/a')
-ON CONFLICT (version) DO NOTHING;
-
 COMMIT;
