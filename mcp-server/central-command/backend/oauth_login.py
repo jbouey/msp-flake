@@ -67,7 +67,7 @@ PKCE_CODE_VERIFIER_LENGTH = 64  # 64 bytes = 512 bits
 STATE_TTL_SECONDS = 600  # 10 minutes
 
 # Frontend URLs
-FRONTEND_BASE_URL = os.getenv("FRONTEND_URL", "https://dashboard.osiriscare.net")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_URL", "https://www.osiriscare.net")
 
 
 # =============================================================================

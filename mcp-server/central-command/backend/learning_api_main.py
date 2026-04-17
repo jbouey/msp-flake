@@ -98,7 +98,7 @@ async def _send_promotion_notification(req: PromotionReportRequest, db: AsyncSes
                     f"<td>{c.get('stats', {}).get('success_rate', 0):.1%}</td></tr>"
                 )
             body_parts.append("</table>")
-            body_parts.append("<p><a href='https://dashboard.osiriscare.net/learning'>Review in Dashboard</a></p>")
+            body_parts.append(f"<p><a href='{os.getenv('FRONTEND_URL', 'https://www.osiriscare.net')}/learning'>Review in Dashboard</a></p>")
 
         if req.candidates_promoted > 0:
             body_parts.append("<h3>Auto-Promoted Rules</h3>")
@@ -176,7 +176,7 @@ async def _notify_site_owner_promotion(
 
         subject = f"[{site_name}] {req.candidates_pending} automation rules ready for approval"
 
-        dashboard_url = os.getenv("DASHBOARD_URL", "https://dashboard.osiriscare.net")
+        dashboard_url = os.getenv("FRONTEND_URL", os.getenv("DASHBOARD_URL", "https://www.osiriscare.net"))
         approval_link = f"{dashboard_url}/learning?site={req.site_id}"
 
         body_parts = [

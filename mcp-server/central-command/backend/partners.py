@@ -2961,7 +2961,7 @@ async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: d
         "email": row['email'],
         "name": row['name'],
         "role": row['role'],
-        "magic_link": f"https://dashboard.osiriscare.net/partner/login?token={magic_token}",
+        "magic_link": f"{os.getenv('FRONTEND_URL', 'https://www.osiriscare.net')}/partner/login?token={magic_token}",
         "expires": magic_expires.isoformat(),
     }
 
@@ -2986,7 +2986,7 @@ async def generate_user_magic_link(partner_id: str, user_id: str, admin: dict = 
             raise HTTPException(status_code=404, detail="User not found")
 
     return {
-        "magic_link": f"https://dashboard.osiriscare.net/partner/login?token={magic_token}",
+        "magic_link": f"{os.getenv('FRONTEND_URL', 'https://www.osiriscare.net')}/partner/login?token={magic_token}",
         "expires": magic_expires.isoformat(),
         "email": result['email'],
     }

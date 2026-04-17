@@ -129,6 +129,10 @@ class SignupStart(BaseModel):
     billing_contact_name: str = Field(..., min_length=1, max_length=255)
     state: Optional[str] = Field(None, pattern=r"^[A-Z]{2}$")  # US state code
     plan: str
+    # Optional partner-invite token (from /signup?invite=…). Captured here
+    # so it survives /start → /checkout without re-posting from the client.
+    # Consumed in the Stripe webhook via consume_invite_for_signup().
+    partner_invite_token: Optional[str] = Field(None, min_length=1, max_length=256)
 
     @field_validator("plan")
     @classmethod
@@ -198,17 +202,46 @@ async def start_signup(req: SignupStart, request: Request) -> Dict[str, Any]:
         logger.error("stripe customer create failed email=%s err=%s", req.email, e, exc_info=True)
         raise HTTPException(status_code=502, detail=f"stripe customer create failed: {e}")
 
+    # If a partner invite token came in, validate + look up partner_id
+    # NOW so we fail fast on a bogus or consumed token — cheaper than
+    # letting the user sign the BAA + hit checkout only to error at
+    # webhook consumption. The token itself is stored on the row so we
+    # don't need to re-post it at /checkout.
+    partner_id: Optional[str] = None
+    if req.partner_invite_token:
+        from .partner_invites_api import _sha256_hex as _invite_sha256
+        async with (await get_pool()).acquire() as _vconn:  # read-only
+            invrow = await _vconn.fetchrow(
+                """
+                SELECT partner_id, expires_at, consumed_at, revoked_at
+                  FROM partner_invites
+                 WHERE token_sha256 = $1
+                """,
+                _invite_sha256(req.partner_invite_token),
+            )
+        if not invrow:
+            raise HTTPException(status_code=400, detail="partner invite not found")
+        if invrow["consumed_at"]:
+            raise HTTPException(status_code=409, detail="partner invite already used")
+        if invrow["revoked_at"]:
+            raise HTTPException(status_code=410, detail="partner invite revoked")
+        if invrow["expires_at"] and invrow["expires_at"] < datetime.now(timezone.utc):
+            raise HTTPException(status_code=410, detail="partner invite expired")
+        partner_id = str(invrow["partner_id"])
+
     pool = await get_pool()
     async with admin_connection(pool) as conn, conn.transaction():
         await conn.execute(
             """
             INSERT INTO signup_sessions
                 (signup_id, email, practice_name, billing_contact_name,
-                 state, plan, stripe_customer_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 state, plan, stripe_customer_id,
+                 partner_invite_token, partner_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             """,
             signup_id, req.email, req.practice_name, req.billing_contact_name,
             req.state, req.plan, customer.id,
+            req.partner_invite_token, partner_id,
         )
 
     logger.info(
@@ -320,7 +353,7 @@ async def create_checkout(req: SignupCheckout, request: Request) -> Dict[str, An
     async with admin_connection(pool) as conn, conn.transaction():
         row = await conn.fetchrow(
             "SELECT email, stripe_customer_id, plan, baa_signed_at, "
-            "       completed_at, expires_at "
+            "       completed_at, expires_at, partner_invite_token, partner_id "
             "  FROM signup_sessions WHERE signup_id = $1 FOR UPDATE",
             req.signup_id,
         )
@@ -360,6 +393,17 @@ async def create_checkout(req: SignupCheckout, request: Request) -> Dict[str, An
         # handler uses to correlate checkout.session.completed back to
         # the signup_sessions row. mode differs: one-time (pilot) vs
         # subscription (essentials/professional/enterprise).
+        # Checkout session metadata — the webhook reads this back. We pass
+        # the partner invite token through if present so that the webhook
+        # handler can atomically consume it via consume_invite_for_signup()
+        # and set subscriptions.partner_id. Stripe caps metadata values at
+        # 500 chars and keys at 40, both well over what we need.
+        checkout_metadata: Dict[str, str] = {"signup_id": req.signup_id, "plan": plan}
+        if row["partner_invite_token"]:
+            checkout_metadata["partner_invite_token"] = row["partner_invite_token"]
+        if row["partner_id"]:
+            checkout_metadata["partner_id"] = str(row["partner_id"])
+
         try:
             session = stripe.checkout.Session.create(
                 mode=plan_cfg["mode"],
@@ -367,7 +411,7 @@ async def create_checkout(req: SignupCheckout, request: Request) -> Dict[str, An
                 line_items=[{"price": price.id, "quantity": 1}],
                 success_url=req.success_url + "?session_id={CHECKOUT_SESSION_ID}",
                 cancel_url=req.cancel_url,
-                metadata={"signup_id": req.signup_id, "plan": plan},
+                metadata=checkout_metadata,
                 # Include ACH via Link/us_bank_account where available.
                 # Stripe auto-populates the methods allowed for the
                 # destination account; this hint nudges the UI toward ACH.
@@ -449,14 +493,42 @@ async def handle_checkout_completed_for_signup(event_data: Dict[str, Any]) -> No
     customer_id = session.get("customer")
     mode = session.get("mode")
     plan = metadata.get("plan", "")
+    partner_invite_token = metadata.get("partner_invite_token")
+
+    # Consume partner invite BEFORE marking signup complete — if consume
+    # fails (expired, revoked, already-consumed), the signup still completes
+    # but as a direct-to-clinic subscription (no partner_id set). Logged at
+    # WARNING so it surfaces in the monitoring stream.
+    consumed_invite: Optional[Dict[str, Any]] = None
+    if partner_invite_token:
+        try:
+            from .partner_invites_api import consume_invite_for_signup
+        except ImportError:
+            from partner_invites_api import consume_invite_for_signup  # type: ignore
+        consumed_invite = await consume_invite_for_signup(
+            partner_invite_token, signup_id,
+        )
+        if consumed_invite is None:
+            logger.warning(
+                "signup with partner_invite_token failed to consume signup_id=%s "
+                "— falling back to direct subscription (no partner_id)",
+                signup_id,
+            )
+    resolved_partner_id = (
+        consumed_invite["partner_id"] if consumed_invite else metadata.get("partner_id")
+    )
 
     pool = await get_pool()
     async with admin_connection(pool) as conn, conn.transaction():
-        # Mark signup completed (idempotent).
+        # Mark signup completed (idempotent) + clear the plaintext token
+        # so it isn't sitting in the DB after consumption.
         await conn.execute(
-            "UPDATE signup_sessions SET completed_at = COALESCE(completed_at, NOW()) "
-            "WHERE signup_id = $1",
-            signup_id,
+            "UPDATE signup_sessions "
+            "   SET completed_at = COALESCE(completed_at, NOW()), "
+            "       partner_invite_token = NULL, "
+            "       partner_id = COALESCE(partner_id, $2::uuid) "
+            " WHERE signup_id = $1",
+            signup_id, resolved_partner_id,
         )
 
         if mode == "subscription" and subscription_id:
@@ -475,14 +547,15 @@ async def handle_checkout_completed_for_signup(event_data: Dict[str, Any]) -> No
                 INSERT INTO subscriptions
                     (stripe_subscription_id, stripe_customer_id, plan, status,
                      trial_end, current_period_start, current_period_end,
-                     cancel_at_period_end, billing_mode)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'card')
+                     cancel_at_period_end, billing_mode, partner_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'card', $9::uuid)
                 ON CONFLICT (stripe_subscription_id) DO UPDATE SET
                     status                = EXCLUDED.status,
                     trial_end             = EXCLUDED.trial_end,
                     current_period_start  = EXCLUDED.current_period_start,
                     current_period_end    = EXCLUDED.current_period_end,
                     cancel_at_period_end  = EXCLUDED.cancel_at_period_end,
+                    partner_id            = COALESCE(subscriptions.partner_id, EXCLUDED.partner_id),
                     updated_at            = NOW()
                 """,
                 sub.id, customer_id, plan, sub.status,
@@ -490,6 +563,7 @@ async def handle_checkout_completed_for_signup(event_data: Dict[str, Any]) -> No
                 datetime.fromtimestamp(sub.current_period_start, tz=timezone.utc),
                 datetime.fromtimestamp(sub.current_period_end, tz=timezone.utc),
                 sub.cancel_at_period_end,
+                resolved_partner_id,
             )
         elif mode == "payment":
             # One-time (pilot) — write a pseudo-subscription row with a
@@ -503,12 +577,12 @@ async def handle_checkout_completed_for_signup(event_data: Dict[str, Any]) -> No
                 INSERT INTO subscriptions
                     (stripe_subscription_id, stripe_customer_id, plan, status,
                      trial_end, current_period_start, current_period_end,
-                     cancel_at_period_end, billing_mode)
-                VALUES ($1, $2, $3, 'trialing', $4, $5, $4, false, 'card')
+                     cancel_at_period_end, billing_mode, partner_id)
+                VALUES ($1, $2, $3, 'trialing', $4, $5, $4, false, 'card', $6::uuid)
                 ON CONFLICT (stripe_subscription_id) DO NOTHING
                 """,
                 f"pilot_{session.get('id', signup_id)}", customer_id, plan,
-                pilot_end, now,
+                pilot_end, now, resolved_partner_id,
             )
 
     logger.info(

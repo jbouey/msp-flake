@@ -37,9 +37,22 @@ const US_STATES: string[] = [
   'VA','WA','WV','WI','WY','DC',
 ];
 
+interface PartnerInvitePayload {
+  invite_id: string;
+  partner_name: string;
+  partner_slug: string;
+  partner_brand: string | null;
+  plan: string;
+  clinic_email: string | null;
+  clinic_name: string | null;
+  expires_at: string | null;
+}
+
 export const Signup: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+
+  const inviteToken = searchParams.get('invite');
 
   const initialPlan = searchParams.get('plan') || 'pilot';
   const [plan, setPlan] = useState(initialPlan in PLANS ? initialPlan : 'pilot');
@@ -50,9 +63,58 @@ export const Signup: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [invite, setInvite] = useState<PartnerInvitePayload | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteLoading, setInviteLoading] = useState<boolean>(!!inviteToken);
+
   useEffect(() => {
     document.title = `Sign up · ${BRANDING.name}`;
   }, []);
+
+  // Validate partner invite token if present in URL.
+  useEffect(() => {
+    if (!inviteToken) return;
+    let aborted = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/partner-invites/${encodeURIComponent(inviteToken)}/validate`,
+        );
+        if (aborted) return;
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          const msg =
+            res.status === 404
+              ? 'This invite link is not recognized.'
+              : res.status === 409
+                ? 'This invite has already been used.'
+                : res.status === 410
+                  ? 'This invite has expired or been revoked.'
+                  : body.detail || `HTTP ${res.status}`;
+          setInviteError(msg);
+          return;
+        }
+        const data: PartnerInvitePayload = await res.json();
+        setInvite(data);
+        // Preselect plan from invite (overrides ?plan= when both present).
+        if (data.plan in PLANS) {
+          setPlan(data.plan);
+        }
+        // Pre-fill clinic email / name from the invite as hints.
+        if (data.clinic_email) setEmail((prev) => prev || data.clinic_email!);
+        if (data.clinic_name) setPracticeName((prev) => prev || data.clinic_name!);
+      } catch (e) {
+        if (!aborted) {
+          setInviteError(e instanceof Error ? e.message : 'invite validation failed');
+        }
+      } finally {
+        if (!aborted) setInviteLoading(false);
+      }
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [inviteToken]);
 
   const planInfo = PLANS[plan];
 
@@ -61,20 +123,26 @@ export const Signup: React.FC = () => {
     setError(null);
     setSubmitting(true);
     try {
+      const body: Record<string, unknown> = {
+        email,
+        practice_name: practiceName,
+        billing_contact_name: billingContactName,
+        state: state || null,
+        plan,
+      };
+      // Only thread the token if it validated — prevents a bad token from
+      // tripping the backend's fail-fast check on every retry.
+      if (invite && inviteToken) {
+        body.partner_invite_token = inviteToken;
+      }
       const res = await fetch('/api/billing/signup/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          practice_name: practiceName,
-          billing_contact_name: billingContactName,
-          state: state || null,
-          plan,
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || `HTTP ${res.status}`);
+        const resBody = await res.json().catch(() => ({}));
+        throw new Error(resBody.detail || `HTTP ${res.status}`);
       }
       const data = await res.json();
       navigate(`/signup/baa?signup_id=${encodeURIComponent(data.signup_id)}`);
@@ -84,6 +152,8 @@ export const Signup: React.FC = () => {
       setSubmitting(false);
     }
   };
+
+  const partnerLabel = invite?.partner_brand || invite?.partner_name || null;
 
   return (
     <div className="min-h-screen bg-white" style={{ fontFamily: "'DM Sans', 'Helvetica Neue', system-ui, sans-serif" }}>
@@ -111,6 +181,32 @@ export const Signup: React.FC = () => {
       </nav>
 
       <div className="max-w-3xl mx-auto px-6 py-16">
+        {inviteLoading && (
+          <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 font-body">
+            Validating your invite link…
+          </div>
+        )}
+
+        {inviteError && (
+          <div className="mb-6 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900 font-body">
+            <strong>Invite link problem:</strong> {inviteError} You can still continue — you'll just
+            sign up directly with OsirisCare instead of through your MSP partner.
+          </div>
+        )}
+
+        {invite && partnerLabel && (
+          <div className="mb-6 rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 font-body">
+            <p className="text-sm font-semibold text-teal-900">
+              Invited by {partnerLabel}
+            </p>
+            <p className="mt-0.5 text-xs text-teal-800 leading-relaxed">
+              Your compliance appliance will be managed by <strong>{invite.partner_name}</strong> as
+              your MSP. OsirisCare is the attestation substrate — {invite.partner_name} holds the
+              operating relationship and your direct Business Associate Agreement.
+            </p>
+          </div>
+        )}
+
         <div className="mb-10">
           <p className="text-sm font-semibold uppercase tracking-widest mb-2 font-body" style={{ color: '#0d9488' }}>
             Step 1 of 3
@@ -124,7 +220,14 @@ export const Signup: React.FC = () => {
         <form onSubmit={onSubmit} className="space-y-6">
           {/* Plan selection */}
           <div>
-            <label className="block text-sm font-semibold text-slate-900 mb-3 font-body">Plan</label>
+            <label className="block text-sm font-semibold text-slate-900 mb-3 font-body">
+              Plan
+              {invite && (
+                <span className="ml-2 text-xs font-normal text-slate-500">
+                  (preselected by {partnerLabel})
+                </span>
+              )}
+            </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {(['pilot', 'essentials', 'professional', 'enterprise'] as const).map((p) => (
                 <button

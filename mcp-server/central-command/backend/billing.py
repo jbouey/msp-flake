@@ -35,6 +35,32 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
+# Public app origin — used for Stripe success/cancel/return URLs. dashboard.osiriscare.net
+# has no live DNS; default to the live marketing + app origin. Override via env.
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://www.osiriscare.net")
+
+# Partner plan catalog — keyed by plan enum, lookup_key matches the Stripe Price
+# lookup_key set at product creation. Mirrors client_signup.PLAN_CATALOG so a
+# Stripe price-id rotation never requires a redeploy. Amounts are display-only
+# here; Stripe is the source of truth for billed amounts.
+PARTNER_PLAN_CATALOG = {
+    "essentials": {
+        "lookup_key": "osiris-essentials-monthly",
+        "mode": "subscription",
+        "display_name": "Essentials",
+    },
+    "professional": {
+        "lookup_key": "osiris-professional-monthly",
+        "mode": "subscription",
+        "display_name": "Professional",
+    },
+    "enterprise": {
+        "lookup_key": "osiris-enterprise-monthly",
+        "mode": "subscription",
+        "display_name": "Enterprise",
+    },
+}
+
 if HAS_STRIPE and STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
 
@@ -47,15 +73,22 @@ router = APIRouter(prefix="/api/billing", tags=["billing"])
 # =============================================================================
 
 class CreateCheckoutSession(BaseModel):
-    """Model for creating a Stripe checkout session."""
-    price_id: str  # Stripe Price ID for the subscription plan
+    """Model for creating a Stripe checkout session.
+
+    Callers SHOULD send `plan` (one of PARTNER_PLAN_CATALOG keys) so we can
+    resolve the Stripe Price via lookup_key. `price_id` is retained for
+    back-compat with older frontend builds; one of the two must be provided.
+    """
+    plan: Optional[str] = None
+    price_id: Optional[str] = None
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
 
 
 class UpdateSubscription(BaseModel):
     """Model for updating subscription."""
-    price_id: Optional[str] = None  # New price ID to switch plans
+    plan: Optional[str] = None  # preferred — resolves via lookup_key
+    price_id: Optional[str] = None  # back-compat: explicit Price ID
     cancel_at_period_end: Optional[bool] = None
 
 
@@ -301,9 +334,35 @@ async def create_checkout_session(
         row['name']
     )
 
-    # Default URLs if not provided
-    success_url = request.success_url or "https://dashboard.osiriscare.net/partner?billing=success"
-    cancel_url = request.cancel_url or "https://dashboard.osiriscare.net/partner?billing=canceled"
+    # Default URLs if not provided — pinned to live app origin via FRONTEND_URL.
+    success_url = request.success_url or f"{FRONTEND_URL}/partner?billing=success"
+    cancel_url = request.cancel_url or f"{FRONTEND_URL}/partner?billing=canceled"
+
+    # Resolve Stripe Price — prefer plan → lookup_key so a Stripe price-id
+    # rotation doesn't break partner checkout. price_id retained for back-compat.
+    if request.plan:
+        plan_cfg = PARTNER_PLAN_CATALOG.get(request.plan)
+        if not plan_cfg:
+            raise HTTPException(
+                status_code=400,
+                detail=f"plan must be one of {sorted(PARTNER_PLAN_CATALOG.keys())}",
+            )
+        try:
+            prices = stripe.Price.list(lookup_keys=[plan_cfg["lookup_key"]], limit=1)
+        except stripe.error.StripeError as e:
+            logger.error("stripe price lookup failed plan=%s err=%s", request.plan, e, exc_info=True)
+            raise HTTPException(status_code=502, detail="Stripe price lookup failed.")
+        if not prices.data:
+            logger.error("no stripe price for lookup_key=%s", plan_cfg["lookup_key"])
+            raise HTTPException(
+                status_code=500,
+                detail=f"Stripe price not found for plan={request.plan}",
+            )
+        resolved_price_id = prices.data[0].id
+    elif request.price_id:
+        resolved_price_id = request.price_id
+    else:
+        raise HTTPException(status_code=400, detail="plan or price_id required")
 
     try:
         # Create Checkout Session
@@ -312,17 +371,19 @@ async def create_checkout_session(
             payment_method_types=["card"],
             mode="subscription",
             line_items=[{
-                "price": request.price_id,
+                "price": resolved_price_id,
                 "quantity": 1,
             }],
             success_url=success_url,
             cancel_url=cancel_url,
             metadata={
                 "partner_id": partner['id'],
+                "plan": request.plan or "",
             },
             subscription_data={
                 "metadata": {
                     "partner_id": partner['id'],
+                    "plan": request.plan or "",
                 }
             },
             # Allow promotion codes
@@ -361,7 +422,7 @@ async def create_customer_portal_session(partner=Depends(require_partner)):
     try:
         portal_session = stripe.billing_portal.Session.create(
             customer=row['stripe_customer_id'],
-            return_url="https://dashboard.osiriscare.net/partner",
+            return_url=f"{FRONTEND_URL}/partner",
         )
 
         return {

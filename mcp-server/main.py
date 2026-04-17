@@ -92,6 +92,11 @@ from dashboard_api.alert_router import digest_sender_loop
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router, session_router as partner_session_router
 from dashboard_api.billing import router as billing_router
+from dashboard_api.partner_agreements_api import router as partner_agreements_router
+from dashboard_api.partner_invites_api import (
+    partner_router as partner_invites_router,
+    public_router as partner_invites_public_router,
+)
 from dashboard_api.client_signup import router as client_signup_router
 from dashboard_api.client_billing import router as client_billing_router
 from dashboard_api.exceptions_api import router as exceptions_router
@@ -1880,6 +1885,9 @@ app.include_router(partner_auth_router, prefix="/api")  # Partner OAuth login en
 app.include_router(partner_session_router, prefix="/api/partner-auth")  # Partner TOTP management (session-auth)
 app.include_router(partner_admin_router, prefix="/api")  # Partner admin endpoints (pending, oauth-config)
 app.include_router(billing_router)  # Stripe billing for partners
+app.include_router(partner_agreements_router)  # Partner MSA + Subcontractor BAA + Reseller Addendum e-sign
+app.include_router(partner_invites_router)     # Partner→clinic invite create/list/revoke (auth)
+app.include_router(partner_invites_public_router)  # Partner→clinic invite validate (public, clinic-facing)
 app.include_router(client_signup_router)  # Client self-serve signup (pilot + paid tiers)
 app.include_router(client_billing_router)  # Logged-in client self-serve billing (status + Stripe Portal)
 app.include_router(exceptions_router)  # Compliance exceptions management

@@ -87,7 +87,7 @@ for _cat, _types in COMPLIANCE_CATEGORIES.items():
 # CONFIGURATION
 # =============================================================================
 
-BASE_URL = os.getenv("BASE_URL", "https://dashboard.osiriscare.net")
+BASE_URL = os.getenv("FRONTEND_URL", os.getenv("BASE_URL", "https://www.osiriscare.net"))
 
 # Session configuration
 SESSION_COOKIE_NAME = "osiris_client_session"

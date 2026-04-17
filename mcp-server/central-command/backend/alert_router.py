@@ -597,7 +597,7 @@ async def _check_non_engagement(conn) -> None:
   <p><strong>{safe_org_name}</strong> has <strong>{row['unacted_count']}</strong> unacted compliance alert(s) that have been pending for over {NON_ENGAGEMENT_HOURS} hours.</p>
   <p style="color:#64748b;">The client was notified but has not taken action. Please follow up.</p>
   <div style="margin-top:16px;text-align:center;">
-    <a href="https://dashboard.osiriscare.net/partners/orgs/{row['org_id']}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">View in Dashboard</a>
+    <a href="{os.getenv('FRONTEND_URL', 'https://www.osiriscare.net')}/partners/orgs/{row['org_id']}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">View in Dashboard</a>
   </div>
 </div>
 <div style="padding:12px;text-align:center;color:#94a3b8;font-size:11px;">OsirisCare Partner Alert</div>

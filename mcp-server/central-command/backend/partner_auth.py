@@ -58,7 +58,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_PARTNER_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_PARTNER_CLIENT_SECRET", "")
 
 # Base URL for redirects
-BASE_URL = os.getenv("BASE_URL", "https://dashboard.osiriscare.net")
+BASE_URL = os.getenv("FRONTEND_URL", os.getenv("BASE_URL", "https://www.osiriscare.net"))
 
 # Session configuration
 SESSION_COOKIE_NAME = "osiris_partner_session"
@@ -353,7 +353,7 @@ Name: {partner_name}
 Email: {partner_email}
 
 Please review and approve/reject at:
-https://dashboard.osiriscare.net/partners
+{BASE_URL}/partners
 
 This signup was created at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}."""
 
@@ -1091,20 +1091,26 @@ async def email_login(request: Request, body: EmailLoginRequest):
         if not verify_password(password, partner["password_hash"]):
             raise _generic_error
 
-        # Check MFA status (enabled + required)
+        # Check MFA status (enabled + required + grace window, Migration 227)
         mfa_row = await conn.fetchrow(
-            "SELECT mfa_enabled, mfa_required FROM partners WHERE id = $1", partner["id"]
+            "SELECT mfa_enabled, mfa_required, mfa_grace_period_until "
+            "  FROM partners WHERE id = $1", partner["id"]
         )
         mfa_enabled = mfa_row["mfa_enabled"] if mfa_row else False
         mfa_required = mfa_row["mfa_required"] if mfa_row else False
+        grace_until = mfa_row["mfa_grace_period_until"] if mfa_row else None
+        grace_active = grace_until is not None and grace_until > datetime.now(timezone.utc)
 
-        # MFA required but not enrolled — block login until setup is complete
-        if mfa_required and not mfa_enabled:
+        # MFA required but not enrolled — block unless still within grace window.
+        # Grace window permits login so the partner can go enroll MFA. Outside
+        # grace, the gate returns 403 until enrollment completes.
+        if mfa_required and not mfa_enabled and not grace_active:
             raise HTTPException(
                 status_code=403,
                 detail={
                     "status": "mfa_setup_required",
                     "error": "Multi-factor authentication is required. Please set up MFA before logging in.",
+                    "grace_expired_at": grace_until.isoformat() if grace_until else None,
                 },
             )
 
@@ -1125,6 +1131,14 @@ async def email_login(request: Request, body: EmailLoginRequest):
             return RedirectResponse(
                 url=f"/partner/login?mfa_required=true&mfa_token={mfa_token}",
                 status_code=303,
+            )
+
+        # Grace-window login — MFA required but not yet enrolled. Log it
+        # so the nag-to-enroll UI can show grace-remaining + expiry.
+        if mfa_required and not mfa_enabled and grace_active:
+            logger.info(
+                "partner login in MFA grace window partner_id=%s grace_until=%s",
+                partner["id"], grace_until.isoformat(),
             )
 
         # Update last_login_at
@@ -1216,21 +1230,25 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
             )
             raise _generic_error
 
-        # Check MFA status (enabled + required)
+        # Check MFA status (enabled + required + grace window, Migration 227)
         mfa_row = await conn.fetchrow(
-            "SELECT mfa_enabled, mfa_required FROM partners WHERE id = $1", partner["id"]
+            "SELECT mfa_enabled, mfa_required, mfa_grace_period_until "
+            "  FROM partners WHERE id = $1", partner["id"]
         )
         mfa_enabled = mfa_row["mfa_enabled"] if mfa_row else False
         mfa_required = mfa_row["mfa_required"] if mfa_row else False
+        grace_until = mfa_row["mfa_grace_period_until"] if mfa_row else None
+        grace_active = grace_until is not None and grace_until > datetime.now(timezone.utc)
 
-        # MFA required but not enrolled — block login until setup is complete
-        if mfa_required and not mfa_enabled:
+        # MFA required but not enrolled — block unless still within grace window.
+        if mfa_required and not mfa_enabled and not grace_active:
             from fastapi.responses import JSONResponse
             return JSONResponse(
                 status_code=403,
                 content={
                     "status": "mfa_setup_required",
                     "error": "Multi-factor authentication is required. Please set up MFA before logging in.",
+                    "grace_expired_at": grace_until.isoformat() if grace_until else None,
                 },
             )
 
@@ -1389,7 +1407,7 @@ async def approve_partner(partner_id: str, request: Request, user: Dict = Depend
 Your partner account has been approved!
 
 You can now sign in to the Partner Portal:
-https://dashboard.osiriscare.net/partner/login
+{BASE_URL}/partner/login
 
 Welcome to the OsirisCare Partner Program.
 """

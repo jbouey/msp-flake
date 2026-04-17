@@ -52,6 +52,9 @@ export default [
         navigator: 'readonly',
         location: 'readonly',
         history: 'readonly',
+        crypto: 'readonly',
+        TextEncoder: 'readonly',
+        TextDecoder: 'readonly',
       },
     },
     plugins: {

@@ -23,6 +23,7 @@ SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "alerts@osiriscare.net")
 ALERT_EMAIL = os.getenv("ALERT_EMAIL", "administrator@osiriscare.net")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://www.osiriscare.net")
 
 
 def is_email_configured() -> bool:
@@ -261,7 +262,7 @@ def send_critical_alert(
             "",
             "---",
             "This is an automated alert from OsirisCare Central Command.",
-            "Dashboard: https://dashboard.osiriscare.net",
+            f"Dashboard: {FRONTEND_URL}",
         ])
         text_content = "\n".join(text_parts)
 
@@ -344,11 +345,11 @@ def send_critical_alert(
                 <div class="field-label">Message</div>
                 <div class="field-value">{html.escape(message)}</div>
             </div>{details_html}{hipaa_html}{actions_html}{recommendation_html}
-            <a href="https://dashboard.osiriscare.net/notifications" class="button">View in Dashboard</a>
+            <a href="{FRONTEND_URL}/notifications" class="button">View in Dashboard</a>
         </div>
         <div class="footer">
             This is an automated alert from OsirisCare Central Command.<br>
-            <a href="https://dashboard.osiriscare.net">dashboard.osiriscare.net</a>
+            <a href="{FRONTEND_URL}">{FRONTEND_URL.replace('https://', '').replace('http://', '')}</a>
         </div>
     </div>
 </body>
@@ -537,7 +538,7 @@ Please review this client's progress in the Companion Portal.
 
 ---
 This is an automated alert from OsirisCare Central Command.
-https://dashboard.osiriscare.net/companion
+{FRONTEND_URL}/companion
 """
 
         desc_html = ""
@@ -605,11 +606,11 @@ https://dashboard.osiriscare.net/companion
                 </div>
             </div>
 
-            <a href="https://dashboard.osiriscare.net/companion" class="button">Open Companion Portal</a>
+            <a href="{FRONTEND_URL}/companion" class="button">Open Companion Portal</a>
         </div>
         <div class="footer">
             This is an automated alert from OsirisCare Central Command.<br>
-            <a href="https://dashboard.osiriscare.net/companion" style="color:#0D7377;">dashboard.osiriscare.net/companion</a>
+            <a href="{FRONTEND_URL}/companion" style="color:#0D7377;">{FRONTEND_URL.replace('https://', '').replace('http://', '')}/companion</a>
         </div>
     </div>
 </body>

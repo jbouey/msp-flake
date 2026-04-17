@@ -42,7 +42,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "font-src 'self'; "
-        "connect-src 'self' wss://dashboard.osiriscare.net; "
+        "connect-src 'self' wss://www.osiriscare.net wss://dashboard.osiriscare.net; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'; "
