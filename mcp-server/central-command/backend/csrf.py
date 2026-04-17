@@ -134,6 +134,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/client/auth/",     # Client login/logout/magic-link (no session yet)
         "/api/portal/auth/",     # Portal magic link validation
         "/api/portal/sites/",    # Portal access request (public)
+        "/api/billing/signup/",  # Public self-serve signup (pre-account, pre-session).
+                                 # Abuse prevention: IP rate-limit on /start + signup_id
+                                 # UUID gating on /sign-baa + /checkout (see client_signup.py).
         # --- Fleet / CVE / Framework (machine-to-machine or admin Bearer) ---
         "/api/fleet/",           # Fleet updates - admin auth protected
         "/api/cve-watch/",       # CVE Watch — admin data ingest + sync triggers

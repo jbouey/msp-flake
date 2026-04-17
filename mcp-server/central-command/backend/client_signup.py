@@ -38,7 +38,22 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
 
+try:
+    from .shared import check_rate_limit
+except ImportError:  # pytest-safe (mirrors auth.py / evidence_chain.py pattern)
+    from shared import check_rate_limit  # type: ignore[no-redef]
+
 logger = logging.getLogger("client_signup")
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP. Behind Caddy (trusted proxy), use X-Forwarded-For
+    first entry. Fall back to request.client.host. Used as the rate-limit key
+    on the pre-session signup endpoints — not for anything security-critical."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 router = APIRouter(prefix="/api/billing/signup", tags=["billing-signup"])
 
@@ -148,6 +163,22 @@ async def start_signup(req: SignupStart, request: Request) -> Dict[str, Any]:
     """
     _check_stripe()
 
+    # CSRF is intentionally not enforced on signup/* (pre-session). Abuse
+    # prevention for /start is IP-based — Stripe customer creation + a row
+    # in signup_sessions is cheap but not free. 5 req/hour/IP is well past
+    # "fat-finger the form twice" and well below "script a thousand new
+    # Stripe customers per hour."
+    ip = _client_ip(request)
+    allowed, retry_after = await check_rate_limit(
+        f"ip:{ip}", "signup_start", window_seconds=3600, max_requests=5,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many signup attempts. Try again later.",
+            headers={"Retry-After": str(retry_after or 3600)},
+        )
+
     signup_id = str(uuid.uuid4())
 
     # Create Stripe customer FIRST so we can attach the id to the session.
@@ -203,6 +234,17 @@ async def sign_baa(req: SignupBaaSign, request: Request) -> Dict[str, Any]:
     of the text shown to them. If the BAA text ever changes, old
     signatures remain bound to their original hash.
     """
+    # Key by signup_id — prevents re-sign churn from a single session.
+    allowed, retry_after = await check_rate_limit(
+        f"signup:{req.signup_id}", "signup_baa", window_seconds=3600, max_requests=10,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many BAA attempts for this session.",
+            headers={"Retry-After": str(retry_after or 3600)},
+        )
+
     pool = await get_pool()
     async with admin_connection(pool) as conn, conn.transaction():
         row = await conn.fetchrow(
@@ -263,6 +305,16 @@ async def create_checkout(req: SignupCheckout, request: Request) -> Dict[str, An
     Returns the Stripe-hosted Checkout URL.
     """
     _check_stripe()
+
+    allowed, retry_after = await check_rate_limit(
+        f"signup:{req.signup_id}", "signup_checkout", window_seconds=3600, max_requests=10,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many checkout attempts for this session.",
+            headers={"Retry-After": str(retry_after or 3600)},
+        )
 
     pool = await get_pool()
     async with admin_connection(pool) as conn, conn.transaction():
