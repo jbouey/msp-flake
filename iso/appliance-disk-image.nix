@@ -788,7 +788,11 @@ EOF
       ExecStart = "${network-scanner}/bin/network-scanner";
       Restart = "always";
       RestartSec = "30s";
-      WatchdogSec = "120s";
+      # NOTE: WatchdogSec requires Type=notify with periodic WATCHDOG=1 pings.
+      # Python scanner does not emit sd_notify — a WatchdogSec= line here is
+      # a silent no-op. Rely on Restart=always for crash recovery. If hang
+      # detection is needed later, bolt sd_notify into the scanner loop and
+      # flip Type to "notify" in the same PR.
       StartLimitIntervalSec = 300;
       StartLimitBurst = 5;
       WorkingDirectory = "/var/lib/msp";
@@ -830,7 +834,9 @@ EOF
       ExecStart = "${local-portal}/bin/local-portal --port 8084 --host 127.0.0.1";
       Restart = "always";
       RestartSec = "10s";
-      WatchdogSec = "120s";
+      # See network-scanner.service: WatchdogSec requires Type=notify +
+      # sd_notify WATCHDOG=1 pings. Python local-portal has neither, so the
+      # watchdog silently no-ops. Dropped until portal grows sd_notify.
       StartLimitIntervalSec = 300;
       StartLimitBurst = 5;
       WorkingDirectory = "/var/lib/msp";
