@@ -2203,21 +2203,24 @@ WEEKLY_ROLLUP_REFRESH_SECONDS = 30 * 60  # every 30 min
 async def weekly_rollup_refresh_loop():
     """Refresh the partner_site_weekly_rollup materialized view.
 
-    The view aggregates last-7-day + last-24h incidents + self-heal %
-    per (partner_id, site_id). Used by /api/partners/me/rollup/weekly.
-    CONCURRENTLY lets readers keep querying during the refresh.
+    REFRESH MATERIALIZED VIEW requires ownership of the view. The view
+    was created by migration 185 running as the mcp superuser, so a
+    REFRESH executed through the app pool (mcp_app via PgBouncer) fails
+    with "must be owner of materialized view". Use a single-shot direct
+    asyncpg connection as the migration superuser instead — same pattern
+    as heartbeat_partition_maintainer.
 
-    If the view doesn't exist yet (migration 185 not applied), the
-    first pg_matviews check short-circuits and we try again next tick.
+    CONCURRENTLY lets readers keep querying during the refresh. If the
+    view doesn't exist yet (migration 185 not applied), the pg_matviews
+    check short-circuits and we try again next tick.
     """
+    import asyncpg as _asyncpg
     await asyncio.sleep(120)  # let migrations complete on cold starts
     while True:
         _hb("weekly_rollup_refresh")
         try:
-            from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
-            pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            conn = await _asyncpg.connect(_migration_db_url())
+            try:
                 exists = await conn.fetchval(
                     "SELECT 1 FROM pg_matviews WHERE matviewname = 'partner_site_weekly_rollup'"
                 )
@@ -2227,6 +2230,8 @@ async def weekly_rollup_refresh_loop():
                         "REFRESH MATERIALIZED VIEW CONCURRENTLY partner_site_weekly_rollup"
                     )
                     logger.info("weekly_rollup_refresh_complete")
+            finally:
+                await conn.close()
         except asyncio.CancelledError:
             break
         except Exception as e:

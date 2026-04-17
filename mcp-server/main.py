@@ -1234,27 +1234,49 @@ async def lifespan(app: FastAPI):
             exc_info=True,
         )
 
-    # Create exceptions tables if needed
+    # Verify exception + delegation tables exist. These used to be
+    # created ad-hoc at startup, but the app pool (mcp_app via PgBouncer)
+    # lacks CREATE on schema public, so the calls always failed with
+    # "permission denied" and were logged as warnings. The tables live
+    # in the DB already (created historically as superuser); schema
+    # ownership is maintained via the migration system. Here we just
+    # confirm they are still present — absence is a loud error, not
+    # a silent warning.
     try:
-        from dashboard_api.exceptions_api import create_exceptions_tables
         from dashboard_api.fleet import get_pool
         pool = await get_pool()
         async with pool.acquire() as conn:
-            await create_exceptions_tables(conn)
-        logger.info("Exceptions tables ready")
+            rows = await conn.fetch(
+                """
+                SELECT tablename FROM pg_tables
+                WHERE schemaname = 'public'
+                  AND tablename = ANY($1)
+                """,
+                [
+                    "compliance_exceptions",
+                    "exception_audit_log",
+                    "delegated_keys",
+                    "appliance_audit_trail",
+                    "processed_escalations",
+                ],
+            )
+            present = {r["tablename"] for r in rows}
+            missing = {
+                "compliance_exceptions",
+                "exception_audit_log",
+                "delegated_keys",
+                "appliance_audit_trail",
+                "processed_escalations",
+            } - present
+        if missing:
+            logger.error(
+                f"startup_missing_tables: {sorted(missing)} — migration drift. "
+                "Create via a proper migration running as the mcp superuser."
+            )
+        else:
+            logger.info("exceptions + delegation tables ready")
     except Exception as e:
-        logger.warning(f"Could not create exceptions tables: {e}")
-
-    # Create appliance delegation tables if needed
-    try:
-        from dashboard_api.appliance_delegation import create_delegation_tables
-        from dashboard_api.fleet import get_pool
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await create_delegation_tables(conn)
-        logger.info("Appliance delegation tables ready")
-    except Exception as e:
-        logger.warning(f"Could not create delegation tables: {e}")
+        logger.error(f"startup_table_presence_check_failed: {e}", exc_info=True)
 
     # Verify credential encryption key is available (warms the MultiFernet
     # keyring cache so startup fails loudly rather than at first request)
