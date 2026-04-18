@@ -623,6 +623,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="An appliance has been checking in continuously for >24h but has never POSTed a journal batch. Either the msp-journal-upload.timer is not deployed on the host (older ISO predating Session 207), or the very first attempt is failing silently. Forensics path is broken for this appliance — incident investigation cannot use the hash-chained journal archive.",
         check=lambda c: _check_journal_upload_never_received(c),
     ),
+    Assertion(
+        name="evidence_chain_stalled",
+        severity="sev1",
+        description="At least one appliance has checked in in the last 15 minutes but zero compliance_bundles have been inserted in that window. Baseline fleet bundle rate is ~1 bundle per 4–5 min per active appliance, so 15 minutes of silence while checkins continue is a strong signal that evidence-chain writes are failing (RLS context miss, missing partition, signing key mismatch, disk pressure). Caught the 2026-04-18 RLS P0 after the fact — this invariant would have fired it inside 15 minutes.",
+        check=lambda c: _check_evidence_chain_stalled(c),
+    ),
 ]
 
 
@@ -811,6 +817,15 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "/api/journal/upload is reachable from the site's egress allowlist. "
             "Without this, forensics after an incident cannot use the hash-chained "
             "journal archive for that appliance.",
+    },
+    "evidence_chain_stalled": {
+        "display_name": "Evidence chain INSERT stalled fleet-wide",
+        "recommended_action": "Treat as P0 — attestation is offline. "
+            "Grep mcp-server logs for 'InsufficientPrivilegeError', 'UniqueViolation', or partition errors on compliance_bundles. "
+            "Verify `SELECT current_setting('app.is_admin', true)` returns 'true' inside a SQLAlchemy session "
+            "(if 'false', the after_begin listener in shared.py is broken — see 2026-04-18 fix 2ddc596). "
+            "If partition-related, check for missing monthly partition on compliance_bundles and create it. "
+            "If signing-key related, check per-appliance key rotation state in site_appliances.agent_public_key.",
     },
 }
 
@@ -1808,6 +1823,77 @@ async def _check_mesh_ring_deficit(conn: asyncpg.Connection) -> List[Violation]:
             },
         )
         for r in rows
+    ]
+
+
+async def _check_evidence_chain_stalled(conn: asyncpg.Connection) -> List[Violation]:
+    """Fleet-wide evidence-chain health: if any appliance checked in in
+    the last 15 min, there should be AT LEAST one compliance_bundles
+    row written in the last 15 min. Checkins happen every 60s; drift
+    scans + bundle writes happen every ~5 min per appliance — so 15 min
+    of fleet silence while appliances are actively checking in is
+    strongly anomalous.
+
+    Caught the 2026-04-18 RLS P0 (migration 234 + broken SQLAlchemy
+    `after_begin` binding → 2608 InsufficientPrivilegeError rejections
+    on compliance_bundles INSERT in 2h with zero visibility). This
+    invariant would have opened a sev1 violation inside 15 min instead
+    of being discovered via dashboard data-contradiction analysis.
+
+    Scope intentionally wider than the original `rls_rejection_spike`
+    proposal: this catches RLS failures AND any other evidence-chain
+    INSERT failure (partition missing, disk full, signing key rotation
+    bug, etc.) at the OUTCOME layer. No log scraping required.
+    """
+    row = await conn.fetchrow(
+        """
+        WITH fleet_state AS (
+            SELECT COUNT(*) FILTER (
+                       WHERE last_checkin > NOW() - INTERVAL '15 minutes'
+                   ) AS online_recent
+              FROM site_appliances
+             WHERE deleted_at IS NULL
+        ),
+        bundle_state AS (
+            SELECT COUNT(*) AS bundles_15m,
+                   MAX(created_at) AS latest_bundle_at
+              FROM compliance_bundles
+             WHERE created_at > NOW() - INTERVAL '15 minutes'
+        )
+        SELECT fs.online_recent,
+               bs.bundles_15m,
+               bs.latest_bundle_at,
+               EXTRACT(EPOCH FROM (NOW() - bs.latest_bundle_at))/60
+                   AS minutes_since_last_bundle
+          FROM fleet_state fs, bundle_state bs
+        """
+    )
+    if row is None:
+        return []
+    online_recent = int(row["online_recent"] or 0)
+    bundles_15m = int(row["bundles_15m"] or 0)
+    # Only fire when at least one appliance is actively checking in
+    # AND no bundles have landed in the window. Zero-fleet is handled
+    # by other invariants (offline_appliance_over_1h etc.).
+    if online_recent < 1 or bundles_15m > 0:
+        return []
+    minutes_since = float(row["minutes_since_last_bundle"] or 0)
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "online_recent_15m": online_recent,
+                "bundles_15m": bundles_15m,
+                "latest_bundle_at": row["latest_bundle_at"].isoformat() if row["latest_bundle_at"] else None,
+                "minutes_since_last_bundle": minutes_since,
+                "remediation": (
+                    "Grep mcp-server logs for InsufficientPrivilegeError, UniqueViolation, "
+                    "or partition errors on compliance_bundles. Common causes: RLS context "
+                    "not set in SQLAlchemy session (see 2026-04-18 fix commits ebb9f17 + 2ddc596), "
+                    "missing monthly partition, signing key rotation mid-write, or disk pressure."
+                ),
+            },
+        )
     ]
 
 
