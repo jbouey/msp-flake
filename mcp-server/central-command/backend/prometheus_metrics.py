@@ -283,6 +283,66 @@ async def prometheus_metrics(user: dict = Depends(require_auth)):
                 # Table missing pre-189 → silent skip
                 pass
 
+            # --- Substrate Integrity Engine: active violations (alert surface) ---
+            # Session 209 wired this gauge so Prometheus/alertmanager can
+            # page on sev1 invariants (`evidence_chain_stalled`,
+            # `flywheel_ledger_stalled`, `provisioning_stalled`, …) without
+            # a human having to refresh /admin/substrate-health. Emits one
+            # sample per active violation, or a single zero-value sentinel
+            # if the fleet is clean — dashboards don't render as "no data".
+            try:
+                sv_rows = await conn.fetch("""
+                    SELECT invariant_name,
+                           severity,
+                           COALESCE(site_id, '') AS site_id,
+                           minutes_open::float  AS minutes_open
+                      FROM v_substrate_violations_active
+                """)
+                if sv_rows:
+                    sections.append(_gauge(
+                        "osiriscare_substrate_violations_active",
+                        "Active substrate invariant violations "
+                        "(1 sample per open violation; labels: invariant_name, severity, site_id)",
+                        [
+                            (
+                                {
+                                    "invariant_name": r["invariant_name"][:80],
+                                    "severity": r["severity"][:20],
+                                    "site_id": (r["site_id"] or "")[:80],
+                                },
+                                1.0,
+                            )
+                            for r in sv_rows
+                        ],
+                    ))
+                    sections.append(_gauge(
+                        "osiriscare_substrate_violation_minutes_open",
+                        "Minutes since each active substrate violation opened",
+                        [
+                            (
+                                {
+                                    "invariant_name": r["invariant_name"][:80],
+                                    "severity": r["severity"][:20],
+                                    "site_id": (r["site_id"] or "")[:80],
+                                },
+                                float(r["minutes_open"] or 0.0),
+                            )
+                            for r in sv_rows
+                        ],
+                    ))
+                else:
+                    # Zero-rows sentinel so alertmanager can detect "all clear"
+                    # and a dashboard query (sum by invariant_name) returns 0
+                    # instead of no-data.
+                    sections.append(_gauge(
+                        "osiriscare_substrate_violations_active",
+                        "Active substrate invariant violations "
+                        "(1 sample per open violation; labels: invariant_name, severity, site_id)",
+                        [({"invariant_name": "_none", "severity": "_none", "site_id": ""}, 0.0)],
+                    ))
+            except Exception:
+                logger.exception("metrics: substrate_violations gauge query failed")
+
             # --- Flywheel Spine: stuck rules + operator_ack_required ---
             try:
                 stuck = await conn.fetchval("""

@@ -210,3 +210,135 @@ groups:
 
             Thresholds calibrated for <10 active partners; revisit
             when partner count > 20.
+
+  # ───────────────────────────────────────────────────────────────────
+  # Substrate Integrity Engine — Session 209
+  #
+  # `osiriscare_substrate_violations_active` is emitted by
+  # prometheus_metrics.py from the `v_substrate_violations_active` view.
+  # One sample per open violation, labeled by (invariant_name, severity,
+  # site_id). A fleet-clean state emits a single zero-value sample
+  # carrying `invariant_name="_none"` so these rules can distinguish
+  # "clean" from "no data" explicitly.
+  #
+  # Severity / `for:` calibration:
+  #   sev1 → pager, for:5m  (the engine already has its own 15-min
+  #                          detection window; don't double it)
+  #   sev2 → warn,  for:15m
+  #   sev3 → info,  for:2h
+  # ───────────────────────────────────────────────────────────────────
+  - name: osiriscare_substrate_invariants
+    interval: 60s
+    rules:
+      - alert: SubstrateInvariantSev1
+        expr: |
+          sum by (invariant_name, site_id) (
+            osiriscare_substrate_violations_active{severity="sev1",invariant_name!="_none"}
+          ) > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: substrate_integrity
+          pager: on-call
+        annotations:
+          summary: "Substrate sev1 invariant {{ $labels.invariant_name }} failing"
+          description: |
+            Substrate invariant `{{ $labels.invariant_name }}` is in a
+            failing state{{ if $labels.site_id }} for site {{ $labels.site_id }}{{ end }}.
+            This is a sev1 — platform-level integrity breach.
+            Check /admin/substrate-health for detail + recommended action.
+          runbook_url: "https://www.osiriscare.net/admin/substrate-health"
+
+      - alert: SubstrateInvariantSev2
+        expr: |
+          sum by (invariant_name, site_id) (
+            osiriscare_substrate_violations_active{severity="sev2",invariant_name!="_none"}
+          ) > 0
+        for: 15m
+        labels:
+          severity: warning
+          category: substrate_integrity
+        annotations:
+          summary: "Substrate sev2 invariant {{ $labels.invariant_name }} failing"
+          description: |
+            Substrate invariant `{{ $labels.invariant_name }}` has been
+            failing for ≥15 min{{ if $labels.site_id }} on site {{ $labels.site_id }}{{ end }}.
+            Triage via /admin/substrate-health.
+          runbook_url: "https://www.osiriscare.net/admin/substrate-health"
+
+      - alert: SubstrateInvariantSev3
+        expr: |
+          sum by (invariant_name, site_id) (
+            osiriscare_substrate_violations_active{severity="sev3",invariant_name!="_none"}
+          ) > 0
+        for: 2h
+        labels:
+          severity: info
+          category: substrate_integrity
+        annotations:
+          summary: "Substrate sev3 invariant {{ $labels.invariant_name }} open >2h"
+          description: |
+            Long-lived low-severity substrate signal on
+            `{{ $labels.invariant_name }}`{{ if $labels.site_id }} (site {{ $labels.site_id }}){{ end }}.
+            Review during next ops window.
+          runbook_url: "https://www.osiriscare.net/admin/substrate-health"
+
+      # Named sev1 alerts — these are the three invariants Session 209
+      # added/verified and that we most want paged individually so the
+      # operator sees the failure mode in the alert title, not only
+      # "some sev1 broke".
+      - alert: EvidenceChainStalled
+        expr: |
+          osiriscare_substrate_violations_active{invariant_name="evidence_chain_stalled"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: substrate_integrity
+          pager: on-call
+        annotations:
+          summary: "Evidence chain stalled — appliances checking in, no bundles landing"
+          description: |
+            At least one appliance has checked in within the last 15 min
+            but zero `compliance_bundles` have been INSERTed in that
+            window. Typical causes: RLS regression, missing partition,
+            signing-key rotation gap, disk pressure on the evidence
+            partition. HIPAA attestation is accruing a gap — treat as
+            production incident.
+          runbook_url: "https://www.osiriscare.net/admin/substrate-health#evidence_chain_stalled"
+
+      - alert: FlywheelLedgerStalled
+        expr: |
+          osiriscare_substrate_violations_active{invariant_name="flywheel_ledger_stalled"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: substrate_integrity
+          pager: on-call
+        annotations:
+          summary: "Flywheel ledger stalled — rollouts completing but no events recorded"
+          description: |
+            Promoted rules in rolling_out state have fleet_order
+            completions but zero `promoted_rule_events` writes in the
+            last 60 min. Indicates a three-list drift or a silent
+            CheckViolationError in safe_rollout_promoted_rule. The
+            spine is failing silently; orchestrator decisions become
+            undecidable.
+          runbook_url: "https://www.osiriscare.net/admin/substrate-health#flywheel_ledger_stalled"
+
+      - alert: ProvisioningStalled
+        expr: |
+          osiriscare_substrate_violations_active{invariant_name="provisioning_stalled"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: substrate_integrity
+          pager: on-call
+        annotations:
+          summary: "Provisioning stalled — installer session looping, no site_appliance checkin"
+          description: |
+            A MAC has ≥3 `install_sessions` checkins in the last hour
+            but `site_appliances.last_checkin` is NULL or >15 min
+            stale. Typical root causes: DNS-filter blocking
+            `api.osiriscare.net`, cert pin mismatch, NAT traversal.
+            Customer-visible failure — block new installs behind this.
+          runbook_url: "https://www.osiriscare.net/admin/substrate-health#provisioning_stalled"

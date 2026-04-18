@@ -404,10 +404,13 @@ async def flywheel_reconciliation_loop():
                         hint="promoted_rules rows exist without matching l1_rules entry",
                     )
 
-                # Check 3: l1_rules promoted with no runbooks entry
+                # Check 3: l1_rules promoted with no runbooks entry.
+                # Join on lr.runbook_id (the column that actually references
+                # runbooks.runbook_id). Pre-fix this joined on lr.rule_id,
+                # which under-reported orphans by ~9% on 2026-04-18 (11 vs 12).
                 orphan_rb = await conn.fetchval("""
                     SELECT COUNT(*) FROM l1_rules lr
-                    LEFT JOIN runbooks rb ON rb.runbook_id = lr.rule_id
+                    LEFT JOIN runbooks rb ON rb.runbook_id = lr.runbook_id
                     WHERE lr.promoted_from_l2 = true
                       AND lr.source = 'promoted'
                       AND rb.runbook_id IS NULL
@@ -1175,6 +1178,15 @@ async def flywheel_promotion_loop():
                         WHERE et.resolution_level = 'L2'
                           AND et.incident_type IS NOT NULL
                           AND et.runbook_id IS NOT NULL
+                          -- Exclude synthetic L2-* planner IDs. These are
+                          -- legacy artifacts (Jan 2026) — the current L2
+                          -- planner canonicalizes before emitting, but old
+                          -- rows in execution_telemetry re-populate this
+                          -- table every 30 min and trigger "Skipping
+                          -- platform promotion: invalid runbook_id". See
+                          -- migration 162 (one-shot backfill) + migration
+                          -- 237 (one-shot pps cleanup).
+                          AND et.runbook_id NOT LIKE 'L2-%'
                         GROUP BY et.incident_type, et.runbook_id
                         HAVING COUNT(*) >= 10
                         ON CONFLICT (pattern_key) DO UPDATE SET
