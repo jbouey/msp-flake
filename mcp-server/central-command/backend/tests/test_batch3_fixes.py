@@ -80,12 +80,20 @@ class TestTenantMiddleware:
         assert "conn.transaction()" in body
         assert "SET LOCAL app.current_org" in body
 
-    def test_docstring_documents_db_default_reliance(self):
-        """admin_connection docstring must mention relying on DB default."""
+    def test_docstring_documents_explicit_set_post_234(self):
+        """admin_connection docstring must explain the post-migration-234 explicit SET.
+
+        Migration 234 flipped the mcp_app role default of app.is_admin to 'false'
+        so forgotten-context paths fail closed. admin_connection must now SET
+        app.is_admin explicitly — the docstring must explain why so future
+        maintainers don't rip it out thinking it's dead code.
+        """
         start = self.source.find("async def admin_connection(")
-        body = self.source[start:start + 600]
-        assert "database default" in body.lower() or "db default" in body.lower(), \
-            "Docstring must document reliance on DB default for is_admin"
+        body = self.source[start:start + 800].lower()
+        assert "migration 234" in body or "fail-closed" in body or "fail_closed" in body, \
+            "Docstring must reference migration 234 fail-closed flip"
+        assert "set" in body and "app.is_admin" in body, \
+            "Docstring must document the explicit SET app.is_admin"
 
 
 class TestEmailAlertsDRY:

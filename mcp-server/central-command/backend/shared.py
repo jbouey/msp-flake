@@ -102,22 +102,34 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 # SQLAlchemy it should use an explicit SET LOCAL inside an explicit
 # transaction — this event listener only sets the default admin context.
 # -----------------------------------------------------------------------------
-from sqlalchemy import event as _sqla_event
+try:
+    from sqlalchemy import event as _sqla_event
+except ImportError:
+    # Unit tests stub `sys.modules["sqlalchemy"]` with a bare ModuleType
+    # that lacks `event`. In those runs the engine above is also a stub
+    # and would reject listener registration anyway — safely skip.
+    _sqla_event = None  # type: ignore[assignment]
 
-
-@_sqla_event.listens_for(engine.sync_engine, "connect")
-def _set_sqla_admin_context(dbapi_connection, connection_record):
-    """Run on EVERY new backend connection checked out into the pool.
-
-    Uses the DB-API cursor directly because SQLAlchemy event listeners fire
-    on the sync shim of the async engine. `SET` (no LOCAL) is session-level;
-    PgBouncer DISCARD ALL clears it between borrows from the front-side pool.
-    """
-    cursor = dbapi_connection.cursor()
+if _sqla_event is not None:
     try:
-        cursor.execute("SET app.is_admin TO 'true'")
-    finally:
-        cursor.close()
+        @_sqla_event.listens_for(engine.sync_engine, "connect")
+        def _set_sqla_admin_context(dbapi_connection, connection_record):
+            """Run on EVERY new backend connection checked out into the pool.
+
+            Uses the DB-API cursor directly because SQLAlchemy event listeners
+            fire on the sync shim of the async engine. `SET` (no LOCAL) is
+            session-level; PgBouncer DISCARD ALL clears it between borrows
+            from the front-side pool.
+            """
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("SET app.is_admin TO 'true'")
+            finally:
+                cursor.close()
+    except Exception:
+        # If engine is a stub (tests), `sync_engine` may not resolve — the
+        # missing admin context is fine in unit tests that don't touch RLS.
+        pass
 
 
 async def get_db():

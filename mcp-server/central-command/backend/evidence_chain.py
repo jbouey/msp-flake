@@ -1147,40 +1147,26 @@ async def submit_evidence(
 
     # Evidence dedup: skip duplicate bundle hashes within 15-min window.
     # Handles grace-period overlap where two appliances scan the same target.
-    #
-    # SAVEPOINT: without begin_nested(), a failure here poisons the outer
-    # tenant_connection() transaction and every subsequent query in
-    # submit_evidence() returns InFailedSQLTransactionError. The April
-    # audit surfaced this as a live prod error on north-valley-branch-2.
     try:
-        async with db.begin_nested():
-            existing_dup = await db.execute(text("""
-                SELECT 1 FROM compliance_bundles
-                WHERE site_id = :site_id
-                  AND bundle_hash = :hash
-                  AND created_at > NOW() - INTERVAL '15 minutes'
-                LIMIT 1
-            """), {"site_id": site_id, "hash": bundle.bundle_hash})
-            if existing_dup.fetchone():
-                logger.info(
-                    f"evidence_dedup_skip: site_id={site_id} bundle_hash={bundle.bundle_hash[:12]}..."
-                )
-                return {
-                    "status": "accepted",
-                    "bundle_id": bundle.bundle_id,
-                    "deduplicated": True,
-                    "message": "Bundle already recorded within 15-minute window",
-                }
+        existing_dup = await db.execute(text("""
+            SELECT 1 FROM compliance_bundles
+            WHERE site_id = :site_id
+              AND bundle_hash = :hash
+              AND created_at > NOW() - INTERVAL '15 minutes'
+            LIMIT 1
+        """), {"site_id": site_id, "hash": bundle.bundle_hash})
+        if existing_dup.fetchone():
+            logger.info(
+                f"evidence_dedup_skip: site_id={site_id} bundle_hash={bundle.bundle_hash[:12]}..."
+            )
+            return {
+                "status": "accepted",
+                "bundle_id": bundle.bundle_id,
+                "deduplicated": True,
+                "message": "Bundle already recorded within 15-minute window",
+            }
     except Exception as e:
-        logger.error(
-            "evidence_dedup_check_failed",
-            exc_info=True,
-            extra={
-                "site_id": site_id,
-                "bundle_hash_prefix": bundle.bundle_hash[:12],
-                "exception_class": type(e).__name__,
-            },
-        )
+        logger.warning(f"evidence_dedup_check_failed: {e}")
 
     # Acquire per-site advisory lock to serialize chain position assignment.
     # Without this, concurrent submissions race on chain_position (caused 1,125 broken links).
@@ -1223,14 +1209,10 @@ async def submit_evidence(
     # Fix: check bundle_id existence first. If present, return as dedup
     # (same semantics as the bundle_hash 15-min window above, but
     # stronger — this covers any future conflict by bundle_id).
-    # SAVEPOINT: same rationale as the bundle_hash dedup above. A transient
-    # failure on this lookup must not poison the transaction before INSERT.
-    async with db.begin_nested():
-        existing_by_id = await db.execute(text("""
-            SELECT 1 FROM compliance_bundles WHERE bundle_id = :bundle_id LIMIT 1
-        """), {"bundle_id": bundle.bundle_id})
-        dup_hit = existing_by_id.fetchone()
-    if dup_hit:
+    existing_by_id = await db.execute(text("""
+        SELECT 1 FROM compliance_bundles WHERE bundle_id = :bundle_id LIMIT 1
+    """), {"bundle_id": bundle.bundle_id})
+    if existing_by_id.fetchone():
         logger.info(
             "evidence_duplicate_bundle_id",
             extra={

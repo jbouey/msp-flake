@@ -2342,18 +2342,21 @@ async def get_my_branding(partner: dict = require_partner_role("admin", "tech", 
     async with admin_connection(pool) as conn:
         row = await conn.fetchrow("""
             SELECT brand_name, logo_url, primary_color, secondary_color,
-                   tagline, support_email, support_phone, slug
+                   tagline, support_email, support_phone, slug,
+                   email_from_display_name, email_reply_to_address
             FROM partners WHERE id = $1
         """, partner['id'])
 
     if not row:
         raise HTTPException(status_code=404, detail="Partner not found")
 
-    async with admin_connection(pool) as conn:
-        email_row = await conn.fetchrow("""
-            SELECT email_from_display_name, email_reply_to_address
-            FROM partners WHERE id = $1
-        """, partner['id'])
+    # Migration 232 added email_from_display_name + email_reply_to_address;
+    # tolerate test fixtures that don't surface them (pre-232 FakeRecords).
+    def _row_get(r, key):
+        try:
+            return r[key]
+        except (KeyError, IndexError, TypeError):
+            return None
 
     return {
         "brand_name": row["brand_name"] or "OsirisCare",
@@ -2364,8 +2367,8 @@ async def get_my_branding(partner: dict = require_partner_role("admin", "tech", 
         "support_email": row["support_email"],
         "support_phone": row["support_phone"],
         "partner_slug": row["slug"],
-        "email_from_display_name": email_row["email_from_display_name"] if email_row else None,
-        "email_reply_to_address": email_row["email_reply_to_address"] if email_row else None,
+        "email_from_display_name": _row_get(row, "email_from_display_name"),
+        "email_reply_to_address": _row_get(row, "email_reply_to_address"),
     }
 
 

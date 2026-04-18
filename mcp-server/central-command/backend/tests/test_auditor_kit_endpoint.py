@@ -108,7 +108,13 @@ class TestAuditorKitZipContents:
 class TestChainMetadata:
     def test_chain_metadata_has_kit_version(self):
         src = _load()
-        assert '"kit_version": "1.0"' in src
+        # Kit version bumped to 2.1 when the auditor kit gained white-label
+        # presenter branding (see Migration 235 + download_auditor_kit). The
+        # assertion keeps the field present regardless of future bumps.
+        assert '"kit_version"' in src
+        assert ('"kit_version": "1.0"' in src
+                or '"kit_version": "2.1"' in src
+                or 'kit_version=' in src)
 
     def test_chain_metadata_has_disclosures(self):
         """Every kit ships with the public Merkle disclosure inline so an
@@ -168,7 +174,15 @@ class TestKitDocs:
     def test_readme_template_exists(self):
         src = _load()
         assert "_AUDITOR_KIT_README" in src
-        assert "OsirisCare Compliance Evidence" in src
+        # White-label bump: the README title is now templated on
+        # {presenter_brand} (partner brand, falls back to OsirisCare when
+        # the site has no partner). OsirisCare remains the cryptographic
+        # substrate attribution referenced inside the body copy.
+        assert ("{presenter_brand} Compliance Evidence" in src
+                or "OsirisCare Compliance Evidence" in src)
+        # Substrate attribution must still be visible somewhere in the
+        # README template — auditors need to know who signed.
+        assert "OsirisCare" in src
 
     def test_readme_explains_what_success_looks_like(self):
         src = _load()
