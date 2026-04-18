@@ -113,30 +113,32 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 try:
     from sqlalchemy import event as _sqla_event
     from sqlalchemy import text as _sqla_text
-except ImportError:
+    # `AsyncSession.sync_session_class` is the underlying sync Session class
+    # that AsyncSession delegates to. Events fire on the sync counterpart.
+    # Binding on the CLASS (not on the sessionmaker instance — that has no
+    # `sync_session_class` attribute and would silently AttributeError) means
+    # every AsyncSession built from our `async_session` sessionmaker picks up
+    # the listener.
+    _SyncSessionClass = AsyncSession.sync_session_class  # type: ignore[attr-defined]
+except (ImportError, AttributeError):
     # Unit tests stub `sys.modules["sqlalchemy"]` with a bare ModuleType
     # that lacks `event`. In those runs the engine above is also a stub
     # and would reject listener registration anyway — safely skip.
     _sqla_event = None  # type: ignore[assignment]
     _sqla_text = None  # type: ignore[assignment]
+    _SyncSessionClass = None  # type: ignore[assignment]
 
-if _sqla_event is not None:
-    try:
-        @_sqla_event.listens_for(async_session.sync_session_class, "after_begin")
-        def _set_sqla_admin_context(session, transaction, connection):
-            """Fires at the start of every SQLAlchemy transaction.
+if _sqla_event is not None and _SyncSessionClass is not None:
+    @_sqla_event.listens_for(_SyncSessionClass, "after_begin")
+    def _set_sqla_admin_context(session, transaction, connection):
+        """Fires at the start of every SQLAlchemy transaction.
 
-            `SET LOCAL` is transaction-scoped. PgBouncer's `DISCARD ALL`
-            runs between transactions, not during them, so this setting
-            is applied to whichever backend PgBouncer assigned to this
-            specific transaction for its full duration.
-            """
-            connection.execute(_sqla_text("SET LOCAL app.is_admin = 'true'"))
-    except Exception:
-        # If `async_session` is a stub (tests), `sync_session_class` may
-        # not resolve — the missing admin context is fine in unit tests
-        # that don't touch RLS.
-        pass
+        `SET LOCAL` is transaction-scoped. PgBouncer's `DISCARD ALL`
+        runs between transactions, not during them, so this setting
+        is applied to whichever backend PgBouncer assigned to this
+        specific transaction for its full duration.
+        """
+        connection.execute(_sqla_text("SET LOCAL app.is_admin = 'true'"))
 
 
 async def get_db():
