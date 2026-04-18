@@ -82,10 +82,21 @@ async def tenant_connection(
     """
     async with pool.acquire() as conn:
         if is_admin:
-            # Database default is app.is_admin='true', so no SET needed.
-            # No transaction wrapper — avoids transaction poisoning for
-            # long multi-query endpoints (checkins, fleet overview, etc).
-            yield conn
+            # Migration 234 flipped the mcp_app role default to 'false',
+            # so admin context must be set explicitly. Session-level SET
+            # (not SET LOCAL) because we intentionally do NOT wrap admin
+            # connections in a transaction — avoids poisoning on long
+            # multi-query endpoints (checkins, fleet overview, etc).
+            # PgBouncer's server_reset_query = DISCARD ALL clears this
+            # before the next borrower acquires the connection.
+            await conn.execute("SET app.is_admin TO 'true'")
+            try:
+                yield conn
+            finally:
+                try:
+                    await conn.execute("RESET app.is_admin")
+                except Exception:
+                    logger.warning("tenant_connection(is_admin=True) RESET failed")
         elif site_id:
             # Tenant-scoped: wrap in transaction for SET LOCAL scoping
             async with conn.transaction():
@@ -113,24 +124,46 @@ async def tenant_connection(
 async def admin_connection(pool: asyncpg.Pool):
     """Shortcut for admin-level connections that bypass RLS.
 
-    Relies on the database default (app.is_admin = 'true') rather than
-    SET LOCAL, because SET LOCAL is scoped to the current transaction and
-    we intentionally do NOT wrap admin connections in a transaction to avoid
-    transaction poisoning on long multi-query endpoints.
+    Migration 234 flipped the mcp_app ROLE default of app.is_admin to
+    'false' so any path that forgets to set tenant/admin context gets
+    zero rows instead of every tenant's rows. That flip means this
+    helper can no longer rely on a DB-level default — it must SET the
+    parameter itself.
 
-    This is safe with PgBouncer transaction pooling: any SET LOCAL from a
-    prior tenant_connection was already discarded when that transaction ended.
-    PgBouncer returns a clean connection with DB defaults intact.
-
-    NOTE: If pooling mode ever changes from 'transaction' to 'session',
-    this must be revisited — session-level SET would persist across borrows.
+    We use session-level `SET` (not `SET LOCAL`) deliberately:
+      - SET LOCAL is transaction-scoped, and wrapping long multi-query
+        admin endpoints (fleet dashboards, checkin handlers) in a single
+        transaction causes transaction poisoning when one statement fails.
+      - Session-level SET persists across transactions on the same
+        backend connection — but PgBouncer transaction-pooling mode runs
+        `DISCARD ALL` (its default `server_reset_query`) before returning
+        a connection to the pool, so the SET does NOT leak to the next
+        borrower.
+      - Because this path relies on PgBouncer's reset hook, pgbouncer.ini
+        MUST keep `server_reset_query = DISCARD ALL` (or a superset).
+        Session-pool mode would break the invariant — revisit if pooling
+        mode ever changes.
 
     Usage:
         async with admin_connection(pool) as conn:
             rows = await conn.fetch("SELECT * FROM incidents")  # all tenants
     """
     async with pool.acquire() as conn:
-        yield conn
+        # Explicit admin opt-in. No transaction wrapper — intentional.
+        await conn.execute("SET app.is_admin TO 'true'")
+        try:
+            yield conn
+        finally:
+            # Belt-and-suspenders reset. PgBouncer's DISCARD ALL will also
+            # clear this, but resetting here protects direct-to-Postgres
+            # deployments (tests, local dev without PgBouncer) from
+            # leaking admin context to the next borrower of the connection.
+            try:
+                await conn.execute("RESET app.is_admin")
+            except Exception:
+                # If reset fails the connection is already being recycled
+                # or torn down; no action available here.
+                logger.warning("admin_connection RESET failed — connection will be recycled")
 
 
 def _validated_org_id(org_id: str) -> str:

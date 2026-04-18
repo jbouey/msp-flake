@@ -82,8 +82,53 @@ engine = create_async_engine(
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+# -----------------------------------------------------------------------------
+# RLS admin context for SQLAlchemy sessions (Migration 234 follow-up)
+#
+# Migration 234 flipped the mcp_app role default of `app.is_admin` from 'true'
+# to 'false' so any path that forgets to set tenant scope sees zero rows. Every
+# SQLAlchemy endpoint today uses `get_db()` as an ADMIN surface — partner
+# dashboards, admin consoles, OAuth setup — none of them set tenant context.
+# Without this hook the whole SQLAlchemy tree would go blind the moment the
+# migration applies.
+#
+# The hook sets `app.is_admin = 'true'` at session-scope (not transaction-
+# scope) so it persists across the autocommit + flush lifecycle SQLAlchemy
+# uses internally. PgBouncer's `server_reset_query = DISCARD ALL` strips the
+# setting before the backend connection is returned to another borrower, so
+# the setting does not leak outside the session that set it.
+#
+# If a future endpoint needs genuine per-session tenant scope through
+# SQLAlchemy it should use an explicit SET LOCAL inside an explicit
+# transaction — this event listener only sets the default admin context.
+# -----------------------------------------------------------------------------
+from sqlalchemy import event as _sqla_event
+
+
+@_sqla_event.listens_for(engine.sync_engine, "connect")
+def _set_sqla_admin_context(dbapi_connection, connection_record):
+    """Run on EVERY new backend connection checked out into the pool.
+
+    Uses the DB-API cursor directly because SQLAlchemy event listeners fire
+    on the sync shim of the async engine. `SET` (no LOCAL) is session-level;
+    PgBouncer DISCARD ALL clears it between borrows from the front-side pool.
+    """
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("SET app.is_admin TO 'true'")
+    finally:
+        cursor.close()
+
+
 async def get_db():
-    """Yield a SQLAlchemy async session (FastAPI Depends)."""
+    """Yield a SQLAlchemy async session (FastAPI Depends).
+
+    The session inherits the admin RLS context set by the engine `connect`
+    event listener above — there is no per-request SET needed. Tenant-
+    scoped code should not use this; it should use `tenant_connection()`
+    or `org_connection()` in `tenant_middleware.py` to acquire an asyncpg
+    connection with SET LOCAL tenant scope.
+    """
     async with async_session() as session:
         yield session
 

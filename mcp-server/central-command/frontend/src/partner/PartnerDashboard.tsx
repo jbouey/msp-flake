@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { usePartner } from './PartnerContext';
 import { PartnerBilling } from './PartnerBilling';
+import PartnerCommission from './PartnerCommission';
 import { PartnerAgreements } from './PartnerAgreements';
 import { PartnerInvites } from './PartnerInvites';
 import { csrfHeaders } from '../utils/csrf';
@@ -48,7 +49,7 @@ export const PartnerDashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { partner, apiKey, isAuthenticated, isLoading, logout } = usePartner();
 
-  const [activeTab, setActiveTab] = useState<'sites' | 'onboarding' | 'provisions' | 'agreements' | 'invites' | 'billing' | 'compliance' | 'exceptions' | 'escalations' | 'learning' | 'sso' | 'inventory'>('sites');
+  const [activeTab, setActiveTab] = useState<'sites' | 'onboarding' | 'provisions' | 'agreements' | 'invites' | 'billing' | 'commission' | 'compliance' | 'exceptions' | 'escalations' | 'learning' | 'sso' | 'inventory'>('sites');
   const [ssoConfigSite, setSsoConfigSite] = useState<{ id: string; name: string } | null>(null);
 
   // Handle billing redirect from Stripe
@@ -63,6 +64,11 @@ export const PartnerDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showNewProvision, setShowNewProvision] = useState(false);
   const [newClientName, setNewClientName] = useState('');
+  const [showBulkProvision, setShowBulkProvision] = useState(false);
+  const [bulkCsvText, setBulkCsvText] = useState('');
+  const [bulkCreating, setBulkCreating] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkResult, setBulkResult] = useState<{ count: number } | null>(null);
   const [creating, setCreating] = useState(false);
   const [qrProvision, setQrProvision] = useState<Provision | null>(null);
   const [driftConfigSite, setDriftConfigSite] = useState<{ id: string; name: string } | null>(null);
@@ -151,6 +157,54 @@ export const PartnerDashboard: React.FC = () => {
       console.error('Failed to create provision', e);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleBulkProvision = async () => {
+    if (!isAuthenticated) return;
+    const lines = bulkCsvText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#'));
+    if (lines.length === 0) {
+      setBulkError('Paste at least one client name (one per line, CSV first column).');
+      return;
+    }
+    if (lines.length > 100) {
+      setBulkError('Max 100 rows per bulk upload. Split into multiple batches.');
+      return;
+    }
+    const entries = lines.map((line) => {
+      // First column = client_name. Additional columns reserved for future use.
+      const cols = line.split(',').map((c) => c.trim());
+      return { client_name: cols[0] };
+    });
+    setBulkCreating(true);
+    setBulkError(null);
+    setBulkResult(null);
+    try {
+      const headers: HeadersInit = apiKey
+        ? { 'Content-Type': 'application/json', 'X-API-Key': apiKey }
+        : { 'Content-Type': 'application/json', ...csrfHeaders() };
+      const response = await fetch('/api/partners/me/provisions/bulk', {
+        method: 'POST',
+        headers,
+        credentials: apiKey ? undefined : 'include',
+        body: JSON.stringify({ entries, expires_days: 30 }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setBulkError(body.detail || `Server returned ${response.status}`);
+        return;
+      }
+      const data = await response.json();
+      setBulkResult({ count: data.count || entries.length });
+      setBulkCsvText('');
+      loadData();
+    } catch (e: any) {
+      setBulkError(e?.message || 'Bulk upload failed');
+    } finally {
+      setBulkCreating(false);
     }
   };
 
@@ -407,6 +461,16 @@ export const PartnerDashboard: React.FC = () => {
             Billing
           </button>
           <button
+            onClick={() => setActiveTab('commission')}
+            className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
+              activeTab === 'commission'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-indigo-600'
+            }`}
+          >
+            Commission
+          </button>
+          <button
             onClick={() => setActiveTab('compliance')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'compliance'
@@ -584,8 +648,17 @@ export const PartnerDashboard: React.FC = () => {
 
         {activeTab === 'provisions' && (
           <div>
-            {/* New Provision Button */}
-            <div className="mb-4 flex justify-end">
+            {/* New Provision + Bulk Upload Buttons */}
+            <div className="mb-4 flex justify-end gap-2">
+              <button
+                onClick={() => { setShowBulkProvision(true); setBulkError(null); setBulkResult(null); }}
+                className="px-4 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200 transition flex items-center gap-2 border border-slate-300"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                Bulk Upload (CSV)
+              </button>
               <button
                 onClick={() => setShowNewProvision(true)}
                 className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition flex items-center gap-2"
@@ -596,6 +669,50 @@ export const PartnerDashboard: React.FC = () => {
                 New Provision Code
               </button>
             </div>
+
+            {/* Bulk Upload Modal */}
+            {showBulkProvision && (
+              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 modal-backdrop">
+                <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Bulk Provision Codes</h3>
+                  <p className="text-sm text-slate-600 mb-3">
+                    One client per line. CSV format — first column is client name. Max 100 rows.
+                  </p>
+                  <textarea
+                    value={bulkCsvText}
+                    onChange={(e) => setBulkCsvText(e.target.value)}
+                    placeholder={"Scranton Family Practice\nWilkes-Barre Dental\nClarks Summit Urgent Care"}
+                    rows={8}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                  {bulkError && (
+                    <div className="mt-2 text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded px-3 py-2">
+                      {bulkError}
+                    </div>
+                  )}
+                  {bulkResult && (
+                    <div className="mt-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2">
+                      Created {bulkResult.count} provision code{bulkResult.count === 1 ? '' : 's'}. See the list below.
+                    </div>
+                  )}
+                  <div className="mt-4 flex gap-3 justify-end">
+                    <button
+                      onClick={() => { setShowBulkProvision(false); setBulkCsvText(''); setBulkError(null); setBulkResult(null); }}
+                      className="px-4 py-2 text-slate-600 hover:text-slate-900 transition"
+                    >
+                      Close
+                    </button>
+                    <button
+                      onClick={handleBulkProvision}
+                      disabled={bulkCreating || !bulkCsvText.trim()}
+                      className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
+                    >
+                      {bulkCreating ? 'Creating…' : 'Create Codes'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* New Provision Modal */}
             {showNewProvision && (
@@ -815,6 +932,10 @@ export const PartnerDashboard: React.FC = () => {
 
         {activeTab === 'billing' && (
           <PartnerBilling />
+        )}
+
+        {activeTab === 'commission' && (
+          <PartnerCommission />
         )}
 
         {activeTab === 'compliance' && (

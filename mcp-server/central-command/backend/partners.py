@@ -108,6 +108,19 @@ class ProvisionCreate(BaseModel):
     expires_days: int = 30
 
 
+class ProvisionBulkEntry(BaseModel):
+    """Single row in a bulk provision-code request."""
+    client_name: Optional[str] = None
+    target_site_id: Optional[str] = None
+
+
+class ProvisionBulkCreate(BaseModel):
+    """Bulk create provision codes. One code per entry; empty list rejected.
+    100-entry cap matches the rate-limit budget for a single partner action."""
+    entries: List[ProvisionBulkEntry]
+    expires_days: int = 30
+
+
 class ProvisionClaim(BaseModel):
     """Model for claiming a provision code."""
     provision_code: str
@@ -124,6 +137,8 @@ class BrandingUpdate(BaseModel):
     tagline: Optional[str] = None
     support_email: Optional[str] = None
     support_phone: Optional[str] = None
+    email_from_display_name: Optional[str] = None
+    email_reply_to_address: Optional[str] = None
 
 
 # =============================================================================
@@ -2030,6 +2045,66 @@ async def create_provision_code(
     }
 
 
+@router.post("/me/provisions/bulk")
+async def bulk_create_provision_codes(
+    request: Request,
+    payload: ProvisionBulkCreate,
+    partner: dict = require_partner_role("admin")
+):
+    """Bulk create N provision codes in one call. Accepts JSON or
+    CSV-derived list from the UI. All-or-nothing insert in a single
+    transaction so partial failure doesn't leave orphan codes."""
+    if not payload.entries:
+        raise HTTPException(status_code=400, detail="entries must not be empty")
+    if len(payload.entries) > 100:
+        raise HTTPException(status_code=400, detail="max 100 entries per bulk request")
+
+    pool = await get_pool()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_days)
+    results = []
+
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            for entry in payload.entries:
+                code = generate_provision_code()
+                row = await conn.fetchrow("""
+                    INSERT INTO appliance_provisions (
+                        partner_id, provision_code, target_site_id,
+                        client_name, expires_at
+                    ) VALUES ($1, $2, $3, $4, $5)
+                    RETURNING id, provision_code, created_at
+                """,
+                    partner['id'],
+                    code,
+                    entry.target_site_id,
+                    entry.client_name,
+                    expires_at,
+                )
+                results.append({
+                    "id": str(row['id']),
+                    "provision_code": row['provision_code'],
+                    "qr_content": f"osiris://{code}",
+                    "client_name": entry.client_name,
+                    "target_site_id": entry.target_site_id,
+                    "expires_at": expires_at.isoformat(),
+                    "created_at": row['created_at'].isoformat(),
+                })
+
+    await log_partner_activity(
+        partner_id=str(partner['id']),
+        event_type=PartnerEventType.PROVISION_CREATED,
+        target_type="provision_bulk",
+        target_id=f"bulk:{len(results)}",
+        event_data={"count": len(results), "expires_days": payload.expires_days},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+        request_path=str(request.url.path),
+        request_method=request.method,
+    )
+
+    return {"count": len(results), "provisions": results}
+
+
 @router.get("/me/provisions")
 async def list_provision_codes(
     status: Optional[str] = None,
@@ -2274,6 +2349,12 @@ async def get_my_branding(partner: dict = require_partner_role("admin", "tech", 
     if not row:
         raise HTTPException(status_code=404, detail="Partner not found")
 
+    async with admin_connection(pool) as conn:
+        email_row = await conn.fetchrow("""
+            SELECT email_from_display_name, email_reply_to_address
+            FROM partners WHERE id = $1
+        """, partner['id'])
+
     return {
         "brand_name": row["brand_name"] or "OsirisCare",
         "logo_url": row["logo_url"],
@@ -2283,6 +2364,8 @@ async def get_my_branding(partner: dict = require_partner_role("admin", "tech", 
         "support_email": row["support_email"],
         "support_phone": row["support_phone"],
         "partner_slug": row["slug"],
+        "email_from_display_name": email_row["email_from_display_name"] if email_row else None,
+        "email_reply_to_address": email_row["email_reply_to_address"] if email_row else None,
     }
 
 
@@ -2327,6 +2410,20 @@ async def update_my_branding(
     if body.support_phone is not None:
         updates["support_phone"] = body.support_phone[:50] if body.support_phone else None
 
+    # Email-from branding (display name + Reply-To). Envelope From stays on
+    # OsirisCare's SMTP identity for DKIM/SPF alignment — see migration 232.
+    if body.email_from_display_name is not None:
+        sanitized = _sanitize_text(body.email_from_display_name)
+        updates["email_from_display_name"] = (sanitized[:120] if sanitized else None)
+    if body.email_reply_to_address is not None:
+        addr = body.email_reply_to_address.strip() if body.email_reply_to_address else None
+        if addr and not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', addr):
+            raise HTTPException(
+                status_code=400,
+                detail="email_reply_to_address must look like an email",
+            )
+        updates["email_reply_to_address"] = addr[:255] if addr else None
+
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -2359,6 +2456,141 @@ async def update_my_branding(
     )
 
     return {"status": "updated", "updated_fields": list(updates.keys())}
+
+
+# =============================================================================
+# COMMISSION DASHBOARD
+# =============================================================================
+# Lets a partner see exactly what they're earning: MRR from active
+# subscriptions, effective revenue-share rate (from migration 233's tiered
+# curve), estimated monthly + YTD commission, and per-month breakdown.
+#
+# This is READ-ONLY and deliberately computes from subscription state + the
+# shared PARTNER_PLAN_CATALOG. Real paid-out commission history sits in
+# partner_invoices once Stripe Connect ships — for now lifetime_paid is
+# reported as 0 and the UI is explicit that the commission figure is
+# estimated pending reconciliation.
+
+@router.get("/me/commission")
+async def get_my_commission(
+    partner: dict = require_partner_role("admin", "billing")
+):
+    """Return commission summary for this partner.
+
+    Response shape:
+        {
+          "active_clinic_count": int,
+          "mrr_cents": int,                   # monthly recurring across active subs
+          "ytd_mrr_cents": int,               # sum of MRR months YTD (approx)
+          "effective_rate_bps": int,          # from compute_partner_rate_bps()
+          "estimated_monthly_commission_cents": int,
+          "ytd_estimated_commission_cents": int,
+          "lifetime_paid_cents": int,         # always 0 until Stripe Connect
+          "currency": "USD",
+          "monthly_breakdown": [{month: 'YYYY-MM', mrr_cents, commission_cents}, ...]
+        }
+    """
+    # Price map — one source of truth with client_signup.PLAN_CATALOG
+    # Inlined here to avoid a cross-module import cycle.
+    MONTHLY_AMOUNT_CENTS = {
+        "essentials": 49900,
+        "professional": 79900,
+        "enterprise": 129900,
+        # pilot is one-time; doesn't contribute to MRR
+    }
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        subs = await conn.fetch(
+            """
+            SELECT plan, status, current_period_start, current_period_end,
+                   site_id, created_at
+              FROM subscriptions
+             WHERE partner_id = $1::uuid
+               AND status IN ('active','trialing','past_due')
+            """,
+            str(partner['id']),
+        )
+
+        # Active clinic count = distinct non-null site_id from the partner's
+        # active subs. Treat each active sub as one "clinic seat".
+        active_clinic_count = len({s['site_id'] for s in subs if s['site_id']})
+        if active_clinic_count == 0:
+            # Fallback: if no site_id stamped yet (webhook race), count subs.
+            active_clinic_count = sum(
+                1 for s in subs if s['status'] in ('active', 'trialing')
+            )
+
+        mrr_cents = sum(
+            MONTHLY_AMOUNT_CENTS.get(s['plan'], 0)
+            for s in subs
+            if s['plan'] in MONTHLY_AMOUNT_CENTS and s['status'] in ('active', 'trialing')
+        )
+
+        rate_row = await conn.fetchrow(
+            "SELECT compute_partner_rate_bps($1::uuid, $2::int) AS bps",
+            str(partner['id']),
+            active_clinic_count,
+        )
+        effective_rate_bps = int(rate_row['bps']) if rate_row else 4000
+
+        # Monthly breakdown for the last 12 months. For each month the
+        # partner had at least one active sub, attribute MRR at that time.
+        # Approximates via created_at — precise history requires Stripe
+        # invoice ingestion (ships with Stripe Connect later).
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        breakdown = []
+        for month_idx in range(12):
+            # Walk back month-by-month (approx by 30 days)
+            cursor = now - timedelta(days=30 * month_idx)
+            month_start = cursor.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            # Active subs at that month = created_at <= month_start AND
+            # (canceled_at IS NULL OR canceled_at > month_start)
+            month_subs = await conn.fetch(
+                """
+                SELECT plan FROM subscriptions
+                 WHERE partner_id = $1::uuid
+                   AND created_at <= $2
+                   AND (canceled_at IS NULL OR canceled_at > $2)
+                   AND status <> 'incomplete'
+                """,
+                str(partner['id']),
+                month_start,
+            )
+            month_mrr = sum(
+                MONTHLY_AMOUNT_CENTS.get(s['plan'], 0) for s in month_subs
+            )
+            month_commission = (month_mrr * effective_rate_bps) // 10000
+            breakdown.append({
+                "month": month_start.strftime("%Y-%m"),
+                "mrr_cents": month_mrr,
+                "commission_cents": month_commission,
+            })
+        breakdown.reverse()  # oldest first, like a chart
+
+    estimated_monthly = (mrr_cents * effective_rate_bps) // 10000
+    current_year = now.year
+    ytd_months = [b for b in breakdown if b["month"].startswith(str(current_year))]
+    ytd_mrr = sum(b["mrr_cents"] for b in ytd_months)
+    ytd_commission = sum(b["commission_cents"] for b in ytd_months)
+
+    return {
+        "active_clinic_count": active_clinic_count,
+        "mrr_cents": mrr_cents,
+        "ytd_mrr_cents": ytd_mrr,
+        "effective_rate_bps": effective_rate_bps,
+        "estimated_monthly_commission_cents": estimated_monthly,
+        "ytd_estimated_commission_cents": ytd_commission,
+        "lifetime_paid_cents": 0,
+        "currency": "USD",
+        "monthly_breakdown": breakdown,
+        "note": (
+            "Commission is estimated from active Stripe subscriptions and the "
+            "tiered revenue-share rate. Actual payouts reconcile once Stripe "
+            "Connect is activated — see partner_payouts for paid history."
+        ),
+    }
 
 
 # =============================================================================

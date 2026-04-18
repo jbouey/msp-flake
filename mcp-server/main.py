@@ -16,7 +16,7 @@ import json
 import hashlib
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -92,6 +92,11 @@ from dashboard_api.alert_router import digest_sender_loop
 from dashboard_api.oauth_login import public_router as oauth_public_router, router as oauth_router, admin_router as oauth_admin_router
 from dashboard_api.partner_auth import public_router as partner_auth_router, admin_router as partner_admin_router, session_router as partner_session_router
 from dashboard_api.billing import router as billing_router
+from dashboard_api.stripe_connect import (
+    router as partner_payouts_router,
+    admin_router as admin_payouts_router,
+    run_monthly_payout_job,
+)
 from dashboard_api.partner_agreements_api import router as partner_agreements_router
 from dashboard_api.partner_invites_api import (
     partner_router as partner_invites_router,
@@ -1390,6 +1395,60 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"Reconciliation loop (no-op) error: {e}")
 
+    async def _partner_payout_loop():
+        """Monthly partner commission payout run.
+
+        Mirrors the compliance-packet loop's catch-up pattern: runs once an
+        hour and generates a payout row for any completed month that does
+        not yet have one. Idempotent via the UNIQUE (partner_id, period_start)
+        constraint + ON CONFLICT UPSERT in run_monthly_payout_job.
+
+        Actual Stripe Transfer creation is gated by OSIRIS_PAYOUT_ENABLED;
+        while the flag is false the loop computes payouts as a dry-run so
+        ops can verify the math against the commission dashboard before
+        money ever moves.
+        """
+        # 30-minute startup delay — longer than the packet loop so the two
+        # don't collide on pool warm-up and the payout computation never
+        # runs before the packet generator has stabilized on a cold start.
+        await asyncio.sleep(1800)
+
+        CATCH_UP_MONTHS = 3
+
+        def _ended_months(now_: datetime, count: int):
+            y, m = now_.year, now_.month
+            for _ in range(count):
+                m -= 1
+                if m == 0:
+                    m = 12
+                    y -= 1
+                yield (y, m)
+
+        while not _bg_shutdown.is_set():
+            try:
+                now = datetime.now(timezone.utc)
+                for year, month in _ended_months(now, CATCH_UP_MONTHS):
+                    target = date(year, month, 1)
+                    try:
+                        summary = await run_monthly_payout_job(for_month=target)
+                        logger.info(
+                            "partner_payout_loop_tick",
+                            period=target.isoformat(),
+                            dry_run=summary["dry_run"],
+                            computed=summary["computed"],
+                            transferred=summary["transferred"],
+                            failed=summary["failed"],
+                            skipped=summary["skipped"],
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"partner_payout_loop error for {target}: {e}",
+                            exc_info=True,
+                        )
+            except Exception as outer:
+                logger.error(f"partner_payout_loop outer error: {outer}", exc_info=True)
+            await asyncio.sleep(3600)  # hourly cadence; idempotent by design
+
     async def _compliance_packet_loop():
         """Auto-generate + persist monthly compliance packets.
 
@@ -1698,6 +1757,7 @@ async def lifespan(app: FastAPI):
         ("healing_sla", healing_sla_loop),
         ("unregistered_device_alerts", _unregistered_device_alert_loop),
         ("compliance_packets", _compliance_packet_loop),
+        ("partner_payout", _partner_payout_loop),
         ("alert_digest", digest_sender_loop),
         ("audit_log_retention", _audit_log_retention_loop),
         ("mark_stale_appliances", mark_stale_appliances_loop),
@@ -1885,6 +1945,8 @@ app.include_router(partner_auth_router, prefix="/api")  # Partner OAuth login en
 app.include_router(partner_session_router, prefix="/api/partner-auth")  # Partner TOTP management (session-auth)
 app.include_router(partner_admin_router, prefix="/api")  # Partner admin endpoints (pending, oauth-config)
 app.include_router(billing_router)  # Stripe billing for partners
+app.include_router(partner_payouts_router)  # Stripe Connect — partner payout onboarding + history
+app.include_router(admin_payouts_router)  # Admin manual trigger for payout run
 app.include_router(partner_agreements_router)  # Partner MSA + Subcontractor BAA + Reseller Addendum e-sign
 app.include_router(partner_invites_router)     # Partner→clinic invite create/list/revoke (auth)
 app.include_router(partner_invites_public_router)  # Partner→clinic invite validate (public, clinic-facing)

@@ -1147,26 +1147,40 @@ async def submit_evidence(
 
     # Evidence dedup: skip duplicate bundle hashes within 15-min window.
     # Handles grace-period overlap where two appliances scan the same target.
+    #
+    # SAVEPOINT: without begin_nested(), a failure here poisons the outer
+    # tenant_connection() transaction and every subsequent query in
+    # submit_evidence() returns InFailedSQLTransactionError. The April
+    # audit surfaced this as a live prod error on north-valley-branch-2.
     try:
-        existing_dup = await db.execute(text("""
-            SELECT 1 FROM compliance_bundles
-            WHERE site_id = :site_id
-              AND bundle_hash = :hash
-              AND created_at > NOW() - INTERVAL '15 minutes'
-            LIMIT 1
-        """), {"site_id": site_id, "hash": bundle.bundle_hash})
-        if existing_dup.fetchone():
-            logger.info(
-                f"evidence_dedup_skip: site_id={site_id} bundle_hash={bundle.bundle_hash[:12]}..."
-            )
-            return {
-                "status": "accepted",
-                "bundle_id": bundle.bundle_id,
-                "deduplicated": True,
-                "message": "Bundle already recorded within 15-minute window",
-            }
+        async with db.begin_nested():
+            existing_dup = await db.execute(text("""
+                SELECT 1 FROM compliance_bundles
+                WHERE site_id = :site_id
+                  AND bundle_hash = :hash
+                  AND created_at > NOW() - INTERVAL '15 minutes'
+                LIMIT 1
+            """), {"site_id": site_id, "hash": bundle.bundle_hash})
+            if existing_dup.fetchone():
+                logger.info(
+                    f"evidence_dedup_skip: site_id={site_id} bundle_hash={bundle.bundle_hash[:12]}..."
+                )
+                return {
+                    "status": "accepted",
+                    "bundle_id": bundle.bundle_id,
+                    "deduplicated": True,
+                    "message": "Bundle already recorded within 15-minute window",
+                }
     except Exception as e:
-        logger.warning(f"evidence_dedup_check_failed: {e}")
+        logger.error(
+            "evidence_dedup_check_failed",
+            exc_info=True,
+            extra={
+                "site_id": site_id,
+                "bundle_hash_prefix": bundle.bundle_hash[:12],
+                "exception_class": type(e).__name__,
+            },
+        )
 
     # Acquire per-site advisory lock to serialize chain position assignment.
     # Without this, concurrent submissions race on chain_position (caused 1,125 broken links).
@@ -1209,10 +1223,14 @@ async def submit_evidence(
     # Fix: check bundle_id existence first. If present, return as dedup
     # (same semantics as the bundle_hash 15-min window above, but
     # stronger — this covers any future conflict by bundle_id).
-    existing_by_id = await db.execute(text("""
-        SELECT 1 FROM compliance_bundles WHERE bundle_id = :bundle_id LIMIT 1
-    """), {"bundle_id": bundle.bundle_id})
-    if existing_by_id.fetchone():
+    # SAVEPOINT: same rationale as the bundle_hash dedup above. A transient
+    # failure on this lookup must not poison the transaction before INSERT.
+    async with db.begin_nested():
+        existing_by_id = await db.execute(text("""
+            SELECT 1 FROM compliance_bundles WHERE bundle_id = :bundle_id LIMIT 1
+        """), {"bundle_id": bundle.bundle_id})
+        dup_hit = existing_by_id.fetchone()
+    if dup_hit:
         logger.info(
             "evidence_duplicate_bundle_id",
             extra={
@@ -3850,12 +3868,22 @@ async def export_chain_of_custody(
 # (~10MB at 10KB/bundle). Auditors who want the full chain can call
 # repeatedly with `offset`.
 
-_AUDITOR_KIT_README = """# OsirisCare Compliance Evidence — Auditor Verification Kit
+_AUDITOR_KIT_README = """# {presenter_brand} Compliance Evidence — Auditor Verification Kit
+
+**Presented by:** {presenter_brand}{presenter_contact_line}
+**Compliance substrate:** OsirisCare (issuer of Ed25519 signing keys and
+OpenTimestamps anchors referenced in this kit)
 
 This ZIP contains everything an external auditor needs to **independently
 verify** the compliance evidence collected for this site. **No connection
-to OsirisCare's servers is required at any point.** Verification uses
-only standard open-source tools.
+to any vendor server is required at any point.** Verification uses only
+standard open-source tools.
+
+The cryptographic attribution in this kit (public keys, signatures, OTS
+proofs) is emitted by OsirisCare's substrate — that is the entity the
+auditor confirms signed the bundles. {presenter_brand} is the partner
+that manages this site and is presenting the evidence to the auditor.
+Both identities appear in `chain.json` so there is no ambiguity.
 
 ## Contents
 
@@ -3922,9 +3950,10 @@ FAIL before signing off the audit.**
 ## Verifying the verifier
 
 `verify.sh` is open source and is the same script used by every
-OsirisCare audit kit. You can read every line — it has no network
-calls (other than the optional `ots verify` which talks to public
-Bitcoin block explorers, never to OsirisCare).
+OsirisCare audit kit, regardless of which partner presents it. You
+can read every line — it has no network calls (other than the
+optional `ots verify` which talks to public Bitcoin block explorers,
+never to OsirisCare or to {presenter_brand}).
 
 If you want a third-party-built verifier instead of trusting ours,
 you can use the OpenTimestamps CLI directly on each `.ots` file in
@@ -3944,10 +3973,15 @@ advisories page on the OsirisCare website.
 
 ## Contact
 
-Generated by OsirisCare for: `{site_id}` ({clinic_name})
+Presented by: {presenter_brand}{presenter_contact_line}
+Compliance substrate: OsirisCare — support@osiriscare.net
+Generated for site: `{site_id}` ({clinic_name})
 Generated at: {generated_at}
-Kit version: 1.0
-Questions: support@osiriscare.net
+Kit version: 2.1
+
+For operational questions about this deployment, contact {presenter_brand}.
+For questions about the cryptographic substrate (key rotation, algorithm
+choice, disclosures), contact OsirisCare.
 """
 
 
@@ -4247,12 +4281,40 @@ async def download_auditor_kit(
     if offset < 0:
         raise HTTPException(400, "offset must be >= 0")
 
-    # 1. Site identity + clinic name
+    # 1. Site identity + clinic name + partner attribution
     site_row = (await db.execute(text("""
-        SELECT site_id, clinic_name FROM sites WHERE site_id = :sid
+        SELECT site_id, clinic_name, partner_id FROM sites WHERE site_id = :sid
     """), {"sid": site_id})).fetchone()
     if not site_row:
         raise HTTPException(404, "Site not found")
+
+    # 2. Partner brand for white-labeled presentation layer. The cryptographic
+    #    attribution always remains OsirisCare (substrate owns the Ed25519 keys
+    #    and OTS anchors); the partner is only the *presenter* of the evidence.
+    #    This separation is what makes the white-label legally clean — the
+    #    auditor can always trace signatures back to a single substrate issuer,
+    #    no matter which partner brands the cover page. A direct-to-clinic site
+    #    with no partner_id defaults to "OsirisCare" on both lines, so behavior
+    #    is unchanged.
+    presenter_brand = "OsirisCare"
+    presenter_contact_line = ""
+    presenter_partner_id: Optional[str] = None
+    if site_row.partner_id:
+        brand_row = (await db.execute(text("""
+            SELECT id, brand_name, support_email, support_phone
+              FROM partners
+             WHERE id = :pid
+        """), {"pid": site_row.partner_id})).fetchone()
+        if brand_row and brand_row.brand_name:
+            presenter_brand = brand_row.brand_name
+            presenter_partner_id = str(brand_row.id)
+            contact_bits = []
+            if brand_row.support_email:
+                contact_bits.append(brand_row.support_email)
+            if brand_row.support_phone:
+                contact_bits.append(brand_row.support_phone)
+            if contact_bits:
+                presenter_contact_line = " — " + " · ".join(contact_bits)
 
     # 2. Per-appliance public keys (with fingerprints)
     pk_rows = (await db.execute(text("""
@@ -4307,11 +4369,29 @@ async def download_auditor_kit(
     generated_at = datetime.now(timezone.utc).isoformat()
 
     chain_metadata = {
-        "kit_version": "1.0",
+        "kit_version": "2.1",
         "generated_at": generated_at,
         "site": {
             "site_id": site_row.site_id,
             "clinic_name": site_row.clinic_name,
+        },
+        "presentation": {
+            # Who the auditor received this kit from. Partner_id is included
+            # only when a partner presents; direct-to-clinic leaves it null.
+            "presenter_brand": presenter_brand,
+            "presenter_partner_id": presenter_partner_id,
+            # The substrate that issued the cryptographic material below.
+            # This is always OsirisCare — it does NOT change per-partner.
+            # Auditors MUST verify signatures against substrate-issued keys;
+            # presenter branding is cosmetic only.
+            "substrate_issuer": "OsirisCare",
+            "substrate_note": (
+                "All Ed25519 signatures, per-appliance public keys, and "
+                "OpenTimestamps anchors in this kit are issued by the "
+                "OsirisCare compliance substrate. The presenter brand "
+                "identifies the partner that manages this site; it does "
+                "not participate in signing."
+            ),
         },
         "chain": {
             "bundle_count_in_kit": len(bundle_rows),
@@ -4491,6 +4571,8 @@ async def download_auditor_kit(
             site_id=site_row.site_id,
             clinic_name=site_row.clinic_name or "—",
             generated_at=generated_at,
+            presenter_brand=presenter_brand,
+            presenter_contact_line=presenter_contact_line,
         ))
         zf.writestr("verify.sh", _AUDITOR_KIT_VERIFY_SH)
         zf.writestr("chain.json", _json.dumps(chain_metadata, indent=2))

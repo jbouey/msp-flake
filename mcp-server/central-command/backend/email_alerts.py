@@ -36,13 +36,34 @@ def _send_smtp_with_retry(
     recipients: list[str],
     label: str = "email",
     max_retries: int = 3,
+    partner_branding: Optional[dict] = None,
 ) -> bool:
     """Send an email via SMTP with exponential backoff retry.
 
     Centralizes the retry logic used by all email-sending functions.
     Returns True on success, False on failure (after exhausting retries).
+
+    partner_branding (optional): {'display_name': str, 'reply_to': str}
+        Rewrites the From header display name and adds a Reply-To header
+        so the email appears to come from the MSP to the recipient, while
+        the DKIM-signing envelope sender remains OsirisCare's. SPF/DKIM
+        alignment preserved — we don't allow envelope From spoofing.
     """
     import time as _time
+
+    if partner_branding:
+        display = partner_branding.get("display_name")
+        reply_to = partner_branding.get("reply_to")
+        if display:
+            # Rewrite the From: header with the partner display name.
+            # email.utils.formataddr quotes display name correctly.
+            from email.utils import formataddr
+            del msg["From"]
+            msg["From"] = formataddr((display, SMTP_FROM))
+        if reply_to:
+            if "Reply-To" in msg:
+                del msg["Reply-To"]
+            msg["Reply-To"] = reply_to
 
     for attempt in range(max_retries):
         try:
@@ -61,6 +82,46 @@ def _send_smtp_with_retry(
                 logger.error(f"Failed to send {label} after {max_retries} attempts: {smtp_err}")
                 return False
     return False
+
+
+async def get_partner_email_branding(partner_id: Optional[str]) -> Optional[dict]:
+    """Look up the partner's email display name + reply-to override.
+
+    Returns None when no partner_id (global OsirisCare identity) or when the
+    partner has no overrides set. The return shape matches the
+    partner_branding kwarg of _send_smtp_with_retry.
+    """
+    if not partner_id:
+        return None
+    try:
+        # Local import to avoid module-load ordering issues
+        from shared import get_pool, admin_connection  # type: ignore
+        pool = await get_pool()
+        async with admin_connection(pool) as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT email_from_display_name AS display_name,
+                       email_reply_to_address AS reply_to
+                FROM partners
+                WHERE id = $1::uuid
+                """,
+                str(partner_id),
+            )
+        if not row:
+            return None
+        display = row["display_name"]
+        reply_to = row["reply_to"]
+        if not display and not reply_to:
+            return None
+        branding: dict = {}
+        if display:
+            branding["display_name"] = display
+        if reply_to:
+            branding["reply_to"] = reply_to
+        return branding
+    except Exception as e:
+        logger.warning(f"get_partner_email_branding failed for partner={partner_id}: {e}")
+        return None
 
 
 def _build_details_section(details: dict) -> str:
