@@ -1,16 +1,17 @@
 """Unit tests for evidence bundle deduplication in submit_evidence.
 
-Covers the 15-minute window dedup that prevents duplicate rows during
-mesh failover grace periods when two appliances scan the same target.
-
-These tests import via the dashboard_api package so that relative imports
-in evidence_chain.py resolve correctly (avoiding the Depends(None) problem
-that occurs when the module is imported standalone).
+Covers both the 15-minute hash-window dedup AND the bundle_id dedup under
+the per-site advisory lock. Since Session 209 the write path runs under
+tenant_connection(site_id) with asyncpg (not SQLAlchemy), so this file
+mocks get_pool() + tenant_connection() to observe the asyncpg call
+sequence. The pre-write phase (site + appliance lookup) still uses
+SQLAlchemy and is mocked via `db.execute` as before.
 """
 
 import json
 import os
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -59,7 +60,7 @@ AGENT_SIG = "c" * 128
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# SQLAlchemy-side fakes (pre-write phase: site lookup + appliance lookup)
 # ---------------------------------------------------------------------------
 
 
@@ -120,17 +121,8 @@ def _make_bundle(**overrides):
     return evidence_chain.EvidenceBundleSubmit(**kwargs)
 
 
-def _make_db(dedup_hit: bool):
-    """
-    Build a mock AsyncSession that responds to the DB query sequence inside
-    submit_evidence, routing dedup SELECT to either a hit or miss result.
-
-    Query order inside submit_evidence up to the dedup check:
-      1. SELECT site_id, agent_public_key FROM sites WHERE site_id = …
-      2. SELECT appliance_id, agent_public_key FROM site_appliances WHERE … (key lookup)
-      3. UPDATE site_appliances … (auto-register / heartbeat — optional, ignored)
-      4. SELECT 1 FROM compliance_bundles WHERE … bundle_hash … (dedup check)
-    """
+def _make_sqla_db():
+    """SQLAlchemy mock for the pre-write phase (site + appliance lookup + heartbeat UPDATEs)."""
     site_row = FakeRow(
         [SITE_ID, AGENT_PUB_KEY],
         names=["site_id", "agent_public_key"],
@@ -139,11 +131,9 @@ def _make_db(dedup_hit: bool):
         ["appliance-uuid-001", AGENT_PUB_KEY],
         names=["appliance_id", "agent_public_key"],
     )
-    dedup_row = FakeRow([1]) if dedup_hit else None
 
     async def mock_execute(query, params=None):
         query_str = str(query)
-
         if "FROM sites WHERE site_id" in query_str:
             return FakeResult([site_row])
         if (
@@ -152,13 +142,7 @@ def _make_db(dedup_hit: bool):
             and "SELECT" in query_str
         ):
             return FakeResult([appliance_row])
-        if (
-            "compliance_bundles" in query_str
-            and "bundle_hash" in query_str
-            and "SELECT" in query_str
-        ):
-            return FakeResult([dedup_row] if dedup_row else [])
-        # UPDATEs, advisory lock, prev-bundle SELECT, INSERT — empty success
+        # UPDATE site_appliances etc. — empty success
         return FakeResult()
 
     db = AsyncMock()
@@ -168,25 +152,94 @@ def _make_db(dedup_hit: bool):
 
 
 # ---------------------------------------------------------------------------
+# asyncpg-side fake (write phase via tenant_connection)
+# ---------------------------------------------------------------------------
+
+
+class FakeAsyncpgConn:
+    """Minimal asyncpg Connection stand-in capturing calls."""
+
+    def __init__(self, hash_hit=False, id_hit=False, prev_bundle=None):
+        self.hash_hit = hash_hit
+        self.id_hit = id_hit
+        self.prev_bundle = prev_bundle
+        self.execute_calls = []
+        self.fetchval_calls = []
+        self.fetchrow_calls = []
+
+    async def execute(self, query, *args):
+        self.execute_calls.append((query, args))
+        return "OK"
+
+    async def fetchval(self, query, *args):
+        self.fetchval_calls.append((query, args))
+        if "bundle_hash" in query and "INTERVAL" in query:
+            return 1 if self.hash_hit else None
+        if "WHERE bundle_id = $1 LIMIT 1" in query:
+            return 1 if self.id_hit else None
+        return None
+
+    async def fetchrow(self, query, *args):
+        self.fetchrow_calls.append((query, args))
+        if "ORDER BY chain_position DESC" in query:
+            return self.prev_bundle
+        return None
+
+    def inserts(self):
+        return [
+            call for call in self.execute_calls
+            if "INSERT INTO compliance_bundles" in call[0]
+        ]
+
+    def advisory_locks(self):
+        return [
+            call for call in self.execute_calls
+            if "pg_advisory_xact_lock" in call[0]
+        ]
+
+
+def _patch_pool_and_tenant(conn):
+    """Return (get_pool_patcher, tenant_connection_patcher) that route the
+    deferred `from .fleet import get_pool` + `from .tenant_middleware import
+    tenant_connection` inside submit_evidence to our fakes."""
+
+    @asynccontextmanager
+    async def _fake_tc(pool, site_id=None, is_admin=False, actor_appliance_id=None):
+        yield conn
+
+    gp = patch(
+        "dashboard_api.fleet.get_pool",
+        AsyncMock(return_value=MagicMock()),
+    )
+    tc = patch(
+        "dashboard_api.tenant_middleware.tenant_connection",
+        _fake_tc,
+    )
+    return gp, tc
+
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 
 class TestEvidenceDedup:
-    """Verify the 15-minute dedup window in evidence_chain.submit_evidence."""
+    """Verify hash-window + bundle_id dedup in evidence_chain.submit_evidence."""
 
     @pytest.mark.asyncio
-    async def test_dedup_returns_accepted_without_inserting(self):
+    async def test_dedup_hash_window_returns_accepted_without_inserting(self):
         """
         When an identical bundle_hash exists within 15 minutes,
         submit_evidence must return status=accepted + deduplicated=True
-        without executing an INSERT INTO compliance_bundles.
+        without executing the INSERT or acquiring the advisory lock.
         """
-        db = _make_db(dedup_hit=True)
+        conn = FakeAsyncpgConn(hash_hit=True)
+        db = _make_sqla_db()
         bundle = _make_bundle()
         background_tasks = MagicMock()
 
-        with patch.object(evidence_chain, "verify_ed25519_signature", return_value=True):
+        gp, tc = _patch_pool_and_tenant(conn)
+        with gp, tc, patch.object(evidence_chain, "verify_ed25519_signature", return_value=True):
             result = await evidence_chain.submit_evidence(
                 site_id=SITE_ID,
                 bundle=bundle,
@@ -201,27 +254,26 @@ class TestEvidenceDedup:
         assert "15-minute" in result.get("message", ""), (
             f"expected '15-minute' in message, got: {result.get('message')}"
         )
-
-        insert_calls = [
-            call
-            for call in db.execute.call_args_list
-            if "INSERT INTO compliance_bundles" in str(call.args[0])
-        ]
-        assert insert_calls == [], (
-            f"INSERT must NOT run when dedup match is found; got {len(insert_calls)} call(s)"
+        assert conn.inserts() == [], (
+            f"INSERT must NOT run when hash-window dedup match is found; got {len(conn.inserts())}"
+        )
+        assert conn.advisory_locks() == [], (
+            "Advisory lock must NOT be acquired when hash-window dedup returns early"
         )
 
     @pytest.mark.asyncio
     async def test_no_dedup_proceeds_to_insert(self):
         """
-        When no matching bundle_hash exists in the 15-minute window,
-        submit_evidence must proceed normally and execute the INSERT.
+        When no matching bundle_hash OR bundle_id exists, submit_evidence
+        must acquire the advisory lock and execute the INSERT.
         """
-        db = _make_db(dedup_hit=False)
+        conn = FakeAsyncpgConn(hash_hit=False, id_hit=False, prev_bundle=None)
+        db = _make_sqla_db()
         bundle = _make_bundle()
         background_tasks = MagicMock()
 
-        with patch.object(evidence_chain, "verify_ed25519_signature", return_value=True):
+        gp, tc = _patch_pool_and_tenant(conn)
+        with gp, tc, patch.object(evidence_chain, "verify_ed25519_signature", return_value=True):
             result = await evidence_chain.submit_evidence(
                 site_id=SITE_ID,
                 bundle=bundle,
@@ -230,7 +282,7 @@ class TestEvidenceDedup:
                 db=db,
             )
 
-        # result may be a Pydantic model or dict depending on code path
+        # result is an EvidenceSubmitResponse Pydantic model on the happy path
         deduped = (
             result.get("deduplicated")
             if isinstance(result, dict)
@@ -239,26 +291,60 @@ class TestEvidenceDedup:
         assert deduped is not True, (
             "deduplicated should not be set when no dedup match exists"
         )
-        insert_calls = [
-            call
-            for call in db.execute.call_args_list
-            if "INSERT INTO compliance_bundles" in str(call.args[0])
-        ]
-        assert len(insert_calls) == 1, (
-            f"INSERT must execute exactly once when no dedup match; got {len(insert_calls)}"
+        assert len(conn.inserts()) == 1, (
+            f"INSERT must execute exactly once when no dedup match; got {len(conn.inserts())}"
+        )
+        assert len(conn.advisory_locks()) == 1, (
+            f"Advisory lock must be acquired exactly once on the write path; got {len(conn.advisory_locks())}"
         )
 
     @pytest.mark.asyncio
-    async def test_dedup_skip_does_not_call_commit(self):
+    async def test_bundle_id_duplicate_returns_accepted_without_inserting(self):
         """
-        A dedup-skipped submission must not call db.commit() because no write
-        occurred — early return happens before the advisory lock and INSERT.
+        Second-line dedup: bundle_hash window misses but bundle_id already
+        exists (e.g., hash-window expired but ID still collides). Must
+        return deduplicated=True with the bundle_id-specific message and
+        skip the INSERT, while STILL having acquired the advisory lock.
         """
-        db = _make_db(dedup_hit=True)
+        conn = FakeAsyncpgConn(hash_hit=False, id_hit=True, prev_bundle=None)
+        db = _make_sqla_db()
         bundle = _make_bundle()
         background_tasks = MagicMock()
 
-        with patch.object(evidence_chain, "verify_ed25519_signature", return_value=True):
+        gp, tc = _patch_pool_and_tenant(conn)
+        with gp, tc, patch.object(evidence_chain, "verify_ed25519_signature", return_value=True):
+            result = await evidence_chain.submit_evidence(
+                site_id=SITE_ID,
+                bundle=bundle,
+                background_tasks=background_tasks,
+                auth_site_id=SITE_ID,
+                db=db,
+            )
+
+        assert result["status"] == "accepted"
+        assert result.get("deduplicated") is True
+        assert "bundle_id" in result.get("message", "").lower()
+        assert conn.inserts() == [], (
+            "INSERT must not run when bundle_id already exists"
+        )
+        assert len(conn.advisory_locks()) == 1, (
+            "Advisory lock IS acquired for the bundle_id check (tighter race window)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dedup_skip_does_not_call_sqla_commit(self):
+        """
+        A dedup-skipped submission must not call the SQLAlchemy db.commit()
+        because no write happened — early return fires before tenant_connection
+        even opens a transaction on the asyncpg side.
+        """
+        conn = FakeAsyncpgConn(hash_hit=True)
+        db = _make_sqla_db()
+        bundle = _make_bundle()
+        background_tasks = MagicMock()
+
+        gp, tc = _patch_pool_and_tenant(conn)
+        with gp, tc, patch.object(evidence_chain, "verify_ed25519_signature", return_value=True):
             await evidence_chain.submit_evidence(
                 site_id=SITE_ID,
                 bundle=bundle,
@@ -268,66 +354,3 @@ class TestEvidenceDedup:
             )
 
         db.commit.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_dedup_check_failure_does_not_block_submission(self):
-        """
-        A transient DB error during the dedup SELECT (e.g., connection glitch)
-        must be swallowed and allow the submission to proceed normally.
-        """
-        site_row = FakeRow(
-            [SITE_ID, AGENT_PUB_KEY],
-            names=["site_id", "agent_public_key"],
-        )
-        appliance_row = FakeRow(
-            ["appliance-uuid-002", AGENT_PUB_KEY],
-            names=["appliance_id", "agent_public_key"],
-        )
-
-        async def mock_execute_dedup_error(query, params=None):
-            query_str = str(query)
-            if "FROM sites WHERE site_id" in query_str:
-                return FakeResult([site_row])
-            if (
-                "FROM site_appliances" in query_str
-                and "agent_public_key" in query_str
-                and "SELECT" in query_str
-            ):
-                return FakeResult([appliance_row])
-            # Only raise on the dedup-specific query, which has INTERVAL '15 minutes'
-            if "INTERVAL" in query_str and "bundle_hash" in query_str:
-                raise RuntimeError("Simulated transient DB error in dedup check")
-            return FakeResult()
-
-        db = AsyncMock()
-        db.execute = AsyncMock(side_effect=mock_execute_dedup_error)
-        db.commit = AsyncMock()
-
-        bundle = _make_bundle()
-        background_tasks = MagicMock()
-
-        with patch.object(evidence_chain, "verify_ed25519_signature", return_value=True):
-            result = await evidence_chain.submit_evidence(
-                site_id=SITE_ID,
-                bundle=bundle,
-                background_tasks=background_tasks,
-                auth_site_id=SITE_ID,
-                db=db,
-            )
-
-        deduped = (
-            result.get("deduplicated")
-            if isinstance(result, dict)
-            else getattr(result, "deduplicated", None)
-        )
-        assert deduped is not True, (
-            "Submission must not be deduplicated when dedup check itself fails"
-        )
-        insert_calls = [
-            call
-            for call in db.execute.call_args_list
-            if "INSERT INTO compliance_bundles" in str(call.args[0])
-        ]
-        assert len(insert_calls) == 1, (
-            f"Submission must proceed to INSERT when dedup check fails; got {len(insert_calls)}"
-        )

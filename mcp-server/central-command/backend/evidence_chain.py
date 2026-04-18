@@ -1147,15 +1147,43 @@ async def submit_evidence(
 
     # Evidence dedup: skip duplicate bundle hashes within 15-min window.
     # Handles grace-period overlap where two appliances scan the same target.
-    try:
-        existing_dup = await db.execute(text("""
+    # Session 209 P1: write phase moved to tenant_connection(site_id) with
+    # SET LOCAL app.current_tenant. Admin-context RLS (via the after_begin
+    # listener in shared.py) was a compensation for PgBouncer-wiping SETs;
+    # tenant-scoped context is the intended posture for per-site writes
+    # under the RLS policies (admin_bypass + tenant_isolation) on
+    # compliance_bundles. tenant_connection wraps in one transaction, so
+    # pg_advisory_xact_lock is held across the prev-bundle lookup and INSERT.
+    #
+    # Folding ots_status into the INSERT removes a post-commit UPDATE on the
+    # partitioned evidence table for the Merkle-batching path (the default).
+    from .fleet import get_pool
+    from .tenant_middleware import tenant_connection
+
+    initial_ots_status = (
+        "batching" if (OTS_ENABLED and MERKLE_BATCHING_ENABLED) else "pending"
+    )
+    stored_signed_data = (
+        signed_data.decode("utf-8") if isinstance(signed_data, bytes) else signed_data
+    )
+
+    pool = await get_pool()
+    async with tenant_connection(
+        pool, site_id=site_id, actor_appliance_id=matched_appliance_id
+    ) as conn:
+        # Opportunistic hash-window dedup (retry storms / network glitches).
+        existing_hash = await conn.fetchval(
+            """
             SELECT 1 FROM compliance_bundles
-            WHERE site_id = :site_id
-              AND bundle_hash = :hash
+            WHERE site_id = $1
+              AND bundle_hash = $2
               AND created_at > NOW() - INTERVAL '15 minutes'
             LIMIT 1
-        """), {"site_id": site_id, "hash": bundle.bundle_hash})
-        if existing_dup.fetchone():
+            """,
+            site_id,
+            bundle.bundle_hash,
+        )
+        if existing_hash:
             logger.info(
                 f"evidence_dedup_skip: site_id={site_id} bundle_hash={bundle.bundle_hash[:12]}..."
             )
@@ -1165,119 +1193,98 @@ async def submit_evidence(
                 "deduplicated": True,
                 "message": "Bundle already recorded within 15-minute window",
             }
-    except Exception as e:
-        logger.warning(f"evidence_dedup_check_failed: {e}")
 
-    # Acquire per-site advisory lock to serialize chain position assignment.
-    # Without this, concurrent submissions race on chain_position (caused 1,125 broken links).
-    await db.execute(text(
-        "SELECT pg_advisory_xact_lock(hashtext(:site_id))"
-    ), {"site_id": site_id})
+        # Per-site advisory lock serializes chain_position assignment.
+        # Without this, concurrent submissions race (caused 1,125 broken links).
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtext($1))", site_id
+        )
 
-    # Get previous bundle for chain linking (safe under advisory lock)
-    prev_result = await db.execute(text("""
-        SELECT bundle_id, bundle_hash, chain_position
-        FROM compliance_bundles
-        WHERE site_id = :site_id
-        ORDER BY chain_position DESC
-        LIMIT 1
-    """), {"site_id": site_id})
-    prev_bundle = prev_result.fetchone()
-
-    GENESIS_HASH = "0" * 64
-    prev_hash = prev_bundle.bundle_hash if prev_bundle else GENESIS_HASH
-    chain_position = (prev_bundle.chain_position + 1) if prev_bundle else 1
-
-    # Compute chain hash (includes previous hash for integrity)
-    chain_data = f"{bundle.bundle_hash}:{prev_hash}:{chain_position}"
-    chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
-
-    # Store the signed_data for future verification
-    stored_signed_data = signed_data.decode('utf-8') if isinstance(signed_data, bytes) else signed_data
-
-    # Evidence immutability: if this bundle_id was already ingested, return
-    # idempotent success. Previously the path was DELETE-then-INSERT ("upsert
-    # via DELETE+INSERT for partitioned table compatibility") — but Migration
-    # 151 added a BEFORE DELETE trigger (prevent_audit_deletion) to
-    # compliance_bundles that correctly enforces HIPAA audit immutability.
-    # Attempting to DELETE an evidence row is evidence forgery by design —
-    # the trigger is right to block it. The 2026-04-12 fleet-order delivery
-    # outage postmortem traced the same class of silent txn-poisoning via
-    # the same DELETE-trigger-vs-upsert mismatch on fleet_order_completions.
-    # See docs/session-205-cont-migration-hardening-fleet-outage.md.
-    #
-    # Fix: check bundle_id existence first. If present, return as dedup
-    # (same semantics as the bundle_hash 15-min window above, but
-    # stronger — this covers any future conflict by bundle_id).
-    existing_by_id = await db.execute(text("""
-        SELECT 1 FROM compliance_bundles WHERE bundle_id = :bundle_id LIMIT 1
-    """), {"bundle_id": bundle.bundle_id})
-    if existing_by_id.fetchone():
-        logger.info(
-            "evidence_duplicate_bundle_id",
-            extra={
-                "site_id": site_id,
+        # Bundle-id dedup under the lock. Migration 151's prevent_audit_deletion
+        # trigger makes DELETE+INSERT upsert impossible (correctly — DELETE on
+        # evidence is forgery); idempotent fast-exit is the right semantics.
+        existing_by_id = await conn.fetchval(
+            "SELECT 1 FROM compliance_bundles WHERE bundle_id = $1 LIMIT 1",
+            bundle.bundle_id,
+        )
+        if existing_by_id:
+            logger.info(
+                "evidence_duplicate_bundle_id",
+                extra={
+                    "site_id": site_id,
+                    "bundle_id": bundle.bundle_id,
+                    "bundle_hash_prefix": bundle.bundle_hash[:12],
+                },
+            )
+            return {
+                "status": "accepted",
                 "bundle_id": bundle.bundle_id,
-                "bundle_hash_prefix": bundle.bundle_hash[:12],
-            },
+                "deduplicated": True,
+                "message": "Bundle already recorded (duplicate bundle_id after hash dedup window)",
+            }
+
+        prev_bundle = await conn.fetchrow(
+            """
+            SELECT bundle_id, bundle_hash, chain_position
+            FROM compliance_bundles
+            WHERE site_id = $1
+            ORDER BY chain_position DESC
+            LIMIT 1
+            """,
+            site_id,
         )
-        return {
-            "status": "accepted",
-            "bundle_id": bundle.bundle_id,
-            "deduplicated": True,
-            "message": "Bundle already recorded (duplicate bundle_id after hash dedup window)",
-        }
 
-    await db.execute(text("""
-        INSERT INTO compliance_bundles (
-            site_id, bundle_id, bundle_hash, check_type, check_result, checked_at,
-            checks, summary, agent_signature, signed_data, signature_valid, ntp_verification,
-            prev_bundle_id, prev_hash, chain_position, chain_hash,
-            ots_status
-        ) VALUES (
-            :site_id, :bundle_id, :bundle_hash, :check_type, :check_result, :checked_at,
-            CAST(:checks AS jsonb), CAST(:summary AS jsonb), :agent_signature, :signed_data, :signature_valid, CAST(:ntp_verification AS jsonb),
-            :prev_bundle_id, :prev_hash, :chain_position, :chain_hash,
-            'pending'
+        GENESIS_HASH = "0" * 64
+        prev_hash = prev_bundle["bundle_hash"] if prev_bundle else GENESIS_HASH
+        chain_position = (prev_bundle["chain_position"] + 1) if prev_bundle else 1
+
+        chain_data = f"{bundle.bundle_hash}:{prev_hash}:{chain_position}"
+        chain_hash = hashlib.sha256(chain_data.encode()).hexdigest()
+
+        await conn.execute(
+            """
+            INSERT INTO compliance_bundles (
+                site_id, bundle_id, bundle_hash, check_type, check_result, checked_at,
+                checks, summary, agent_signature, signed_data, signature_valid, ntp_verification,
+                prev_bundle_id, prev_hash, chain_position, chain_hash,
+                ots_status
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6,
+                $7::jsonb, $8::jsonb, $9, $10, $11, $12::jsonb,
+                $13, $14, $15, $16,
+                $17
+            )
+            """,
+            site_id,
+            bundle.bundle_id,
+            bundle.bundle_hash,
+            bundle.check_type,
+            bundle.check_result,
+            bundle.checked_at,
+            json.dumps(bundle.checks),
+            json.dumps(bundle.summary),
+            bundle.agent_signature,
+            stored_signed_data,
+            signature_valid,
+            json.dumps(bundle.ntp_verification) if bundle.ntp_verification else None,
+            prev_bundle["bundle_id"] if prev_bundle else None,
+            prev_hash,
+            chain_position,
+            chain_hash,
+            initial_ots_status,
         )
-    """), {
-        "site_id": site_id,
-        "bundle_id": bundle.bundle_id,
-        "bundle_hash": bundle.bundle_hash,
-        "check_type": bundle.check_type,
-        "check_result": bundle.check_result,
-        "checked_at": bundle.checked_at,
-        "checks": json.dumps(bundle.checks),
-        "summary": json.dumps(bundle.summary),
-        "agent_signature": bundle.agent_signature,
-        "signed_data": stored_signed_data,
-        "signature_valid": signature_valid,
-        "ntp_verification": json.dumps(bundle.ntp_verification) if bundle.ntp_verification else None,
-        "prev_bundle_id": prev_bundle.bundle_id if prev_bundle else None,
-        "prev_hash": prev_hash,
-        "chain_position": chain_position,
-        "chain_hash": chain_hash,
-    })
 
-    await db.commit()
-
-    # Submit to OTS in background
+    # Post-commit: the Merkle-batching path has ots_status='batching' already;
+    # the legacy individual-OTS path still needs a background submit.
     ots_submitted = False
     if OTS_ENABLED:
-        if MERKLE_BATCHING_ENABLED:
-            # Mark for hourly Merkle batching instead of immediate individual OTS
-            await db.execute(text("""
-                UPDATE compliance_bundles SET ots_status = 'batching' WHERE bundle_id = :bundle_id
-            """), {"bundle_id": bundle.bundle_id})
-            await db.commit()
-        else:
-            # Legacy: individual OTS proof per bundle
+        if not MERKLE_BATCHING_ENABLED:
             background_tasks.add_task(
                 submit_ots_proof_background,
                 db,
                 bundle.bundle_id,
                 bundle.bundle_hash,
-                site_id
+                site_id,
             )
         ots_submitted = True
 
