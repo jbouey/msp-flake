@@ -92,52 +92,59 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 # Without this hook the whole SQLAlchemy tree would go blind the moment the
 # migration applies.
 #
-# The hook sets `app.is_admin = 'true'` at session-scope (not transaction-
-# scope) so it persists across the autocommit + flush lifecycle SQLAlchemy
-# uses internally. PgBouncer's `server_reset_query = DISCARD ALL` strips the
-# setting before the backend connection is returned to another borrower, so
-# the setting does not leak outside the session that set it.
+# WHY `after_begin` (per-transaction) AND NOT `connect` (per-connection):
+# PgBouncer is in **transaction-pool mode** with `server_reset_query = DISCARD
+# ALL`. A session-level `SET` issued at physical connect is wiped by
+# `DISCARD ALL` between transactions, so `SET app.is_admin = 'true'` at
+# `connect` time only protects the FIRST transaction and every subsequent
+# `get_db()` borrow sees the role default (now `false`) and fails closed.
+# Observed in prod: 2,608 `InsufficientPrivilegeError`s in 2h after 234 shipped.
 #
-# If a future endpoint needs genuine per-session tenant scope through
-# SQLAlchemy it should use an explicit SET LOCAL inside an explicit
-# transaction — this event listener only sets the default admin context.
+# `SET LOCAL` inside an explicit transaction is transaction-scoped and is NOT
+# touched by `DISCARD ALL`. Binding to `after_begin` on the sync_session_class
+# means the SET fires synchronously inside every SQLAlchemy transaction before
+# any application query runs. PgBouncer then resets between borrows normally —
+# no leakage to the next client.
+#
+# If a future endpoint needs genuine per-session TENANT scope through
+# SQLAlchemy it should issue its own `SET LOCAL app.current_tenant = $site`
+# inside its transaction — this listener only establishes admin context.
 # -----------------------------------------------------------------------------
 try:
     from sqlalchemy import event as _sqla_event
+    from sqlalchemy import text as _sqla_text
 except ImportError:
     # Unit tests stub `sys.modules["sqlalchemy"]` with a bare ModuleType
     # that lacks `event`. In those runs the engine above is also a stub
     # and would reject listener registration anyway — safely skip.
     _sqla_event = None  # type: ignore[assignment]
+    _sqla_text = None  # type: ignore[assignment]
 
 if _sqla_event is not None:
     try:
-        @_sqla_event.listens_for(engine.sync_engine, "connect")
-        def _set_sqla_admin_context(dbapi_connection, connection_record):
-            """Run on EVERY new backend connection checked out into the pool.
+        @_sqla_event.listens_for(async_session.sync_session_class, "after_begin")
+        def _set_sqla_admin_context(session, transaction, connection):
+            """Fires at the start of every SQLAlchemy transaction.
 
-            Uses the DB-API cursor directly because SQLAlchemy event listeners
-            fire on the sync shim of the async engine. `SET` (no LOCAL) is
-            session-level; PgBouncer DISCARD ALL clears it between borrows
-            from the front-side pool.
+            `SET LOCAL` is transaction-scoped. PgBouncer's `DISCARD ALL`
+            runs between transactions, not during them, so this setting
+            is applied to whichever backend PgBouncer assigned to this
+            specific transaction for its full duration.
             """
-            cursor = dbapi_connection.cursor()
-            try:
-                cursor.execute("SET app.is_admin TO 'true'")
-            finally:
-                cursor.close()
+            connection.execute(_sqla_text("SET LOCAL app.is_admin = 'true'"))
     except Exception:
-        # If engine is a stub (tests), `sync_engine` may not resolve — the
-        # missing admin context is fine in unit tests that don't touch RLS.
+        # If `async_session` is a stub (tests), `sync_session_class` may
+        # not resolve — the missing admin context is fine in unit tests
+        # that don't touch RLS.
         pass
 
 
 async def get_db():
     """Yield a SQLAlchemy async session (FastAPI Depends).
 
-    The session inherits the admin RLS context set by the engine `connect`
-    event listener above — there is no per-request SET needed. Tenant-
-    scoped code should not use this; it should use `tenant_connection()`
+    Each transaction entered through this session receives `SET LOCAL
+    app.is_admin = 'true'` via the `after_begin` listener above. Callers
+    that need tenant-scoped access should instead use `tenant_connection()`
     or `org_connection()` in `tenant_middleware.py` to acquire an asyncpg
     connection with SET LOCAL tenant scope.
     """
