@@ -46,7 +46,7 @@ ALTER ROLE mcp_app SET app.is_admin = 'false';
 ALTER ROLE mcp SET app.is_admin = 'true';
 
 -- Sanity: record the flip in the audit trail.
-INSERT INTO admin_audit_log (username, action, target, details, timestamp)
+INSERT INTO admin_audit_log (username, action, target, details, created_at)
 VALUES (
     current_user,
     'rls.app_is_admin.fail_closed',
