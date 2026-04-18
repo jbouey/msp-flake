@@ -38,10 +38,21 @@ async def main() -> int:
 
     # Prefer the direct pool — no RLS tenant scoping needed for this
     # one-shot, and we want admin privilege to bypass any defensive
-    # triggers that may be on the path.
-    from fleet import get_pool
-    from tenant_middleware import admin_connection
-    from flywheel_state import backfill_lifecycle_events
+    # triggers that may be on the path. Import flavors cover both:
+    # `python3 -m dashboard_api.scripts.backfill_flywheel_orphan_ledger`
+    # from /app, and direct `python3 scripts/backfill_flywheel_orphan_ledger.py`
+    # with /app/dashboard_api on PYTHONPATH (the in-container default).
+    try:
+        from dashboard_api.fleet import get_pool
+        from dashboard_api.tenant_middleware import admin_connection
+        from dashboard_api.flywheel_state import backfill_lifecycle_events
+    except ImportError:
+        # /app/dashboard_api is cwd — use bare imports from the runtime package
+        sys.path.insert(0, "/app")
+        sys.path.insert(0, "/app/dashboard_api")
+        from dashboard_api.fleet import get_pool  # type: ignore[no-redef]
+        from dashboard_api.tenant_middleware import admin_connection  # type: ignore[no-redef]
+        from dashboard_api.flywheel_state import backfill_lifecycle_events  # type: ignore[no-redef]
 
     pool = await get_pool()
     async with admin_connection(pool) as conn:
