@@ -113,8 +113,8 @@ COMMENT ON COLUMN partner_payout_runs.notes IS
     'TABLE level by naming convention (no patient|phi|treatment|npi).';
 
 
-INSERT INTO schema_migrations (version, name, applied_at, checksum, execution_time_ms)
-VALUES ('235', 'partner_stripe_connect', NOW(), 'p1-37-scaffold', 0)
-ON CONFLICT (version) DO NOTHING;
+-- schema_migrations is self-recorded by apply_migration after this commit;
+-- do NOT manual-insert here (see 55f31f0 which removed the same pattern
+-- from migrations 227–231).
 
 COMMIT;
