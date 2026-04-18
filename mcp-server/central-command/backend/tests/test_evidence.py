@@ -128,6 +128,36 @@ class TestEvidenceSubmission:
     """Test evidence bundle submission."""
 
     @pytest.mark.asyncio
+    async def test_site_id_mismatch_between_token_and_body_returns_403(self):
+        """Bearer token for site-A must not allow submitting evidence for site-B.
+
+        Locks in the F1 fix: without this check an appliance holding a valid
+        bearer for its own site could forge evidence bundles attributed to
+        another customer's site. See commit 9cec8ef.
+        """
+        import main
+        from fastapi.exceptions import HTTPException
+
+        db = make_mock_db()
+        now = datetime.now(timezone.utc)
+        evidence = main.EvidenceSubmission(
+            bundle_id="bundle-spoof-001",
+            site_id="victim-site",
+            host_id="attacker-host",
+            check_type="service_monitor",
+            outcome="success",
+            pre_state={},
+            post_state={},
+            timestamp_start=now - timedelta(seconds=1),
+            timestamp_end=now,
+            signature="x" * 128,
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await main.submit_evidence(evidence, db, auth_site_id="attacker-site")
+        assert exc_info.value.status_code == 403
+        assert "site" in str(exc_info.value.detail).lower()
+
+    @pytest.mark.asyncio
     async def test_successful_evidence_submission(self):
         """POST /evidence with valid payload stores the bundle and returns success."""
         import main
@@ -169,7 +199,7 @@ class TestEvidenceSubmission:
 
         with patch.object(main, "check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)):
             with patch.object(main, "minio_client", mock_minio):
-                result = await main.submit_evidence(evidence, db)
+                result = await main.submit_evidence(evidence, db, auth_site_id="test-site-001")
 
         assert result["status"] == "received"
         assert result["bundle_id"] == "bundle-test-001"
@@ -226,7 +256,7 @@ class TestEvidenceSubmission:
 
         with patch.object(main, "check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)):
             with patch.object(main, "minio_client", mock_minio):
-                result = await main.submit_evidence(evidence, db)
+                result = await main.submit_evidence(evidence, db, auth_site_id="test-site-002")
 
         assert result["status"] == "received"
         # Verify order update was called with completed status
@@ -278,7 +308,7 @@ class TestEvidenceSubmission:
 
         with patch.object(main, "check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)):
             with patch.object(main, "minio_client", mock_minio):
-                result = await main.submit_evidence(evidence, db)
+                result = await main.submit_evidence(evidence, db, auth_site_id="test-site-003")
 
         assert result["status"] == "received"
         assert len(update_calls) == 1
@@ -316,7 +346,7 @@ class TestEvidenceSubmission:
 
         with patch.object(main, "check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)):
             with pytest.raises(HTTPException) as exc_info:
-                await main.submit_evidence(evidence, db)
+                await main.submit_evidence(evidence, db, auth_site_id="nonexistent-site")
             assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -343,7 +373,7 @@ class TestEvidenceSubmission:
 
         with patch.object(main, "check_rate_limit", new_callable=AsyncMock, return_value=(False, 60)):
             with pytest.raises(HTTPException) as exc_info:
-                await main.submit_evidence(evidence, db)
+                await main.submit_evidence(evidence, db, auth_site_id="rate-limited-site")
             assert exc_info.value.status_code == 429
 
     @pytest.mark.asyncio
@@ -382,7 +412,7 @@ class TestEvidenceSubmission:
 
         with patch.object(main, "check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)):
             with patch.object(main, "minio_client", mock_minio):
-                result = await main.submit_evidence(evidence, db)
+                result = await main.submit_evidence(evidence, db, auth_site_id="test-site-minio")
 
         # Should still succeed (DB storage worked)
         assert result["status"] == "received"
@@ -594,7 +624,7 @@ class TestWORMRetention:
 
         with patch.object(main, "check_rate_limit", new_callable=AsyncMock, return_value=(True, 0)):
             with patch.object(main, "minio_client", mock_minio):
-                result = await main.submit_evidence(evidence, db)
+                result = await main.submit_evidence(evidence, db, auth_site_id="worm-site")
 
         # Verify WORM retention was attempted
         mock_minio.set_object_retention.assert_called_once()
