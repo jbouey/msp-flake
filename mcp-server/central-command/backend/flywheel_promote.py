@@ -382,6 +382,7 @@ async def safe_rollout_promoted_rule(
     site_id: str,
     rule_yaml: Optional[str] = None,
     caller: str = "unknown",
+    scope: str = "site",
 ) -> int:
     """Idempotent + try/except-wrapped wrapper around issue_sync_promoted_rule_orders.
 
@@ -401,19 +402,29 @@ async def safe_rollout_promoted_rule(
     `rule_yaml` is now informational — the issuer always synthesizes
     a fresh body from the l1_rules row. Kept for call-site clarity.
 
+    `scope='fleet'` (Session 209, 2026-04-18) iterates over every
+    `site_appliances` site and issues one fleet_order per site —
+    used by platform auto-promotion (main.py Step 4) so cross-org
+    platform rules actually land on appliances + the ledger reflects
+    it. For scope='fleet', `site_id` is used only as a tag on the
+    ledger event (callers pass a sentinel like '__FLEET__' or the
+    first site's id).
+
     Returns the number of orders created (0 on failure)."""
+    if scope not in ("site", "fleet"):
+        raise ValueError(f"scope must be 'site' or 'fleet', got {scope!r}")
     try:
         n = await issue_sync_promoted_rule_orders(
             conn,
             rule_id=rule_id,
             runbook_id=runbook_id,
             rule_yaml=rule_yaml or "",
-            site_id=site_id,
-            scope="site",
+            site_id=site_id if scope == "site" else None,
+            scope=scope,
         )
         logger.info(
             f"safe_rollout_promoted_rule: caller={caller} rule_id={rule_id} "
-            f"site_id={site_id} orders_created={n}"
+            f"scope={scope} site_id={site_id} orders_created={n}"
         )
         # R6 — advance lifecycle + write ledger event so the spine
         # reflects the rollout. Wrapped in try/except so a missing
@@ -446,9 +457,24 @@ async def safe_rollout_promoted_rule(
                 # Illegal transitions (e.g. rule already graduated) are
                 # NOT fatal — the fleet_order is issued regardless, and
                 # the ledger will reflect state via a later transition.
-                logger.warning(
-                    f"safe_rollout_promoted_rule: ledger advance failed for "
-                    f"{rule_id}: {e}"
+                # BUT: this divergence is EXACTLY the failure mode the
+                # 2026-04-18 audit caught — every auto-promotion silently
+                # failed its transition for months while the fleet_order
+                # succeeded. Logging at ERROR with exc_info per CLAUDE.md
+                # "No silent write failures"; substrate invariant
+                # `flywheel_ledger_stalled` watches for zero-ledger
+                # windows and alerts if this fires frequently.
+                logger.error(
+                    "safe_rollout_ledger_advance_failed",
+                    exc_info=True,
+                    extra={
+                        "rule_id": rule_id,
+                        "caller": caller,
+                        "site_id": site_id,
+                        "target_state": "rolling_out",
+                        "event_type": "rollout_issued",
+                        "exception_class": type(e).__name__,
+                    },
                 )
         return int(n)
     except Exception as e:

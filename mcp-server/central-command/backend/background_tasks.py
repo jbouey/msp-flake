@@ -2077,6 +2077,65 @@ async def flywheel_orchestrator_loop():
         await asyncio.sleep(FLYWHEEL_ORCHESTRATOR_INTERVAL_SECONDS)
 
 
+# ─── Session 209: promoted_rule_events partition maintainer ────────
+#
+# Migration 236 pre-seeded 2026-06/07/08. Past that, the default
+# partition catches overflow — correct on day one, but rows pile up in
+# the default partition defeat partition pruning and make DETACH
+# painful. This loop creates the next 3 months nightly so the steady
+# state is always "next 3 months exist as dedicated partitions."
+#
+# Idempotent: CREATE TABLE IF NOT EXISTS + PARTITION OF is a no-op when
+# the partition already exists.
+
+PARTITION_MAINTAINER_INTERVAL_SECONDS = 86400  # daily
+PARTITION_MAINTAINER_LOOKAHEAD_MONTHS = 3
+
+
+async def partition_maintainer_loop():
+    """Keep the next N months of promoted_rule_events partitions alive."""
+    from datetime import date
+
+    await asyncio.sleep(600)  # 10 min after startup
+    while True:
+        _hb("partition_maintainer")
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_connection
+
+            pool = await get_pool()
+            today = date.today()
+            async with admin_connection(pool) as conn:
+                for offset in range(1, PARTITION_MAINTAINER_LOOKAHEAD_MONTHS + 1):
+                    # Compute first-of-month for offset months ahead
+                    year = today.year + ((today.month - 1 + offset) // 12)
+                    month = ((today.month - 1 + offset) % 12) + 1
+                    start = date(year, month, 1)
+                    end_year = year + (1 if month == 12 else 0)
+                    end_month = 1 if month == 12 else month + 1
+                    end = date(end_year, end_month, 1)
+                    partition = (
+                        f"promoted_rule_events_{year:04d}{month:02d}"
+                    )
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {partition}
+                        PARTITION OF promoted_rule_events
+                        FOR VALUES FROM ('{start.isoformat()}')
+                                    TO ('{end.isoformat()}')
+                        """
+                    )
+            logger.info("partition_maintainer_tick_complete")
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.error(
+                "partition_maintainer_loop_failed",
+                exc_info=True,
+            )
+        await asyncio.sleep(PARTITION_MAINTAINER_INTERVAL_SECONDS)
+
+
 # ─── Phase 15 closing: enterprise appliance offline detection ──────
 
 APPLIANCE_STALE_THRESHOLD_MINUTES = 5

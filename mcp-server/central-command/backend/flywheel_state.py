@@ -42,13 +42,24 @@ LIFECYCLE_STATES = frozenset({
     "graduated", "retired",
 })
 
+# MUST stay in lockstep with promoted_rule_events_event_type_check
+# (migrations 181 + 184 + 188 + 236) and the DB transition matrix.
+# test_three_list_lockstep_pg.py fails CI if any of the three drifts.
 EVENT_TYPES = frozenset({
+    # Spine lifecycle (migration 181)
+    "proposed", "shadow_entered", "approved", "rollout_started", "rollout_acked",
+    "canary_failed", "auto_disabled", "regime_warning", "operator_re_enabled",
+    "operator_acknowledged", "graduated", "retired", "zombie_site",
+    "regime_absolute_low", "stage_change", "reviewer_note",
+    # Orchestrator-specific (migration 188)
+    "retired_site_dead", "regime_critical",
+    # Runbook consent (migration 184)
+    "runbook.consented", "runbook.amended", "runbook.revoked",
+    "runbook.executed_with_consent",
+    # Python-emitted canonical names (migration 236)
     "pattern_detected", "shadow_evaluated", "promotion_approved",
-    "rollout_issued", "rollout_acked", "first_execution",
-    "regime_warning", "regime_critical", "regime_absolute_low",
-    "auto_disabled", "manually_disabled", "graduated",
-    "retired_site_dead", "retired_manual",
-    "operator_acknowledged", "operator_re_enabled",
+    "rollout_issued", "first_execution", "manually_disabled",
+    "retired_manual",
 })
 
 STAGES = frozenset({

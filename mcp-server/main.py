@@ -730,7 +730,40 @@ async def _flywheel_promotion_loop():
             async with async_session() as db:
                 # Step 0: Generate/update patterns from L2 execution telemetry
                 # Pattern signature: incident_type:runbook_id (no hostname — hostname is a grouping key, not identity)
+                # Session 209: fix patterns_pattern_id_key UniqueViolationError that
+                # fired every 30 min for months. Legacy rows carried signatures like
+                # 'firewall:RB-FIREWALL-001' but their pattern_id was already updated
+                # to the hash of the new signature 'firewall:L2-restore_firewall_baseline',
+                # so ON CONFLICT (pattern_signature) missed them and the unique pid
+                # index tripped. Pre-reconcile legacy signatures that share the
+                # deterministic pid hash before the INSERT.
                 try:
+                    await db.execute(text("""
+                        UPDATE patterns p
+                        SET pattern_signature = src.new_sig,
+                            incident_type = src.new_it,
+                            runbook_id = src.new_rb
+                        FROM (
+                            SELECT
+                                LEFT(md5(et.incident_type || ':' || et.runbook_id), 16) AS pid,
+                                et.incident_type || ':' || et.runbook_id AS new_sig,
+                                et.incident_type AS new_it,
+                                et.runbook_id AS new_rb
+                            FROM execution_telemetry et
+                            WHERE et.resolution_level = 'L2'
+                              AND et.incident_type IS NOT NULL
+                              AND et.runbook_id IS NOT NULL
+                            GROUP BY et.incident_type, et.runbook_id
+                            HAVING COUNT(*) >= 5
+                        ) src
+                        WHERE p.pattern_id = src.pid
+                          AND p.pattern_signature IS DISTINCT FROM src.new_sig
+                          AND NOT EXISTS (
+                              SELECT 1 FROM patterns p2
+                              WHERE p2.pattern_signature = src.new_sig
+                                AND p2.pattern_id <> p.pattern_id
+                          )
+                    """))
                     await db.execute(text("""
                         INSERT INTO patterns (
                             pattern_id, pattern_signature, incident_type, runbook_id,
@@ -758,7 +791,12 @@ async def _flywheel_promotion_loop():
                     """))
                     await db.commit()
                 except Exception as e:
-                    logger.warning(f"Flywheel step 0 (pattern generation) failed: {e}")
+                    # CLAUDE.md "No silent write failures" — upgraded from warning
+                    logger.error(
+                        "flywheel_step0_pattern_generation_failed",
+                        exc_info=True,
+                        extra={"exception_class": type(e).__name__},
+                    )
                     await db.rollback()
 
                 # Step 1: Populate aggregated_pattern_stats from execution_telemetry
@@ -814,7 +852,11 @@ async def _flywheel_promotion_loop():
                     """))
                     await db.commit()
                 except Exception as e:
-                    logger.warning(f"Flywheel step 1 (aggregated stats) failed: {e}")
+                    logger.error(
+                        "flywheel_step1_aggregated_stats_failed",
+                        exc_info=True,
+                        extra={"exception_class": type(e).__name__},
+                    )
                     await db.rollback()
 
                 # Step 2: Update promotion_eligible on aggregated_pattern_stats
@@ -839,7 +881,11 @@ async def _flywheel_promotion_loop():
                             newly_eligible=len(newly_eligible),
                         )
                 except Exception as e:
-                    logger.warning(f"Flywheel step 2 (promotion eligible) failed: {e}")
+                    logger.error(
+                        "flywheel_step2_promotion_eligible_failed",
+                        exc_info=True,
+                        extra={"exception_class": type(e).__name__},
+                    )
                     await db.rollback()
 
                 # Step 3: Cross-client platform pattern aggregation
@@ -881,7 +927,11 @@ async def _flywheel_promotion_loop():
                     """))
                     await db.commit()
                 except Exception as e:
-                    logger.warning(f"Flywheel step 3 (platform aggregation) failed: {e}")
+                    logger.error(
+                        "flywheel_step3_platform_aggregation_failed",
+                        exc_info=True,
+                        extra={"exception_class": type(e).__name__},
+                    )
                     await db.rollback()
 
                 # Step 4: Auto-promote platform rules
@@ -1011,93 +1061,125 @@ async def _flywheel_promotion_loop():
                                     success_rate=f"{pc.success_rate:.1%}",
                                     total_occurrences=pc.total_occurrences,
                                 )
+                                # Session 209 (2026-04-18): wire platform auto-promote
+                                # through the spine. Pre-fix: l1_rules was inserted
+                                # but no promoted_rules row, no fleet_order, no
+                                # promoted_rule_events entry. Result: platform rules
+                                # sat dormant — appliances never received them and
+                                # the Flywheel Intelligence dashboard showed
+                                # Auto-Promotions: 0 while patterns accumulated.
+                                # Post-fix: one promoted_rules row per site, ledger
+                                # event for the approval + rollout, fleet-wide
+                                # sync_promoted_rule fleet_orders so every appliance
+                                # picks up the new platform L1 rule on next checkin.
+                                try:
+                                    from dashboard_api.fleet import get_pool
+                                    from dashboard_api.tenant_middleware import admin_connection
+                                    from dashboard_api.flywheel_promote import safe_rollout_promoted_rule
+                                    from dashboard_api.flywheel_state import advance as advance_lifecycle
+
+                                    pool_obj = await get_pool()
+                                    async with admin_connection(pool_obj) as pg_conn:
+                                        rule_json_payload = {
+                                            "rule_id": rule_id,
+                                            "runbook_id": pc.runbook_id,
+                                            "incident_pattern": incident_pattern,
+                                            "source": "platform",
+                                        }
+                                        await pg_conn.execute(
+                                            """
+                                            INSERT INTO promoted_rules (
+                                                rule_id, pattern_signature, site_id,
+                                                rule_yaml, rule_json, lifecycle_state
+                                            )
+                                            SELECT DISTINCT $1, $2, sa.site_id, $3, $4::jsonb, 'proposed'
+                                            FROM site_appliances sa
+                                            WHERE sa.deleted_at IS NULL
+                                            ON CONFLICT (rule_id, site_id) DO NOTHING
+                                            """,
+                                            rule_id,
+                                            pc.pattern_key[:64],
+                                            f"rule_id: {rule_id}\nrunbook_id: {pc.runbook_id}\n",
+                                            json.dumps(rule_json_payload),
+                                        )
+                                        try:
+                                            await advance_lifecycle(
+                                                pg_conn,
+                                                rule_id=rule_id,
+                                                new_state="approved",
+                                                event_type="promotion_approved",
+                                                actor="system:flywheel_loop",
+                                                stage="promotion",
+                                                proof={
+                                                    "distinct_orgs": int(pc.distinct_orgs),
+                                                    "total_occurrences": int(pc.total_occurrences),
+                                                    "success_rate": float(pc.success_rate),
+                                                    "runbook_id": pc.runbook_id,
+                                                },
+                                                reason=(
+                                                    f"Platform auto-promotion: "
+                                                    f"{pc.distinct_orgs} orgs, "
+                                                    f"{pc.total_occurrences} occ, "
+                                                    f"{pc.success_rate:.1%} success"
+                                                ),
+                                            )
+                                        except Exception as e:
+                                            logger.error(
+                                                "platform_promote_advance_approved_failed",
+                                                exc_info=True,
+                                                extra={
+                                                    "rule_id": rule_id,
+                                                    "exception_class": type(e).__name__,
+                                                },
+                                            )
+                                        await safe_rollout_promoted_rule(
+                                            pg_conn,
+                                            rule_id=rule_id,
+                                            runbook_id=pc.runbook_id,
+                                            site_id="__FLEET__",
+                                            caller="platform_auto_promote",
+                                            scope="fleet",
+                                        )
+                                except Exception as e:
+                                    logger.error(
+                                        "platform_promote_spine_wiring_failed",
+                                        exc_info=True,
+                                        extra={
+                                            "rule_id": rule_id,
+                                            "exception_class": type(e).__name__,
+                                        },
+                                    )
                         except Exception as e:
-                            logger.warning(f"Failed to promote platform rule {rule_id}: {e}")
+                            # CLAUDE.md "No silent write failures" — was logger.warning
+                            logger.error(
+                                "platform_promote_candidate_failed",
+                                exc_info=True,
+                                extra={
+                                    "rule_id": rule_id,
+                                    "exception_class": type(e).__name__,
+                                },
+                            )
                             await db.rollback()
 
                     if platform_promoted > 0:
                         logger.info(f"Platform promotion: {platform_promoted} new rules auto-promoted")
 
                 except Exception as e:
-                    logger.warning(f"Flywheel step 4 (platform auto-promotion) failed: {e}")
+                    # CLAUDE.md "No silent write failures"
+                    logger.error(
+                        "flywheel_step4_platform_promotion_failed",
+                        exc_info=True,
+                        extra={"exception_class": type(e).__name__},
+                    )
                     await db.rollback()
 
-                # Step 5: Post-promotion health monitoring (canary → rollout)
-                # Promoted rules start site-specific (source='promoted').
-                # After 48h with >70% success and 3+ executions → promote to 'synced' (fleet-wide).
-                # After 48h with <70% success → disable (protects against bad promotions).
-                try:
-                    # 5a: Disable degraded promoted rules (<70% success after 48h)
-                    degraded = await db.execute(text("""
-                        UPDATE l1_rules SET enabled = false
-                        WHERE source = 'promoted'
-                          AND enabled = true
-                          AND created_at > NOW() - INTERVAL '48 hours'
-                          AND rule_id IN (
-                              SELECT r.rule_id FROM l1_rules r
-                              JOIN execution_telemetry et
-                                ON et.runbook_id = r.runbook_id
-                                AND et.created_at > r.created_at
-                              WHERE r.source = 'promoted'
-                                AND r.enabled = true
-                                AND r.created_at > NOW() - INTERVAL '48 hours'
-                              GROUP BY r.rule_id
-                              HAVING COUNT(*) >= 3
-                                AND SUM(CASE WHEN et.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*) < 0.70
-                          )
-                        RETURNING rule_id
-                    """))
-                    auto_disabled = degraded.fetchall()
-                    if auto_disabled:
-                        for row in auto_disabled:
-                            await db.execute(text("""
-                                INSERT INTO promotion_audit_log (
-                                    event_type, rule_id, source, actor
-                                ) VALUES ('auto_disabled', :rid, 'promoted', 'flywheel_loop')
-                            """), {"rid": row[0]})
-                            logger.warning(
-                                "Promoted rule auto-disabled (success rate < 70%)",
-                                rule_id=row[0],
-                            )
-                    await db.commit()
-
-                    # 5b: Graduate successful promoted rules to 'synced' (>70% success after 48h)
-                    # This is the canary → rollout transition: proven rules become fleet-wide
-                    graduated = await db.execute(text("""
-                        UPDATE l1_rules SET source = 'synced'
-                        WHERE source = 'promoted'
-                          AND enabled = true
-                          AND created_at < NOW() - INTERVAL '48 hours'
-                          AND rule_id IN (
-                              SELECT r.rule_id FROM l1_rules r
-                              JOIN execution_telemetry et
-                                ON et.runbook_id = r.runbook_id
-                                AND et.created_at > r.created_at
-                              WHERE r.source = 'promoted'
-                                AND r.enabled = true
-                                AND r.created_at < NOW() - INTERVAL '48 hours'
-                              GROUP BY r.rule_id
-                              HAVING COUNT(*) >= 3
-                                AND SUM(CASE WHEN et.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*) >= 0.70
-                          )
-                        RETURNING rule_id
-                    """))
-                    auto_graduated = graduated.fetchall()
-                    if auto_graduated:
-                        for row in auto_graduated:
-                            await db.execute(text("""
-                                INSERT INTO promotion_audit_log (
-                                    event_type, rule_id, source, actor
-                                ) VALUES ('synced', :rid, 'promoted', 'flywheel_loop')
-                            """), {"rid": row[0]})
-                            logger.info(
-                                "Promoted rule graduated to synced (canary success)",
-                                rule_id=row[0],
-                            )
-                    await db.commit()
-                except Exception as e:
-                    logger.warning(f"Flywheel step 5 (health monitoring) failed: {e}")
-                    await db.rollback()
+                # Step 5 REMOVED (Session 209, 2026-04-18).
+                # Direct UPDATE l1_rules SET enabled=false / source='synced'
+                # bypassed promoted_rule_events + advance_lifecycle() and
+                # competed with the orchestrator, masking the 2026-04-18
+                # "Flywheel Intelligence at all-zeros" audit finding.
+                # CanaryFailureTransition + GraduationTransition own these
+                # transitions now (flywheel_state.py). One state owner.
 
                 # Step 6: Telemetry retention — purge records older than 90 days
                 try:
@@ -1109,7 +1191,11 @@ async def _flywheel_promotion_loop():
                     if purged.rowcount and purged.rowcount > 0:
                         logger.info("Flywheel telemetry retention", purged=purged.rowcount)
                 except Exception as e:
-                    logger.warning(f"Flywheel step 6 (telemetry retention) failed: {e}")
+                    logger.error(
+                        "flywheel_step6_telemetry_retention_failed",
+                        exc_info=True,
+                        extra={"exception_class": type(e).__name__},
+                    )
                     await db.rollback()
 
         except asyncio.CancelledError:
@@ -1715,6 +1801,7 @@ async def lifespan(app: FastAPI):
         exemplar_miner_loop,
         mark_stale_appliances_loop,
         flywheel_orchestrator_loop,
+        partition_maintainer_loop,
         weekly_rollup_refresh_loop,
         partner_weekly_digest_loop,
         expire_consent_request_tokens_loop,
@@ -1762,6 +1849,7 @@ async def lifespan(app: FastAPI):
         ("audit_log_retention", _audit_log_retention_loop),
         ("mark_stale_appliances", mark_stale_appliances_loop),
         ("flywheel_orchestrator", flywheel_orchestrator_loop),
+        ("partition_maintainer", partition_maintainer_loop),
         ("weekly_rollup_refresh", weekly_rollup_refresh_loop),
         ("partner_weekly_digest", partner_weekly_digest_loop),
         ("expire_consent_request_tokens", expire_consent_request_tokens_loop),

@@ -629,6 +629,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="At least one appliance has checked in in the last 15 minutes but zero compliance_bundles have been inserted in that window. Baseline fleet bundle rate is ~1 bundle per 4–5 min per active appliance, so 15 minutes of silence while checkins continue is a strong signal that evidence-chain writes are failing (RLS context miss, missing partition, signing key mismatch, disk pressure). Caught the 2026-04-18 RLS P0 after the fact — this invariant would have fired it inside 15 minutes.",
         check=lambda c: _check_evidence_chain_stalled(c),
     ),
+    Assertion(
+        name="flywheel_ledger_stalled",
+        severity="sev1",
+        description="The flywheel orchestrator runs every 5 minutes and is the ONLY legal writer to promoted_rule_events (the append-only spine ledger). If there are promoted rules in transitional states (rolling_out with fleet-order completions, active with unacknowledged regime events) but zero ledger rows landed in the last 60 minutes, the orchestrator is either stuck or every transition is silently failing its advance_lifecycle() call. This is exactly the 2026-04-18 audit finding: Python EVENT_TYPES had drifted from the DB CHECK so every transition tripped a CheckViolationError that safe_rollout downgraded to a WARNING. Fleet Intelligence dashboard sat at all-zeros for months. At sev1 because the data flywheel — L2→L1 self-improvement — is silently offline.",
+        check=lambda c: _check_flywheel_ledger_stalled(c),
+    ),
 ]
 
 
@@ -826,6 +832,17 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "(if 'false', the after_begin listener in shared.py is broken — see 2026-04-18 fix 2ddc596). "
             "If partition-related, check for missing monthly partition on compliance_bundles and create it. "
             "If signing-key related, check per-appliance key rotation state in site_appliances.agent_public_key.",
+    },
+    "flywheel_ledger_stalled": {
+        "display_name": "Flywheel spine ledger writes stalled",
+        "recommended_action": "Grep mcp-server logs for "
+            "'CheckViolationError' on promoted_rule_events or "
+            "'safe_rollout_ledger_advance_failed'. Verify the three-list "
+            "lockstep: Python flywheel_state.EVENT_TYPES vs the DB CHECK "
+            "on promoted_rule_events.event_type vs the transition matrix. "
+            "Run test_three_list_lockstep_pg.py — if it fails, land a "
+            "migration that extends the DB CHECK to match the Python set. "
+            "Cross-reference FLYWHEEL_ORCHESTRATOR_MODE (should be 'enforce' in prod).",
     },
 }
 
@@ -1891,6 +1908,89 @@ async def _check_evidence_chain_stalled(conn: asyncpg.Connection) -> List[Violat
                     "or partition errors on compliance_bundles. Common causes: RLS context "
                     "not set in SQLAlchemy session (see 2026-04-18 fix commits ebb9f17 + 2ddc596), "
                     "missing monthly partition, signing key rotation mid-write, or disk pressure."
+                ),
+            },
+        )
+    ]
+
+
+async def _check_flywheel_ledger_stalled(conn: asyncpg.Connection) -> List[Violation]:
+    """Fire when the flywheel orchestrator has transitional work available
+    but the ledger has been silent for a full hour.
+
+    Signals that are TRUE only in the pathological case the 2026-04-18
+    audit caught:
+      * promoted_rules in state 'rolling_out' whose associated fleet_order
+        already has a fleet_order_completion row ≥10 min old — the
+        RolloutAckedTransition should have flipped them to 'active' on a
+        prior 5-min tick, but didn't.
+      * AND zero INSERTs into promoted_rule_events in the last 60 min,
+        despite the orchestrator loop ticking every 5 min.
+
+    Both conditions must hold. If no transitional work is available, a
+    quiet ledger is correct. If transitions WOULD be possible but none
+    happen, the orchestrator is broken.
+
+    Deliberately does NOT dig into log messages — the invariant layer
+    observes outcomes, not causes. The recommended_action points
+    operators at the three-list lockstep CI test which localizes the
+    most common cause in 30 seconds.
+    """
+    row = await conn.fetchrow(
+        """
+        WITH pending AS (
+            SELECT COUNT(*) AS pending_transitions
+              FROM promoted_rules pr
+              JOIN fleet_orders fo
+                ON fo.parameters->>'rule_id' = pr.rule_id
+               AND fo.order_type = 'sync_promoted_rule'
+              JOIN fleet_order_completions foc
+                ON foc.fleet_order_id = fo.id
+             WHERE pr.lifecycle_state = 'rolling_out'
+               AND foc.status = 'completed'
+               AND foc.completed_at < NOW() - INTERVAL '10 minutes'
+               AND foc.completed_at > NOW() - INTERVAL '24 hours'
+        ),
+        ledger AS (
+            SELECT COUNT(*) AS writes_60m,
+                   MAX(created_at) AS latest_write_at
+              FROM promoted_rule_events
+             WHERE created_at > NOW() - INTERVAL '60 minutes'
+        )
+        SELECT p.pending_transitions,
+               l.writes_60m,
+               l.latest_write_at,
+               EXTRACT(EPOCH FROM (NOW() - l.latest_write_at))/60
+                   AS minutes_since_last_write
+          FROM pending p, ledger l
+        """
+    )
+    if row is None:
+        return []
+    pending = int(row["pending_transitions"] or 0)
+    writes_60m = int(row["writes_60m"] or 0)
+    # Only fire when transitional work EXISTS but ledger is silent
+    if pending < 1 or writes_60m > 0:
+        return []
+    minutes_since = float(row["minutes_since_last_write"] or 0)
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "pending_transitions": pending,
+                "writes_60m": writes_60m,
+                "latest_write_at": (
+                    row["latest_write_at"].isoformat()
+                    if row["latest_write_at"] else None
+                ),
+                "minutes_since_last_write": minutes_since,
+                "remediation": (
+                    "Run test_three_list_lockstep_pg.py. If it fails, ship "
+                    "a migration that extends promoted_rule_events.event_type "
+                    "CHECK to match flywheel_state.EVENT_TYPES. If it passes, "
+                    "check the orchestrator loop heartbeat "
+                    "(/api/admin/health/loops) and grep mcp-server logs for "
+                    "orchestrator_transition_failed or safe_rollout_ledger_advance_failed."
                 ),
             },
         )
