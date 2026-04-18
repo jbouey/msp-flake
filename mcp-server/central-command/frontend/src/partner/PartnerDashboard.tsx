@@ -201,8 +201,8 @@ export const PartnerDashboard: React.FC = () => {
       setBulkResult({ count: data.count || entries.length });
       setBulkCsvText('');
       loadData();
-    } catch (e: any) {
-      setBulkError(e?.message || 'Bulk upload failed');
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : 'Bulk upload failed');
     } finally {
       setBulkCreating(false);
     }
