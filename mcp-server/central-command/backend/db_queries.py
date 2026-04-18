@@ -313,21 +313,32 @@ async def get_learning_status_from_db(db: AsyncSession) -> Dict[str, Any]:
     """))
     success_row = result.fetchone()
 
-    total_resolved = sum(tier_counts.values()) or 1
-    l1_rate = (tier_counts.get("L1", 0) / total_resolved) * 100
-    l2_rate = (tier_counts.get("L2", 0) / total_resolved) * 100
+    # Return None (not 0.0) when no denominator exists. A 0.0 with no
+    # incidents/executions renders as "we succeeded at 0%" on the dashboard,
+    # which is a credibility-hitting empty-state lie — the rate is genuinely
+    # undefined with no denominator.
+    total_resolved = sum(tier_counts.values())
+    if total_resolved > 0:
+        l1_rate: Optional[float] = round((tier_counts.get("L1", 0) / total_resolved) * 100, 1)
+        l2_rate: Optional[float] = round((tier_counts.get("L2", 0) / total_resolved) * 100, 1)
+    else:
+        l1_rate = None
+        l2_rate = None
 
-    total_executions = success_row.total or 1
-    success_rate = (success_row.successful / total_executions) * 100
+    total_executions = success_row.total or 0
+    if total_executions > 0:
+        success_rate: Optional[float] = round((success_row.successful / total_executions) * 100, 1)
+    else:
+        success_rate = None
 
     return {
         "total_l1_rules": l1_count,
         "total_l2_decisions_30d": tier_counts.get("L2", 0),
         "patterns_awaiting_promotion": pending_patterns,
         "recently_promoted_count": recently_promoted,
-        "promotion_success_rate": round(success_rate, 1),
-        "l1_resolution_rate": round(l1_rate, 1),
-        "l2_resolution_rate": round(l2_rate, 1),
+        "promotion_success_rate": success_rate,
+        "l1_resolution_rate": l1_rate,
+        "l2_resolution_rate": l2_rate,
         "last_promotion_at": last_promotion_at.isoformat() if last_promotion_at else None,
     }
 
@@ -494,7 +505,19 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
     online_appliances = appliance_row.online or 0
     connectivity_score = round(online_appliances / max(total_appliances, 1) * 100, 1)
 
-    total_resolved = inc_row.total_resolved or 1
+    # Same empty-denominator rule as get_learning_status_from_db: if no
+    # incidents were resolved in the window, the resolution rates are
+    # undefined — return None so the dashboard renders "—" instead of a
+    # misleading "0%". total_resolved is the denominator for all three rates.
+    total_resolved = inc_row.total_resolved or 0
+    if total_resolved > 0:
+        l1_res_rate: Optional[float] = round((inc_row.l1 or 0) / total_resolved * 100, 1)
+        l2_res_rate: Optional[float] = round((inc_row.l2 or 0) / total_resolved * 100, 1)
+        l3_esc_rate: Optional[float] = round((inc_row.l3 or 0) / total_resolved * 100, 1)
+    else:
+        l1_res_rate = None
+        l2_res_rate = None
+        l3_esc_rate = None
 
     return {
         "total_clients": site_row.total or 0,
@@ -505,9 +528,9 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
         "incidents_24h": inc_row.day or 0,
         "incidents_7d": inc_row.week or 0,
         "incidents_30d": inc_row.month or 0,
-        "l1_resolution_rate": round((inc_row.l1 or 0) / total_resolved * 100, 1),
-        "l2_resolution_rate": round((inc_row.l2 or 0) / total_resolved * 100, 1),
-        "l3_escalation_rate": round((inc_row.l3 or 0) / total_resolved * 100, 1),
+        "l1_resolution_rate": l1_res_rate,
+        "l2_resolution_rate": l2_res_rate,
+        "l3_escalation_rate": l3_esc_rate,
     }
 
 

@@ -275,7 +275,11 @@ async def get_learning_stats(partner=Depends(require_partner)):
         """, partner_id)
 
         if stats_row:
-            total = stats_row['total_incidents'] or 1
+            # Use 0 (not 1) as the fallback denominator so the rates below
+            # return None when the partner genuinely has no incidents — "0%"
+            # reads as "we auto-healed 0% of incidents" on the partner
+            # dashboard which is a trust-hitting empty-state lie.
+            total = stats_row['total_incidents'] or 0
             l1 = stats_row['total_l1_resolutions'] or 0
             l2 = stats_row['total_l2_resolutions'] or 0
             l3 = stats_row['total_l3_resolutions'] or 0
@@ -284,21 +288,22 @@ async def get_learning_stats(partner=Depends(require_partner)):
                 "pending_candidates": stats_row['pending_candidates'] or 0,
                 "active_promoted_rules": stats_row['active_promoted_rules'] or 0,
                 "total_executions_30d": total,
-                "l1_resolution_rate": round(l1 / total, 3) if total > 0 else 0,
-                "l2_resolution_rate": round(l2 / total, 3) if total > 0 else 0,
-                "l3_escalation_rate": round(l3 / total, 3) if total > 0 else 0,
-                "avg_success_rate": round(stats_row['avg_success_rate'] or 0, 3)
+                "l1_resolution_rate": round(l1 / total, 3) if total > 0 else None,
+                "l2_resolution_rate": round(l2 / total, 3) if total > 0 else None,
+                "l3_escalation_rate": round(l3 / total, 3) if total > 0 else None,
+                "avg_success_rate": round(stats_row['avg_success_rate'], 3) if stats_row['avg_success_rate'] is not None else None,
             }
 
-        # Fallback to empty stats
+        # Fallback — partner view has no rows yet. Rates are undefined, not
+        # zero; counts are genuinely zero.
         return {
             "pending_candidates": 0,
             "active_promoted_rules": 0,
             "total_executions_30d": 0,
-            "l1_resolution_rate": 0,
-            "l2_resolution_rate": 0,
-            "l3_escalation_rate": 0,
-            "avg_success_rate": 0
+            "l1_resolution_rate": None,
+            "l2_resolution_rate": None,
+            "l3_escalation_rate": None,
+            "avg_success_rate": None,
         }
 
 

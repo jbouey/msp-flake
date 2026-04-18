@@ -260,9 +260,12 @@ class LearningStatus(BaseModel):
     total_l2_decisions_30d: int
     patterns_awaiting_promotion: int
     recently_promoted_count: int
-    promotion_success_rate: float
-    l1_resolution_rate: float
-    l2_resolution_rate: float
+    # Rates are Optional because they are undefined when the denominator is
+    # zero (no executions / no incidents in the window). Frontend teaches the
+    # null: renders "—" instead of the dishonest "0%" that reads as failure.
+    promotion_success_rate: Optional[float] = None
+    l1_resolution_rate: Optional[float] = None
+    l2_resolution_rate: Optional[float] = None
     last_promotion_at: Optional[str] = None
 
 

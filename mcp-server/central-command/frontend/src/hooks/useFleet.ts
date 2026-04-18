@@ -183,7 +183,9 @@ export function useLearningStatus() {
 }
 
 interface FlywheelIntelligence {
-  recurrence_rate_pct: number;
+  // null when no incidents resolved in the 7d window — rate is undefined
+  // without a denominator. Renders "—" on the dashboard.
+  recurrence_rate_pct: number | null;
   chronic_count: number;
   total_types_tracked: number;
   chronic_patterns: Array<{

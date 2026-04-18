@@ -223,7 +223,7 @@ export interface LearningStatus {
   recently_promoted_count: number;
   promotion_success_rate: number | null;
   l1_resolution_rate: number | null;
-  l2_resolution_rate: number;
+  l2_resolution_rate: number | null;
   promoted_rule_matches_30d: number;
   active_promoted_rules: number;
   /** ISO timestamp of the most recent approved promotion — powers the
@@ -349,9 +349,11 @@ export interface GlobalStats {
   incidents_24h: number;
   incidents_7d: number;
   incidents_30d: number;
-  l1_resolution_rate: number;
-  l2_resolution_rate: number;
-  l3_escalation_rate: number;
+  // Resolution/escalation rates are null when no incidents resolved in the
+  // 30d window. Renders as "—" on the dashboard, not "0%".
+  l1_resolution_rate: number | null;
+  l2_resolution_rate: number | null;
+  l3_escalation_rate: number | null;
   active_drift_checks: number;
   total_go_agents: number;
   active_threats: number;

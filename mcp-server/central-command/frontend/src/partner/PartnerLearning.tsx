@@ -6,10 +6,10 @@ interface LearningStats {
   pending_candidates: number;
   active_promoted_rules: number;
   total_executions_30d: number;
-  l1_resolution_rate: number;
-  l2_resolution_rate: number;
-  l3_escalation_rate: number;
-  avg_success_rate: number;
+  l1_resolution_rate: number | null;
+  l2_resolution_rate: number | null;
+  l3_escalation_rate: number | null;
+  avg_success_rate: number | null;
 }
 
 interface PromotionCandidate {
@@ -323,7 +323,8 @@ export const PartnerLearning: React.FC = () => {
     }
   };
 
-  const formatPercentage = (value: number) => {
+  const formatPercentage = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return '—';
     return `${(value * 100).toFixed(1)}%`;
   };
 
@@ -362,19 +363,25 @@ export const PartnerLearning: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
             <p className="text-sm text-slate-500">Pending Candidates</p>
-            <p className="text-2xl font-bold text-health-warning tabular-nums">{stats.pending_candidates}</p>
+            <p className={`text-2xl font-bold tabular-nums ${stats.pending_candidates > 0 ? 'text-health-warning' : 'text-slate-400'}`}>{stats.pending_candidates}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
             <p className="text-sm text-slate-500">Active L1 Rules</p>
-            <p className="text-2xl font-bold text-health-healthy tabular-nums">{stats.active_promoted_rules}</p>
+            <p className={`text-2xl font-bold tabular-nums ${stats.active_promoted_rules > 0 ? 'text-health-healthy' : 'text-slate-400'}`}>{stats.active_promoted_rules}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
             <p className="text-sm text-slate-500">L1 Resolution Rate</p>
-            <p className="text-2xl font-bold text-indigo-600 tabular-nums">{formatPercentage(stats.l1_resolution_rate)}</p>
+            <p className={`text-2xl font-bold tabular-nums ${stats.l1_resolution_rate === null || stats.l1_resolution_rate === undefined ? 'text-slate-400' : 'text-indigo-600'}`}>{formatPercentage(stats.l1_resolution_rate)}</p>
+            {(stats.l1_resolution_rate === null || stats.l1_resolution_rate === undefined) && (
+              <p className="text-xs text-slate-400 mt-1">No incidents resolved yet</p>
+            )}
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
             <p className="text-sm text-slate-500">Avg Success Rate</p>
-            <p className="text-2xl font-bold text-ios-blue tabular-nums">{formatPercentage(stats.avg_success_rate)}</p>
+            <p className={`text-2xl font-bold tabular-nums ${stats.avg_success_rate === null || stats.avg_success_rate === undefined ? 'text-slate-400' : 'text-ios-blue'}`}>{formatPercentage(stats.avg_success_rate)}</p>
+            {(stats.avg_success_rate === null || stats.avg_success_rate === undefined) && (
+              <p className="text-xs text-slate-400 mt-1">No executions yet</p>
+            )}
           </div>
         </div>
       )}

@@ -1059,9 +1059,12 @@ async def get_learning_status(db: AsyncSession = Depends(get_db), user: dict = D
         total_l2_decisions_30d=status.get("total_l2_decisions_30d", 0),
         patterns_awaiting_promotion=status.get("patterns_awaiting_promotion", 0),
         recently_promoted_count=status.get("recently_promoted_count", 0),
-        promotion_success_rate=status.get("promotion_success_rate", 0.0),
-        l1_resolution_rate=status.get("l1_resolution_rate", 0.0),
-        l2_resolution_rate=status.get("l2_resolution_rate", 0.0),
+        # Pass through None — don't coerce missing keys to 0.0 here. The
+        # db_queries layer returns None when the denominator is zero; the
+        # frontend teaches that null by rendering "—".
+        promotion_success_rate=status.get("promotion_success_rate"),
+        l1_resolution_rate=status.get("l1_resolution_rate"),
+        l2_resolution_rate=status.get("l2_resolution_rate"),
         last_promotion_at=status.get("last_promotion_at"),
     )
 
@@ -2957,7 +2960,10 @@ async def get_flywheel_intelligence(db: AsyncSession = Depends(get_db), user: di
         except Exception:
             unhealthy = []
 
-    recurrence_rate = 0.0
+    # None (not 0.0) when no incidents resolved in the 7d window — rate is
+    # undefined without a denominator and the dashboard renders "—" instead
+    # of a misleading "0%".
+    recurrence_rate: Optional[float] = None
     if recurrence_row and recurrence_row["total_resolved_7d"] and recurrence_row["total_resolved_7d"] > 0:
         recurrence_rate = round(
             recurrence_row["total_recurrences_4h"] / recurrence_row["total_resolved_7d"] * 100, 1

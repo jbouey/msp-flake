@@ -103,7 +103,10 @@ const FlywheelSpineHero: React.FC = () => {
             </span>
             {delta !== null && (
               <span className="text-xs text-label-secondary">
-                {deltaArrow} {delta >= 0 ? '+' : ''}{delta.toFixed(1)} vs 7d
+                {/* Both sides of the delta are percentages already, so the
+                    difference is percentage-POINTS — " pts" disambiguates
+                    from a relative "+X% vs 7d". */}
+                {deltaArrow} {delta >= 0 ? '+' : ''}{delta.toFixed(1)} pts vs 7d
               </span>
             )}
           </div>
@@ -241,8 +244,10 @@ export const Dashboard: React.FC = () => {
 
   // L1 auto-heal below target is a silent failure — the arrow may say "+18%"
   // and still be below the contractual 85%. Tint the card when below target.
-  const l1Rate = stats?.l1_resolution_rate ?? 0;
-  const l1BelowTarget = !statsLoading && l1Rate < L1_AUTOHEAL_TARGET;
+  // If l1_resolution_rate is null (no incidents in the window), we don't
+  // know whether we're on-target — leave the tint off, not "below target".
+  const l1Rate = stats?.l1_resolution_rate;
+  const l1BelowTarget = !statsLoading && l1Rate !== null && l1Rate !== undefined && l1Rate < L1_AUTOHEAL_TARGET;
 
   // Manual refresh button: user can force-refetch the two hottest queries
   // without waiting for the 30/60s interval. Not every query — we don't want
@@ -439,7 +444,10 @@ export const Dashboard: React.FC = () => {
                         deltas.compliance_delta > 0 ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'
                       } />
                     </svg>
-                    <span className="tabular-nums">{deltas.compliance_delta > 0 ? '+' : ''}{deltas.compliance_delta}%</span>
+                    {/* Compliance score is already a percentage — the delta is
+                        percentage-POINTS, not percent. "pts" disambiguates
+                        from relative change (which would be a different math). */}
+                    <span className="tabular-nums">{deltas.compliance_delta > 0 ? '+' : ''}{deltas.compliance_delta} pts</span>
                     <span className="text-label-tertiary font-normal">vs 24h ago</span>
                   </div>
                 )}
@@ -481,11 +489,15 @@ export const Dashboard: React.FC = () => {
             <MetricCard
               metric="l1_rate"
               label="L1 Auto-Heal"
-              value={stats?.l1_resolution_rate ?? 0}
+              // Pass null through when there are no incidents in the window —
+              // MetricCard renders "N/A". Coercing to 0 read as "we healed 0%".
+              value={stats?.l1_resolution_rate ?? null}
               suffix="%"
               loading={statsLoading}
               delta={deltas?.l1_rate_delta}
-              deltaSuffix="%"
+              // Delta is percentage-POINTS of a percentage metric (L1 rate
+              // went from 80% to 82% → +2 pts, not +2%). " pts" clarifies.
+              deltaSuffix=" pts"
               // L1 auto-heal below 85% target → amber regardless of delta.
               valueColor={l1BelowTarget ? 'text-health-warning' : 'text-ios-blue'}
               icon={
@@ -677,10 +689,43 @@ export const Dashboard: React.FC = () => {
             </div>
             <div className="space-y-3">
               {[
-                { label: 'L1 Rules', value: learningLoading ? null : `${learning?.total_l1_rules ?? 0}`, color: 'text-ios-blue', tip: METRIC_TOOLTIPS.l1_rules },
-                { label: 'L2 Decisions (30d)', value: learningLoading ? null : `${learning?.total_l2_decisions_30d ?? 0}`, color: 'text-ios-purple', tip: METRIC_TOOLTIPS.l2_decisions },
-                { label: 'Awaiting Promotion', value: learningLoading ? null : `${learning?.patterns_awaiting_promotion ?? 0}`, color: 'text-health-warning', tip: METRIC_TOOLTIPS.awaiting_promotion },
-                { label: 'Success Rate', value: learningLoading ? null : `${learning?.promotion_success_rate ?? 0}%`, color: 'text-health-healthy', tip: METRIC_TOOLTIPS.promotion_success },
+                // Counts: color-dim to tertiary when 0 so an empty substrate
+                // doesn't light up "healthy blue" as if zero rules were an
+                // achievement. Non-zero counts keep their semantic color.
+                {
+                  label: 'L1 Rules',
+                  value: learningLoading ? null : `${learning?.total_l1_rules ?? 0}`,
+                  color: (learning?.total_l1_rules ?? 0) > 0 ? 'text-ios-blue' : 'text-label-tertiary',
+                  tip: METRIC_TOOLTIPS.l1_rules,
+                },
+                {
+                  label: 'L2 Decisions (30d)',
+                  value: learningLoading ? null : `${learning?.total_l2_decisions_30d ?? 0}`,
+                  color: (learning?.total_l2_decisions_30d ?? 0) > 0 ? 'text-ios-purple' : 'text-label-tertiary',
+                  tip: METRIC_TOOLTIPS.l2_decisions,
+                },
+                {
+                  label: 'Awaiting Promotion',
+                  value: learningLoading ? null : `${learning?.patterns_awaiting_promotion ?? 0}`,
+                  // "Awaiting promotion" at 0 is genuinely fine (not a backlog).
+                  color: (learning?.patterns_awaiting_promotion ?? 0) > 0 ? 'text-health-warning' : 'text-label-tertiary',
+                  tip: METRIC_TOOLTIPS.awaiting_promotion,
+                },
+                // Success rate — render em-dash when null (no executions in
+                // the window). "0%" would read as "we succeeded at 0%".
+                {
+                  label: 'Success Rate',
+                  value: learningLoading
+                    ? null
+                    : (learning?.promotion_success_rate === null || learning?.promotion_success_rate === undefined)
+                      ? '—'
+                      : `${learning.promotion_success_rate}%`,
+                  color:
+                    (learning?.promotion_success_rate === null || learning?.promotion_success_rate === undefined)
+                      ? 'text-label-tertiary'
+                      : 'text-health-healthy',
+                  tip: METRIC_TOOLTIPS.promotion_success,
+                },
               ].map((row) => (
                 <div key={row.label} className="flex items-center justify-between py-0.5">
                   <span className="text-sm text-label-secondary">{row.label}{row.tip && <InfoTip text={row.tip} />}</span>
@@ -717,34 +762,51 @@ export const Dashboard: React.FC = () => {
                 {flywheelLoading && <Spinner size="sm" />}
               </div>
               {[
+                // Recurrence rate: null when no incidents resolved in 7d.
+                // Render "—" in muted grey instead of "0%" in health-green,
+                // which reads as "nothing recurs, we're great" when the
+                // truth is "we have no denominator to measure against".
                 {
                   label: 'Recurrence Rate',
-                  value: flywheelLoading ? null : `${flywheel?.recurrence_rate_pct ?? 0}%`,
-                  color: (flywheel?.recurrence_rate_pct ?? 0) > 20 ? 'text-health-warning' : 'text-health-healthy',
+                  value: flywheelLoading
+                    ? null
+                    : (flywheel?.recurrence_rate_pct === null || flywheel?.recurrence_rate_pct === undefined)
+                      ? '—'
+                      : `${flywheel.recurrence_rate_pct}%`,
+                  color:
+                    (flywheel?.recurrence_rate_pct === null || flywheel?.recurrence_rate_pct === undefined)
+                      ? 'text-label-tertiary'
+                      : flywheel.recurrence_rate_pct > 20
+                        ? 'text-health-warning'
+                        : 'text-health-healthy',
                   tip: 'Percentage of resolved incidents that recur within 4 hours. Lower is better — means L1 fixes are sticking.',
                 },
+                // Chronic patterns: 0 IS healthy (nothing chronic is good).
                 {
                   label: 'Chronic Patterns',
                   value: flywheelLoading ? null : `${flywheel?.chronic_count ?? 0}`,
                   color: (flywheel?.chronic_count ?? 0) > 0 ? 'text-health-warning' : 'text-health-healthy',
                   tip: 'Incident types recurring 3+ times in 4 hours. These bypass L1 and go to L2 for root-cause analysis.',
                 },
+                // The next three are "activity counts" — a zero is neutral,
+                // not an achievement. Don't paint them in active colors when
+                // there's nothing to report.
                 {
                   label: 'L2 Root-Cause Fixes',
                   value: flywheelLoading ? null : `${flywheel?.l2_recurrence_decisions?.actionable ?? 0}`,
-                  color: 'text-ios-purple',
+                  color: (flywheel?.l2_recurrence_decisions?.actionable ?? 0) > 0 ? 'text-ios-purple' : 'text-label-tertiary',
                   tip: 'L2 decisions triggered by recurrence that produced actionable root-cause fixes.',
                 },
                 {
                   label: 'Auto-Promotions',
                   value: flywheelLoading ? null : `${flywheel?.auto_promotions?.length ?? 0}`,
-                  color: 'text-health-healthy',
+                  color: (flywheel?.auto_promotions?.length ?? 0) > 0 ? 'text-health-healthy' : 'text-label-tertiary',
                   tip: 'L2 root-cause fixes that stopped recurrence for 24h+ and were auto-promoted to L1 rules.',
                 },
                 {
                   label: 'Correlations Found',
                   value: flywheelLoading ? null : `${flywheel?.correlations?.length ?? 0}`,
-                  color: 'text-ios-blue',
+                  color: (flywheel?.correlations?.length ?? 0) > 0 ? 'text-ios-blue' : 'text-label-tertiary',
                   tip: 'Cross-incident patterns: when fixing incident A consistently triggers incident B within 10 minutes.',
                 },
               ].map((row) => (
@@ -797,16 +859,19 @@ export const Dashboard: React.FC = () => {
                 {installsLoading && <Spinner size="sm" />}
               </div>
               {[
+                // Zero installs/zero successes/zero in-progress are neutral
+                // states, not "healthy blue" or "attention-warning amber".
+                // Only non-zero counts get their semantic color.
                 {
                   label: 'Installs (7d)',
                   value: installsLoading ? null : `${installs?.summary?.total_7d ?? 0}`,
-                  color: 'text-ios-blue',
+                  color: (installs?.summary?.total_7d ?? 0) > 0 ? 'text-ios-blue' : 'text-label-tertiary',
                   tip: 'Total install attempts in the last 7 days (from installer ISO telemetry).',
                 },
                 {
                   label: 'Successful',
                   value: installsLoading ? null : `${installs?.summary?.success_count ?? 0}`,
-                  color: 'text-health-healthy',
+                  color: (installs?.summary?.success_count ?? 0) > 0 ? 'text-health-healthy' : 'text-label-tertiary',
                   tip: 'Installs that completed successfully with verification passed.',
                 },
                 {
@@ -818,7 +883,7 @@ export const Dashboard: React.FC = () => {
                 {
                   label: 'In Progress',
                   value: installsLoading ? null : `${installs?.summary?.in_progress_count ?? 0}`,
-                  color: 'text-health-warning',
+                  color: (installs?.summary?.in_progress_count ?? 0) > 0 ? 'text-health-warning' : 'text-label-tertiary',
                   tip: 'Installers that started but never reported completion. May indicate halted/crashed installs.',
                 },
               ].map((row) => (

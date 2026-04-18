@@ -144,10 +144,22 @@ export const Learning: React.FC = () => {
             <div className="h-9 animate-pulse bg-separator-light rounded mt-1" />
           ) : (
             <>
-              <p className="text-3xl font-semibold text-health-healthy">
-                {status?.l1_resolution_rate?.toFixed(1) ?? 0}%
-              </p>
-              <p className="text-xs text-label-tertiary">Target: 70-80%</p>
+              {/* Null when no incidents resolved in the window — render em-dash
+                  in muted grey, not "0%" in health-green which reads as
+                  "L1 healed 0% of incidents" on an empty substrate. */}
+              {(status?.l1_resolution_rate === null || status?.l1_resolution_rate === undefined) ? (
+                <>
+                  <p className="text-3xl font-semibold text-label-tertiary">—</p>
+                  <p className="text-xs text-label-tertiary">No incidents resolved yet</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-3xl font-semibold text-health-healthy">
+                    {status.l1_resolution_rate.toFixed(1)}%
+                  </p>
+                  <p className="text-xs text-label-tertiary">Target: 70-80%</p>
+                </>
+              )}
             </>
           )}
         </GlassCard>
@@ -176,14 +188,25 @@ export const Learning: React.FC = () => {
             <div className="h-9 animate-pulse bg-separator-light rounded mt-1" />
           ) : (
             <>
-              <p className={`text-3xl font-semibold ${
-                (status?.promotion_success_rate ?? 0) >= 90
-                  ? 'text-health-healthy'
-                  : 'text-health-warning'
-              }`}>
-                {status?.promotion_success_rate?.toFixed(1) ?? 0}%
-              </p>
-              <p className="text-xs text-label-tertiary">Post-promotion accuracy</p>
+              {/* Null when no promoted executions have run — same trust
+                  argument as L1 Resolution Rate above. */}
+              {(status?.promotion_success_rate === null || status?.promotion_success_rate === undefined) ? (
+                <>
+                  <p className="text-3xl font-semibold text-label-tertiary">—</p>
+                  <p className="text-xs text-label-tertiary">No post-promotion executions yet</p>
+                </>
+              ) : (
+                <>
+                  <p className={`text-3xl font-semibold ${
+                    status.promotion_success_rate >= 90
+                      ? 'text-health-healthy'
+                      : 'text-health-warning'
+                  }`}>
+                    {status.promotion_success_rate.toFixed(1)}%
+                  </p>
+                  <p className="text-xs text-label-tertiary">Post-promotion accuracy</p>
+                </>
+              )}
             </>
           )}
         </GlassCard>
