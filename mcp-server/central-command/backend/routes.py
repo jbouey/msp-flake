@@ -2387,8 +2387,11 @@ async def get_flywheel_spine(
         # Denominator: total incidents (exclude status='rejected' or
         #              chaos-lab synthetic if we ever tag them)
         # Window: 24h rolling + 7d rolling
-        self_heal_24h = {"total": 0, "l1": 0, "l2": 0, "l3": 0, "pct": 0.0}
-        self_heal_7d = {"total": 0, "l1": 0, "l2": 0, "l3": 0, "pct": 0.0}
+        # pct is None when total==0 — the self-heal *rate* is undefined with
+        # zero incidents, and 100.0 was dishonest empty-state noise on the
+        # hero metric. Frontend renders a "no incidents" empty state instead.
+        self_heal_24h: dict = {"total": 0, "l1": 0, "l2": 0, "l3": 0, "pct": None}
+        self_heal_7d: dict = {"total": 0, "l1": 0, "l2": 0, "l3": 0, "pct": None}
         trend_7d: list[dict] = []
         per_site: list[dict] = []
         chronic_pattern_count = 0
@@ -2410,7 +2413,7 @@ async def get_flywheel_spine(
                     "l1": l1,
                     "l2": int(sh24["l2"] or 0),
                     "l3": int(sh24["l3"] or 0),
-                    "pct": round(100.0 * l1 / total, 1) if total > 0 else 100.0,
+                    "pct": round(100.0 * l1 / total, 1) if total > 0 else None,
                 }
             sh7 = await conn.fetchrow("""
                 SELECT
@@ -2429,7 +2432,7 @@ async def get_flywheel_spine(
                     "l1": l1,
                     "l2": int(sh7["l2"] or 0),
                     "l3": int(sh7["l3"] or 0),
-                    "pct": round(100.0 * l1 / total, 1) if total > 0 else 100.0,
+                    "pct": round(100.0 * l1 / total, 1) if total > 0 else None,
                 }
         except Exception:
             logger.exception("flywheel-spine: self_heal aggregation failed")
@@ -2451,7 +2454,7 @@ async def get_flywheel_spine(
                     "l1": int(r["l1"] or 0),
                     "pct": (
                         round(100.0 * int(r["l1"] or 0) / int(r["total"]), 1)
-                        if r["total"] and int(r["total"]) > 0 else 100.0
+                        if r["total"] and int(r["total"]) > 0 else None
                     ),
                 }
                 for r in trend_rows
@@ -2477,7 +2480,7 @@ async def get_flywheel_spine(
                     "l1": int(r["l1"] or 0),
                     "pct": (
                         round(100.0 * int(r["l1"] or 0) / int(r["total"]), 1)
-                        if r["total"] and int(r["total"]) > 0 else 100.0
+                        if r["total"] and int(r["total"]) > 0 else None
                     ),
                 }
                 for r in per_site_rows
@@ -2790,6 +2793,10 @@ async def get_flywheel_events(
         # in its TypeScript interface but they stay null here; the spine
         # stores state only on `promoted_rules.lifecycle_state`, not
         # per-event.
+        # 7-day window: the frontend labels this a "live event stream" and
+        # polls every 60s, so unbounded historical events would contradict
+        # the label. Drill-down (rule_id filter) honors the full history
+        # because there's no "recent" framing in that view.
         if rule_id:
             rows = await conn.fetch(
                 """
@@ -2808,6 +2815,7 @@ async def get_flywheel_events(
                 SELECT event_id, rule_id, site_id, event_type,
                        actor, stage, outcome, reason, created_at, proof
                 FROM promoted_rule_events
+                WHERE created_at > NOW() - INTERVAL '7 days'
                 ORDER BY created_at DESC
                 LIMIT $1
                 """,

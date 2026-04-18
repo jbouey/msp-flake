@@ -77,13 +77,18 @@ const FlywheelSpineHero: React.FC = () => {
   if (!data) return null;
   const pct24 = data.self_heal_rate_24h_pct;
   const pct7 = data.self_heal_rate_7d_pct;
-  const delta = Math.round((pct24 - pct7) * 10) / 10;
-  const deltaArrow = delta > 0.2 ? '↗' : delta < -0.2 ? '↘' : '→';
-  const pctColor =
-    pct24 >= 95 ? 'text-health-healthy'
+  const hasPct24 = pct24 !== null && pct24 !== undefined;
+  const hasPct7 = pct7 !== null && pct7 !== undefined;
+  const delta = hasPct24 && hasPct7 ? Math.round((pct24 - pct7) * 10) / 10 : null;
+  const deltaArrow = delta === null ? '' : delta > 0.2 ? '↗' : delta < -0.2 ? '↘' : '→';
+  const pctColor = !hasPct24
+    ? 'text-label-tertiary'
+    : pct24 >= 95 ? 'text-health-healthy'
     : pct24 >= 85 ? 'text-health-warning'
     : 'text-health-critical';
-  const trendValues = (data.trend_7d || []).map((t) => t.pct);
+  const trendValues = (data.trend_7d || [])
+    .map((t) => t.pct)
+    .filter((v): v is number => v !== null && v !== undefined);
   return (
     <GlassCard>
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
@@ -94,14 +99,18 @@ const FlywheelSpineHero: React.FC = () => {
           </div>
           <div className="flex items-baseline gap-3">
             <span className={`text-5xl font-bold tabular-nums ${pctColor}`}>
-              {pct24.toFixed(1)}%
+              {hasPct24 ? `${pct24.toFixed(1)}%` : '—'}
             </span>
-            <span className="text-xs text-label-secondary">
-              {deltaArrow} {delta >= 0 ? '+' : ''}{delta.toFixed(1)} vs 7d
-            </span>
+            {delta !== null && (
+              <span className="text-xs text-label-secondary">
+                {deltaArrow} {delta >= 0 ? '+' : ''}{delta.toFixed(1)} vs 7d
+              </span>
+            )}
           </div>
           <div className="text-[11px] text-label-tertiary">
-            Target ≥95%. 7-day avg: {pct7.toFixed(1)}%
+            {hasPct24
+              ? `Target ≥95%. 7-day avg: ${hasPct7 ? `${pct7.toFixed(1)}%` : '—'}`
+              : 'No incidents detected in the last 24h — nothing to heal'}
           </div>
         </div>
         <div className="md:col-span-3 space-y-1">
@@ -137,7 +146,7 @@ const FlywheelSpineHero: React.FC = () => {
               points={trendValues}
               width={180}
               height={44}
-              color={pct24 >= 95 ? '#34c759' : pct24 >= 85 ? '#ff9f0a' : '#ff3b30'}
+              color={!hasPct24 ? '#8e8e93' : pct24 >= 95 ? '#34c759' : pct24 >= 85 ? '#ff9f0a' : '#ff3b30'}
             />
           )}
           <div className="text-[11px] text-label-tertiary">
@@ -157,11 +166,12 @@ const FlywheelSpineHero: React.FC = () => {
                   {s.site_id}
                 </div>
                 <div className={`tabular-nums ${
-                  s.pct >= 95 ? 'text-health-healthy'
+                  s.pct === null || s.pct === undefined ? 'text-label-tertiary'
+                  : s.pct >= 95 ? 'text-health-healthy'
                   : s.pct >= 85 ? 'text-health-warning'
                   : 'text-health-critical'
                 }`}>
-                  {s.pct.toFixed(1)}% ({s.l1}/{s.total})
+                  {s.pct === null || s.pct === undefined ? '— no incidents' : `${s.pct.toFixed(1)}% (${s.l1}/${s.total})`}
                 </div>
               </div>
             ))}
@@ -835,11 +845,18 @@ export const Dashboard: React.FC = () => {
                       r.install_success === true ? 'text-health-healthy' :
                       r.install_success === false ? 'text-health-critical' :
                       'text-health-warning';
+                    // Prefer human-readable identifiers; fall back to mac/serial, never a UUID slice.
+                    const label =
+                      r.product_name ||
+                      r.drive_model ||
+                      r.serial_number ||
+                      r.mac_address ||
+                      'Unknown device';
                     return (
                       <div key={r.installer_id} className="flex justify-between text-xs py-0.5">
-                        <span className="text-label-secondary truncate max-w-[70%]" title={r.serial_number || r.mac_address || r.installer_id}>
+                        <span className="text-label-secondary truncate max-w-[70%]" title={r.serial_number || r.mac_address || label}>
                           <span className={`${statusColor} mr-1`}>{status}</span>
-                          {r.product_name || r.drive_model || r.installer_id.slice(0, 8)}
+                          {label}
                           {r.error_step && <span className="text-health-critical ml-1">({r.error_step})</span>}
                         </span>
                         <span className="text-label-tertiary tabular-nums">

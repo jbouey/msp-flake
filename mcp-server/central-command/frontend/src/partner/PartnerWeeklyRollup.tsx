@@ -25,7 +25,7 @@ interface RollupSite {
   l3_7d: number;
   incidents_24h: number;
   l1_24h: number;
-  self_heal_rate_7d_pct: number;
+  self_heal_rate_7d_pct: number | null;
 }
 
 interface RollupResponse {
@@ -117,8 +117,10 @@ export const PartnerWeeklyRollup: React.FC = () => {
             <tbody>
               {data.sites.slice(0, 25).map((s) => {
                 const pct = s.self_heal_rate_7d_pct;
-                const tone =
-                  pct >= 95 ? 'text-emerald-600'
+                const hasPct = pct !== null && pct !== undefined;
+                const tone = !hasPct
+                  ? 'text-slate-400'
+                  : pct >= 95 ? 'text-emerald-600'
                   : pct >= 85 ? 'text-amber-600'
                   : 'text-rose-600';
                 return (
@@ -127,7 +129,7 @@ export const PartnerWeeklyRollup: React.FC = () => {
                       {s.clinic_name || s.site_id}
                     </td>
                     <td className={`px-2 py-2 text-right tabular-nums font-semibold ${tone}`}>
-                      {pct.toFixed(1)}%
+                      {hasPct ? `${pct.toFixed(1)}%` : '—'}
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums text-slate-700">
                       {s.incidents_7d}

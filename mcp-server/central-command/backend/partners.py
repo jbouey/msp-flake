@@ -668,9 +668,12 @@ async def get_partner_dashboard(
         )
         total_incidents_24h = int(bob["incidents_24h"] or 0) if bob else 0
         l1_24h = int(bob["l1_24h"] or 0) if bob else 0
+        # None when total==0: the self-heal rate is undefined with zero
+        # incidents; emitting 100 would mean "every drift was auto-healed"
+        # when nothing was observed. Frontend renders the empty state.
         self_heal_24h_pct = (
             round(100.0 * l1_24h / total_incidents_24h, 1)
-            if total_incidents_24h > 0 else 100.0
+            if total_incidents_24h > 0 else None
         )
         book_of_business = {
             "total_clients": int(bob["total_clients"] or 0) if bob else 0,
@@ -704,7 +707,7 @@ async def get_partner_dashboard(
                 "l1": int(r["l1"] or 0),
                 "pct": (
                     round(100.0 * int(r["l1"] or 0) / int(r["total"]), 1)
-                    if r["total"] and int(r["total"]) > 0 else 100.0
+                    if r["total"] and int(r["total"]) > 0 else None
                 ),
             }
             for r in trend_rows

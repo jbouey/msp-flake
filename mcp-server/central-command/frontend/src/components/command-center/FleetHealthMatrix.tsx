@@ -128,7 +128,9 @@ export const FleetHealthMatrix: React.FC<{ className?: string }> = ({ className 
   const { data: sites, isLoading } = useFleetPosture();
 
   const totalSites = sites?.length ?? 0;
-  const needsAttention = sites?.filter(s => s.l3_unresolved > 0 || s.unresolved > 0).length ?? 0;
+  // Matrix-scoped count: sites with unresolved incidents right now.
+  // Distinct from the Sidebar "needs attention" rollup, which is health-status based.
+  const withOpenIncidents = sites?.filter(s => s.l3_unresolved > 0 || s.unresolved > 0).length ?? 0;
 
   return (
     <GlassCard className={className}>
@@ -137,8 +139,8 @@ export const FleetHealthMatrix: React.FC<{ className?: string }> = ({ className 
           <h3 className="text-base font-semibold text-label-primary">Fleet Posture</h3>
           <p className="text-xs text-label-tertiary mt-0.5">
             {totalSites} site{totalSites !== 1 ? 's' : ''}
-            {needsAttention > 0 && (
-              <span className="text-health-critical font-medium"> — {needsAttention} need{needsAttention !== 1 ? '' : 's'} attention</span>
+            {withOpenIncidents > 0 && (
+              <span className="text-health-critical font-medium"> — {withOpenIncidents} with open incidents</span>
             )}
           </p>
         </div>

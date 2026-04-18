@@ -146,19 +146,22 @@ async def test_per_site_aggregates_separately(conn):
 
 
 @pytest.mark.asyncio
-async def test_zero_incidents_returns_100pct_not_division_by_zero(conn):
-    # Endpoint's Python code must handle total=0 by returning 100.0
-    # (psychology: empty fleet or quiet day is GOOD, not undefined)
+async def test_zero_incidents_returns_none_not_division_by_zero(conn):
+    # The endpoint must return pct=None (not 100.0) when no incidents
+    # have been observed in the window. Rationale: the self-heal *rate*
+    # is undefined with a zero denominator; emitting 100.0 reads as
+    # "every drift was auto-healed" when in fact nothing was observed.
+    # Frontend renders an explicit "no incidents detected" empty state.
     row = await conn.fetchrow(
         """SELECT COUNT(*) AS total FROM incidents
            WHERE created_at > NOW() - INTERVAL '24 hours'"""
     )
     assert int(row["total"]) == 0
-    # Matching Python: `pct = round(100.0 * l1 / total, 1) if total > 0 else 100.0`
+    # Matching Python: `pct = round(100.0 * l1 / total, 1) if total > 0 else None`
     total = int(row["total"])
     l1 = 0
-    pct = round(100.0 * l1 / total, 1) if total > 0 else 100.0
-    assert pct == 100.0
+    pct = round(100.0 * l1 / total, 1) if total > 0 else None
+    assert pct is None
 
 
 # ─── Transient drift (portal) ──────────────────────────────────────

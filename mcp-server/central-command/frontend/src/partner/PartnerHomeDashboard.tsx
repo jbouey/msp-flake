@@ -46,10 +46,10 @@ interface DashboardData {
     l1_24h: number;
     l2_24h: number;
     l3_24h: number;
-    self_heal_24h_pct: number;
+    self_heal_24h_pct: number | null;
     active_alerts: number;
   };
-  trend_7d: Array<{ date: string; total: number; l1: number; pct: number }>;
+  trend_7d: Array<{ date: string; total: number; l1: number; pct: number | null }>;
   generated_at: string;
 }
 
@@ -221,10 +221,14 @@ export const PartnerHomeDashboard: React.FC = () => {
           <h2 className="text-sm font-semibold text-slate-900">Book-of-business · 24h</h2>
           <div>
             <div className="text-3xl font-bold text-slate-900 tabular-nums">
-              {bob.self_heal_24h_pct.toFixed(1)}%
+              {bob.self_heal_24h_pct !== null && bob.self_heal_24h_pct !== undefined
+                ? `${bob.self_heal_24h_pct.toFixed(1)}%`
+                : '—'}
             </div>
             <div className="text-xs text-slate-500">
-              Self-heal rate · target ≥95%
+              {bob.self_heal_24h_pct !== null && bob.self_heal_24h_pct !== undefined
+                ? 'Self-heal rate · target ≥95%'
+                : 'No incidents detected in the last 24h'}
             </div>
           </div>
           <div className="text-xs text-slate-600 space-y-1 tabular-nums">
@@ -250,10 +254,19 @@ export const PartnerHomeDashboard: React.FC = () => {
               <div className="text-xs text-slate-500 mb-1">7-day trend</div>
               <div className="flex gap-0.5 h-8">
                 {data.trend_7d.map((d) => {
-                  const height = Math.max(5, d.pct);
-                  const color = d.pct >= 95 ? 'bg-emerald-400' : d.pct >= 85 ? 'bg-amber-400' : 'bg-red-400';
+                  const pct = d.pct;
+                  const height = pct === null || pct === undefined ? 5 : Math.max(5, pct);
+                  const color =
+                    pct === null || pct === undefined ? 'bg-slate-200'
+                    : pct >= 95 ? 'bg-emerald-400'
+                    : pct >= 85 ? 'bg-amber-400'
+                    : 'bg-red-400';
+                  const title =
+                    pct === null || pct === undefined
+                      ? `${d.date}: no incidents`
+                      : `${d.date}: ${pct.toFixed(1)}% (${d.l1}/${d.total})`;
                   return (
-                    <div key={d.date} className="flex-1 flex items-end" title={`${d.date}: ${d.pct.toFixed(1)}% (${d.l1}/${d.total})`}>
+                    <div key={d.date} className="flex-1 flex items-end" title={title}>
                       <div className={color} style={{ height: `${height}%`, width: '100%', borderRadius: 2 }} />
                     </div>
                   );
