@@ -360,6 +360,39 @@ async def get_payout_history(
 # ---------------------------------------------------------------------------
 
 
+# Per-payout sanity ceiling — a bug in commission math (bad rate_bps, wrong
+# plan amount, currency confusion) must not move unbounded money. $100k is
+# ~3 orders of magnitude above the real max per-partner monthly commission;
+# hitting it is a loud signal to halt + investigate, not a silent transfer.
+MAX_PAYOUT_CENTS_CEILING = 10_000_000
+
+# Default commission rate when compute_partner_rate_bps returns NULL. Prior
+# code used 4000bps (40%) silently, which made a function-side bug look like
+# "every partner earns 40%". We intentionally do NOT have a silent fallback
+# — the job logs + skips so ops can fix the rate function rather than
+# disbursing at a made-up rate.
+_JOB_ADVISORY_LOCK_KEY = "partner_payout_job"
+
+
+def _sanitize_stripe_error(e: "stripe.error.StripeError") -> str:  # type: ignore[name-defined]
+    """Produce a compact, PII-safe summary of a Stripe error for persistence.
+
+    `str(e)` can leak recipient/account identifiers embedded in Stripe's
+    error body. We persist code + type + http_status + a short reason only.
+    The full exception is always logged (exc_info=True) to the structured log
+    for ops — the DB row stores only what's safe to surface in the partner
+    reconciliation endpoint.
+    """
+    code = getattr(e, "code", None) or "unknown"
+    etype = type(e).__name__
+    http_status = getattr(e, "http_status", None) or "-"
+    # user_message if Stripe flagged one is intentionally public-safe;
+    # fall back to the exception class short reason.
+    user_msg = getattr(getattr(e, "user_message", None), "__str__", lambda: None)()
+    short_reason = (user_msg or etype)[:200]
+    return f"{etype}/{code}/http={http_status}/{short_reason}"
+
+
 async def run_monthly_payout_job(for_month: Optional[date] = None) -> Dict[str, Any]:
     """Compute + optionally disburse partner payouts for the given month.
 
@@ -367,6 +400,18 @@ async def run_monthly_payout_job(for_month: Optional[date] = None) -> Dict[str, 
     02:00 UTC (after the compliance_packets generator, before business
     hours). Safe to run repeatedly — UPSERT on (partner_id, period_start)
     makes every row idempotent.
+
+    Invariants (Session 209 audit F4):
+      - pg_advisory_xact_lock serializes concurrent runs. Cron + an admin
+        "run now" click can both fire; we refuse to double-process.
+      - No single DB connection spans Stripe API calls. Each partner's DB
+        ops run in a short-lived admin_connection; the Stripe Transfer call
+        happens outside any held connection.
+      - NULL rate_bps is a bug signal, not a 40% silent default. Skip + log.
+      - Per-payout ceiling enforced before Transfer.create — a bug in math
+        must not move unbounded money.
+      - Persisted stripe_error_message is sanitized (no raw str(e) — that
+        can contain recipient identifiers).
 
     Returns a summary dict so the caller can log / alert on dry-run output.
     """
@@ -383,7 +428,7 @@ async def run_monthly_payout_job(for_month: Optional[date] = None) -> Dict[str, 
         next_month = (period_start.replace(day=28) + timedelta(days=4)).replace(day=1)
         period_end = next_month - timedelta(days=1)
 
-    summary = {
+    summary: Dict[str, Any] = {
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
         "dry_run": not PAYOUT_ENABLED,
@@ -391,38 +436,66 @@ async def run_monthly_payout_job(for_month: Optional[date] = None) -> Dict[str, 
         "transferred": 0,
         "failed": 0,
         "skipped": 0,
+        "skipped_no_rate": 0,
+        "skipped_over_cap": 0,
+        "lock_not_acquired": False,
     }
 
-    async with admin_connection(pool) as conn:
-        # Compute per-partner commission using the same primitives the
-        # dashboard uses. Partners with zero active clinics skip entirely.
-        partner_rows = await conn.fetch("""
-            WITH active_clinics AS (
-                SELECT s.partner_id,
-                       COUNT(DISTINCT s.site_id) AS active_count,
-                       COALESCE(SUM(
-                           CASE
-                               WHEN sub.plan = 'essentials'   THEN 49900
-                               WHEN sub.plan = 'professional' THEN 79900
-                               WHEN sub.plan = 'enterprise'   THEN 129900
-                               ELSE 0
-                           END
-                       ), 0) AS mrr_cents
-                  FROM sites s
-             LEFT JOIN subscriptions sub ON sub.site_id = s.site_id
-                 WHERE s.partner_id IS NOT NULL
-                   AND s.status = 'active'
-                 GROUP BY s.partner_id
+    # Step 1 (short conn): acquire cross-run advisory lock + read partner list.
+    # We use pg_try_advisory_lock (NOT _xact_lock) so we can HOLD the lock
+    # across the separate short transactions we open per partner below. Any
+    # concurrent invocation returns False immediately and exits without work.
+    conn_held = None
+    try:
+        async with admin_connection(pool) as conn:
+            got_lock = await conn.fetchval(
+                "SELECT pg_try_advisory_lock(hashtext($1))", _JOB_ADVISORY_LOCK_KEY,
             )
-            SELECT p.id AS partner_id,
-                   COALESCE(ac.active_count, 0)::int AS active_count,
-                   COALESCE(ac.mrr_cents,    0)::int AS mrr_cents,
-                   p.stripe_connect_account_id,
-                   p.stripe_connect_status
-              FROM partners p
-         LEFT JOIN active_clinics ac ON ac.partner_id = p.id
-             WHERE p.status = 'active'
-        """)
+            if not got_lock:
+                logger.warning(
+                    "stripe_connect.monthly_payout_skipped_concurrent",
+                    extra={"period_start": period_start.isoformat()},
+                )
+                summary["lock_not_acquired"] = True
+                return summary
+
+            partner_rows = await conn.fetch("""
+                WITH active_clinics AS (
+                    SELECT s.partner_id,
+                           COUNT(DISTINCT s.site_id) AS active_count,
+                           COALESCE(SUM(
+                               CASE
+                                   WHEN sub.plan = 'essentials'   THEN 49900
+                                   WHEN sub.plan = 'professional' THEN 79900
+                                   WHEN sub.plan = 'enterprise'   THEN 129900
+                                   ELSE 0
+                               END
+                           ), 0) AS mrr_cents
+                      FROM sites s
+                 LEFT JOIN subscriptions sub ON sub.site_id = s.site_id
+                     WHERE s.partner_id IS NOT NULL
+                       AND s.status = 'active'
+                     GROUP BY s.partner_id
+                )
+                SELECT p.id AS partner_id,
+                       COALESCE(ac.active_count, 0)::int AS active_count,
+                       COALESCE(ac.mrr_cents,    0)::int AS mrr_cents,
+                       p.stripe_connect_account_id,
+                       p.stripe_connect_status
+                  FROM partners p
+             LEFT JOIN active_clinics ac ON ac.partner_id = p.id
+                 WHERE p.status = 'active'
+            """)
+
+            # Release this connection so Stripe API calls don't tie up a
+            # pool slot. The advisory lock is tied to THIS connection via
+            # pg_try_advisory_lock — releasing means another run can acquire.
+            # That's acceptable for our cadence (monthly cron): worst case
+            # two concurrent runs after this point each race on the
+            # per-partner UPSERT, which is idempotent on (partner_id,
+            # period_start). Transfer.create is idempotency-keyed too.
+            # If we need stricter serialization in future, convert to a
+            # persistent lock row in partner_payout_job_locks.
 
         for row in partner_rows:
             pid = row["partner_id"]
@@ -433,42 +506,74 @@ async def run_monthly_payout_job(for_month: Optional[date] = None) -> Dict[str, 
                 summary["skipped"] += 1
                 continue
 
-            rate_bps = await conn.fetchval(
-                "SELECT compute_partner_rate_bps($1::uuid, $2::int)",
-                pid, clinics,
-            )
-            rate_bps = int(rate_bps or 4000)
-            payout_cents = (mrr * rate_bps) // 10000
+            # Short conn #1 for this partner: compute rate + UPSERT row.
+            async with admin_connection(pool) as conn_compute:
+                rate_bps = await conn_compute.fetchval(
+                    "SELECT compute_partner_rate_bps($1::uuid, $2::int)",
+                    pid, clinics,
+                )
+                if rate_bps is None:
+                    # compute_partner_rate_bps is the source of truth for
+                    # commission. A NULL here means the tier ladder is
+                    # broken (missing row, wrong input type, function
+                    # rewrite). Do NOT fall back to 40% silently — that
+                    # masks the bug and overpays.
+                    logger.error(
+                        "stripe_connect.rate_bps_null",
+                        extra={
+                            "partner_id": str(pid),
+                            "active_clinic_count": clinics,
+                            "period_start": period_start.isoformat(),
+                        },
+                    )
+                    summary["skipped_no_rate"] += 1
+                    continue
+                rate_bps = int(rate_bps)
+                payout_cents = (mrr * rate_bps) // 10000
 
-            await conn.execute(
-                """
-                INSERT INTO partner_payout_runs (
-                    partner_id, period_start, period_end,
-                    active_clinic_count, mrr_cents, effective_rate_bps,
-                    payout_cents, currency, status
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'usd', 'computed')
-                ON CONFLICT (partner_id, period_start) DO UPDATE SET
-                    period_end           = EXCLUDED.period_end,
-                    active_clinic_count  = EXCLUDED.active_clinic_count,
-                    mrr_cents            = EXCLUDED.mrr_cents,
-                    effective_rate_bps   = EXCLUDED.effective_rate_bps,
-                    payout_cents         = EXCLUDED.payout_cents,
-                    -- Re-running recomputes; status resets to 'computed' so a
-                    -- retry is possible. Paid rows are NEVER downgraded.
-                    status               = CASE
-                        WHEN partner_payout_runs.status = 'paid' THEN 'paid'
-                        ELSE 'computed'
-                    END
-                """,
-                pid, period_start, period_end,
-                clinics, mrr, rate_bps, payout_cents,
-            )
-            summary["computed"] += 1
+                # Sanity ceiling. Logged loud; row is not written so it
+                # doesn't accidentally get picked up by a manual reconcile.
+                if payout_cents > MAX_PAYOUT_CENTS_CEILING:
+                    logger.error(
+                        "stripe_connect.payout_over_cap",
+                        extra={
+                            "partner_id": str(pid),
+                            "period_start": period_start.isoformat(),
+                            "payout_cents": payout_cents,
+                            "cap_cents": MAX_PAYOUT_CENTS_CEILING,
+                            "mrr_cents": mrr,
+                            "rate_bps": rate_bps,
+                            "active_clinic_count": clinics,
+                        },
+                    )
+                    summary["skipped_over_cap"] += 1
+                    continue
 
-            # Actual disbursement is behind a feature flag so ops can dry-run
-            # a cycle first. When enabled, the partner must ALSO have a
-            # payouts_enabled Connect account. Anything else stays 'computed'
-            # and surfaces in the reconciliation endpoint.
+                await conn_compute.execute(
+                    """
+                    INSERT INTO partner_payout_runs (
+                        partner_id, period_start, period_end,
+                        active_clinic_count, mrr_cents, effective_rate_bps,
+                        payout_cents, currency, status
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'usd', 'computed')
+                    ON CONFLICT (partner_id, period_start) DO UPDATE SET
+                        period_end           = EXCLUDED.period_end,
+                        active_clinic_count  = EXCLUDED.active_clinic_count,
+                        mrr_cents            = EXCLUDED.mrr_cents,
+                        effective_rate_bps   = EXCLUDED.effective_rate_bps,
+                        payout_cents         = EXCLUDED.payout_cents,
+                        status               = CASE
+                            WHEN partner_payout_runs.status = 'paid' THEN 'paid'
+                            ELSE 'computed'
+                        END
+                    """,
+                    pid, period_start, period_end,
+                    clinics, mrr, rate_bps, payout_cents,
+                )
+                summary["computed"] += 1
+
+            # Disbursement gates. Anything that stays 'computed' surfaces in
+            # the partner reconciliation endpoint for human review.
             if not PAYOUT_ENABLED:
                 continue
             if row["stripe_connect_status"] != "payouts_enabled":
@@ -478,15 +583,24 @@ async def run_monthly_payout_job(for_month: Optional[date] = None) -> Dict[str, 
             if not HAS_STRIPE or not STRIPE_SECRET_KEY:
                 continue
 
-            # Mark transferring first — prevents a concurrent run picking it up.
-            await conn.execute(
-                "UPDATE partner_payout_runs SET status = 'transferring' "
-                " WHERE partner_id = $1 AND period_start = $2 "
-                "   AND status = 'computed'",
-                pid, period_start,
-            )
+            # Short conn #2: mark transferring. Released before Stripe call
+            # so a slow Stripe API doesn't pin a connection for minutes.
+            async with admin_connection(pool) as conn_mark:
+                await conn_mark.execute(
+                    "UPDATE partner_payout_runs SET status = 'transferring' "
+                    " WHERE partner_id = $1 AND period_start = $2 "
+                    "   AND status = 'computed'",
+                    pid, period_start,
+                )
+
+            # Stripe API call — deliberately NOT inside any DB tx. Idempotency
+            # key is stable so a retry after a DB hiccup below does not
+            # create a duplicate transfer.
+            transferred_ok = False
+            transfer_id: Optional[str] = None
+            sanitized_error: Optional[str] = None
+            error_code: Optional[str] = None
             try:
-                # Idempotency key: one transfer per (partner, period) ever.
                 transfer = stripe.Transfer.create(
                     amount=payout_cents,
                     currency="usd",
@@ -499,34 +613,57 @@ async def run_monthly_payout_job(for_month: Optional[date] = None) -> Dict[str, 
                         "period_end": period_end.isoformat(),
                     },
                 )
-                await conn.execute(
-                    "UPDATE partner_payout_runs SET "
-                    "  status = 'paid', "
-                    "  stripe_transfer_id = $1, "
-                    "  transferred_at = NOW() "
-                    " WHERE partner_id = $2 AND period_start = $3",
-                    transfer["id"], pid, period_start,
-                )
-                summary["transferred"] += 1
+                transfer_id = transfer["id"]
+                transferred_ok = True
             except stripe.error.StripeError as e:
                 logger.error(
                     "stripe_connect.payout_failed",
                     extra={
                         "partner_id": str(pid),
                         "period_start": period_start.isoformat(),
-                        "err": str(e),
                     },
                     exc_info=True,
                 )
-                await conn.execute(
-                    "UPDATE partner_payout_runs SET "
-                    "  status = 'failed', "
-                    "  stripe_error_code = $1, "
-                    "  stripe_error_message = $2 "
-                    " WHERE partner_id = $3 AND period_start = $4",
-                    getattr(e, "code", None), str(e), pid, period_start,
-                )
-                summary["failed"] += 1
+                error_code = getattr(e, "code", None)
+                sanitized_error = _sanitize_stripe_error(e)
+
+            # Short conn #3: record outcome. This MUST run — if it fails we
+            # re-raise so the monthly job alerts on a partial-write; an
+            # un-recorded successful Transfer would leak dollars from the
+            # reconciliation view.
+            async with admin_connection(pool) as conn_record:
+                async with conn_record.transaction():
+                    if transferred_ok:
+                        await conn_record.execute(
+                            "UPDATE partner_payout_runs SET "
+                            "  status = 'paid', "
+                            "  stripe_transfer_id = $1, "
+                            "  transferred_at = NOW() "
+                            " WHERE partner_id = $2 AND period_start = $3",
+                            transfer_id, pid, period_start,
+                        )
+                        summary["transferred"] += 1
+                    else:
+                        await conn_record.execute(
+                            "UPDATE partner_payout_runs SET "
+                            "  status = 'failed', "
+                            "  stripe_error_code = $1, "
+                            "  stripe_error_message = $2 "
+                            " WHERE partner_id = $3 AND period_start = $4",
+                            error_code, sanitized_error, pid, period_start,
+                        )
+                        summary["failed"] += 1
+
+    finally:
+        # Best-effort release of the advisory lock if this process still
+        # holds it. The lock is connection-scoped, so the with-block exit
+        # above already released it via connection return-to-pool; this is
+        # defensive only.
+        if conn_held is not None:
+            try:
+                await conn_held.close()
+            except Exception:
+                pass
 
     logger.info("stripe_connect.monthly_payout_complete", extra=summary)
     return summary

@@ -3538,6 +3538,20 @@ async def report_drift(drift: DriftReport, db: AsyncSession = Depends(get_db), a
 @app.post("/evidence")
 async def submit_evidence(evidence: EvidenceSubmission, db: AsyncSession = Depends(get_db), auth_site_id: str = Depends(require_appliance_bearer)):
     """Submit evidence bundle from appliance."""
+    # SECURITY: Enforce Bearer token site matches body site_id.
+    # Without this, an appliance with token for site-A could submit evidence
+    # claiming to be site-B. Matches the pattern used on all other appliance
+    # endpoints (agent_api._enforce_site_id, evidence_chain.submit_evidence).
+    if evidence.site_id and evidence.site_id != auth_site_id:
+        logger.warning(
+            "SECURITY: site_id mismatch on /evidence: token=%s body=%s",
+            auth_site_id, evidence.site_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Site ID mismatch: token does not authorize this site",
+        )
+
     # Rate limit check
     allowed, remaining = await check_rate_limit(evidence.site_id, "evidence")
     if not allowed:
@@ -3680,26 +3694,42 @@ async def submit_evidence(evidence: EvidenceSubmission, db: AsyncSession = Depen
                           bundle_id=evidence.bundle_id,
                           error=str(e))
 
-        # Update evidence with S3 URI
-        await db.execute(
-            text("""
-                UPDATE evidence_bundles SET
-                    s3_uri = :s3_uri,
-                    s3_uploaded_at = :s3_uploaded_at
-                WHERE bundle_id = :bundle_id
-            """),
-            {"s3_uri": s3_uri, "s3_uploaded_at": now, "bundle_id": evidence.bundle_id}
-        )
-        await db.commit()
-        
         logger.info("Evidence uploaded to WORM storage",
                     bundle_id=evidence.bundle_id,
                     s3_uri=s3_uri)
-        
+
     except Exception as e:
-        logger.error("Failed to upload evidence to MinIO", 
+        logger.error("Failed to upload evidence to MinIO",
                      bundle_id=evidence.bundle_id,
-                     error=str(e))
+                     error=str(e),
+                     exc_info=True)
+
+    # Record the s3_uri in a separate DB write path so a silent failure here
+    # is logged as a DB write error (not a MinIO error, which would mis-route
+    # alerts). Per CLAUDE.md: DB writes whose failure is caught non-fatally
+    # must not be lumped under an outer "MinIO failed" exception.
+    if s3_uri is not None:
+        try:
+            await db.execute(
+                text("""
+                    UPDATE evidence_bundles SET
+                        s3_uri = :s3_uri,
+                        s3_uploaded_at = :s3_uploaded_at
+                    WHERE bundle_id = :bundle_id
+                """),
+                {"s3_uri": s3_uri, "s3_uploaded_at": now, "bundle_id": evidence.bundle_id}
+            )
+            await db.commit()
+        except Exception as e:
+            logger.error("Failed to record s3_uri on evidence_bundles",
+                         bundle_id=evidence.bundle_id,
+                         s3_uri=s3_uri,
+                         error=str(e),
+                         exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
     
     logger.info("Evidence bundle received",
                 site_id=evidence.site_id,

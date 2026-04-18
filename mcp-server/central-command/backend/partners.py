@@ -2533,59 +2533,96 @@ async def get_my_commission(
             if s['plan'] in MONTHLY_AMOUNT_CENTS and s['status'] in ('active', 'trialing')
         )
 
+        # F5: compute_partner_rate_bps() can return NULL (no tier row for this
+        # partner, rate table misconfigured, migration 233 not applied, etc.).
+        # Never silently fall back to 40% — the UI would confidently render a
+        # fabricated commission figure the partner would then expect to be
+        # paid. Log at ERROR + surface rate_unavailable=true so the frontend
+        # renders "—" and the partner calls us.
         rate_row = await conn.fetchrow(
             "SELECT compute_partner_rate_bps($1::uuid, $2::int) AS bps",
             str(partner['id']),
             active_clinic_count,
         )
-        effective_rate_bps = int(rate_row['bps']) if rate_row else 4000
+        rate_unavailable = (
+            rate_row is None
+            or rate_row['bps'] is None
+        )
+        if rate_unavailable:
+            logger.error(
+                "partners.commission.rate_bps_null",
+                extra={
+                    "partner_id": str(partner['id']),
+                    "active_clinic_count": active_clinic_count,
+                },
+            )
+            effective_rate_bps = 0  # never compute a number from this
+        else:
+            effective_rate_bps = int(rate_row['bps'])
 
-        # Monthly breakdown for the last 12 months. For each month the
-        # partner had at least one active sub, attribute MRR at that time.
-        # Approximates via created_at — precise history requires Stripe
-        # invoice ingestion (ships with Stripe Connect later).
-        from datetime import datetime, timezone, timedelta
+        # F6: single-query monthly breakdown via generate_series + LEFT JOIN.
+        # Previously fired 12 separate `SELECT plan FROM subscriptions`
+        # queries per request — hot dashboard endpoint.
+        from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
-        breakdown = []
-        for month_idx in range(12):
-            # Walk back month-by-month (approx by 30 days)
-            cursor = now - timedelta(days=30 * month_idx)
-            month_start = cursor.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            # Active subs at that month = created_at <= month_start AND
-            # (canceled_at IS NULL OR canceled_at > month_start)
-            month_subs = await conn.fetch(
-                """
-                SELECT plan FROM subscriptions
-                 WHERE partner_id = $1::uuid
-                   AND created_at <= $2
-                   AND (canceled_at IS NULL OR canceled_at > $2)
-                   AND status <> 'incomplete'
-                """,
-                str(partner['id']),
-                month_start,
+        month_rows = await conn.fetch(
+            """
+            WITH months AS (
+              SELECT generate_series(
+                date_trunc('month', $2::timestamptz - INTERVAL '11 months'),
+                date_trunc('month', $2::timestamptz),
+                INTERVAL '1 month'
+              ) AS month_start
             )
-            month_mrr = sum(
-                MONTHLY_AMOUNT_CENTS.get(s['plan'], 0) for s in month_subs
-            )
-            month_commission = (month_mrr * effective_rate_bps) // 10000
-            breakdown.append({
-                "month": month_start.strftime("%Y-%m"),
-                "mrr_cents": month_mrr,
-                "commission_cents": month_commission,
-            })
-        breakdown.reverse()  # oldest first, like a chart
+            SELECT
+              to_char(m.month_start, 'YYYY-MM') AS month,
+              COALESCE(SUM(CASE s.plan
+                WHEN 'essentials'   THEN 49900
+                WHEN 'professional' THEN 79900
+                WHEN 'enterprise'   THEN 129900
+                ELSE 0 END), 0)::bigint AS month_mrr_cents
+              FROM months m
+              LEFT JOIN subscriptions s
+                ON s.partner_id = $1::uuid
+               AND s.created_at <= m.month_start
+               AND (s.canceled_at IS NULL OR s.canceled_at > m.month_start)
+               AND s.status <> 'incomplete'
+             GROUP BY m.month_start
+             ORDER BY m.month_start ASC
+            """,
+            str(partner['id']),
+            now,
+        )
+        breakdown = [
+            {
+                "month": r['month'],
+                "mrr_cents": int(r['month_mrr_cents']),
+                "commission_cents": (
+                    (int(r['month_mrr_cents']) * effective_rate_bps) // 10000
+                    if not rate_unavailable else None
+                ),
+            }
+            for r in month_rows
+        ]
 
-    estimated_monthly = (mrr_cents * effective_rate_bps) // 10000
+    estimated_monthly = (
+        (mrr_cents * effective_rate_bps) // 10000
+        if not rate_unavailable else None
+    )
     current_year = now.year
     ytd_months = [b for b in breakdown if b["month"].startswith(str(current_year))]
     ytd_mrr = sum(b["mrr_cents"] for b in ytd_months)
-    ytd_commission = sum(b["commission_cents"] for b in ytd_months)
+    ytd_commission = (
+        sum(b["commission_cents"] for b in ytd_months)
+        if not rate_unavailable else None
+    )
 
     return {
         "active_clinic_count": active_clinic_count,
         "mrr_cents": mrr_cents,
         "ytd_mrr_cents": ytd_mrr,
-        "effective_rate_bps": effective_rate_bps,
+        "effective_rate_bps": effective_rate_bps if not rate_unavailable else None,
+        "rate_unavailable": rate_unavailable,
         "estimated_monthly_commission_cents": estimated_monthly,
         "ytd_estimated_commission_cents": ytd_commission,
         "lifetime_paid_cents": 0,
