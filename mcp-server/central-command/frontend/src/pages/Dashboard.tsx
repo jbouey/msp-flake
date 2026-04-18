@@ -18,24 +18,9 @@ import {
   BgTaskHealthPanel,
 } from '../components/command-center';
 import { IncidentFeed } from '../components/incidents';
-import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFlywheelIntelligence, useInstallReports } from '../hooks';
+import { useGlobalStats, useStatsDeltas, useLearningStatus, useIncidents, useFlywheelIntelligence, useInstallReports, useDashboardSLA } from '../hooks';
 import { useFlywheelSpine } from '../hooks/useFleet';
 import { METRIC_TOOLTIPS, getScoreStatus, formatTimeAgo } from '../constants';
-
-// Shape of the /api/dashboard/sla-strip response — shared between
-// DashboardSLAStrip (which renders the pills) and this page (which
-// surfaces OTS/MFA in System Health).
-interface DashboardSLAData {
-  healing_rate_24h: number | null;
-  healing_target: number;
-  ots_anchor_age_minutes: number | null;
-  ots_target_minutes: number;
-  online_appliances_pct: number | null;
-  fleet_target: number;
-  mfa_coverage_pct: number | null;
-  mfa_target: number;
-  computed_at?: string | null;
-}
 
 interface KPITrendsData {
   days: number;
@@ -203,20 +188,10 @@ export const Dashboard: React.FC = () => {
     error: incidentsError,
   } = useIncidents({ limit: INCIDENT_FEED_LIMIT });
 
-  // Dedicated SLA strip query — also used to surface OTS delay + MFA coverage
-  // in the System Health card without adding more fields to the generic
-  // /stats endpoint (which is shared by many pages).
-  const { data: slaData } = useQuery<DashboardSLAData>({
-    queryKey: ['dashboard-sla-strip'],
-    queryFn: async () => {
-      const res = await fetch('/api/dashboard/sla-strip', { credentials: 'same-origin' });
-      if (!res.ok) throw new Error(`SLA strip failed: ${res.status}`);
-      return res.json();
-    },
-    refetchInterval: 5 * 60_000,
-    staleTime: 60_000,
-    retry: false,
-  });
+  // SLA strip data — shared with DashboardSLAStrip under the same query
+  // cache entry. Surfaces OTS delay + MFA coverage in the System Health
+  // card without adding fields to the generic /stats endpoint.
+  const { data: slaData } = useDashboardSLA();
 
   // 14-day KPI trends for the three secondary KPI card sparklines.
   // Single query keeps the dashboard chatty-query count down to 5 total.

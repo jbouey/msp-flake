@@ -128,3 +128,5 @@ export { useTheme } from './useTheme';
 export type { ThemeMode } from './useTheme';
 export { useBranding } from './useBranding';
 export type { PartnerBranding } from './useBranding';
+export { useDashboardSLA, fetchDashboardSLA, DASHBOARD_SLA_QUERY_KEY } from './useDashboardSLA';
+export type { DashboardSLAData } from './useDashboardSLA';

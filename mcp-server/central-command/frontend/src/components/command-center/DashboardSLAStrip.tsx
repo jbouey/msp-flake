@@ -1,6 +1,6 @@
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { GlassCard, Spinner, Tooltip } from '../shared';
+import { useDashboardSLA } from '../../hooks';
 
 /**
  * DashboardSLAStrip — platform-wide SLA posture strip pinned under the
@@ -10,11 +10,9 @@ import { GlassCard, Spinner, Tooltip } from '../shared';
  *   2. Evidence SLA (OTS anchoring delay ≤ 2h)
  *   3. Fleet SLA (≥ 95% of appliances online)
  *
- * Data source: platform metrics aggregated server-side. Falls back to
- * computing from /api/stats if the dedicated endpoint isn't available.
- *
- * This is the "are we meeting our contracts" glance — the dashboard's
- * single most important row for customer success + compliance reporting.
+ * Data comes from `useDashboardSLA` — the same hook powers the System
+ * Health card on the main dashboard so both surfaces render from the
+ * same React Query cache entry with identical fetch semantics.
  */
 
 interface SLAEntry {
@@ -27,52 +25,6 @@ interface SLAEntry {
   detail: string;
   /** Optional tooltip expanding on the SLA definition */
   tip: string;
-}
-
-interface DashboardSLAData {
-  healing_rate_24h: number | null;
-  healing_target: number;
-  ots_anchor_age_minutes: number | null;
-  ots_target_minutes: number;
-  online_appliances_pct: number | null;
-  fleet_target: number;
-  computed_at?: string | null;
-}
-
-/**
- * Fetch the strip data. Tries `/api/dashboard/sla-strip` first, falls back
- * to computing from `/api/dashboard/stats` + light math. The fallback is
- * intentionally permissive because the strip is a soft signal — if any
- * subpart is missing we show "—" instead of the whole strip.
- */
-async function fetchSLAStrip(): Promise<DashboardSLAData> {
-  // Try the dedicated endpoint first
-  try {
-    const res = await fetch('/api/dashboard/sla-strip', { credentials: 'same-origin' });
-    if (res.ok) return await res.json();
-  } catch {
-    // fall through to stats fallback
-  }
-
-  // Fallback: derive from /stats
-  const statsRes = await fetch('/api/dashboard/stats', { credentials: 'same-origin' });
-  if (!statsRes.ok) {
-    throw new Error(`stats fallback failed: ${statsRes.status}`);
-  }
-  const stats = await statsRes.json();
-  const onlinePct =
-    stats.total_appliances > 0
-      ? (stats.online_appliances / stats.total_appliances) * 100
-      : null;
-  return {
-    healing_rate_24h: stats.l1_resolution_rate ?? null,
-    healing_target: 85,
-    ots_anchor_age_minutes: null, // unknown without the dedicated endpoint
-    ots_target_minutes: 120,
-    online_appliances_pct: onlinePct,
-    fleet_target: 95,
-    computed_at: stats.computed_at ?? null,
-  };
 }
 
 const StatusDot: React.FC<{ met: boolean | null }> = ({ met }) => {
@@ -114,13 +66,7 @@ const SLAEntryPill: React.FC<{ entry: SLAEntry }> = ({ entry }) => {
 };
 
 export const DashboardSLAStrip: React.FC = () => {
-  const { data, isLoading, error } = useQuery<DashboardSLAData>({
-    queryKey: ['dashboard-sla-strip'],
-    queryFn: fetchSLAStrip,
-    refetchInterval: 5 * 60_000,
-    staleTime: 60_000,
-    retry: false,
-  });
+  const { data, isLoading, error } = useDashboardSLA();
 
   if (isLoading) {
     return (
