@@ -185,23 +185,28 @@ async def _handle_unlock_platform_account(
         )
 
     if table == "partners":
-        await conn.execute(
+        status = await conn.execute(
             "UPDATE partners SET failed_login_attempts = 0, locked_until = NULL "
-            "WHERE id = $1",
+            "WHERE id = $1 AND (failed_login_attempts >= 5 OR locked_until IS NOT NULL)",
             row["id"],
         )
     else:
-        await conn.execute(
+        status = await conn.execute(
             "UPDATE client_users SET failed_login_attempts = 0, locked_until = NULL "
-            "WHERE id = $1",
+            "WHERE id = $1 AND (failed_login_attempts >= 5 OR locked_until IS NOT NULL)",
             row["id"],
+        )
+
+    if status == "UPDATE 0":
+        raise TargetNotActionable(
+            f"{table} row for email={email!r} was unlocked by a concurrent request"
         )
 
     logger.info(
         "substrate.unlock_platform_account",
         extra={
             "table": table,
-            "email": row["email"],
+            "account_id": str(row["id"]),
             "previous_failed_count": row["failed_login_attempts"] or 0,
         },
     )

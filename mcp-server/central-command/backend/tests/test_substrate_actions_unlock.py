@@ -28,6 +28,7 @@ if str(_BACKEND) not in sys.path:
 from substrate_actions import (
     _handle_unlock_platform_account,
     TargetNotActionable,
+    TargetNotFound,
     TargetRefInvalid,
 )
 
@@ -79,12 +80,16 @@ async def seed_locked_partner(pool):
             5,
         )
 
-    yield {"email": email}
-
-    async with admin_connection(pool) as conn:
-        await conn.execute(
-            "DELETE FROM partners WHERE contact_email = $1", email
-        )
+    try:
+        yield {"email": email}
+    finally:
+        async with admin_connection(pool) as conn:
+            try:
+                await conn.execute(
+                    "DELETE FROM partners WHERE contact_email = $1", email
+                )
+            except Exception:
+                pass  # pool may already be closing
 
 
 @pytest_asyncio.fixture
@@ -112,12 +117,16 @@ async def seed_unlocked_partner(pool):
             0,
         )
 
-    yield {"email": email}
-
-    async with admin_connection(pool) as conn:
-        await conn.execute(
-            "DELETE FROM partners WHERE contact_email = $1", email
-        )
+    try:
+        yield {"email": email}
+    finally:
+        async with admin_connection(pool) as conn:
+            try:
+                await conn.execute(
+                    "DELETE FROM partners WHERE contact_email = $1", email
+                )
+            except Exception:
+                pass  # pool may already be closing
 
 
 @pytest_asyncio.fixture
@@ -156,13 +165,23 @@ async def seed_locked_client_user(pool):
             5,
         )
 
-    yield {"email": email, "org_id": org_id}
-
-    async with admin_connection(pool) as conn:
-        # CASCADE deletes client_users rows too.
-        await conn.execute(
-            "DELETE FROM client_orgs WHERE id = $1", org_id
-        )
+    try:
+        yield {"email": email, "org_id": org_id}
+    finally:
+        async with admin_connection(pool) as conn:
+            try:
+                await conn.execute(
+                    "DELETE FROM client_users WHERE email = $1", email
+                )
+            except Exception:
+                pass  # pool may already be closing
+            try:
+                # CASCADE deletes client_users rows too.
+                await conn.execute(
+                    "DELETE FROM client_orgs WHERE id = $1", org_id
+                )
+            except Exception:
+                pass  # pool may already be closing
 
 
 # ---------------------------------------------------------------------------
@@ -261,4 +280,22 @@ async def test_unlock_not_actionable_if_not_locked(pool, seed_unlocked_partner):
                     conn,
                     {"table": "partners", "email": email},
                     reason="Integration test: expect not-actionable",
+                )
+
+
+@pytest.mark.asyncio
+async def test_unlock_account_not_found_raises_notfound(pool):
+    """TargetNotFound raised when the email does not exist in the named table."""
+    from tenant_middleware import admin_connection
+
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            with pytest.raises(TargetNotFound):
+                await _handle_unlock_platform_account(
+                    conn,
+                    {
+                        "table": "partners",
+                        "email": "substrate-unlock-nonexistent@example.invalid",
+                    },
+                    reason="Integration test: expect not-found for missing email",
                 )
