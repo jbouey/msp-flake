@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict
+from typing import Awaitable, Callable, Dict
 
 from asyncpg import Connection
 
@@ -20,7 +20,13 @@ HandlerFn = Callable[[Connection, dict, str], Awaitable[dict]]
 
 @dataclass(frozen=True)
 class SubstrateAction:
-    """Metadata for a substrate-only operator action."""
+    """Metadata for a substrate-only operator action.
+
+    Fields:
+      handler: async function that executes the action.
+      required_reason_chars: minimum reason length (0 = reason optional).
+      audit_action: admin_audit_log.action string (format: "substrate.<key>").
+    """
 
     handler: HandlerFn
     required_reason_chars: int
@@ -30,19 +36,19 @@ class SubstrateAction:
 async def _handle_cleanup_install_session(
     conn: Connection, target_ref: dict, reason: str
 ) -> dict:
-    raise NotImplementedError("wired in Task 3")
+    raise NotImplementedError("_handle_cleanup_install_session: wired in Task 3")
 
 
 async def _handle_unlock_platform_account(
     conn: Connection, target_ref: dict, reason: str
 ) -> dict:
-    raise NotImplementedError("wired in Task 4")
+    raise NotImplementedError("_handle_unlock_platform_account: wired in Task 4")
 
 
 async def _handle_reconcile_fleet_order(
     conn: Connection, target_ref: dict, reason: str
 ) -> dict:
-    raise NotImplementedError("wired in Task 5")
+    raise NotImplementedError("_handle_reconcile_fleet_order: wired in Task 5")
 
 
 SUBSTRATE_ACTIONS: Dict[str, SubstrateAction] = {
