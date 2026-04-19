@@ -98,13 +98,9 @@ if [[ ! -f "$RULES_SRC" ]]; then
 fi
 install -m 0644 -o root -g root "$RULES_SRC" /opt/prometheus/rules/alert_rules.yml
 
-# promtool validates both files — fail install before we write tokens
-# if anything is syntactically wrong.
-/opt/prometheus/bin/promtool check config /opt/prometheus/etc/prometheus.yml
-/opt/prometheus/bin/promtool check rules /opt/prometheus/rules/alert_rules.yml
-/opt/alertmanager/bin/amtool check-config /opt/alertmanager/etc/alertmanager.yml
-
 echo "==> tokens"
+# Tokens must exist before promtool/amtool check-config — Prom/AM
+# validate that credentials_file paths resolve at config-check time.
 umask 077
 install -D -m 0400 -o "$PROM_USER" -g "$PROM_USER" /dev/null /opt/prometheus/secrets/scrape_token
 printf '%s' "$PROMETHEUS_SCRAPE_TOKEN" > /opt/prometheus/secrets/scrape_token
@@ -115,6 +111,11 @@ install -D -m 0400 -o "$AM_USER" -g "$AM_USER" /dev/null /opt/alertmanager/secre
 printf '%s' "$ALERTMANAGER_WEBHOOK_TOKEN" > /opt/alertmanager/secrets/webhook_token
 chown "$AM_USER:$AM_USER" /opt/alertmanager/secrets/webhook_token
 chmod 0400 /opt/alertmanager/secrets/webhook_token
+
+# promtool validates both files with credentials_file resolved.
+/opt/prometheus/bin/promtool check config /opt/prometheus/etc/prometheus.yml
+/opt/prometheus/bin/promtool check rules /opt/prometheus/rules/alert_rules.yml
+/opt/alertmanager/bin/amtool check-config /opt/alertmanager/etc/alertmanager.yml
 
 echo "==> systemd units"
 install -m 0644 -o root -g root "${ARTIFACTS}/systemd/prometheus.service"   /etc/systemd/system/prometheus.service

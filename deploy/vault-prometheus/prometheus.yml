@@ -33,7 +33,7 @@ scrape_configs:
     scrape_interval: 60s
     scrape_timeout: 30s
     static_configs:
-      - targets: ['www.osiriscare.net']
+      - targets: ['api.osiriscare.net']
         labels:
           service: mcp-server
     authorization:
