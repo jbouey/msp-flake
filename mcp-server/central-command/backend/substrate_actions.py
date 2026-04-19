@@ -224,7 +224,84 @@ async def _handle_unlock_platform_account(
 async def _handle_reconcile_fleet_order(
     conn: Connection, target_ref: dict, reason: str
 ) -> dict:
-    raise NotImplementedError("_handle_reconcile_fleet_order: wired in Task 5")
+    """Mark a stalled active fleet_order 'completed' to unblock delivery.
+
+    Non-operator action: does not mutate appliance state — only clears a
+    dead entry from the delivery queue. Privileged order types are refused
+    outright (they carry attestation bundles and MUST go through fleet_cli).
+
+    fleet_orders has NO site_id column (fleet-wide table, migration 049).
+    Only fleet_order_completions carries per-appliance ack rows.
+
+    target_ref keys:
+      order_id — required; UUID string of the fleet_orders row to reconcile
+
+    Raises:
+      TargetRefInvalid    — order_id missing/non-string, or order_type is in
+                            PRIVILEGED_ORDER_TYPES (must go through fleet_cli).
+      TargetNotFound      — no fleet_orders row for the given id.
+      TargetNotActionable — order is already completed or cancelled, or was
+                            concurrently completed between SELECT and UPDATE.
+    """
+    from fleet_cli import PRIVILEGED_ORDER_TYPES
+
+    order_id = target_ref.get("order_id")
+    if not order_id or not isinstance(order_id, str):
+        raise TargetRefInvalid("order_id required (UUID string)")
+
+    row = await conn.fetchrow(
+        "SELECT id, order_type, status FROM fleet_orders WHERE id = $1::uuid",
+        order_id,
+    )
+    if row is None:
+        raise TargetNotFound(f"no fleet_orders row for id={order_id!r}")
+
+    if row["order_type"] in PRIVILEGED_ORDER_TYPES:
+        raise TargetRefInvalid(
+            f"order_type={row['order_type']!r} is privileged — privileged "
+            "orders carry attestation bundles and must be managed via "
+            "fleet_cli, not substrate actions"
+        )
+
+    if row["status"] == "completed":
+        raise TargetNotActionable(
+            f"fleet_orders[{order_id}] already completed — nothing to do"
+        )
+    if row["status"] == "cancelled":
+        raise TargetNotActionable(
+            f"fleet_orders[{order_id}] is cancelled — nothing to do"
+        )
+
+    # Race guard: UPDATE only if still in a reconcilable state.
+    # migration 151's fleet_orders_immutable_completed trigger raises on
+    # OLD.status='completed' — our check above fires first, so the trigger
+    # is never reached in normal flow.  The NOT IN guard here covers the
+    # concurrent-completion race after our SELECT.
+    status = await conn.execute(
+        "UPDATE fleet_orders SET status = 'completed' "
+        "WHERE id = $1::uuid AND status NOT IN ('completed', 'cancelled')",
+        order_id,
+    )
+    if status == "UPDATE 0":
+        raise TargetNotActionable(
+            f"fleet_orders[{order_id}] was completed/cancelled by a "
+            "concurrent request"
+        )
+
+    logger.info(
+        "substrate.reconcile_fleet_order",
+        extra={
+            "order_id": str(row["id"]),
+            "order_type": row["order_type"],
+            "prev_status": row["status"],
+        },
+    )
+
+    return {
+        "order_id": order_id,
+        "order_type": row["order_type"],
+        "prev_status": row["status"],
+    }
 
 
 SUBSTRATE_ACTIONS: Dict[str, SubstrateAction] = {
