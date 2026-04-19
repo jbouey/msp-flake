@@ -123,10 +123,97 @@ async def _handle_cleanup_install_session(
     }
 
 
+ALLOWED_UNLOCK_TABLES = {"partners", "client_users"}
+
+
 async def _handle_unlock_platform_account(
     conn: Connection, target_ref: dict, reason: str
 ) -> dict:
-    raise NotImplementedError("_handle_unlock_platform_account: wired in Task 4")
+    """Reset failed_login_attempts and locked_until for a locked platform account.
+
+    target_ref keys:
+      table  — required; one of {"partners", "client_users"}
+      email  — required; must contain '@'
+
+    Raises:
+      TargetRefInvalid    — table not in allowlist, email missing/malformed, or
+                            email matched multiple rows (partners.contact_email is
+                            not unique — ambiguous match refused).
+      TargetNotFound      — no row matches the given email in the named table.
+      TargetNotActionable — row exists but is not currently locked.
+    """
+    table = target_ref.get("table")
+    email = target_ref.get("email")
+
+    if table not in ALLOWED_UNLOCK_TABLES:
+        raise TargetRefInvalid(f"table must be one of {sorted(ALLOWED_UNLOCK_TABLES)}")
+    if not email or not isinstance(email, str) or "@" not in email:
+        raise TargetRefInvalid("email required and must contain '@'")
+
+    # Per-table static SQL — table already whitelisted above.
+    if table == "partners":
+        rows = await conn.fetch(
+            "SELECT id, COALESCE(contact_email, oauth_email) AS email, "
+            "failed_login_attempts, locked_until "
+            "FROM partners WHERE contact_email = $1 OR oauth_email = $1",
+            email,
+        )
+    else:  # client_users
+        rows = await conn.fetch(
+            "SELECT id, email, failed_login_attempts, locked_until "
+            "FROM client_users WHERE email = $1",
+            email,
+        )
+
+    if not rows:
+        raise TargetNotFound(f"no {table} row for email={email!r}")
+    if len(rows) > 1:
+        # partners.contact_email is not unique; a multi-row match is ambiguous.
+        raise TargetRefInvalid(
+            f"email={email!r} matched {len(rows)} rows in {table} — refusing to "
+            "unlock without a disambiguator"
+        )
+
+    row = rows[0]
+    is_locked = (
+        (row["failed_login_attempts"] or 0) >= 5
+        or row["locked_until"] is not None
+    )
+    if not is_locked:
+        raise TargetNotActionable(
+            f"{table} row for email={email!r} is not currently locked"
+        )
+
+    if table == "partners":
+        await conn.execute(
+            "UPDATE partners SET failed_login_attempts = 0, locked_until = NULL "
+            "WHERE id = $1",
+            row["id"],
+        )
+    else:
+        await conn.execute(
+            "UPDATE client_users SET failed_login_attempts = 0, locked_until = NULL "
+            "WHERE id = $1",
+            row["id"],
+        )
+
+    logger.info(
+        "substrate.unlock_platform_account",
+        extra={
+            "table": table,
+            "email": row["email"],
+            "previous_failed_count": row["failed_login_attempts"] or 0,
+        },
+    )
+
+    return {
+        "table": table,
+        "email": row["email"],
+        "previous_failed_count": row["failed_login_attempts"] or 0,
+        "previous_locked_until": (
+            row["locked_until"].isoformat() if row["locked_until"] else None
+        ),
+    }
 
 
 async def _handle_reconcile_fleet_order(
