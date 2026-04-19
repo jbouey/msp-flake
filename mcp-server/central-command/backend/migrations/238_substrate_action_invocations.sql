@@ -2,6 +2,9 @@
 -- Idempotency + audit-pointer table for POST /api/admin/substrate/action.
 -- Append-only: no UPDATE/DELETE triggers (24h replay window is a query filter).
 
+-- Write sequence: INSERT after action completes (result_status/result_body required).
+-- Pre-flight duplicate check: SELECT FROM this table on (actor_email, idempotency_key).
+
 CREATE TABLE IF NOT EXISTS substrate_action_invocations (
     id               BIGSERIAL PRIMARY KEY,
     idempotency_key  TEXT NOT NULL,
@@ -11,7 +14,7 @@ CREATE TABLE IF NOT EXISTS substrate_action_invocations (
     reason           TEXT,
     result_status    VARCHAR(32) NOT NULL,
     result_body      JSONB NOT NULL,
-    admin_audit_id   INTEGER REFERENCES admin_audit_log(id),
+    admin_audit_id   INTEGER REFERENCES admin_audit_log(id),  -- nullable: audit-log INSERT failure must not block idempotency record
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

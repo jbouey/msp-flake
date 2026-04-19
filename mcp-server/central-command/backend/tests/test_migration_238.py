@@ -18,11 +18,13 @@ async def test_substrate_action_invocations_schema():
             "admin_audit_id", "created_at"} <= names
 
 @pytest.mark.asyncio
-async def test_substrate_action_invocations_unique_index():
+async def test_substrate_action_invocations_indexes():
     async with async_session() as db:
-        idx = await db.execute(text(
+        rows = await db.execute(text(
             "SELECT indexname FROM pg_indexes "
-            "WHERE tablename = 'substrate_action_invocations' "
-            "AND indexname = 'substrate_action_invocations_idem'"
+            "WHERE tablename = 'substrate_action_invocations'"
         ))
-        assert idx.scalar() == "substrate_action_invocations_idem"
+        names = {r[0] for r in rows}
+    assert "substrate_action_invocations_idem" in names
+    assert "substrate_action_invocations_actor_time" in names
+    assert "substrate_action_invocations_action_time" in names
