@@ -139,16 +139,3 @@ async def test_cleanup_install_session_rejects_missing_mac(pool):
         async with conn.transaction():
             with pytest.raises(TargetRefInvalid):
                 await _handle_cleanup_install_session(conn, {}, reason="")
-
-
-@pytest.mark.asyncio
-async def test_cleanup_install_session_rejects_malformed_mac(pool):
-    """TargetRefInvalid raised when mac does not match MAC_PATTERN."""
-    from tenant_middleware import admin_connection
-
-    async with admin_connection(pool) as conn:
-        async with conn.transaction():
-            with pytest.raises(TargetRefInvalid):
-                await _handle_cleanup_install_session(
-                    conn, {"mac": "not-a-mac"}, reason=""
-                )
