@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 HandlerFn = Callable[[Connection, dict, str], Awaitable[dict]]
 
+# Permissive by design — accepts 12-char unseparated MACs (from the Go daemon's
+# normalize_mac_for_ring() output) and 17-char colon/dash separated. Format
+# precision is NOT the purpose here; the authoritative check is the DB lookup
+# (TargetNotFound if no row matches). Do not tighten without verifying every
+# caller still passes.
 MAC_PATTERN = re.compile(r"^[0-9A-Fa-f:\-]{12,17}$")
 
 
@@ -33,6 +38,7 @@ class TargetNotFound(SubstrateActionError):
     """target_ref was valid but the referenced row does not exist."""
 
 
+# Consumed by unlock_platform_account (Task 4) and reconcile_fleet_order (Task 5).
 class TargetNotActionable(SubstrateActionError):
     """Target exists but is not in a state where this action applies."""
 
@@ -83,7 +89,21 @@ async def _handle_cleanup_install_session(
     if row is None:
         raise TargetNotFound(f"no install_sessions row for mac={mac!r}")
 
-    await conn.execute("DELETE FROM install_sessions WHERE mac_address = $1", mac)
+    if stage:
+        status = await conn.execute(
+            "DELETE FROM install_sessions WHERE mac_address = $1 AND install_stage = $2",
+            mac, stage,
+        )
+    else:
+        status = await conn.execute(
+            "DELETE FROM install_sessions WHERE mac_address = $1",
+            mac,
+        )
+
+    if status == "DELETE 0":
+        raise TargetNotFound(
+            f"install_sessions row for mac={mac!r} was deleted by a concurrent request"
+        )
 
     logger.info(
         "substrate.cleanup_install_session",

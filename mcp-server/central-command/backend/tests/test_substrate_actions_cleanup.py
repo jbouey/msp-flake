@@ -50,6 +50,8 @@ async def pool():
         await p.close()
 
 
+# Not xdist-safe — uses a fixed TEST_MAC, so parallel workers would collide.
+# Run this test file with `-p no:xdist` or `-n 0` if running distributed.
 @pytest_asyncio.fixture
 async def seed_stale_install_session(pool):
     """Insert one stale install_sessions row, yield target_ref dict, then clean up.
