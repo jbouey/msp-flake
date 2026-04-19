@@ -82,6 +82,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/appliances/evidence",
         "/api/partners/claim",       # Appliance provision
         "/api/webhook",              # Webhooks have their own auth
+        "/api/admin/alertmanager-webhook",  # Alertmanager → SMTP bridge (Bearer token auth)
         "/api/witness/submit",       # Witness attestation from appliances (API-key auth)
         "/api/install/report",       # Installer telemetry (shared-secret auth, pre-checkin)
         # Agent endpoints at root level (no /api/ prefix) - use API-key auth
