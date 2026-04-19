@@ -8,6 +8,7 @@ Non-operator posture audit: docs/superpowers/specs/2026-04-19-substrate-operator
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Dict
 
@@ -16,6 +17,24 @@ from asyncpg import Connection
 logger = logging.getLogger(__name__)
 
 HandlerFn = Callable[[Connection, dict, str], Awaitable[dict]]
+
+MAC_PATTERN = re.compile(r"^[0-9A-Fa-f:\-]{12,17}$")
+
+
+class SubstrateActionError(Exception):
+    """Base class for substrate action errors."""
+
+
+class TargetRefInvalid(SubstrateActionError):
+    """target_ref missing required keys or values fail validation."""
+
+
+class TargetNotFound(SubstrateActionError):
+    """target_ref was valid but the referenced row does not exist."""
+
+
+class TargetNotActionable(SubstrateActionError):
+    """Target exists but is not in a state where this action applies."""
 
 
 @dataclass(frozen=True)
@@ -36,7 +55,52 @@ class SubstrateAction:
 async def _handle_cleanup_install_session(
     conn: Connection, target_ref: dict, reason: str
 ) -> dict:
-    raise NotImplementedError("_handle_cleanup_install_session: wired in Task 3")
+    """Delete one stale install_sessions row keyed by MAC address.
+
+    target_ref keys (API-level):
+      mac   — required; normalized MAC string, 12–17 hex chars + separators
+      stage — optional; if provided, also filters by install_stage
+    """
+    mac = target_ref.get("mac")
+    stage = target_ref.get("stage")
+
+    if not mac or not MAC_PATTERN.match(mac):
+        raise TargetRefInvalid("mac required and must match pattern [0-9A-Fa-f:\\-]{12,17}")
+
+    if stage:
+        row = await conn.fetchrow(
+            "SELECT mac_address, install_stage, checkin_count, first_seen "
+            "FROM install_sessions WHERE mac_address = $1 AND install_stage = $2",
+            mac, stage,
+        )
+    else:
+        row = await conn.fetchrow(
+            "SELECT mac_address, install_stage, checkin_count, first_seen "
+            "FROM install_sessions WHERE mac_address = $1",
+            mac,
+        )
+
+    if row is None:
+        raise TargetNotFound(f"no install_sessions row for mac={mac!r}")
+
+    await conn.execute("DELETE FROM install_sessions WHERE mac_address = $1", mac)
+
+    logger.info(
+        "substrate.cleanup_install_session",
+        extra={
+            "mac": mac,
+            "stage": row["install_stage"],
+            "checkin_count": row["checkin_count"],
+        },
+    )
+
+    return {
+        "deleted": 1,
+        "mac": mac,
+        "stage": row["install_stage"],
+        "checkin_count": row["checkin_count"],
+        "first_seen": row["first_seen"].isoformat(),
+    }
 
 
 async def _handle_unlock_platform_account(
