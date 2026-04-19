@@ -108,7 +108,7 @@ async def seed_active_order(pool):
                     "DELETE FROM fleet_orders WHERE id = $1::uuid",
                     order_id,
                 )
-            except Exception:
+            except (asyncpg.InterfaceError, asyncpg.ClosedPoolError):
                 pass  # pool may already be closing
 
 
@@ -140,7 +140,44 @@ async def seed_completed_order(pool):
                     "DELETE FROM fleet_orders WHERE id = $1::uuid",
                     order_id,
                 )
-            except Exception:
+            except (asyncpg.InterfaceError, asyncpg.ClosedPoolError):
+                pass  # pool may already be closing
+
+
+@pytest_asyncio.fixture
+async def seed_cancelled_fleet_order(pool):
+    """Insert a fleet_order with status='cancelled' (non-privileged type).
+
+    Inserts directly with status='cancelled' — migration 151 only blocks
+    UPDATE on completed orders and DELETE on fleet_order_completions; a
+    fresh INSERT with any status value is permitted.
+    """
+    from tenant_middleware import admin_connection
+
+    order_id = str(uuid.uuid4())
+
+    async with admin_connection(pool) as conn:
+        await conn.execute(
+            "INSERT INTO fleet_orders "
+            "(id, order_type, parameters, status, created_at, expires_at, created_by) "
+            "VALUES ($1::uuid, $2, $3::jsonb, 'cancelled', NOW(), "
+            "        NOW() + INTERVAL '7 days', $4)",
+            order_id,
+            "run_drift",
+            "{}",
+            "substrate-reconcile-test-seed",
+        )
+
+    try:
+        yield {"order_id": order_id}
+    finally:
+        async with admin_connection(pool) as conn:
+            try:
+                await conn.execute(
+                    "DELETE FROM fleet_orders WHERE id = $1::uuid",
+                    order_id,
+                )
+            except (asyncpg.InterfaceError, asyncpg.ClosedPoolError):
                 pass  # pool may already be closing
 
 
@@ -220,7 +257,6 @@ async def test_reconcile_rejects_privileged_order_type():
     """
     privileged_type = "enable_emergency_access"  # member of PRIVILEGED_ORDER_TYPES
 
-    mock_row = asyncpg.Record  # just for type reference — won't be called
     fake_order_id = str(uuid.uuid4())
 
     # Build a minimal mock connection whose fetchrow returns a row with the
@@ -259,4 +295,19 @@ async def test_reconcile_not_found_raises_notfound(pool):
                     conn,
                     {"order_id": nonexistent_id},
                     reason="Integration test: expect not-found for missing order",
+                )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rejects_cancelled_order(pool, seed_cancelled_fleet_order):
+    """TargetNotActionable raised when fleet_order status is 'cancelled'."""
+    from tenant_middleware import admin_connection
+
+    order_id = seed_cancelled_fleet_order["order_id"]
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            with pytest.raises(TargetNotActionable):
+                await _handle_reconcile_fleet_order(
+                    conn, {"order_id": order_id},
+                    reason="Cancelled order reconcile test",
                 )

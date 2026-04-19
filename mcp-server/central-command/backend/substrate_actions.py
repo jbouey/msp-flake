@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Dict
 
 from asyncpg import Connection
+from fleet_cli import PRIVILEGED_ORDER_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -243,8 +244,6 @@ async def _handle_reconcile_fleet_order(
       TargetNotActionable — order is already completed or cancelled, or was
                             concurrently completed between SELECT and UPDATE.
     """
-    from fleet_cli import PRIVILEGED_ORDER_TYPES
-
     order_id = target_ref.get("order_id")
     if not order_id or not isinstance(order_id, str):
         raise TargetRefInvalid("order_id required (UUID string)")
@@ -298,7 +297,7 @@ async def _handle_reconcile_fleet_order(
     )
 
     return {
-        "order_id": order_id,
+        "order_id": str(row["id"]),
         "order_type": row["order_type"],
         "prev_status": row["status"],
     }
