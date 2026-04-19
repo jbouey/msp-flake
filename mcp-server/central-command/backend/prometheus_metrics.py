@@ -1,14 +1,18 @@
 """Prometheus-compatible metrics endpoint.
 
 Exposes platform health metrics in Prometheus text exposition format.
-Requires admin authentication (cookie or Bearer token).
-Generates text format manually — no prometheus_client dependency needed.
+Accepts the Prometheus scraper bearer (PROMETHEUS_SCRAPE_TOKEN env) OR
+admin authentication (cookie / user Bearer). Generates text format
+manually — no prometheus_client dependency needed.
 """
 
+import hmac
 import logging
+import os
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from .auth import require_auth
@@ -16,6 +20,26 @@ from .auth import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["metrics"])
+
+
+async def require_scrape_or_admin(request: Request) -> dict[str, Any]:
+    """Accept Prometheus scraper bearer OR admin auth.
+
+    Prometheus scrapers send a static `Authorization: Bearer <TOKEN>`
+    where TOKEN = PROMETHEUS_SCRAPE_TOKEN env. The token lives in env
+    only (never in DB) and is compared with hmac.compare_digest to
+    avoid timing oracles. When the env var is unset, this dependency
+    degrades to admin-only auth, preserving pre-Session-209 behavior.
+    """
+    expected = os.getenv("PROMETHEUS_SCRAPE_TOKEN", "").strip()
+    if expected:
+        header = request.headers.get("authorization", "")
+        if header.startswith("Bearer "):
+            submitted = header[7:].strip()
+            if submitted and hmac.compare_digest(submitted, expected):
+                return {"username": "prometheus_scraper", "role": "scraper"}
+    # Fall through to admin auth. require_auth raises 401 on failure.
+    return await require_auth(request)
 
 # =============================================================================
 # Prometheus text format helpers
@@ -58,7 +82,7 @@ def _counter(name: str, help_text: str, values: list[tuple[dict[str, str], float
 
 
 @router.get("/metrics", response_class=PlainTextResponse)
-async def prometheus_metrics(user: dict = Depends(require_auth)):
+async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
     """Return platform metrics in Prometheus text exposition format.
 
     Queries are executed fresh on each scrape — no background loop.

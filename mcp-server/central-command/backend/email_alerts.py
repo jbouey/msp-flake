@@ -1040,3 +1040,118 @@ def send_consent_request_email(
     msg.attach(MIMEText(html_body, "html"))
 
     return _send_smtp_with_retry(msg, [to_email], f"consent request to {to_email}")
+
+
+# =============================================================================
+# Alertmanager webhook digest
+# =============================================================================
+
+
+_AM_SEV_RANK = {
+    "sev1": 4, "critical": 4, "page": 4,
+    "sev2": 3, "warning": 3, "warn": 3,
+    "sev3": 2,
+    "info": 1,
+    "": 0,
+}
+
+
+def send_alertmanager_digest(payload: dict, recipients: list[str]) -> bool:
+    """Email one digest per Alertmanager webhook POST.
+
+    AM already groups related alerts; we ship one email per group so
+    the on-call engineer gets a single coherent notification per
+    incident, not N parallel notes. Uses the same SMTP retry path as
+    all other alerts (_send_smtp_with_retry).
+
+    Subject carries the highest severity across the group and a
+    FIRING/RESOLVED status tag so an inbox rule can route on it.
+    """
+    if not is_email_configured():
+        logger.warning("email_not_configured - skipping alertmanager digest")
+        return False
+    if not recipients:
+        logger.warning("alertmanager_digest_no_recipients - skipping")
+        return False
+
+    status = str(payload.get("status") or "firing").lower()
+    alerts = payload.get("alerts") or []
+    if not isinstance(alerts, list):
+        alerts = []
+    common_labels = payload.get("commonLabels") or {}
+    common_ann = payload.get("commonAnnotations") or {}
+
+    severities = {
+        str((a.get("labels") or {}).get("severity", "")).lower()
+        for a in alerts
+    }
+    primary_sev = max(severities, key=lambda s: _AM_SEV_RANK.get(s, 0)) if severities else "info"
+    subject_status = "FIRING" if status == "firing" else "RESOLVED"
+    alertname = (
+        common_labels.get("alertname")
+        or payload.get("receiver")
+        or "Alertmanager"
+    )
+    subject = f"[{primary_sev.upper()}] [{subject_status}] {alertname} — {len(alerts)} alert(s)"
+
+    text_lines = [
+        f"Alertmanager digest — {subject_status}",
+        "=" * 48,
+        f"Receiver:   {payload.get('receiver', '')}",
+        f"Group key:  {payload.get('groupKey', '')}",
+        f"External:   {payload.get('externalURL', '')}",
+        f"Alerts:     {len(alerts)}",
+        "",
+    ]
+    if common_labels:
+        text_lines.append("Common labels:")
+        for k, v in sorted(common_labels.items()):
+            text_lines.append(f"  {k}={v}")
+        text_lines.append("")
+    if common_ann:
+        text_lines.append("Common annotations:")
+        for k, v in sorted(common_ann.items()):
+            text_lines.append(f"  {k}: {v}")
+        text_lines.append("")
+
+    for idx, alert in enumerate(alerts, 1):
+        a_labels = alert.get("labels") or {}
+        a_ann = alert.get("annotations") or {}
+        a_status = str(alert.get("status") or "?").lower()
+        a_name = a_labels.get("alertname", "?")
+        a_sev = a_labels.get("severity", "?")
+        text_lines.append(f"[{idx}/{len(alerts)}] {a_name} (sev={a_sev}) [{a_status}]")
+        for k in ("summary", "description", "runbook_url"):
+            if a_ann.get(k):
+                text_lines.append(f"    {k}: {a_ann[k]}")
+        if alert.get("startsAt"):
+            text_lines.append(f"    started:  {alert['startsAt']}")
+        if a_status == "resolved" and alert.get("endsAt"):
+            text_lines.append(f"    resolved: {alert['endsAt']}")
+        for k in ("invariant_name", "site_id", "instance", "job"):
+            if k in a_labels:
+                text_lines.append(f"    {k}: {a_labels[k]}")
+        if alert.get("generatorURL"):
+            text_lines.append(f"    query:    {alert['generatorURL']}")
+        text_lines.append("")
+
+    text_lines.extend([
+        "---",
+        "Posted by Alertmanager → /api/admin/alertmanager-webhook.",
+    ])
+    text_body = "\n".join(text_lines)
+    html_body = (
+        "<pre style='font-family:ui-monospace,monospace;"
+        "font-size:12px;line-height:1.4;color:#111827;'>"
+        f"{html.escape(text_body)}</pre>"
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = ", ".join(recipients)
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    label = f"alertmanager_{primary_sev}_{subject_status.lower()}"
+    return _send_smtp_with_retry(msg, recipients, label=label)

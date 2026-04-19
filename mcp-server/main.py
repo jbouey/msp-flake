@@ -116,6 +116,7 @@ from dashboard_api.cve_watch import router as cve_watch_router, cve_sync_loop
 from dashboard_api.cve_remediation import cve_remediation_loop
 from dashboard_api.framework_sync import router as framework_sync_router, framework_sync_loop
 from dashboard_api.prometheus_metrics import router as metrics_router
+from dashboard_api.alertmanager_webhook import router as alertmanager_webhook_router
 from dashboard_api.websocket_manager import ws_manager
 from dashboard_api.agent_api import agent_l2_plan as agent_l2_plan_handler
 from dashboard_api.healing_sla import healing_sla_loop
@@ -2064,6 +2065,7 @@ app.include_router(compliance_partner_router)  # Partner compliance defaults + s
 app.include_router(log_ingest_router)  # Centralized log aggregation from appliances
 app.include_router(security_events_router)  # WORM archival of sanitized security events
 app.include_router(metrics_router)  # Prometheus-compatible metrics endpoint
+app.include_router(alertmanager_webhook_router)  # Alertmanager → email bridge
 app.include_router(check_catalog_router)  # Public check definitions catalog (no auth, marketing/transparency)
 
 # WebSocket endpoint for real-time event push

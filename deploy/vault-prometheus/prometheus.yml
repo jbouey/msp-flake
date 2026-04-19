@@ -1,0 +1,41 @@
+global:
+  scrape_interval: 60s
+  evaluation_interval: 60s
+  external_labels:
+    cluster: osiriscare
+    environment: production
+    host: vault-host
+    observer: prometheus-vault
+
+rule_files:
+  - /opt/prometheus/rules/alert_rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['10.100.0.3:9093']
+      scheme: http
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['10.100.0.3:9090']
+        labels:
+          service: prometheus-self
+
+  # Scrape the Central Command /metrics endpoint over the public Caddy
+  # TLS listener. We authenticate with a static bearer loaded from a
+  # file so the token never appears in process listings or prom config
+  # dumps. The endpoint auth lives at prometheus_metrics.require_scrape_or_admin.
+  - job_name: mcp-server
+    metrics_path: /metrics
+    scheme: https
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    static_configs:
+      - targets: ['www.osiriscare.net']
+        labels:
+          service: mcp-server
+    authorization:
+      type: Bearer
+      credentials_file: /opt/prometheus/secrets/scrape_token

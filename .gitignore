@@ -3,7 +3,10 @@ result-*
 __pycache__/
 *.pyc
 .pytest_cache/
-deploy/
+deploy/deploy.log
+deploy/msp-flakes.tar.gz
+deploy/prometheus/
+deploy/setup-on-main-cpu.sh
 node_modules/
 .DS_Store
 *.egg-info/

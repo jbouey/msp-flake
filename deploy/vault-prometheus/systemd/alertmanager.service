@@ -1,0 +1,43 @@
+[Unit]
+Description=Alertmanager (OsirisCare webhook relay on Vault host)
+Documentation=https://prometheus.io/docs/alerting/latest/alertmanager/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=alertmanager
+Group=alertmanager
+ExecStart=/opt/alertmanager/bin/alertmanager \
+  --config.file=/opt/alertmanager/etc/alertmanager.yml \
+  --storage.path=/opt/alertmanager/data \
+  --web.listen-address=10.100.0.3:9093 \
+  --web.external-url=http://10.100.0.3:9093/ \
+  --cluster.listen-address=
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10s
+
+# Hardening — this host also runs Vault; AM gets the bare minimum.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/opt/alertmanager/data
+ReadOnlyPaths=/opt/alertmanager/etc /opt/alertmanager/secrets
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

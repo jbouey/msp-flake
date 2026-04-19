@@ -1,0 +1,38 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: osiriscare-email
+  group_by: ['alertname', 'site_id']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity="sev1"
+      receiver: osiriscare-email
+      group_wait: 10s
+      repeat_interval: 1h
+    - matchers:
+        - severity="sev3"
+      receiver: osiriscare-email
+      group_wait: 2m
+      repeat_interval: 24h
+
+receivers:
+  - name: osiriscare-email
+    webhook_configs:
+      - url: https://www.osiriscare.net/api/admin/alertmanager-webhook
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /opt/alertmanager/secrets/webhook_token
+
+inhibit_rules:
+  - source_matchers: [severity="sev1"]
+    target_matchers: [severity="sev2"]
+    equal: [alertname, site_id]
+  - source_matchers: [severity="sev2"]
+    target_matchers: [severity="sev3"]
+    equal: [alertname, site_id]

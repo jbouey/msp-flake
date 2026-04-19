@@ -1,0 +1,45 @@
+[Unit]
+Description=Prometheus (OsirisCare observer on Vault host)
+Documentation=https://prometheus.io/docs/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+ExecStart=/opt/prometheus/bin/prometheus \
+  --config.file=/opt/prometheus/etc/prometheus.yml \
+  --storage.tsdb.path=/opt/prometheus/data \
+  --storage.tsdb.retention.time=90d \
+  --storage.tsdb.retention.size=5GB \
+  --web.listen-address=10.100.0.3:9090 \
+  --web.external-url=http://10.100.0.3:9090/ \
+  --web.enable-lifecycle
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10s
+
+# Hardening — this host also runs Vault; Prom gets the bare minimum.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/opt/prometheus/data
+ReadOnlyPaths=/opt/prometheus/etc /opt/prometheus/rules /opt/prometheus/secrets
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target
