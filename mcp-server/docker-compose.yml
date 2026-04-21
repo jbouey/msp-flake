@@ -124,6 +124,12 @@ services:
       # LOG_ARCHIVE first (lowest risk, no runbooks currently ship for
       # it), then CONFIG_SYNC, then expand.
       RUNBOOK_CONSENT_ENFORCE_CLASSES: ${RUNBOOK_CONSENT_ENFORCE_CLASSES:-}
+      # Session 209 substrate operator controls — scoped admin actions
+      # (cleanup_install_session, unlock_platform_account, reconcile_fleet_order).
+      # "true" enables POST /api/admin/substrate/action; any other value
+      # keeps the endpoint gated at 503. Read-only endpoints (runbook,
+      # library) are always available.
+      SUBSTRATE_ACTIONS_ENABLED: ${SUBSTRATE_ACTIONS_ENABLED:-false}
       RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-10}
       RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-300}
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-Admin}
