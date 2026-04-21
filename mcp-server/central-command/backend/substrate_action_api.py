@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 try:
     from auth import require_auth
     from assertions import ALL_ASSERTIONS, _DISPLAY_METADATA
+    from shared import check_rate_limit
     from substrate_actions import (
         SUBSTRATE_ACTIONS,
         SubstrateActionError,
@@ -46,6 +47,7 @@ try:
 except ImportError:
     from .auth import require_auth
     from .assertions import ALL_ASSERTIONS, _DISPLAY_METADATA
+    from .shared import check_rate_limit
     from .substrate_actions import (
         SUBSTRATE_ACTIONS,
         SubstrateActionError,
@@ -82,6 +84,22 @@ class ActionBody(BaseModel):
     action_key: str = Field(..., min_length=1, max_length=64)
     target_ref: dict[str, Any]
     reason: str = Field(default="")
+
+
+# Per-action rate limits: (window_seconds, max_requests_per_actor_per_window).
+# Keyed by the registered action_key in SUBSTRATE_ACTIONS. Tuned for the
+# Phase-1 operator set — a single human hitting dozens of install-session
+# rows after a v38 fleet reflash is normal; dozens of platform-account
+# unlocks in an hour is not.
+#
+# Rate key is "substrate.<action_key>" scoped by actor_email (not site_id).
+# Rationale: the operator is the unit of abuse, not the customer site —
+# install_loop cleanups cut across sites.
+RATE_LIMITS: dict[str, tuple[int, int]] = {
+    "cleanup_install_session": (3600, 60),
+    "unlock_platform_account": (3600, 10),
+    "reconcile_fleet_order":   (3600, 20),
+}
 
 
 def _feature_flag_enabled() -> bool:
@@ -136,7 +154,14 @@ async def post_substrate_action(
         logger.info("substrate_action_rejected_flag_off")
         raise HTTPException(
             status_code=503,
-            detail={"reason": "substrate_actions_disabled"},
+            detail={
+                "reason": "substrate_actions_disabled",
+                "flag": "SUBSTRATE_ACTIONS_ENABLED",
+                "message": (
+                    "Substrate action endpoint is off. Set "
+                    "SUBSTRATE_ACTIONS_ENABLED=true on mcp-server to enable."
+                ),
+            },
         )
 
     action = SUBSTRATE_ACTIONS.get(body.action_key)
@@ -165,6 +190,36 @@ async def post_substrate_action(
             status_code=401,
             detail="no actor email on session",
         )
+
+    rl_config = RATE_LIMITS.get(body.action_key)
+    if rl_config is not None:
+        rl_window, rl_max = rl_config
+        allowed, retry_after = await check_rate_limit(
+            actor_email,
+            f"substrate.{body.action_key}",
+            window_seconds=rl_window,
+            max_requests=rl_max,
+        )
+        if not allowed:
+            logger.info(
+                "substrate_action_rate_limited",
+                extra={
+                    "actor": actor_email,
+                    "action_key": body.action_key,
+                    "retry_after": retry_after,
+                },
+            )
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "reason": "rate_limit_exceeded",
+                    "action_key": body.action_key,
+                    "window_seconds": rl_window,
+                    "max_requests": rl_max,
+                    "retry_after_seconds": retry_after,
+                },
+                headers={"Retry-After": str(max(retry_after, 1))},
+            )
 
     idem_key = _derive_idempotency_key(
         body,
@@ -388,3 +443,43 @@ async def get_runbook(invariant: str, user: dict = Depends(require_auth)):
         "severity": _INVARIANT_SEVERITY[invariant],
         "markdown": path.read_text(),
     }
+
+
+# Whitelist: invariant -> registered handler key in SUBSTRATE_ACTIONS.
+# Kept deliberately short. Mirrors the frontend INVARIANT_ACTIONS map in
+# AdminSubstrateHealth.tsx. Changing one requires changing the other.
+_INVARIANT_ACTION_WHITELIST: dict[str, str] = {
+    "install_loop": "cleanup_install_session",
+    "install_session_ttl": "cleanup_install_session",
+    "auth_failure_lockout": "unlock_platform_account",
+    "agent_version_lag": "reconcile_fleet_order",
+}
+
+
+@router.get("/runbooks")
+async def list_runbooks(user: dict = Depends(require_auth)):
+    """Return every registered invariant as a runbook-library entry.
+
+    Response shape:
+        {"items": [
+            {"invariant": "install_loop", "display_name": "…",
+             "severity": "sev1", "has_action": true,
+             "action_key": "cleanup_install_session"},
+            ...
+        ]}
+
+    Powers the frontend Runbook Library page (Task 16). The runbook prose
+    itself still loads via GET /api/admin/substrate/runbook/{invariant}.
+    """
+    items = []
+    for a in ALL_ASSERTIONS:
+        meta = _DISPLAY_METADATA.get(a.name, {})
+        action_key = _INVARIANT_ACTION_WHITELIST.get(a.name)
+        items.append({
+            "invariant": a.name,
+            "display_name": meta.get("display_name", a.name),
+            "severity": a.severity,
+            "has_action": action_key is not None,
+            "action_key": action_key,
+        })
+    return {"items": items}

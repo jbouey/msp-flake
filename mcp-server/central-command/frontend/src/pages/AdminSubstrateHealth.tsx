@@ -12,6 +12,54 @@
 
 import React, { useEffect, useState } from 'react';
 import { GlassCard, Spinner } from '../components/shared';
+import RunbookDrawer from '../components/substrate/RunbookDrawer';
+import CopyCliButton from '../components/substrate/CopyCliButton';
+import ActionPreviewModal from '../components/substrate/ActionPreviewModal';
+
+type ActionConfig = {
+  actionKey: string;
+  requiredReasonChars: number;
+  cliFallback?: string;
+  buildPlan: (details: Record<string, unknown>) => string;
+  buildTargetRef: (details: Record<string, unknown>) => Record<string, unknown>;
+};
+
+const INVARIANT_ACTIONS: Record<string, ActionConfig> = {
+  install_loop: {
+    actionKey: 'cleanup_install_session',
+    requiredReasonChars: 0,
+    buildPlan: (d) => `Delete install_sessions row where mac=${d.mac}. Idempotent.`,
+    buildTargetRef: (d) => ({ mac: d.mac, stage: d.stage }),
+  },
+  install_session_ttl: {
+    actionKey: 'cleanup_install_session',
+    requiredReasonChars: 0,
+    buildPlan: (d) => `Delete install_sessions row where mac=${d.mac}. Idempotent.`,
+    buildTargetRef: (d) => ({ mac: d.mac, stage: d.stage }),
+  },
+  auth_failure_lockout: {
+    actionKey: 'unlock_platform_account',
+    requiredReasonChars: 20,
+    buildPlan: (d) =>
+      `Unlock ${d.table}.email=${d.email}. Clears failed_login_attempts and locked_until.`,
+    buildTargetRef: (d) => ({ table: d.table, email: d.email }),
+  },
+  agent_version_lag: {
+    actionKey: 'reconcile_fleet_order',
+    requiredReasonChars: 20,
+    cliFallback: 'fleet_cli orders cancel ...',
+    buildPlan: (d) =>
+      `Mark fleet_orders[${d.order_id}] as completed. Use ONLY when upgrade was verified out-of-band.`,
+    buildTargetRef: (d) => ({ order_id: d.order_id, site_id: d.site_id }),
+  },
+};
+
+const CLI_TEMPLATES: Record<string, string> = {
+  offline_appliance_over_1h:
+    'mcp-server/central-command/backend/scripts/recover_legacy_appliance.sh {site_id} {mac} {ip}',
+  agent_version_lag:
+    'fleet_cli create update_daemon --site-id {site_id} --param appliance_id={appliance_id} --param binary_url={binary_url} --actor-email YOU@example.com --reason "..."',
+};
 
 interface ActiveViolation {
   invariant: string;
@@ -75,6 +123,9 @@ export const AdminSubstrateHealth: React.FC = () => {
   const [sla, setSla] = useState<SlaPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [drawerInvariant, setDrawerInvariant] = useState<string | null>(null);
+  const [modal, setModal] = useState<{ cfg: ActionConfig; details: Record<string, unknown> } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,7 +155,7 @@ export const AdminSubstrateHealth: React.FC = () => {
     load();
     const int = setInterval(load, 60_000);
     return () => { cancelled = true; clearInterval(int); };
-  }, []);
+  }, [refreshKey]);
 
   if (loading && !violations) return <div className="p-6"><Spinner /></div>;
   if (error && !violations) return <div className="p-6 text-rose-400 text-sm">Failed to load: {error}</div>;
@@ -158,45 +209,61 @@ export const AdminSubstrateHealth: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {violations.active.map((v, i) => (
-                  <tr key={i} className="border-t border-white/5">
-                    <td className="py-2 pr-4 align-top">
-                      <span className={`px-2 py-0.5 rounded text-xs border ${SEVERITY_COLOR[v.severity] || ''}`}>
-                        {v.severity}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-4 align-top" colSpan={4}>
-                      {/* v36: human-facing row. display_name + recommended_action
-                          render as the primary content; engineering name +
-                          raw details live behind a collapsible for the auditor /
-                          engineer who wants the full picture. */}
-                      <div className="text-white font-medium">
-                        {v.display_name ?? v.invariant}
-                      </div>
-                      {v.recommended_action && (
-                        <div className="mt-1 text-emerald-200/80 text-xs leading-relaxed">
-                          <span className="font-semibold text-emerald-300">Recommended:</span>{' '}
-                          {v.recommended_action}
+                {violations.active.map((v, i) => {
+                  const actionCfg = INVARIANT_ACTIONS[v.invariant];
+                  const cliTemplate = CLI_TEMPLATES[v.invariant] ?? '';
+                  return (
+                    <tr key={i} data-testid="violation-row" className="border-t border-white/5">
+                      <td className="py-2 pr-4 align-top">
+                        <span className={`px-2 py-0.5 rounded text-xs border ${SEVERITY_COLOR[v.severity] || ''}`}>
+                          {v.severity}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-4 align-top" colSpan={4}>
+                        <div className="text-white font-medium">
+                          {v.display_name ?? v.invariant}
                         </div>
-                      )}
-                      <div className="mt-2 flex items-center gap-3 text-[11px] text-white/50">
-                        <span className="font-mono">{v.invariant}</span>
-                        <span>·</span>
-                        <span>{v.site_id || 'global'}</span>
-                        <span>·</span>
-                        <span>open {Math.round(v.minutes_open)}m</span>
-                      </div>
-                      <details className="mt-2 text-white/60 text-xs">
-                        <summary className="cursor-pointer select-none text-white/50 hover:text-white/80">
-                          View raw details
-                        </summary>
-                        <pre className="whitespace-pre-wrap break-all mt-2 p-2 rounded bg-black/30">
-                          {JSON.stringify(v.details, null, 2)}
-                        </pre>
-                      </details>
-                    </td>
-                  </tr>
-                ))}
+                        {v.recommended_action && (
+                          <div className="mt-1 text-emerald-200/80 text-xs leading-relaxed">
+                            <span className="font-semibold text-emerald-300">Recommended:</span>{' '}
+                            {v.recommended_action}
+                          </div>
+                        )}
+                        <div className="mt-2 flex items-center gap-3 text-[11px] text-white/50">
+                          <span className="font-mono">{v.invariant}</span>
+                          <span>·</span>
+                          <span>{v.site_id || 'global'}</span>
+                          <span>·</span>
+                          <span>open {Math.round(v.minutes_open)}m</span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => setDrawerInvariant(v.invariant)}
+                            className="px-2 py-1 text-xs rounded bg-white/10 hover:bg-white/20 text-white"
+                          >View runbook</button>
+                          <CopyCliButton template={cliTemplate} details={v.details} />
+                          {actionCfg && (
+                            <button
+                              type="button"
+                              data-action="run"
+                              onClick={() => setModal({ cfg: actionCfg, details: v.details })}
+                              className="px-2 py-1 text-xs rounded bg-emerald-600/80 hover:bg-emerald-500 text-white"
+                            >Run action</button>
+                          )}
+                        </div>
+                        <details className="mt-2 text-white/60 text-xs">
+                          <summary className="cursor-pointer select-none text-white/50 hover:text-white/80">
+                            View raw details
+                          </summary>
+                          <pre className="whitespace-pre-wrap break-all mt-2 p-2 rounded bg-black/30">
+                            {JSON.stringify(v.details, null, 2)}
+                          </pre>
+                        </details>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -238,6 +305,25 @@ export const AdminSubstrateHealth: React.FC = () => {
             </div>
           </div>
         </GlassCard>
+      )}
+
+      {drawerInvariant && (
+        <RunbookDrawer
+          invariant={drawerInvariant}
+          onClose={() => setDrawerInvariant(null)}
+        />
+      )}
+
+      {modal && (
+        <ActionPreviewModal
+          actionKey={modal.cfg.actionKey}
+          requiredReasonChars={modal.cfg.requiredReasonChars}
+          plan={modal.cfg.buildPlan(modal.details)}
+          targetRef={modal.cfg.buildTargetRef(modal.details)}
+          cliFallback={modal.cfg.cliFallback}
+          onClose={() => setModal(null)}
+          onDone={() => { setModal(null); setRefreshKey((k) => k + 1); }}
+        />
       )}
 
       {violations.resolved_24h.length > 0 && (
