@@ -51,6 +51,22 @@ except ImportError:
     )
     from .tenant_middleware import admin_connection
 
+# fleet.py itself has `from .tenant_middleware import admin_connection` at
+# module scope, so it is ONLY importable in the packaged runtime context
+# (production main.py loads as dashboard_api.main). In the pytest context
+# (backend/ on sys.path directly, no parent package), loading fleet.py fails
+# and we intentionally leave get_pool as None — none of the non-DB-gated
+# tests exercise the DB path, and DB-gated tests provide their own pool via
+# fixture + admin_connection(pool). Hoisted to module scope for clarity over
+# the Task-6 lazy-inside-handler pattern.
+try:
+    from .fleet import get_pool  # type: ignore[attr-defined]
+except ImportError:
+    try:
+        from fleet import get_pool  # type: ignore[no-redef]
+    except ImportError:
+        get_pool = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin/substrate", tags=["admin", "substrate"])
@@ -86,7 +102,15 @@ def _derive_idempotency_key(
     if header_key:
         return header_key
     day = datetime.now(timezone.utc).date().isoformat()  # e.g. "2026-04-19"
-    material = f"{actor_email}|{body.action_key}|{body.target_ref}|{day}"
+    # Canonicalize target_ref so clients sending the same logical payload with
+    # different key orderings / whitespace still dedupe. Python's dict repr is
+    # insertion-ordered (3.7+) but is NOT a canonical wire form across
+    # languages; json.dumps(sort_keys=True, separators=(',', ':')) is.
+    material = (
+        f"{actor_email}|{body.action_key}|"
+        f"{json.dumps(body.target_ref, sort_keys=True, separators=(',', ':'))}"
+        f"|{day}"
+    )
     return hashlib.sha256(material.encode()).hexdigest()
 
 
@@ -105,9 +129,10 @@ async def post_substrate_action(
       SubstrateActionError (base) → 500 (with exc_info=True logging)
     """
     if not _feature_flag_enabled():
+        logger.info("substrate_action_rejected_flag_off")
         raise HTTPException(
             status_code=503,
-            detail={"reason": "SUBSTRATE_ACTIONS_ENABLED is off"},
+            detail={"reason": "substrate_actions_disabled"},
         )
 
     action = SUBSTRATE_ACTIONS.get(body.action_key)
@@ -143,18 +168,6 @@ async def post_substrate_action(
         request.headers.get("Idempotency-Key"),
     )
 
-    # Lazy dual-path import of get_pool. fleet.py has a relative import
-    # (`from .tenant_middleware`) so bare `from fleet import get_pool`
-    # breaks when backend/ is on sys.path without the dashboard_api. prefix
-    # (pytest test context). Try the package import first (real app path),
-    # fall back to bare (test path, in which case get_pool isn't actually
-    # reachable — but the DB-gated tests are the only ones that call
-    # get_pool and they provide their own pool fixture).
-    try:
-        from .fleet import get_pool
-    except ImportError:
-        from fleet import get_pool  # type: ignore[no-redef]
-
     pool = await get_pool()
     async with admin_connection(pool) as conn:
         # 1) Idempotency replay check — belt + suspenders ORDER BY LIMIT 1.
@@ -179,53 +192,80 @@ async def post_substrate_action(
         # 2) Run handler + write audit + write invocation in ONE transaction
         # so partial failures roll back cleanly. HTTPException inside the
         # context manager propagates up and rolls back before re-raising.
-        async with conn.transaction():
-            try:
-                summary = await action.handler(
-                    conn, body.target_ref, body.reason
-                )
-            except TargetRefInvalid as e:
-                raise HTTPException(status_code=400, detail=str(e))
-            except TargetNotFound as e:
-                raise HTTPException(status_code=404, detail=str(e))
-            except TargetNotActionable as e:
-                raise HTTPException(status_code=409, detail=str(e))
-            except SubstrateActionError as e:
-                logger.error(
-                    "substrate_action_failed",
-                    exc_info=True,
-                    extra={
-                        "action_key": body.action_key,
-                        "actor": actor_email,
-                    },
-                )
-                raise HTTPException(status_code=500, detail=str(e))
+        try:
+            async with conn.transaction():
+                try:
+                    summary = await action.handler(
+                        conn, body.target_ref, body.reason
+                    )
+                except TargetRefInvalid as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "reason": "target_ref_invalid",
+                            "message": str(e),
+                        },
+                    )
+                except TargetNotFound as e:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "reason": "target_not_found",
+                            "message": str(e),
+                        },
+                    )
+                except TargetNotActionable as e:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "reason": "target_not_actionable",
+                            "message": str(e),
+                        },
+                    )
+                except SubstrateActionError:
+                    # Drop str(e) from the wire; operators read the full
+                    # message (incl. SQL fragments / hostnames) via the
+                    # log line below.
+                    logger.error(
+                        "substrate_action_failed",
+                        exc_info=True,
+                        extra={
+                            "action_key": body.action_key,
+                            "actor": actor_email,
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail={"reason": "internal_error"},
+                    )
 
-            # admin_audit_log: direct INSERT — no wrapper module exists.
-            # target VARCHAR(255): stable synthetic ref, not a Python repr.
-            # details JSONB: json.dumps + ::jsonb cast (asyncpg won't
-            # auto-encode dict → JSONB without a codec).
-            audit_id = await conn.fetchval(
-                "INSERT INTO admin_audit_log "
-                "(user_id, username, action, target, details, ip_address) "
-                "VALUES (NULL, $1, $2, $3, $4::jsonb, $5) "
-                "RETURNING id",
-                actor_email,
-                action.audit_action,
-                f"substrate_action:{body.action_key}"[:255],
-                json.dumps(
-                    {
-                        "reason": body.reason,
-                        "target_ref": body.target_ref,
-                        "result": summary,
-                    }
-                ),
-                request.client.host if request.client else None,
-            )
+                # admin_audit_log: direct INSERT — no wrapper module exists.
+                # target VARCHAR(255): stable synthetic ref, not a Python repr.
+                # details JSONB: json.dumps + ::jsonb cast (asyncpg won't
+                # auto-encode dict → JSONB without a codec).
+                audit_id = await conn.fetchval(
+                    "INSERT INTO admin_audit_log "
+                    "(user_id, username, action, target, details, ip_address) "
+                    "VALUES (NULL, $1, $2, $3, $4::jsonb, $5) "
+                    "RETURNING id",
+                    actor_email,
+                    action.audit_action,
+                    f"substrate_action:{body.action_key}"[:255],
+                    json.dumps(
+                        {
+                            "reason": body.reason,
+                            "target_ref": body.target_ref,
+                            "result": summary,
+                        }
+                    ),
+                    request.client.host if request.client else None,
+                )
 
-            # Invocation row — idempotency checkpoint + pointer to audit row.
-            result_body = {"status": "completed", "details": summary}
-            try:
+                # Invocation row — idempotency checkpoint + pointer to audit
+                # row. UniqueViolationError here is caught OUTSIDE this
+                # transaction so it rolls back cleanly (including the audit
+                # row written above).
+                result_body = {"status": "completed", "details": summary}
                 inv_id = await conn.fetchval(
                     "INSERT INTO substrate_action_invocations "
                     "(idempotency_key, actor_email, action_key, target_ref, "
@@ -241,22 +281,37 @@ async def post_substrate_action(
                     json.dumps(result_body),
                     audit_id,
                 )
-            except UniqueViolationError:
-                # Race: a 24h+-old prior row existed outside our SELECT
-                # window, or a concurrent request won the INSERT. The unique
-                # index (actor_email, idempotency_key) is last-line defense.
-                # Re-read (no time window) and return the prior row as a
-                # replay. The current transaction will roll back (raising
-                # out of the `conn.transaction()` context) — that's the
-                # correct behavior because we don't want a duplicate audit
-                # row from THIS request to persist.
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "reason": "idempotency_key collision",
+        except UniqueViolationError:
+            # Race: a prior row existed outside our 24h SELECT window, or a
+            # concurrent request won the INSERT. The unique index
+            # (actor_email, idempotency_key) is the last-line defense. The
+            # transaction above has rolled back (audit row + any handler
+            # side effects gone). Re-read with NO time filter and return
+            # the prior row as a replay — same shape as the pre-flight hit.
+            replay = await conn.fetchrow(
+                "SELECT id, result_body FROM substrate_action_invocations "
+                "WHERE actor_email = $1 AND idempotency_key = $2",
+                actor_email,
+                idem_key,
+            )
+            if replay is None:
+                # Shouldn't happen — the unique index fired but no row is
+                # visible. Surface for alerting.
+                logger.error(
+                    "substrate_action_idem_collision_but_no_row",
+                    extra={
                         "actor_email": actor_email,
+                        "idem_key": idem_key,
                     },
                 )
+                raise HTTPException(
+                    status_code=500,
+                    detail={"reason": "idempotency_inconsistent"},
+                )
+            reply = dict(replay["result_body"])
+            reply["status"] = "already_completed"
+            reply["action_id"] = str(replay["id"])
+            return reply
 
         return {
             "action_id": str(inv_id),

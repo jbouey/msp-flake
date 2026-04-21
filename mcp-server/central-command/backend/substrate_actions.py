@@ -64,6 +64,16 @@ class SubstrateAction:
     required_reason_chars: int
     audit_action: str
 
+    def __post_init__(self) -> None:
+        # admin_audit_log.action is VARCHAR(100); fail fast at registry-load
+        # time rather than at request time with a DB error deep in the
+        # transaction.
+        if len(self.audit_action) > 100:
+            raise ValueError(
+                f"audit_action {self.audit_action!r} exceeds "
+                "admin_audit_log.action VARCHAR(100)"
+            )
+
 
 async def _handle_cleanup_install_session(
     conn: Connection, target_ref: dict, reason: str

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import asyncpg
@@ -207,9 +208,13 @@ async def seed_stale_install_session(pool):
             "DELETE FROM install_sessions WHERE mac_address = $1",
             TEST_MAC,
         )
-        # Best-effort cleanup of invocation + audit rows from this test.
+        # Best-effort cleanup of invocation rows from this test. Scope to
+        # test-tagged idempotency_keys only so we don't scrub legit rows
+        # under the same admin email (derived-key hashes won't match, but
+        # explicitly supplied keys used in tests always start with "test-").
         await conn.execute(
-            "DELETE FROM substrate_action_invocations WHERE actor_email = $1",
+            "DELETE FROM substrate_action_invocations "
+            "WHERE actor_email = $1 AND idempotency_key LIKE 'test-%'",
             ADMIN_USER["email"],
         )
 
@@ -256,6 +261,9 @@ async def test_endpoint_idempotency_replay(
     assert r2.json()["action_id"] == r1.json()["action_id"]
 
 
+# Not xdist-safe — uses an unfiltered COUNT(*) on admin_audit_log.
+# Parallel workers running this test concurrently would break the
+# before/after invariant. Gate via -p no:xdist or -n 0 for this file.
 @_requires_db
 @pytest.mark.asyncio
 async def test_endpoint_writes_one_audit_row(
@@ -288,3 +296,101 @@ async def test_endpoint_writes_one_audit_row(
             "WHERE action = 'substrate.cleanup_install_session'"
         )
     assert after == before + 1
+
+
+@_requires_db
+@pytest.mark.asyncio
+async def test_endpoint_success_response_shape(
+    pool, seed_stale_install_session, monkeypatch
+):
+    """Fresh (non-replay) invocation returns action_id + status=completed + details."""
+    monkeypatch.setenv("SUBSTRATE_ACTIONS_ENABLED", "true")
+    mac = seed_stale_install_session["mac"]
+    r = await _post(
+        {
+            "action_key": "cleanup_install_session",
+            "target_ref": {"mac": mac, "stage": "live_usb"},
+            "reason": "",
+        }
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body.keys()) == {"action_id", "status", "details"}
+    assert body["status"] == "completed"
+    assert body["action_id"]  # non-empty
+    assert body["details"]["deleted"] == 1
+    assert body["details"]["mac"] == mac
+    assert body["details"]["stage"] == "live_usb"
+
+
+@_requires_db
+@pytest.mark.asyncio
+async def test_endpoint_idempotency_race_beyond_24h_window(
+    pool, seed_stale_install_session, monkeypatch
+):
+    """Pre-existing row outside 24h window triggers UniqueViolationError on
+    INSERT; endpoint re-reads and returns replay shape, not 409."""
+    import json as _json
+
+    from tenant_middleware import admin_connection
+
+    monkeypatch.setenv("SUBSTRATE_ACTIONS_ENABLED", "true")
+    mac = seed_stale_install_session["mac"]
+    race_key = f"test-race-{uuid.uuid4()}"
+
+    # Seed a prior invocation row outside the 24h replay window so the
+    # pre-flight SELECT misses it but the unique index still fires on INSERT.
+    async with admin_connection(pool) as conn:
+        audit_id = await conn.fetchval(
+            "INSERT INTO admin_audit_log "
+            "(user_id, username, action, target, details, ip_address) "
+            "VALUES (NULL, $1, $2, $3, $4::jsonb, $5) "
+            "RETURNING id",
+            ADMIN_USER["email"],
+            "substrate.cleanup_install_session",
+            "substrate_action:cleanup_install_session",
+            _json.dumps({"reason": "", "target_ref": {}, "result": {}}),
+            None,
+        )
+        prior_inv_id = await conn.fetchval(
+            "INSERT INTO substrate_action_invocations "
+            "(idempotency_key, actor_email, action_key, target_ref, "
+            " reason, result_status, result_body, admin_audit_id, created_at) "
+            "VALUES ($1, $2, $3, $4::jsonb, $5, 'completed', $6::jsonb, $7, "
+            "        now() - INTERVAL '25 hours') "
+            "RETURNING id",
+            race_key,
+            ADMIN_USER["email"],
+            "cleanup_install_session",
+            _json.dumps({"mac": mac, "stage": "live_usb"}),
+            "",
+            _json.dumps(
+                {
+                    "status": "completed",
+                    "details": {
+                        "deleted": 1,
+                        "mac": mac,
+                        "stage": "live_usb",
+                        "checkin_count": 5,
+                        "first_seen": "2026-04-17T00:00:00+00:00",
+                    },
+                }
+            ),
+            audit_id,
+        )
+
+    # Endpoint call with same idempotency_key triggers the race path:
+    # pre-flight SELECT misses (25h > 24h window), INSERT hits unique index.
+    r = await _post(
+        {
+            "action_key": "cleanup_install_session",
+            "target_ref": {"mac": mac, "stage": "live_usb"},
+            "reason": "",
+        },
+        headers={"Idempotency-Key": race_key},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "already_completed"
+    assert body["action_id"] == str(prior_inv_id)
