@@ -1167,12 +1167,20 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                     _current_fp = _sk.verify_key.encode(encoder=HexEncoder).decode()[:16]
                 except Exception:
                     _current_fp = None
+                # Exclude appliances that can't have seen the current
+                # key yet: offline boxes and anything that hasn't checked
+                # in within 24h. Otherwise a single stranded appliance
+                # (pre-rotation or dead USB session) pins the gauge > 0
+                # forever and ApplianceServerPubkeyDivergence flaps.
                 row = await conn.fetchrow("""
                     SELECT
                       COUNT(*) FILTER (WHERE server_pubkey_fingerprint_seen IS DISTINCT FROM $1) AS divergent,
                       COUNT(*) AS total
                     FROM site_appliances
                     WHERE deleted_at IS NULL
+                      AND status = 'online'
+                      AND last_checkin > NOW() - INTERVAL '24 hours'
+                      AND hostname IS DISTINCT FROM 'osiriscare-installer'
                 """, _current_fp)
                 sections.append(_gauge(
                     "osiriscare_appliance_server_pubkey_divergence",

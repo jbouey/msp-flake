@@ -46,6 +46,27 @@ class Violation:
     details: Dict[str, object]
 
 
+# Installer sessions live in site_appliances during the boot-from-USB
+# window but are not real installed appliances. Pubkey / version / offline
+# invariants must skip them or a single stranded USB session spams
+# sev1/sev2 alerts forever.
+_INSTALLER_HOSTNAME = "osiriscare-installer"
+
+
+def _parse_semver(v: Optional[str]) -> Optional[tuple[int, ...]]:
+    """Parse a leading semver like '0.4.5' or '0.4.5-rc1' into a
+    tuple of ints for ordered comparison. Returns None on any
+    non-numeric component so callers can treat as 'unknown'."""
+    if not v:
+        return None
+    head = v.split("-", 1)[0].split("+", 1)[0]
+    parts = head.split(".")
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        return None
+
+
 CheckFn = Callable[[asyncpg.Connection], Awaitable[List[Violation]]]
 
 
@@ -134,7 +155,9 @@ async def _check_offline_appliance_long(conn: asyncpg.Connection) -> List[Violat
          WHERE deleted_at IS NULL
            AND status = 'offline'
            AND last_checkin < NOW() - INTERVAL '1 hour'
-        """
+           AND hostname IS DISTINCT FROM $1
+        """,
+        _INSTALLER_HOSTNAME,
     )
     return [
         Violation(
@@ -151,10 +174,16 @@ async def _check_offline_appliance_long(conn: asyncpg.Connection) -> List[Violat
 
 
 async def _check_agent_version_lag(conn: asyncpg.Connection) -> List[Violation]:
-    """site_appliances.agent_version must match the most-recent
+    """site_appliances.agent_version must not be behind the most-recent
     SUCCESSFULLY-COMPLETED update_daemon order. A lag means the
     completion ACK lied (pre-0.4.3 daemon bug) or a rollback fired
-    silently."""
+    silently.
+
+    "Ahead" (running_version > expected_version) is NOT a lag — it
+    happens when the fleet moves forward through paths whose order
+    completion ACK didn't land (cancelled/expired orders). Flagging it
+    produces sev1 false positives that scale linearly with site count.
+    """
     rows = await conn.fetch(
         """
         WITH last_update AS (
@@ -174,21 +203,30 @@ async def _check_agent_version_lag(conn: asyncpg.Connection) -> List[Violation]:
                                   AND sa.deleted_at IS NULL
                                   AND sa.status = 'online'
          WHERE sa.agent_version IS DISTINCT FROM lu.expected_version
+           AND sa.hostname IS DISTINCT FROM $1
            AND lu.created_at < NOW() - INTERVAL '15 minutes'
-        """
+        """,
+        _INSTALLER_HOSTNAME,
     )
-    return [
-        Violation(
-            site_id=r["site_id"],
-            details={
-                "mac_address": r["mac_address"],
-                "hostname": r["hostname"],
-                "running_version": r["agent_version"],
-                "expected_version": r["expected_version"],
-            },
+    violations: List[Violation] = []
+    for r in rows:
+        running = _parse_semver(r["agent_version"])
+        expected = _parse_semver(r["expected_version"])
+        # Only flag true lag: we could parse both and running is strictly behind.
+        if running is None or expected is None or running >= expected:
+            continue
+        violations.append(
+            Violation(
+                site_id=r["site_id"],
+                details={
+                    "mac_address": r["mac_address"],
+                    "hostname": r["hostname"],
+                    "running_version": r["agent_version"],
+                    "expected_version": r["expected_version"],
+                },
+            )
         )
-        for r in rows
-    ]
+    return violations
 
 
 async def _check_fleet_order_url_resolvable(conn: asyncpg.Connection) -> List[Violation]:
@@ -259,9 +297,11 @@ async def _check_discovered_devices_freshness(conn: asyncpg.Connection) -> List[
            AND dd.site_id = sa.site_id
          WHERE sa.deleted_at IS NULL
            AND sa.status = 'online'
+           AND sa.hostname IS DISTINCT FROM $1
            AND (dd.last_seen_at IS NULL
                 OR dd.last_seen_at < NOW() - INTERVAL '1 hour')
-        """
+        """,
+        _INSTALLER_HOSTNAME,
     )
     return [
         Violation(
