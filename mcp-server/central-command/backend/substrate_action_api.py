@@ -20,6 +20,8 @@ import hashlib
 import json
 import logging
 import os
+import pathlib
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -32,6 +34,7 @@ from pydantic import BaseModel, Field
 # package path (main.py). See runbook_config.py for the same pattern.
 try:
     from auth import require_auth
+    from assertions import ALL_ASSERTIONS, _DISPLAY_METADATA
     from substrate_actions import (
         SUBSTRATE_ACTIONS,
         SubstrateActionError,
@@ -42,6 +45,7 @@ try:
     from tenant_middleware import admin_connection
 except ImportError:
     from .auth import require_auth
+    from .assertions import ALL_ASSERTIONS, _DISPLAY_METADATA
     from .substrate_actions import (
         SUBSTRATE_ACTIONS,
         SubstrateActionError,
@@ -317,3 +321,70 @@ async def post_substrate_action(
             "action_id": str(inv_id),
             **result_body,
         }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/substrate/runbook/{invariant} — serves the markdown stub
+# for the named invariant. Consumed by the RunbookDrawer on the frontend.
+#
+# Security: invariant name must match ^[a-z0-9_]+$ (blocks traversal). The
+# name must also appear in ALL_ASSERTIONS — stale/unknown names 404 rather
+# than sniff the filesystem. The path is joined from a fixed _DOCS_DIR so
+# the regex guard is the only attack surface.
+# ---------------------------------------------------------------------------
+
+# substrate_action_api.py lives at
+#   mcp-server/central-command/backend/substrate_action_api.py
+# parents[3] reaches the repo root.
+_DOCS_DIR = pathlib.Path(__file__).resolve().parents[3] / "docs" / "substrate"
+
+# Built once at import. If ALL_ASSERTIONS mutates at runtime (it doesn't —
+# the list is module-level immutable in practice), restart required.
+_KNOWN_INVARIANTS = {a.name for a in ALL_ASSERTIONS}
+_INVARIANT_SEVERITY = {a.name: a.severity for a in ALL_ASSERTIONS}
+
+_SAFE_INVARIANT_NAME = re.compile(r"^[a-z0-9_]+$")
+
+
+@router.get("/runbook/{invariant}")
+async def get_runbook(invariant: str, user: dict = Depends(require_auth)):
+    """Return the runbook markdown + metadata for the named invariant.
+
+    Response shape:
+        {
+          "invariant": "install_loop",
+          "display_name": "Box is reboot-looping at install stage",
+          "severity": "sev1",
+          "markdown": "# install_loop\\n\\n…"
+        }
+
+    Errors:
+        400 — invariant name fails the ^[a-z0-9_]+$ regex.
+        404 — invariant not in ALL_ASSERTIONS, or doc file missing.
+    """
+    if not _SAFE_INVARIANT_NAME.match(invariant):
+        raise HTTPException(
+            status_code=400,
+            detail="invariant name must match ^[a-z0-9_]+$",
+        )
+    if invariant not in _KNOWN_INVARIANTS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown invariant: {invariant}",
+        )
+    path = _DOCS_DIR / f"{invariant}.md"
+    if not path.exists():
+        # Doc lockstep test catches this in CI, but guard at runtime in
+        # case something got deleted post-deploy.
+        raise HTTPException(
+            status_code=404,
+            detail=f"doc missing: docs/substrate/{invariant}.md",
+        )
+    meta = _DISPLAY_METADATA.get(invariant, {})
+    # Severity is authoritative on the Assertion object, not the metadata.
+    return {
+        "invariant": invariant,
+        "display_name": meta.get("display_name", invariant),
+        "severity": _INVARIANT_SEVERITY[invariant],
+        "markdown": path.read_text(),
+    }
