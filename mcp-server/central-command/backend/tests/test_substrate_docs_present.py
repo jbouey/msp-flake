@@ -1,5 +1,6 @@
-"""CI gate: every assertions.ALL_ASSERTIONS entry has a docs/substrate/<name>.md
-file containing the required section headings. Fails the build on drift.
+"""CI gate: every assertions.ALL_ASSERTIONS entry has a
+backend/substrate_runbooks/<name>.md file with the required section
+headings. Fails the build on drift.
 
 Scope:
   1. Every registered invariant MUST have a runbook doc.
@@ -28,10 +29,10 @@ if str(_BACKEND) not in sys.path:
 
 from assertions import ALL_ASSERTIONS
 
-# Repo root: backend/ is 3 levels deep (mcp-server/central-command/backend/),
-# tests/ is one more. Walk up 4 parents from this file.
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
-DOCS_DIR = REPO_ROOT / "docs" / "substrate"
+# Runbook stubs live under backend/substrate_runbooks/ (mirrors the
+# runtime path in substrate_action_api._DOCS_DIR). Keeping them inside
+# the backend package ensures the deploy rsync picks them up.
+DOCS_DIR = _BACKEND / "substrate_runbooks"
 
 REQUIRED_SECTIONS = [
     "## What this means",
@@ -59,7 +60,7 @@ def test_doc_exists_and_has_sections(assertion):
     for section in REQUIRED_SECTIONS:
         assert section in body, (
             f"Runbook {path} missing required section: {section!r}. "
-            "See docs/substrate/_TEMPLATE.md for the canonical structure."
+            "See backend/substrate_runbooks/_TEMPLATE.md for the canonical structure."
         )
 
 

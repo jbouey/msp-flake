@@ -388,10 +388,10 @@ async def post_substrate_action(
 # the regex guard is the only attack surface.
 # ---------------------------------------------------------------------------
 
-# substrate_action_api.py lives at
-#   mcp-server/central-command/backend/substrate_action_api.py
-# parents[3] reaches the repo root.
-_DOCS_DIR = pathlib.Path(__file__).resolve().parents[3] / "docs" / "substrate"
+# Runbook stubs live alongside this module so they travel inside the
+# backend rsync (dashboard_api_mount/). Path must resolve identically in the
+# repo tree AND in the container bind-mount at /app/dashboard_api/.
+_DOCS_DIR = pathlib.Path(__file__).resolve().parent / "substrate_runbooks"
 
 # Built once at import. If ALL_ASSERTIONS mutates at runtime (it doesn't —
 # the list is module-level immutable in practice), restart required.
@@ -433,7 +433,7 @@ async def get_runbook(invariant: str, user: dict = Depends(require_auth)):
         # case something got deleted post-deploy.
         raise HTTPException(
             status_code=404,
-            detail=f"doc missing: docs/substrate/{invariant}.md",
+            detail=f"doc missing: {invariant}.md",
         )
     meta = _DISPLAY_METADATA.get(invariant, {})
     # Severity is authoritative on the Assertion object, not the metadata.

@@ -5,11 +5,11 @@ Verifies:
       severity, markdown} — markdown contains required section headings.
   (b) unknown invariant returns 404.
   (c) path-traversal style invariant names return 400 or 404 (never leak
-      files outside docs/substrate/).
+      files outside backend/substrate_runbooks/).
   (d) missing auth dependency override → 401/403.
 
-Non-DB: the endpoint reads docs/substrate/<name>.md from disk and returns
-the contents. Safe to run without TEST_DATABASE_URL.
+Non-DB: the endpoint reads backend/substrate_runbooks/<name>.md from disk
+and returns the contents. Safe to run without TEST_DATABASE_URL.
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ async def test_runbook_404_for_unknown_invariant():
     ],
 )
 async def test_runbook_rejects_invalid_names(bad_name):
-    """Unsafe names MUST NOT resolve to files outside docs/substrate/.
+    """Unsafe names MUST NOT resolve to files outside backend/substrate_runbooks/.
 
     The regex ^[a-z0-9_]+$ is the only character-level guard; anything
     that reaches the filesystem must already be a pure snake_case name.

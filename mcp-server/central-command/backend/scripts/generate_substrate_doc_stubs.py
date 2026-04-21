@@ -1,4 +1,4 @@
-"""Generate one docs/substrate/<invariant>.md stub per entry in
+"""Generate one backend/substrate_runbooks/<invariant>.md stub per entry in
 assertions.ALL_ASSERTIONS.
 
 Re-run is safe — never overwrites a populated file (skips if file
@@ -22,11 +22,10 @@ sys.path.insert(0, str(HERE))
 
 from assertions import ALL_ASSERTIONS, _DISPLAY_METADATA  # noqa: E402
 
-# backend/ is 3 levels under repo root:
-#   mcp-server/central-command/backend/scripts/
-# Walk up 4 parents from this file to reach repo root.
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
-DOCS_ROOT = REPO_ROOT / "docs" / "substrate"
+# Keep runbook stubs INSIDE the backend package so the deploy rsync
+# (backend/ → dashboard_api_mount/) ships them to the container.
+# substrate_action_api._DOCS_DIR must point at the same directory.
+DOCS_ROOT = HERE / "substrate_runbooks"
 TEMPLATE_PATH = DOCS_ROOT / "_TEMPLATE.md"
 
 
@@ -35,7 +34,7 @@ def main() -> int:
     if not TEMPLATE_PATH.exists():
         print(
             f"ERROR: template missing at {TEMPLATE_PATH}. "
-            "Check docs/substrate/_TEMPLATE.md was created by Task 8 Step 1.",
+            "Check backend/substrate_runbooks/_TEMPLATE.md is present.",
             file=sys.stderr,
         )
         return 1
