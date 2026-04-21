@@ -27,7 +27,7 @@ import logging
 import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import asyncpg
@@ -47,6 +47,23 @@ class Violation:
 
 
 CheckFn = Callable[[asyncpg.Connection], Awaitable[List[Violation]]]
+
+
+def _version_tuple(v: Optional[str]) -> Tuple[int, ...]:
+    """Parse 'X.Y.Z' (optionally 'v'-prefixed, optionally with a '-rc1' suffix)
+    into an int tuple for stable comparison. Non-numeric segments clamp to 0 so
+    we can't crash on unexpected formats. Returns (0,) on empty/None so
+    unparseable versions sort as lowest."""
+    if not v:
+        return (0,)
+    clean = v.lstrip("vV").split("-", 1)[0].split("+", 1)[0]
+    parts: List[int] = []
+    for p in clean.split("."):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts) if parts else (0,)
 
 
 @dataclass
@@ -151,10 +168,16 @@ async def _check_offline_appliance_long(conn: asyncpg.Connection) -> List[Violat
 
 
 async def _check_agent_version_lag(conn: asyncpg.Connection) -> List[Violation]:
-    """site_appliances.agent_version must match the most-recent
-    SUCCESSFULLY-COMPLETED update_daemon order. A lag means the
-    completion ACK lied (pre-0.4.3 daemon bug) or a rollback fired
-    silently."""
+    """site_appliances.agent_version is BEHIND the most-recent successfully-
+    completed update_daemon order for the site. "Behind" (running < expected)
+    is the real lag — the completion ACK lied (pre-0.4.3 daemon bug) or a
+    rollback fired silently. Running AHEAD of expected is NOT a lag: it means
+    a newer update completed without the server recording `status=completed`,
+    which is a fleet_orders reporting hygiene gap, not a fleet health SEV1.
+
+    Bounded to the last 30d of completed orders so an ancient 0.3.91 record
+    can't anchor "expected" forever on a fleet that's moved on to 0.4.x.
+    """
     rows = await conn.fetch(
         """
         WITH last_update AS (
@@ -165,6 +188,7 @@ async def _check_agent_version_lag(conn: asyncpg.Connection) -> List[Violation]:
               FROM fleet_orders
              WHERE order_type = 'update_daemon'
                AND status = 'completed'
+               AND created_at > NOW() - INTERVAL '30 days'
           ORDER BY parameters->>'site_id', created_at DESC
         )
         SELECT lu.site_id, sa.mac_address, sa.hostname,
@@ -177,18 +201,24 @@ async def _check_agent_version_lag(conn: asyncpg.Connection) -> List[Violation]:
            AND lu.created_at < NOW() - INTERVAL '15 minutes'
         """
     )
-    return [
-        Violation(
-            site_id=r["site_id"],
-            details={
-                "mac_address": r["mac_address"],
-                "hostname": r["hostname"],
-                "running_version": r["agent_version"],
-                "expected_version": r["expected_version"],
-            },
+    violations: List[Violation] = []
+    for r in rows:
+        running = _version_tuple(r["agent_version"])
+        expected = _version_tuple(r["expected_version"])
+        if running >= expected:
+            continue
+        violations.append(
+            Violation(
+                site_id=r["site_id"],
+                details={
+                    "mac_address": r["mac_address"],
+                    "hostname": r["hostname"],
+                    "running_version": r["agent_version"],
+                    "expected_version": r["expected_version"],
+                },
+            )
         )
-        for r in rows
-    ]
+    return violations
 
 
 async def _check_fleet_order_url_resolvable(conn: asyncpg.Connection) -> List[Violation]:
@@ -2031,13 +2061,26 @@ async def _check_auth_failure_lockout(conn: asyncpg.Connection) -> List[Violatio
 # --- Engine ----------------------------------------------------------
 
 
+# Minutes an open violation must sit without a refresh before the engine
+# will mark it resolved. Prevents open→resolve→open thrash when a check
+# returns the same underlying problem but the row-set composition shifts
+# tick-to-tick (e.g. `status` briefly flips during a checkin UPDATE, or a
+# boundary like `last_checkin > NOW()-1h` clips one row out for one tick).
+# Observed in prod 2026-04-21: 4 invariants flipping 12–60× / day on stable
+# state. 5 min is large enough to cover checkin jitter (appliances check in
+# at ~10s cadence), small enough that a genuine recovery still clears within
+# one human-scale glance at the dashboard.
+RESOLVE_HYSTERESIS_MINUTES = 5
+
+
 async def run_assertions_once(conn: asyncpg.Connection) -> Dict[str, int]:
     """Run every registered assertion exactly once. UPSERTs new
     violations, marks resolved any open rows whose violations no
-    longer appear. Returns a {opened, refreshed, resolved, errors}
-    counters dict for observability."""
+    longer appear (after RESOLVE_HYSTERESIS_MINUTES of no refresh).
+    Returns a {opened, refreshed, resolved, held, errors} counters
+    dict for observability."""
 
-    counters = {"opened": 0, "refreshed": 0, "resolved": 0, "errors": 0}
+    counters = {"opened": 0, "refreshed": 0, "resolved": 0, "held": 0, "errors": 0}
 
     for a in ALL_ASSERTIONS:
         try:
@@ -2162,17 +2205,32 @@ async def run_assertions_once(conn: asyncpg.Connection) -> Dict[str, int]:
             if site_key not in current_keys:
                 try:
                     async with conn.transaction():
-                        await conn.execute(
-                            "UPDATE substrate_violations SET resolved_at = NOW() WHERE id = $1",
+                        result = await conn.execute(
+                            """
+                            UPDATE substrate_violations
+                               SET resolved_at = NOW()
+                             WHERE id = $1
+                               AND last_seen_at < NOW() - make_interval(mins => $2)
+                            """,
+                            row_id, RESOLVE_HYSTERESIS_MINUTES,
+                        )
+                    # asyncpg returns 'UPDATE <rowcount>'. Parse the count so
+                    # we can distinguish a true resolve from a hysteresis hold.
+                    rowcount = 0
+                    try:
+                        rowcount = int(result.split()[-1])
+                    except (ValueError, IndexError):
+                        pass
+                    if rowcount >= 1:
+                        counters["resolved"] += 1
+                        logger.info(
+                            "substrate violation RESOLVED: invariant=%s site=%s id=%s",
+                            a.name,
+                            site_key,
                             row_id,
                         )
-                    counters["resolved"] += 1
-                    logger.info(
-                        "substrate violation RESOLVED: invariant=%s site=%s id=%s",
-                        a.name,
-                        site_key,
-                        row_id,
-                    )
+                    else:
+                        counters["held"] += 1
                 except Exception:
                     logger.error(
                         "substrate resolve failed: invariant=%s site=%s id=%s",
@@ -2216,9 +2274,10 @@ async def assertions_loop():
                 deleted = await _ttl_sweep(conn)
             if counters["opened"] or counters["resolved"] or deleted:
                 logger.info(
-                    "assertions tick: opened=%d refreshed=%d resolved=%d errors=%d sigauth_swept=%d",
+                    "assertions tick: opened=%d refreshed=%d resolved=%d held=%d errors=%d sigauth_swept=%d",
                     counters["opened"], counters["refreshed"],
-                    counters["resolved"], counters["errors"], deleted,
+                    counters["resolved"], counters["held"],
+                    counters["errors"], deleted,
                 )
         except asyncio.CancelledError:
             raise
