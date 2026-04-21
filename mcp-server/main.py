@@ -75,6 +75,7 @@ from dashboard_api.privileged_access_api import (
 )
 from dashboard_api.discovery import router as discovery_router
 from dashboard_api.runbook_config import router as runbook_config_router
+from dashboard_api.substrate_action_api import router as substrate_action_router
 from dashboard_api.users import router as users_router
 from dashboard_api.integrations.api import router as integrations_router, public_router as integrations_public_router
 from dashboard_api.frameworks import router as frameworks_router
@@ -2015,6 +2016,7 @@ app.include_router(privileged_admin_router)
 app.include_router(branding_public_router)  # Public partner branding (no auth, for login pages)
 app.include_router(discovery_router)
 app.include_router(runbook_config_router)
+app.include_router(substrate_action_router)  # POST /api/admin/substrate/action (Task 6)
 app.include_router(users_router)
 app.include_router(integrations_router)
 app.include_router(integrations_public_router)  # OAuth callback (no auth)

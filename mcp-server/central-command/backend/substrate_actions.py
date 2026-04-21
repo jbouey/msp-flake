@@ -13,7 +13,13 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Dict
 
 from asyncpg import Connection
-from fleet_cli import PRIVILEGED_ORDER_TYPES
+
+# Dual-path import: bare-name works when backend/ is on sys.path (pytest),
+# relative works when loaded via the dashboard_api. package path (main.py).
+try:
+    from fleet_cli import PRIVILEGED_ORDER_TYPES
+except ImportError:
+    from .fleet_cli import PRIVILEGED_ORDER_TYPES
 
 logger = logging.getLogger(__name__)
 
