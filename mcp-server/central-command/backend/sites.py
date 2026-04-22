@@ -2298,17 +2298,30 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site
                     "completed_at": now.isoformat()
                 }
 
+    # Mirror result.error_message → top-level error_message column so the
+    # runbook's sample SQL (SELECT error_message FROM admin_orders WHERE ...)
+    # and any log shipper keyed off the column get the payload. The 0.4.7
+    # daemon's head+tail 4KB nix banner is currently buried in result JSONB
+    # only; this surfaces it. Preserves existing request.error_message when
+    # populated, otherwise lifts from the result dict.
+    err_msg_for_column = request.error_message
+    if not err_msg_for_column and isinstance(result_data, dict):
+        _nested = result_data.get("error_message")
+        if isinstance(_nested, str) and _nested.strip():
+            err_msg_for_column = _nested
+
     async with admin_connection(pool) as conn:
         # Try admin_orders first
         result = await conn.fetchrow("""
             UPDATE admin_orders
             SET status = $1,
                 completed_at = $2,
-                result = $3::jsonb
+                result = $3::jsonb,
+                error_message = COALESCE($5, error_message)
             WHERE order_id = $4
             AND status IN ('pending', 'acknowledged')
             RETURNING order_id, appliance_id, site_id, order_type, acknowledged_at
-        """, new_status, now, json.dumps(result_data), order_id)
+        """, new_status, now, json.dumps(result_data), order_id, err_msg_for_column)
 
         if not result:
             # Try healing orders table (orders created by L1/L2/L3 engine)
