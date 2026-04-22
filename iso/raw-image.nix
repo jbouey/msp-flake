@@ -42,7 +42,17 @@ let
     diskSize = "auto";
     partitionTableType = "efi";
     bootSize = "512M";
-    additionalSpace = "1G";   # headroom for future nixos-rebuild on the appliance
+    # 2026-04-22 FIX-6: was "1G", catastrophically undersized. On
+    # 84:3A:5B:1D:0F:E5 the root partition filled inside two generations
+    # of the closure, leaving nix's db.sqlite unable to commit writes
+    # (`database or disk is full (in '/nix/var/nix/db/db.sqlite')`) —
+    # every nixos-rebuild attempt on that box failed for 59 days until
+    # the 0.4.7 diagnostic surfaced the root cause. 8 GB is the minimum
+    # that survives ~8-10 generations of day-to-day system drift plus
+    # the eval-cache + nix store db working set. Does NOT protect
+    # appliances that never garbage-collect; pair with the weekly
+    # nix-gc timer already enabled on installed systems.
+    additionalSpace = "8G";   # headroom for future nixos-rebuild on the appliance
     installBootLoader = true;
     copyChannel = false;
     label = "nixos";
