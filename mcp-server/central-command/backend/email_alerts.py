@@ -1056,16 +1056,105 @@ _AM_SEV_RANK = {
 }
 
 
+def _am_parse_iso(ts: str) -> Optional[datetime]:
+    """Parse an Alertmanager RFC-3339 timestamp. AM emits trailing 'Z'."""
+    if not ts:
+        return None
+    try:
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        return datetime.fromisoformat(ts)
+    except Exception:
+        return None
+
+
+def _am_humanize_age(started: Optional[datetime], now: Optional[datetime] = None) -> str:
+    """'4m', '2h', '3d' — compact age string for how long an alert has
+    been firing. Empty string if the start time can't be parsed."""
+    if not started:
+        return ""
+    now = now or datetime.now(timezone.utc)
+    delta = now - started
+    total = int(delta.total_seconds())
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        return f"{total // 60}m"
+    if total < 86400:
+        return f"{total // 3600}h"
+    return f"{total // 86400}d"
+
+
+def _am_alert_identifier(alert: dict) -> str:
+    """Human-meaningful name. Prefer invariant_name over alertname —
+    alertname is often a generic bucket like 'SubstrateInvariantSev2',
+    while invariant_name is the real signal ('appliance_disk_pressure').
+    """
+    labels = alert.get("labels") or {}
+    return str(
+        labels.get("invariant_name")
+        or labels.get("alertname")
+        or "unknown"
+    )
+
+
+def _am_compose_subject(
+    alerts: list[dict],
+    primary_sev: str,
+    status: str,
+    common_labels: dict,
+) -> str:
+    """Subject that answers 'what/where/how bad' at a glance.
+
+    Shapes (pick the first that matches):
+      1. 1 alert, 1 site:        [SEV2 FIRING] appliance_disk_pressure — north-valley-branch-2
+      2. N alerts, 1 site:       [SEV2 FIRING] 2 invariants on north-valley-branch-2
+      3. N alerts, M sites:      [SEV2 FIRING] 3 invariants across 2 sites
+      4. No invariants parsed:   [SEV2 FIRING] {alertname fallback} — {N} alert(s)
+    """
+    subject_status = "FIRING" if status == "firing" else "RESOLVED"
+    sev_tag = primary_sev.upper() if primary_sev else "INFO"
+
+    # Collect unique sites + names
+    sites = set()
+    names = []
+    for a in alerts:
+        labels = a.get("labels") or {}
+        if labels.get("site_id"):
+            sites.add(str(labels["site_id"]))
+        names.append(_am_alert_identifier(a))
+
+    n = len(alerts)
+    if n == 1:
+        where = f" — {next(iter(sites))}" if sites else ""
+        return f"[{sev_tag} {subject_status}] {names[0]}{where}"
+    if len(sites) == 1:
+        return (
+            f"[{sev_tag} {subject_status}] {n} invariants on "
+            f"{next(iter(sites))}"
+        )
+    if len(sites) > 1:
+        return (
+            f"[{sev_tag} {subject_status}] {n} invariants across "
+            f"{len(sites)} sites"
+        )
+    # Fallback: no site info at all
+    fallback_name = common_labels.get("alertname") or "alerts"
+    return f"[{sev_tag} {subject_status}] {fallback_name} — {n} alert(s)"
+
+
 def send_alertmanager_digest(payload: dict, recipients: list[str]) -> bool:
-    """Email one digest per Alertmanager webhook POST.
+    """Email one human-readable digest per Alertmanager webhook POST.
 
-    AM already groups related alerts; we ship one email per group so
-    the on-call engineer gets a single coherent notification per
-    incident, not N parallel notes. Uses the same SMTP retry path as
-    all other alerts (_send_smtp_with_retry).
+    Prioritizes what the on-call engineer needs in the first 5 seconds:
+      1. Subject answers what/where/how bad at a glance.
+      2. Body leads with a one-line per-invariant summary + a single
+         triage link (/admin/substrate-health).
+      3. Raw AM forensics (group key, common labels, generator URLs)
+         live at the bottom for the rare post-incident deep-dive.
 
-    Subject carries the highest severity across the group and a
-    FIRING/RESOLVED status tag so an inbox rule can route on it.
+    AM already groups related alerts; one email per group, not N.
+    Uses the same SMTP retry path as all other alerts.
     """
     if not is_email_configured():
         logger.warning("email_not_configured - skipping alertmanager digest")
@@ -1085,66 +1174,166 @@ def send_alertmanager_digest(payload: dict, recipients: list[str]) -> bool:
         str((a.get("labels") or {}).get("severity", "")).lower()
         for a in alerts
     }
-    primary_sev = max(severities, key=lambda s: _AM_SEV_RANK.get(s, 0)) if severities else "info"
+    primary_sev = (
+        max(severities, key=lambda s: _AM_SEV_RANK.get(s, 0))
+        if severities else "info"
+    )
     subject_status = "FIRING" if status == "firing" else "RESOLVED"
-    alertname = (
-        common_labels.get("alertname")
-        or payload.get("receiver")
-        or "Alertmanager"
-    )
-    subject = f"[{primary_sev.upper()}] [{subject_status}] {alertname} — {len(alerts)} alert(s)"
+    subject = _am_compose_subject(alerts, primary_sev, status, common_labels)
 
-    text_lines = [
-        f"Alertmanager digest — {subject_status}",
-        "=" * 48,
-        f"Receiver:   {payload.get('receiver', '')}",
-        f"Group key:  {payload.get('groupKey', '')}",
-        f"External:   {payload.get('externalURL', '')}",
-        f"Alerts:     {len(alerts)}",
-        "",
-    ]
+    triage_url = (
+        common_ann.get("runbook_url")
+        or f"{FRONTEND_URL.rstrip('/')}/admin/substrate-health"
+    )
+
+    now = datetime.now(timezone.utc)
+
+    # --- Plaintext body -----------------------------------------------------
+    text_lines: list[str] = []
+    headline = "RESOLVED" if status == "resolved" else "FIRING"
+    text_lines.append(f"{headline} — {len(alerts)} alert(s) · sev={primary_sev or 'info'}")
+    text_lines.append("")
+    text_lines.append(f"Triage: {triage_url}")
+    text_lines.append("")
+    text_lines.append("Invariants:")
+
+    for alert in alerts:
+        labels = alert.get("labels") or {}
+        ann = alert.get("annotations") or {}
+        name = _am_alert_identifier(alert)
+        sev = str(labels.get("severity") or primary_sev or "info").lower()
+        site = labels.get("site_id") or "—"
+        a_status = str(alert.get("status") or status).lower()
+        age = _am_humanize_age(_am_parse_iso(alert.get("startsAt", "")), now)
+        age_phrase = (
+            f"firing {age}" if a_status == "firing" and age
+            else ("resolved" if a_status == "resolved" else a_status)
+        )
+        text_lines.append(
+            f"  - {name} · {site} · sev={sev} · {age_phrase}"
+        )
+        one_liner = (ann.get("summary") or ann.get("description") or "").strip()
+        if one_liner:
+            # Keep to a single line; AM descriptions can be multi-sentence.
+            one_liner = one_liner.split("\n", 1)[0].strip()
+            if len(one_liner) > 220:
+                one_liner = one_liner[:217] + "…"
+            text_lines.append(f"      {one_liner}")
+        rb = ann.get("runbook_url")
+        if rb and rb != triage_url:
+            text_lines.append(f"      runbook: {rb}")
+
+    text_lines.append("")
+    text_lines.append("— — —")
+    text_lines.append("Raw Alertmanager payload (for post-incident forensics):")
+    text_lines.append(f"  receiver:   {payload.get('receiver', '')}")
+    text_lines.append(f"  status:     {status}")
+    text_lines.append(f"  group_key:  {payload.get('groupKey', '')}")
     if common_labels:
-        text_lines.append("Common labels:")
+        text_lines.append("  common_labels:")
         for k, v in sorted(common_labels.items()):
-            text_lines.append(f"  {k}={v}")
-        text_lines.append("")
-    if common_ann:
-        text_lines.append("Common annotations:")
-        for k, v in sorted(common_ann.items()):
-            text_lines.append(f"  {k}: {v}")
-        text_lines.append("")
-
+            text_lines.append(f"    {k}={v}")
     for idx, alert in enumerate(alerts, 1):
-        a_labels = alert.get("labels") or {}
-        a_ann = alert.get("annotations") or {}
-        a_status = str(alert.get("status") or "?").lower()
-        a_name = a_labels.get("alertname", "?")
-        a_sev = a_labels.get("severity", "?")
-        text_lines.append(f"[{idx}/{len(alerts)}] {a_name} (sev={a_sev}) [{a_status}]")
-        for k in ("summary", "description", "runbook_url"):
-            if a_ann.get(k):
-                text_lines.append(f"    {k}: {a_ann[k]}")
-        if alert.get("startsAt"):
-            text_lines.append(f"    started:  {alert['startsAt']}")
-        if a_status == "resolved" and alert.get("endsAt"):
-            text_lines.append(f"    resolved: {alert['endsAt']}")
-        for k in ("invariant_name", "site_id", "instance", "job"):
-            if k in a_labels:
-                text_lines.append(f"    {k}: {a_labels[k]}")
+        text_lines.append(f"  [{idx}/{len(alerts)}] labels: {alert.get('labels') or {}}")
         if alert.get("generatorURL"):
-            text_lines.append(f"    query:    {alert['generatorURL']}")
-        text_lines.append("")
+            text_lines.append(f"         query: {alert['generatorURL']}")
+        if alert.get("startsAt"):
+            text_lines.append(f"         started:  {alert['startsAt']}")
+        if alert.get("endsAt") and a_status == "resolved":
+            text_lines.append(f"         resolved: {alert['endsAt']}")
 
-    text_lines.extend([
-        "---",
-        "Posted by Alertmanager → /api/admin/alertmanager-webhook.",
-    ])
     text_body = "\n".join(text_lines)
-    html_body = (
-        "<pre style='font-family:ui-monospace,monospace;"
-        "font-size:12px;line-height:1.4;color:#111827;'>"
-        f"{html.escape(text_body)}</pre>"
+
+    # --- HTML body ----------------------------------------------------------
+    tone = "#b91c1c" if status == "firing" else "#047857"
+    parts: list[str] = [
+        "<div style=\"font-family:ui-sans-serif,system-ui,-apple-system,"
+        "sans-serif;color:#111827;max-width:720px;\">",
+        f"<div style=\"border-left:4px solid {tone};padding:8px 12px;"
+        "background:#f9fafb;border-radius:4px;margin-bottom:16px;\">"
+        f"<strong style=\"color:{tone};\">{headline}</strong> · "
+        f"{len(alerts)} alert(s) · sev={html.escape(primary_sev or 'info')}"
+        "</div>",
+        "<p style=\"margin:0 0 16px;\">"
+        f"<a href=\"{html.escape(triage_url)}\" "
+        "style=\"background:#111827;color:#fff;padding:8px 14px;"
+        "text-decoration:none;border-radius:4px;font-weight:600;\">"
+        "Triage in Substrate Health</a></p>",
+        "<h3 style=\"margin:16px 0 8px;font-size:14px;color:#374151;\">Invariants</h3>",
+        "<table style=\"border-collapse:collapse;width:100%;"
+        "font-size:13px;\">",
+        "<thead><tr style=\"text-align:left;color:#6b7280;"
+        "border-bottom:1px solid #e5e7eb;\">"
+        "<th style=\"padding:4px 8px;\">Invariant</th>"
+        "<th style=\"padding:4px 8px;\">Site</th>"
+        "<th style=\"padding:4px 8px;\">Sev</th>"
+        "<th style=\"padding:4px 8px;\">State</th>"
+        "</tr></thead><tbody>",
+    ]
+
+    for alert in alerts:
+        labels = alert.get("labels") or {}
+        ann = alert.get("annotations") or {}
+        name = _am_alert_identifier(alert)
+        sev = str(labels.get("severity") or primary_sev or "info").lower()
+        site = labels.get("site_id") or "—"
+        a_status = str(alert.get("status") or status).lower()
+        age = _am_humanize_age(_am_parse_iso(alert.get("startsAt", "")), now)
+        age_phrase = (
+            f"firing {age}" if a_status == "firing" and age
+            else ("resolved" if a_status == "resolved" else a_status)
+        )
+        one_liner = (ann.get("summary") or ann.get("description") or "").strip()
+        if one_liner:
+            one_liner = one_liner.split("\n", 1)[0].strip()
+            if len(one_liner) > 220:
+                one_liner = one_liner[:217] + "…"
+        rb = ann.get("runbook_url")
+        sev_color = {
+            "sev1": "#b91c1c", "critical": "#b91c1c", "page": "#b91c1c",
+            "sev2": "#b45309", "warning": "#b45309", "warn": "#b45309",
+            "sev3": "#1d4ed8", "info": "#6b7280",
+        }.get(sev, "#6b7280")
+
+        parts.append(
+            "<tr style=\"border-bottom:1px solid #f3f4f6;vertical-align:top;\">"
+            f"<td style=\"padding:8px;font-family:ui-monospace,monospace;\">"
+            f"{html.escape(name)}</td>"
+            f"<td style=\"padding:8px;\">{html.escape(str(site))}</td>"
+            f"<td style=\"padding:8px;color:{sev_color};font-weight:600;\">"
+            f"{html.escape(sev)}</td>"
+            f"<td style=\"padding:8px;\">{html.escape(age_phrase)}</td>"
+            "</tr>"
+        )
+        if one_liner or rb:
+            extra_bits: list[str] = []
+            if one_liner:
+                extra_bits.append(
+                    f"<span style=\"color:#374151;\">{html.escape(one_liner)}</span>"
+                )
+            if rb and rb != triage_url:
+                extra_bits.append(
+                    f"<a href=\"{html.escape(rb)}\" "
+                    "style=\"color:#1d4ed8;\">runbook</a>"
+                )
+            parts.append(
+                "<tr><td colspan=\"4\" "
+                "style=\"padding:0 8px 10px;font-size:12px;\">"
+                + " · ".join(extra_bits) +
+                "</td></tr>"
+            )
+
+    parts.append("</tbody></table>")
+    parts.append(
+        "<details style=\"margin-top:20px;color:#6b7280;font-size:12px;\">"
+        "<summary style=\"cursor:pointer;\">Raw Alertmanager payload</summary>"
+        "<pre style=\"font-family:ui-monospace,monospace;font-size:11px;"
+        "line-height:1.4;background:#f9fafb;padding:8px;border-radius:4px;"
+        "overflow-x:auto;\">"
+        + html.escape(text_body) +
+        "</pre></details></div>"
     )
+    html_body = "".join(parts)
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
