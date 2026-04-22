@@ -58,8 +58,8 @@ func TestNewProcessor(t *testing.T) {
 	}
 	// Handler count is a smoke test for "all handlers registered."
 	// Update alongside RegisterHandler calls in NewProcessor.
-	if p.HandlerCount() != 27 {
-		t.Fatalf("expected 27 handlers, got %d", p.HandlerCount())
+	if p.HandlerCount() != 28 {
+		t.Fatalf("expected 28 handlers, got %d", p.HandlerCount())
 	}
 }
 

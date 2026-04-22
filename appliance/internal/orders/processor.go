@@ -47,6 +47,7 @@ var orderTimeouts = map[string]time.Duration{
 	"chaos_quicktest":     5 * time.Minute,
 	"view_logs":           30 * time.Second,
 	"validate_credential": 30 * time.Second,
+	"nix_gc":              30 * time.Minute,
 }
 
 // defaultOrderTimeout is used for order types not in orderTimeouts.
@@ -303,6 +304,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["enable_emergency_access"] = p.handleEnableEmergencyAccess
 	p.handlers["disable_emergency_access"] = p.handleDisableEmergencyAccess
 	p.handlers["configure_dns"] = p.handleConfigureDNS
+	p.handlers["nix_gc"] = p.handleNixGC
 
 	return p
 }

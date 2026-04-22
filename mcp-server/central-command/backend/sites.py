@@ -263,6 +263,7 @@ class OrderType(str, Enum):
     REMOVE_SENSOR = "remove_sensor"
     UPDATE_CREDENTIALS = "update_credentials"
     RESTART_AGENT = "restart_agent"
+    NIX_GC = "nix_gc"
 
 
 class HealingTier(str, Enum):

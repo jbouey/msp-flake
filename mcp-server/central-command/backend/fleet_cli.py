@@ -53,10 +53,14 @@ VALID_ORDER_TYPES = {
     "chaos_quicktest",
     "enable_emergency_access", "disable_emergency_access",
     "configure_dns",
+    # 2026-04-22: reclaim disk in /nix/store. Non-privileged; idempotent.
+    # Surfaces bytes_freed in the completion payload.
+    "nix_gc",
 }
 
 DEFAULT_PARAMS = {
     "nixos_rebuild": {"flake_ref": "github:jbouey/msp-flake#osiriscare-appliance-disk"},
+    "nix_gc": {"older_than_days": 14, "optimise": True},
 }
 
 REQUIRED_PARAMS = {
