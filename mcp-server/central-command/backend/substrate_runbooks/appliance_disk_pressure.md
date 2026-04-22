@@ -72,3 +72,4 @@ NOT an auto-fix: GC is operator-authorized precisely because it prunes rollback 
 ## Change log
 
 - 2026-04-22 — generated — cut-in following the 0.4.7 diagnostic upgrade revealing ENOSPC as the silent root cause behind the 59-day `nixos_rebuild_success_drought`.
+- 2026-04-22 — FIX-7 — broadened the pattern match to also catch `database or disk is full` (sqlite's translation of ENOSPC). The canary at 7C:D3:0A:7C:55:18 surfaced this gap: when `/nix/var/nix/db/db.sqlite` or the nix eval-cache sqlite can't commit, the top-level banner is the sqlite phrase and the kernel `No space left` string never appears. Both patterns now match.

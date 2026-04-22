@@ -2205,9 +2205,19 @@ async def _check_appliance_disk_pressure(conn: asyncpg.Connection) -> List[Viola
       * fleet_order_completions.error_message (for fleet-wide rollouts).
       * fleet_order_completions.output->>'error_message' (JSONB mirror).
 
-    Pattern-matches `No space left` and `no space left` — the nix error
-    banner is deterministic text from the kernel ENOSPC path, not
-    localized.
+    Pattern-matches two deterministic surfaces of ENOSPC:
+      * `%no space left%` — the kernel ENOSPC banner (direct writes).
+      * `%database or disk is full%` — sqlite's translation of ENOSPC
+        when committing to /nix/var/nix/db/db.sqlite or the eval-cache.
+
+    Both phrases indicate the same structural condition (full partition),
+    but they surface at different layers. The 2026-04-22 canary at
+    7C:D3:0A:7C:55:18 hit ONLY the sqlite phrase — the top-level
+    `No space left` banner never appeared — so the regex before FIX-7
+    silently missed the violation. Both patterns must be checked; the
+    eval-cache sqlite in particular can be full before the filesystem
+    itself is 100%, because it lives under /root/.cache/nix on the
+    same partition.
     """
     rows = await conn.fetch(
         """
@@ -2224,7 +2234,8 @@ async def _check_appliance_disk_pressure(conn: asyncpg.Connection) -> List[Viola
             FROM admin_orders ao
            WHERE ao.completed_at > NOW() - INTERVAL '24 hours'
              AND ao.status IN ('failed', 'completed')
-             AND ao.error_message ILIKE '%no space left%'
+             AND (ao.error_message ILIKE '%no space left%'
+                  OR ao.error_message ILIKE '%database or disk is full%')
 
           UNION ALL
 
@@ -2240,7 +2251,8 @@ async def _check_appliance_disk_pressure(conn: asyncpg.Connection) -> List[Viola
             FROM admin_orders ao
            WHERE ao.completed_at > NOW() - INTERVAL '24 hours'
              AND ao.status IN ('failed', 'completed')
-             AND ao.result->>'error_message' ILIKE '%no space left%'
+             AND (ao.result->>'error_message' ILIKE '%no space left%'
+                  OR ao.result->>'error_message' ILIKE '%database or disk is full%')
 
           UNION ALL
 
@@ -2257,7 +2269,8 @@ async def _check_appliance_disk_pressure(conn: asyncpg.Connection) -> List[Viola
             JOIN fleet_orders fo ON fo.id = foc.fleet_order_id
            WHERE foc.completed_at > NOW() - INTERVAL '24 hours'
              AND foc.status = 'failed'
-             AND foc.error_message ILIKE '%no space left%'
+             AND (foc.error_message ILIKE '%no space left%'
+                  OR foc.error_message ILIKE '%database or disk is full%')
 
           UNION ALL
 
@@ -2274,7 +2287,8 @@ async def _check_appliance_disk_pressure(conn: asyncpg.Connection) -> List[Viola
             JOIN fleet_orders fo ON fo.id = foc.fleet_order_id
            WHERE foc.completed_at > NOW() - INTERVAL '24 hours'
              AND foc.status = 'failed'
-             AND foc.output->>'error_message' ILIKE '%no space left%'
+             AND (foc.output->>'error_message' ILIKE '%no space left%'
+                  OR foc.output->>'error_message' ILIKE '%database or disk is full%')
         )
         SELECT
             appliance_id,
