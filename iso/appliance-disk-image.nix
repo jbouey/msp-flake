@@ -172,13 +172,6 @@ in
     LOGO=osiriscare
   '';
 
-  # Quieter boot menu — the systemd-boot entry title inherits from
-  # system.nixos.label, which we already overrode to "OsirisCare".
-  boot.loader.systemd-boot = {
-    consoleMode = lib.mkDefault "max";
-    editor = lib.mkDefault false;   # auditors: no grub-edit-to-root
-  };
-
   # Quiet MOTD/issue files that sometimes leak branding
   environment.etc."issue".text = lib.mkForce ''
     OsirisCare Appliance \n \l
@@ -227,7 +220,11 @@ in
   # ============================================================================
   boot = {
     loader = {
-      systemd-boot.enable = true;
+      systemd-boot = {
+        enable = true;
+        consoleMode = lib.mkDefault "max";
+        editor = lib.mkDefault false;   # auditors: no grub-edit-to-root
+      };
       efi.canTouchEfiVariables = false;
       timeout = 3;
     };

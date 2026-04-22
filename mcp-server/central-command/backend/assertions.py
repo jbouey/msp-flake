@@ -671,6 +671,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Operators have issued ≥1 nixos_rebuild admin_order in the last 7 days but NONE have succeeded. Signals a silent regression in the flake-eval / systemd-boot / lanzaboote path that prevents NixOS-level remediation from landing. Lost capability is invisible until the next live rebuild attempt surfaces it — this invariant exposes the gap on the dashboard between attempts. 2026-04-21 round-table: a 59-day success drought on fleet-wide rebuild capability went undetected until a live canary rebuild against the journal-timer feature confirmed it; pre-0.4.7 daemons truncated the nix `error:` banner, so every failure looked like an unexplained exit code.",
         check=lambda c: _check_nixos_rebuild_success_drought(c),
     ),
+    Assertion(
+        name="appliance_disk_pressure",
+        severity="sev2",
+        description="An appliance has surfaced a `No space left on device` error in a recent admin_order or fleet_order_completion within the last 24 hours. Disk pressure on /nix/store silently fails nixos_rebuild AND blocks evidence-bundle writes (the daemon cannot fsync the compliance bundle to disk). 2026-04-22 canary incident: 84:3A:5B:1D:0F:E5 rebuild failed with `writing to file: No space left on device` under a 5 GB /nix store — no substrate signal existed until the 0.4.7 diagnostic upgrade tail exposed the nix error. Mirror of vps_disk_pressure, scoped per-appliance. Auto-resolves when no matching error is observed in the 24h window.",
+        check=lambda c: _check_appliance_disk_pressure(c),
+    ),
 ]
 
 
@@ -894,6 +900,21 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "writes the full log to /var/lib/msp/last-rebuild-error.log on "
             "the appliance — grab it via break-glass SSH if the error_message "
             "head+tail is still not enough.",
+    },
+    "appliance_disk_pressure": {
+        "display_name": "Appliance /nix store out of space",
+        "recommended_action": "Issue a nix_gc fleet order against the affected "
+            "appliance: `fleet_cli.py create nix_gc --actor-email you@example.com "
+            "--reason \"<20+ char reason>\" --param older_than_days=7 "
+            "--param optimise=true`. The handler reclaims /nix/store generations "
+            "older than N days and runs `nix-store --optimise` for hardlink "
+            "dedup; returns before/after bytes in the completion payload. If "
+            "disk stays tight after GC, the /nix partition itself is "
+            "undersized — reprovision with a larger MSP-DATA partition (the "
+            "disk image defaults to 20 GB for /nix, which is marginal once "
+            "multiple generations accumulate). Cross-check "
+            "nixos_rebuild_success_drought — disk pressure is the most common "
+            "root cause of a silent rebuild failure.",
     },
 }
 
@@ -2160,6 +2181,154 @@ async def _check_nixos_rebuild_success_drought(conn: asyncpg.Connection) -> List
             },
         )
     ]
+
+
+async def _check_appliance_disk_pressure(conn: asyncpg.Connection) -> List[Violation]:
+    """Fire sev2 when a recent admin_order or fleet_order_completion from
+    any appliance carries a `No space left on device` error within the
+    last 24h. Emitted per-appliance so operators can remediate the
+    specific box (via nix_gc fleet_order) without losing the fleet-wide
+    context.
+
+    The 2026-04-22 canary incident on 84:3A:5B:1D:0F:E5 surfaced this
+    exactly: the /nix store was 99%+ full and every nixos_rebuild
+    attempt failed with `writing to file: No space left on device`. No
+    substrate signal existed — the drought invariant caught the outcome
+    (0 successes in 7d) but not the root cause. This invariant catches
+    the root cause within one 60s tick of the next failure.
+
+    Matches the error banner across both sources of truth:
+      * admin_orders.error_message (top-level column, populated since
+        Session 209 commit 661c9ed1 — the COALESCE-from-JSONB fix).
+      * admin_orders.result->>'error_message' (the JSONB payload that
+        predates the top-level column fix; safe to union.)
+      * fleet_order_completions.error_message (for fleet-wide rollouts).
+      * fleet_order_completions.output->>'error_message' (JSONB mirror).
+
+    Pattern-matches `No space left` and `no space left` — the nix error
+    banner is deterministic text from the kernel ENOSPC path, not
+    localized.
+    """
+    rows = await conn.fetch(
+        """
+        WITH evidence AS (
+          -- admin_orders: top-level error_message column
+          SELECT
+              ao.appliance_id              AS appliance_id,
+              ao.site_id                   AS site_id,
+              ao.order_type                AS order_type,
+              ao.order_id                  AS order_ref,
+              ao.completed_at              AS observed_at,
+              ao.error_message             AS error_text,
+              'admin_order.error_message'  AS source
+            FROM admin_orders ao
+           WHERE ao.completed_at > NOW() - INTERVAL '24 hours'
+             AND ao.status IN ('failed', 'completed')
+             AND ao.error_message ILIKE '%no space left%'
+
+          UNION ALL
+
+          -- admin_orders: JSONB result.error_message (catches legacy payloads)
+          SELECT
+              ao.appliance_id              AS appliance_id,
+              ao.site_id                   AS site_id,
+              ao.order_type                AS order_type,
+              ao.order_id                  AS order_ref,
+              ao.completed_at              AS observed_at,
+              ao.result->>'error_message'  AS error_text,
+              'admin_order.result'         AS source
+            FROM admin_orders ao
+           WHERE ao.completed_at > NOW() - INTERVAL '24 hours'
+             AND ao.status IN ('failed', 'completed')
+             AND ao.result->>'error_message' ILIKE '%no space left%'
+
+          UNION ALL
+
+          -- fleet_order_completions: top-level error_message column
+          SELECT
+              foc.appliance_id                   AS appliance_id,
+              NULL                               AS site_id,
+              fo.order_type                      AS order_type,
+              foc.fleet_order_id::text           AS order_ref,
+              foc.completed_at                   AS observed_at,
+              foc.error_message                  AS error_text,
+              'fleet_completion.error_message'   AS source
+            FROM fleet_order_completions foc
+            JOIN fleet_orders fo ON fo.id = foc.fleet_order_id
+           WHERE foc.completed_at > NOW() - INTERVAL '24 hours'
+             AND foc.status = 'failed'
+             AND foc.error_message ILIKE '%no space left%'
+
+          UNION ALL
+
+          -- fleet_order_completions: JSONB output.error_message
+          SELECT
+              foc.appliance_id                   AS appliance_id,
+              NULL                               AS site_id,
+              fo.order_type                      AS order_type,
+              foc.fleet_order_id::text           AS order_ref,
+              foc.completed_at                   AS observed_at,
+              foc.output->>'error_message'       AS error_text,
+              'fleet_completion.output'          AS source
+            FROM fleet_order_completions foc
+            JOIN fleet_orders fo ON fo.id = foc.fleet_order_id
+           WHERE foc.completed_at > NOW() - INTERVAL '24 hours'
+             AND foc.status = 'failed'
+             AND foc.output->>'error_message' ILIKE '%no space left%'
+        )
+        SELECT
+            appliance_id,
+            MAX(site_id)                         AS site_id,
+            COUNT(*)                             AS evidence_count,
+            MAX(observed_at)                     AS latest_observed_at,
+            -- Pick the freshest error message as the representative
+            (array_agg(error_text ORDER BY observed_at DESC))[1]
+                                                 AS latest_error,
+            (array_agg(order_type ORDER BY observed_at DESC))[1]
+                                                 AS latest_order_type,
+            (array_agg(order_ref ORDER BY observed_at DESC))[1]
+                                                 AS latest_order_ref,
+            (array_agg(source ORDER BY observed_at DESC))[1]
+                                                 AS latest_source
+          FROM evidence
+         WHERE appliance_id IS NOT NULL
+         GROUP BY appliance_id
+        """
+    )
+    violations: List[Violation] = []
+    for row in rows:
+        raw_error = row["latest_error"] or ""
+        # Truncate the error to keep the details payload bounded — the
+        # head+tail 4KB diagnostic from 0.4.7 is already large; we only
+        # need enough of the banner to confirm the match in a glance.
+        truncated_error = raw_error[:512] if raw_error else ""
+        violations.append(
+            Violation(
+                site_id=row["site_id"],
+                details={
+                    "appliance_id": row["appliance_id"],
+                    "evidence_count_24h": int(row["evidence_count"] or 0),
+                    "latest_observed_at": (
+                        row["latest_observed_at"].isoformat()
+                        if row["latest_observed_at"] else None
+                    ),
+                    "latest_order_type": row["latest_order_type"],
+                    "latest_order_ref": row["latest_order_ref"],
+                    "latest_source": row["latest_source"],
+                    "error_excerpt": truncated_error,
+                    "remediation": (
+                        "Issue a nix_gc fleet_order against this appliance: "
+                        "`fleet_cli.py create nix_gc --actor-email "
+                        "you@example.com --reason '<20+ char reason>' "
+                        "--param older_than_days=7 --param optimise=true`. "
+                        "The handler returns before/after bytes in the "
+                        "completion payload — confirm bytes_freed > 0 and "
+                        "re-canary the failing order."
+                    ),
+                },
+            )
+        )
+    return violations
 
 
 # --- Engine ----------------------------------------------------------
