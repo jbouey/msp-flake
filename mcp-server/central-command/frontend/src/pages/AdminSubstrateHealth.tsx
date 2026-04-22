@@ -104,6 +104,27 @@ interface SlaPayload {
   min_minutes: number | null;
 }
 
+interface FleetUpdateHealthPayload {
+  nixos_rebuild: {
+    success_7d: number;
+    failed_7d: number;
+    expired_7d: number;
+    success_30d: number;
+    failed_30d: number;
+    expired_30d: number;
+    last_success_at: string | null;
+    last_failure_at: string | null;
+    days_since_last_success: number | null;
+  };
+  update_daemon: {
+    completed_7d: number;
+    skipped_7d: number;
+    failed_7d: number;
+    last_completion_at: string | null;
+  };
+  agent_versions: Array<{ version: string; count: number }>;
+}
+
 const SEVERITY_COLOR: Record<string, string> = {
   sev1: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
   sev2: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
@@ -121,6 +142,7 @@ function relTime(iso: string): string {
 export const AdminSubstrateHealth: React.FC = () => {
   const [violations, setViolations] = useState<ViolationsPayload | null>(null);
   const [sla, setSla] = useState<SlaPayload | null>(null);
+  const [updateHealth, setUpdateHealth] = useState<FleetUpdateHealthPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [drawerInvariant, setDrawerInvariant] = useState<string | null>(null);
@@ -131,17 +153,22 @@ export const AdminSubstrateHealth: React.FC = () => {
     let cancelled = false;
     const load = async () => {
       try {
-        const [vRes, sRes] = await Promise.all([
+        const [vRes, sRes, uRes] = await Promise.all([
           fetch('/api/dashboard/admin/substrate-violations', { credentials: 'include' }),
           fetch('/api/dashboard/admin/substrate-installation-sla', { credentials: 'include' }),
+          fetch('/api/dashboard/admin/substrate-fleet-update-health', { credentials: 'include' }),
         ]);
         if (!vRes.ok) throw new Error(`violations HTTP ${vRes.status}`);
         if (!sRes.ok) throw new Error(`sla HTTP ${sRes.status}`);
         const v = await vRes.json();
         const s = await sRes.json();
+        // Tolerate 404 on the update-health endpoint in case it lags
+        // behind a backend deploy — the rest of the page still renders.
+        const u = uRes.ok ? await uRes.json() : null;
         if (!cancelled) {
           setViolations(v);
           setSla(s);
+          setUpdateHealth(u);
           setLoading(false);
           setError(null);
         }
@@ -302,6 +329,122 @@ export const AdminSubstrateHealth: React.FC = () => {
               <div className={`font-medium ${sla.breaches_over_target > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
                 {sla.breaches_over_target}
               </div>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
+      {updateHealth && (
+        <GlassCard>
+          <div className="px-5 py-4 border-b border-white/10">
+            <h2 className="text-lg font-medium text-white">Fleet update health</h2>
+            <p className="text-white/60 text-xs mt-1">
+              NixOS-level (nixos_rebuild) + daemon-level (update_daemon) delivery paths.
+              Paired with the <span className="font-mono">nixos_rebuild_success_drought</span> invariant.
+            </p>
+          </div>
+          <div className="px-5 py-4 space-y-4 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <div className="text-white/60 text-xs">nixos_rebuild · 7d success</div>
+                <div
+                  className={`font-medium ${
+                    updateHealth.nixos_rebuild.success_7d === 0 &&
+                    (updateHealth.nixos_rebuild.failed_7d + updateHealth.nixos_rebuild.expired_7d) > 0
+                      ? 'text-rose-300'
+                      : 'text-emerald-300'
+                  }`}
+                >
+                  {updateHealth.nixos_rebuild.success_7d} / {
+                    updateHealth.nixos_rebuild.success_7d +
+                    updateHealth.nixos_rebuild.failed_7d +
+                    updateHealth.nixos_rebuild.expired_7d
+                  }
+                </div>
+              </div>
+              <div>
+                <div className="text-white/60 text-xs">30d success</div>
+                <div className="text-white font-medium">
+                  {updateHealth.nixos_rebuild.success_30d} / {
+                    updateHealth.nixos_rebuild.success_30d +
+                    updateHealth.nixos_rebuild.failed_30d +
+                    updateHealth.nixos_rebuild.expired_30d
+                  }
+                </div>
+              </div>
+              <div>
+                <div className="text-white/60 text-xs">Days since last success</div>
+                <div
+                  className={`font-medium ${
+                    (updateHealth.nixos_rebuild.days_since_last_success ?? 0) > 7
+                      ? 'text-amber-300'
+                      : 'text-emerald-300'
+                  }`}
+                >
+                  {updateHealth.nixos_rebuild.days_since_last_success ?? '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-white/60 text-xs">Last failure</div>
+                <div className="text-white/80 text-xs">
+                  {updateHealth.nixos_rebuild.last_failure_at
+                    ? relTime(updateHealth.nixos_rebuild.last_failure_at)
+                    : 'never'}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2 border-t border-white/5">
+              <div>
+                <div className="text-white/60 text-xs">update_daemon · 7d completed</div>
+                <div className="text-emerald-300 font-medium">
+                  {updateHealth.update_daemon.completed_7d}
+                </div>
+              </div>
+              <div>
+                <div className="text-white/60 text-xs">skipped (already at version)</div>
+                <div className="text-white font-medium">
+                  {updateHealth.update_daemon.skipped_7d}
+                </div>
+              </div>
+              <div>
+                <div className="text-white/60 text-xs">failed</div>
+                <div
+                  className={`font-medium ${
+                    updateHealth.update_daemon.failed_7d > 0 ? 'text-rose-300' : 'text-emerald-300'
+                  }`}
+                >
+                  {updateHealth.update_daemon.failed_7d}
+                </div>
+              </div>
+              <div>
+                <div className="text-white/60 text-xs">Last completion</div>
+                <div className="text-white/80 text-xs">
+                  {updateHealth.update_daemon.last_completion_at
+                    ? relTime(updateHealth.update_daemon.last_completion_at)
+                    : 'never'}
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-white/5">
+              <div className="text-white/60 text-xs mb-2">
+                Daemon version distribution (live appliances, last 7d)
+              </div>
+              {updateHealth.agent_versions.length === 0 ? (
+                <div className="text-white/50 text-xs">No live appliances checked in</div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {updateHealth.agent_versions.map((v) => (
+                    <span
+                      key={v.version}
+                      className="px-2 py-0.5 rounded text-xs font-mono bg-white/5 border border-white/10 text-white/80"
+                    >
+                      {v.version} · <span className="text-white/60">{v.count}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </GlassCard>

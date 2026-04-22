@@ -926,13 +926,23 @@ func (p *Processor) handleNixOSRebuild(ctx context.Context, params map[string]in
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		os.Remove(markerPath)
-		// Truncate output for error reporting
+		// 500-char tail-only truncation (pre-0.4.7) deleted the nix
+		// `error:` banner and kept only the final location citation,
+		// making rebuild failures undebuggable from the server side.
+		// Keep the full output on disk AND return head+tail 4KB so the
+		// admin_orders.result payload carries both the top-of-error
+		// context and the final citation.
 		outStr := string(output)
-		if len(outStr) > 500 {
-			outStr = outStr[len(outStr)-500:]
+		logPath := filepath.Join(p.stateDir, "last-rebuild-error.log")
+		_ = os.WriteFile(logPath, output, 0o644)
+		const head = 2048
+		const tail = 2048
+		truncated := outStr
+		if len(outStr) > head+tail+64 {
+			truncated = outStr[:head] + "\n…[truncated, full on appliance at " + logPath + "]…\n" + outStr[len(outStr)-tail:]
 		}
-		log.Printf("[orders] nixos-rebuild test failed (exit %v)", err)
-		return nil, fmt.Errorf("nixos-rebuild test failed: %v\n%s", err, outStr)
+		log.Printf("[orders] nixos-rebuild test failed (exit %v); full log at %s", err, logPath)
+		return nil, fmt.Errorf("nixos-rebuild test failed: %v\nfull log: %s\n%s", err, logPath, truncated)
 	}
 
 	log.Printf("[orders] nixos-rebuild test succeeded, scheduling daemon restart in 10s")

@@ -56,6 +56,30 @@ const slaPayload = {
   min_minutes: null,
 };
 
+const fleetUpdateHealthPayload = {
+  nixos_rebuild: {
+    success_7d: 0,
+    failed_7d: 1,
+    expired_7d: 0,
+    success_30d: 0,
+    failed_30d: 5,
+    expired_30d: 1,
+    last_success_at: "2026-02-21T04:53:12Z",
+    last_failure_at: "2026-04-21T23:44:20Z",
+    days_since_last_success: 59,
+  },
+  update_daemon: {
+    completed_7d: 3,
+    skipped_7d: 12,
+    failed_7d: 0,
+    last_completion_at: "2026-04-22T00:01:30Z",
+  },
+  agent_versions: [
+    { version: "0.4.7", count: 3 },
+    { version: "0.4.4", count: 1 },
+  ],
+};
+
 beforeEach(() => {
   globalThis.fetch = vi.fn(async (input: unknown) => {
     const url = typeof input === "string"
@@ -70,6 +94,9 @@ beforeEach(() => {
     }
     if (url.includes("/admin/substrate-installation-sla")) {
       return new Response(JSON.stringify(slaPayload), { status: 200 });
+    }
+    if (url.includes("/admin/substrate-fleet-update-health")) {
+      return new Response(JSON.stringify(fleetUpdateHealthPayload), { status: 200 });
     }
     if (url.includes("/admin/substrate/runbook/")) {
       return new Response(JSON.stringify({
@@ -112,5 +139,16 @@ describe("AdminSubstrateHealth upgrades", () => {
     await waitFor(() => screen.getByText("Install Loop"));
     fireEvent.click(screen.getAllByRole("button", { name: /view runbook/i })[0]);
     await waitFor(() => expect(screen.getByText("body")).toBeInTheDocument());
+  });
+
+  it("renders Fleet update health card with drought + version distribution", async () => {
+    wrap(<AdminSubstrateHealth />);
+    await waitFor(() => expect(screen.getByText("Fleet update health")).toBeInTheDocument());
+    // Days since last success = 59 from fixture
+    expect(screen.getByText("59")).toBeInTheDocument();
+    // 7d success / total = 0 / 1
+    expect(screen.getByText("0 / 1")).toBeInTheDocument();
+    // At least one version chip
+    expect(screen.getByText(/0\.4\.7/)).toBeInTheDocument();
   });
 });

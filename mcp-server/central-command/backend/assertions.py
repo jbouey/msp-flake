@@ -665,6 +665,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="The flywheel orchestrator runs every 5 minutes and is the ONLY legal writer to promoted_rule_events (the append-only spine ledger). If there are promoted rules in transitional states (rolling_out with fleet-order completions, active with unacknowledged regime events) but zero ledger rows landed in the last 60 minutes, the orchestrator is either stuck or every transition is silently failing its advance_lifecycle() call. This is exactly the 2026-04-18 audit finding: Python EVENT_TYPES had drifted from the DB CHECK so every transition tripped a CheckViolationError that safe_rollout downgraded to a WARNING. Fleet Intelligence dashboard sat at all-zeros for months. At sev1 because the data flywheel — L2→L1 self-improvement — is silently offline.",
         check=lambda c: _check_flywheel_ledger_stalled(c),
     ),
+    Assertion(
+        name="nixos_rebuild_success_drought",
+        severity="sev2",
+        description="Operators have issued ≥1 nixos_rebuild admin_order in the last 7 days but NONE have succeeded. Signals a silent regression in the flake-eval / systemd-boot / lanzaboote path that prevents NixOS-level remediation from landing. Lost capability is invisible until the next live rebuild attempt surfaces it — this invariant exposes the gap on the dashboard between attempts. 2026-04-21 round-table: a 59-day success drought on fleet-wide rebuild capability went undetected until a live canary rebuild against the journal-timer feature confirmed it; pre-0.4.7 daemons truncated the nix `error:` banner, so every failure looked like an unexplained exit code.",
+        check=lambda c: _check_nixos_rebuild_success_drought(c),
+    ),
 ]
 
 
@@ -873,6 +879,21 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "Run test_three_list_lockstep_pg.py — if it fails, land a "
             "migration that extends the DB CHECK to match the Python set. "
             "Cross-reference FLYWHEEL_ORCHESTRATOR_MODE (should be 'enforce' in prod).",
+    },
+    "nixos_rebuild_success_drought": {
+        "display_name": "No nixos_rebuild has succeeded fleet-wide in 7d",
+        "recommended_action": "Pull the latest failed order's output: "
+            "`SELECT appliance_id, error_message, result FROM admin_orders "
+            "WHERE order_type='nixos_rebuild' AND status='failed' "
+            "ORDER BY completed_at DESC LIMIT 1;`. Pre-0.4.7 daemons truncate "
+            "to 500 chars and hide the nix `error:` banner — upgrade to "
+            "0.4.7+ then re-fire a canary on one appliance. Common causes: "
+            "flake-eval regression from pinned-nixpkgs drift, lanzaboote hash "
+            "mismatch, or a runtime-only option like boot.loader.systemd-boot "
+            "that doesn't survive `nixos-rebuild test`. The 0.4.7 daemon "
+            "writes the full log to /var/lib/msp/last-rebuild-error.log on "
+            "the appliance — grab it via break-glass SSH if the error_message "
+            "head+tail is still not enough.",
     },
 }
 
@@ -2055,6 +2076,89 @@ async def _check_auth_failure_lockout(conn: asyncpg.Connection) -> List[Violatio
             },
         )
         for r in rows
+    ]
+
+
+async def _check_nixos_rebuild_success_drought(conn: asyncpg.Connection) -> List[Violation]:
+    """Fire when operators have ATTEMPTED nixos_rebuild admin_orders
+    in the last 7 days but none have succeeded.
+
+    The healthy state is either (a) a steady cadence of completed
+    rebuilds, or (b) no attempts at all. The pathological state is
+    "we keep trying and every one fails" — which is invisible from
+    the existing dashboards because nixos_rebuild is an admin-triggered
+    action, not a background loop.
+
+    Windows:
+      * attempts counted within last 7 days (admin_orders.created_at)
+      * successes counted within last 7 days (admin_orders.status='completed')
+      * last-success anchor extended to 365 days so the violation
+        details carry a human-meaningful "days since last success" number
+        for the dashboard card.
+
+    Does NOT fire when admin_orders has a completed row in the 7-day
+    window, even if later failures followed — one success is enough to
+    prove the path still works. Operator judgment takes over from there.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE status = 'completed') AS successes_7d,
+            COUNT(*) FILTER (WHERE status = 'failed')    AS failures_7d,
+            COUNT(*) FILTER (WHERE status = 'expired')   AS expired_7d,
+            MAX(completed_at) FILTER (WHERE status = 'completed')
+                AS last_success_7d
+          FROM admin_orders
+         WHERE order_type = 'nixos_rebuild'
+           AND created_at > NOW() - INTERVAL '7 days'
+        """
+    )
+    if row is None:
+        return []
+    successes = int(row["successes_7d"] or 0)
+    failures = int(row["failures_7d"] or 0) + int(row["expired_7d"] or 0)
+    if successes > 0 or failures < 1:
+        return []
+
+    # Anchor the "drought length" number with a separate query so we can
+    # report 59-days-since-success even when the 7-day window is empty
+    # of successes.
+    last_success_ever = await conn.fetchval(
+        """
+        SELECT MAX(completed_at)
+          FROM admin_orders
+         WHERE order_type = 'nixos_rebuild'
+           AND status = 'completed'
+        """
+    )
+    days_since_success: Optional[int] = None
+    if last_success_ever is not None:
+        delta = datetime.now(timezone.utc) - last_success_ever
+        days_since_success = int(delta.total_seconds() // 86400)
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "successes_7d": successes,
+                "failures_7d": int(row["failures_7d"] or 0),
+                "expired_7d": int(row["expired_7d"] or 0),
+                "last_success_at": (
+                    last_success_ever.isoformat()
+                    if last_success_ever else None
+                ),
+                "days_since_last_success": days_since_success,
+                "remediation": (
+                    "Pull the most recent failed order's payload: "
+                    "SELECT appliance_id, error_message, result FROM admin_orders "
+                    "WHERE order_type='nixos_rebuild' AND status='failed' "
+                    "ORDER BY completed_at DESC LIMIT 1. 0.4.7+ daemons "
+                    "persist the full log at /var/lib/msp/last-rebuild-error.log "
+                    "on the appliance and return head+tail 4KB in error_message. "
+                    "Pre-0.4.7 daemons tail-truncated to 500 chars and hid the "
+                    "nix `error:` banner — upgrade first, then re-canary."
+                ),
+            },
+        )
     ]
 
 

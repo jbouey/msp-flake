@@ -7974,6 +7974,102 @@ async def get_installation_sla(
     }
 
 
+@router.get("/admin/substrate-fleet-update-health")
+async def get_fleet_update_health(
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Fleet update delivery health — complement to the
+    `nixos_rebuild_success_drought` invariant.
+
+    Surfaces the three signals an operator needs to know whether the
+    NixOS-level + daemon-level update paths are healthy BEFORE the next
+    rebuild attempt:
+
+      * nixos_rebuild outcomes — 7 day + 30 day windows, last-success anchor.
+      * update_daemon activity  — completions, skipped, failed, expired.
+      * daemon version distribution across live appliances.
+
+    Cheap: 3 indexed SELECTs on admin_orders/fleet_orders/site_appliances.
+    """
+    from .fleet import get_pool
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        nixos_row = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'completed' AND created_at > NOW() - INTERVAL '7 days')  AS success_7d,
+                COUNT(*) FILTER (WHERE status = 'failed'    AND created_at > NOW() - INTERVAL '7 days')  AS failed_7d,
+                COUNT(*) FILTER (WHERE status = 'expired'   AND created_at > NOW() - INTERVAL '7 days')  AS expired_7d,
+                COUNT(*) FILTER (WHERE status = 'completed' AND created_at > NOW() - INTERVAL '30 days') AS success_30d,
+                COUNT(*) FILTER (WHERE status = 'failed'    AND created_at > NOW() - INTERVAL '30 days') AS failed_30d,
+                COUNT(*) FILTER (WHERE status = 'expired'   AND created_at > NOW() - INTERVAL '30 days') AS expired_30d,
+                MAX(completed_at) FILTER (WHERE status = 'completed') AS last_success_at,
+                MAX(completed_at) FILTER (WHERE status IN ('failed', 'expired')) AS last_failure_at
+              FROM admin_orders
+             WHERE order_type = 'nixos_rebuild'
+            """
+        )
+        daemon_row = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE foc.status = 'completed' AND foc.completed_at > NOW() - INTERVAL '7 days') AS completed_7d,
+                COUNT(*) FILTER (WHERE foc.status = 'skipped'   AND foc.completed_at > NOW() - INTERVAL '7 days') AS skipped_7d,
+                COUNT(*) FILTER (WHERE foc.status = 'failed'    AND foc.completed_at > NOW() - INTERVAL '7 days') AS failed_7d,
+                MAX(foc.completed_at) FILTER (WHERE foc.status = 'completed') AS last_completion_at
+              FROM fleet_order_completions foc
+              JOIN fleet_orders fo ON fo.id = foc.fleet_order_id
+             WHERE fo.order_type = 'update_daemon'
+            """
+        )
+        version_rows = await conn.fetch(
+            """
+            SELECT COALESCE(agent_version, 'unknown') AS agent_version,
+                   COUNT(*) AS n
+              FROM site_appliances
+             WHERE deleted_at IS NULL
+               AND last_checkin > NOW() - INTERVAL '7 days'
+          GROUP BY COALESCE(agent_version, 'unknown')
+          ORDER BY n DESC
+            """
+        )
+
+    def _days_since(ts) -> Optional[int]:
+        if ts is None:
+            return None
+        delta = datetime.now(timezone.utc) - ts
+        return int(delta.total_seconds() // 86400)
+
+    return {
+        "nixos_rebuild": {
+            "success_7d": int(nixos_row["success_7d"] or 0) if nixos_row else 0,
+            "failed_7d": int(nixos_row["failed_7d"] or 0) if nixos_row else 0,
+            "expired_7d": int(nixos_row["expired_7d"] or 0) if nixos_row else 0,
+            "success_30d": int(nixos_row["success_30d"] or 0) if nixos_row else 0,
+            "failed_30d": int(nixos_row["failed_30d"] or 0) if nixos_row else 0,
+            "expired_30d": int(nixos_row["expired_30d"] or 0) if nixos_row else 0,
+            "last_success_at": nixos_row["last_success_at"].isoformat()
+                if nixos_row and nixos_row["last_success_at"] else None,
+            "last_failure_at": nixos_row["last_failure_at"].isoformat()
+                if nixos_row and nixos_row["last_failure_at"] else None,
+            "days_since_last_success": _days_since(
+                nixos_row["last_success_at"] if nixos_row else None
+            ),
+        },
+        "update_daemon": {
+            "completed_7d": int(daemon_row["completed_7d"] or 0) if daemon_row else 0,
+            "skipped_7d": int(daemon_row["skipped_7d"] or 0) if daemon_row else 0,
+            "failed_7d": int(daemon_row["failed_7d"] or 0) if daemon_row else 0,
+            "last_completion_at": daemon_row["last_completion_at"].isoformat()
+                if daemon_row and daemon_row["last_completion_at"] else None,
+        },
+        "agent_versions": [
+            {"version": r["agent_version"], "count": int(r["n"])}
+            for r in version_rows
+        ],
+    }
+
+
 # =============================================================================
 # AGENT HEALTH (fleet-wide Go agent status)
 # =============================================================================
