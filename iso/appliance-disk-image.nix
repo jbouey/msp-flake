@@ -866,6 +866,15 @@ EOF
     compliance-agent appliance-daemon-go network-scanner local-portal
     jq yq
     sbctl  # UEFI Secure Boot key management
+    # 2026-04-22 FIX-5: nixos-rebuild is normally pulled in by the NixOS
+    # installer-tools module on disk images, but physical-appliance-pilot
+    # -1aea78 surfaced `Failed to find executable nixos-rebuild` in Feb
+    # 2026 — the installed-system closure was missing it entirely, so
+    # every nixos_rebuild admin_order failed until an operator manually
+    # rebuilt via SSH. Pinning it in systemPackages guarantees
+    # /run/current-system/sw/bin/nixos-rebuild exists on every future
+    # install, making NixOS-level remediation reliably deliverable.
+    nixos-rebuild
     # Session 206 fix: msp-auto-provision's signature-verify script imports
     # `from nacl.signing import VerifyKey`. Previously pynacl wasn't in the
     # installed system's python path → import failed silently → script
