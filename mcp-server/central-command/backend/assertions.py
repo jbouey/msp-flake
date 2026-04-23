@@ -594,6 +594,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_installed_but_silent(c),
     ),
     Assertion(
+        name="provisioning_network_fail",
+        severity="sev2",
+        description="A freshly-installed appliance is retrying provisioning (install_sessions.checkin_count ≥ 3 within the last hour) AND the installed system has never reported a successful 4-stage network gate (first_outbound_success_at IS NULL) AND site_appliances is either missing or stale >15min. Fires EARLIER than provisioning_stalled (within ~90s of first failed install-system checkin) so the customer sees the DNS/egress/TLS/health stage failure before 20 minutes of silence. Paired with v40 FIX-11 gate on :8443 beacon — `install_gate_status.last_stage_failed` names the exact broken stage. 2026-04-23 round-table — outcome-layer signal for the FIX-9/10 firewall-determinism fix.",
+        check=lambda c: _check_provisioning_network_fail(c),
+    ),
+    Assertion(
         name="watchdog_silent",
         severity="sev1",
         description="Watchdog service on a previously-reporting appliance has stopped checking in for >10 min. SSH-strip precondition regression — investigate immediately.",
@@ -804,6 +810,15 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "OR attach the SSD to another system and read /boot/msp-boot-diag.json. "
             "Common causes: MSP-DATA not mounted, no DHCP lease, config.yaml missing, "
             "daemon crash-loop, outbound HTTPS blocked.",
+    },
+    "provisioning_network_fail": {
+        "display_name": "Install stuck — installed system can't reach origin",
+        "recommended_action": "LAN-scan http://<appliance-ip>:8443/ — "
+            "install_gate_status.last_stage_failed names the exact broken stage. "
+            "dns = whitelist api.osiriscare.net on the site's DNS filter. "
+            "tcp_443 = allow outbound TCP/443 to 178.156.162.116. "
+            "tls = exempt api.osiriscare.net from SSL-inspection. "
+            "health = origin is down, contact OsirisCare on-call.",
     },
     "watchdog_silent": {
         "display_name": "Appliance watchdog not checking in",
@@ -1632,6 +1647,124 @@ async def _check_provisioning_stalled(conn: asyncpg.Connection) -> List[Violatio
                         "appliance. Verify with the local status beacon on "
                         "the appliance at http://<ip>:8443/ for per-boot "
                         "diagnostics."
+                    ),
+                },
+            )
+        )
+    return out
+
+
+async def _check_provisioning_network_fail(conn: asyncpg.Connection) -> List[Violation]:
+    """v40 FIX-14 (Session 209, 2026-04-23 round-table cont.).
+
+    Fires when a freshly-installed appliance has reached the installed
+    system and is retrying provisioning, but the 4-stage network gate
+    (DNS → TCP/443 → TLS → HTTP /health, FIX-11) has never passed.
+
+    Predicates:
+      - install_sessions row is fresh (last_seen in last hour,
+        checkin_count >= 3 — enough attempts to be meaningful)
+      - first_outbound_success_at IS NULL — the installed system has
+        NEVER completed a successful 4-stage gate
+      - Either site_appliances is missing for this MAC, OR its
+        last_checkin is older than 15 minutes (so we're not firing
+        on a working appliance that happened to have a slow first boot)
+
+    Fires EARLIER than provisioning_stalled: that invariant waits for
+    install_sessions to go stale (20+ min); this one fires within ~90s
+    of the first failed installed-system checkin because
+    first_outbound_success_at is populated eagerly on the FIRST pass.
+
+    Distinct from installed_but_silent — that one fires when the
+    installer itself has stopped and nothing else has started. This one
+    fires while the installed system is ACTIVELY retrying but failing
+    the gate.
+
+    When fired, the beacon at http://<appliance-ip>:8443/ will have a
+    populated `install_gate_status.last_stage_failed` naming the exact
+    broken stage (dns/tcp_443/tls/health) — that's the actionable
+    payload this invariant points operators at.
+    """
+    # We key on install_sessions because that's the only table that
+    # has a row BEFORE the installed system ever checks in. The
+    # first_outbound_success_at column lives on install_sessions too
+    # (populated by /api/install/report/net-ready).
+    #
+    # Fallback: if the column doesn't yet exist (migration 239 not
+    # applied), short-circuit to an empty list so we don't crash the
+    # engine. The migration auto-apply at startup (Session 205) should
+    # prevent this in practice but defense-in-depth costs nothing.
+    col_exists = await conn.fetchval(
+        """
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_name = 'install_sessions'
+           AND column_name = 'first_outbound_success_at'
+         LIMIT 1
+        """
+    )
+    if not col_exists:
+        return []
+
+    rows = await conn.fetch(
+        """
+        SELECT
+            iss.site_id,
+            iss.mac_address,
+            iss.hostname,
+            iss.ip_addresses,
+            iss.checkin_count AS installer_checkins,
+            iss.last_seen     AS installer_last_seen,
+            iss.last_error_code,
+            iss.last_error_detail,
+            iss.api_resolved_ip,
+            sa.last_checkin   AS site_appliance_last_checkin,
+            EXTRACT(EPOCH FROM (NOW() - iss.last_seen))/60 AS installer_age_min
+          FROM install_sessions iss
+          LEFT JOIN site_appliances sa
+            ON UPPER(sa.mac_address) = UPPER(iss.mac_address)
+           AND sa.site_id = iss.site_id
+           AND sa.deleted_at IS NULL
+         WHERE iss.last_seen > NOW() - INTERVAL '1 hour'
+           AND iss.checkin_count >= 3
+           AND iss.first_outbound_success_at IS NULL
+           AND (
+                 sa.last_checkin IS NULL
+              OR sa.last_checkin < NOW() - INTERVAL '15 minutes'
+           )
+        """
+    )
+    out: List[Violation] = []
+    for r in rows:
+        out.append(
+            Violation(
+                site_id=r["site_id"],
+                details={
+                    "mac_address": r["mac_address"],
+                    "hostname": r["hostname"],
+                    "ip_addresses": list(r["ip_addresses"] or []),
+                    "installer_checkin_count": int(r["installer_checkins"]),
+                    "installer_last_seen": (
+                        r["installer_last_seen"].isoformat()
+                        if r["installer_last_seen"] else None
+                    ),
+                    "installer_age_min": round(float(r["installer_age_min"] or 0), 1),
+                    "last_error_code": r["last_error_code"],
+                    "last_error_detail": r["last_error_detail"],
+                    "api_resolved_ip": r["api_resolved_ip"],
+                    "site_appliance_last_checkin": (
+                        r["site_appliance_last_checkin"].isoformat()
+                        if r["site_appliance_last_checkin"] else None
+                    ),
+                    "hint": (
+                        "Installed system has never reached the Central "
+                        "Command origin. LAN-scan the appliance at "
+                        "http://<appliance-ip>:8443/ — the "
+                        "install_gate_status.last_stage_failed field names "
+                        "the exact broken stage (dns, tcp_443, tls, or "
+                        "health). Typical fix is to whitelist "
+                        "api.osiriscare.net (origin 178.156.162.116) on "
+                        "the site's DNS filter / web proxy / firewall."
                     ),
                 },
             )

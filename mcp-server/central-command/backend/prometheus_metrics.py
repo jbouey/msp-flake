@@ -1188,6 +1188,61 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             except Exception:
                 logger.exception("metrics: server-pubkey divergence query failed")
 
+            # v40 FIX-15 (Session 209): install-gate failing gauge.
+            # Fires 1.0 for every MAC that is actively retrying installed-
+            # system provisioning AND has never successfully passed the
+            # 4-stage network gate (first_outbound_success_at IS NULL).
+            # Mirrors the provisioning_network_fail substrate invariant
+            # for scraper-side alerting; a Prom rule can page on
+            # `sum(osiriscare_install_gate_failing) > 0 for 10m`.
+            try:
+                col_exists = await conn.fetchval(
+                    """
+                    SELECT 1
+                      FROM information_schema.columns
+                     WHERE table_name = 'install_sessions'
+                       AND column_name = 'first_outbound_success_at'
+                     LIMIT 1
+                    """
+                )
+                if col_exists:
+                    gate_rows = await conn.fetch(
+                        """
+                        SELECT iss.site_id,
+                               iss.mac_address,
+                               COALESCE(iss.hostname, iss.mac_address) AS label
+                          FROM install_sessions iss
+                          LEFT JOIN site_appliances sa
+                            ON UPPER(sa.mac_address) = UPPER(iss.mac_address)
+                           AND sa.site_id = iss.site_id
+                           AND sa.deleted_at IS NULL
+                         WHERE iss.last_seen > NOW() - INTERVAL '1 hour'
+                           AND iss.checkin_count >= 3
+                           AND iss.first_outbound_success_at IS NULL
+                           AND (
+                                 sa.last_checkin IS NULL
+                              OR sa.last_checkin < NOW() - INTERVAL '15 minutes'
+                           )
+                        """
+                    )
+                    sections.append(_gauge(
+                        "osiriscare_install_gate_failing",
+                        "1 per MAC with installed-system network gate failing. Labels: site_id, mac_address, label (hostname or MAC). v40 FIX-15.",
+                        [
+                            (
+                                {
+                                    "site_id": (r["site_id"] or "")[:80],
+                                    "mac_address": (r["mac_address"] or "")[:20],
+                                    "label": (r["label"] or "")[:80],
+                                },
+                                1.0,
+                            )
+                            for r in gate_rows
+                        ] or [({}, 0.0)],
+                    ))
+            except Exception:
+                logger.exception("metrics: install_gate_failing query failed")
+
             # Phase 6: regime change events in the last 7 days (unacknowledged)
             try:
                 row = await conn.fetchrow("""

@@ -7919,58 +7919,134 @@ async def get_substrate_violations(
 async def get_installation_sla(
     user: dict = Depends(auth_module.require_auth),
 ):
-    """Time-to-first-checkin SLA distribution.
+    """Time-to-first-checkin SLA distribution — two metrics.
 
-    Joins install_sessions.first_seen (when the live USB phoned home)
-    against site_appliances.first_checkin (when the installed system
-    first checked in). Difference = end-to-end provisioning latency.
+    network_up  — first_outbound_success_at − first_seen. Earlier
+                  signal: the moment the installed system's 4-stage
+                  gate (dns/tcp_443/tls/health) passed on the :8443
+                  beacon and POSTed /api/install/report/net-ready.
+                  Populated by migration 239 + FIX-15 endpoint.
+                  Null-safe: older install_sessions rows have NULL
+                  until a fresh install lands.
+    auth_up     — sa.first_checkin − first_seen. Existing signal:
+                  installed system has authenticated Bearer checkin.
+                  This is the END-to-end latency the customer feels.
 
-    Customer-facing target: 99th-percentile under 5 minutes."""
+    Both distributions (p50/p95/p99) are emitted so the substrate
+    panel can surface a FAILURE EARLY ("network up in 30s, auth_up
+    never arrived" = the enrollment handler is broken, not the ISO
+    firewall) — that split mattered the day the v39 install-gate
+    bug masqueraded as a silent appliance.
+
+    Customer-facing target: 99th-percentile auth_up under 5 minutes."""
     from .fleet import get_pool
 
     pool = await get_pool()
     async with admin_connection(pool) as conn:
-        # Per-MAC SLA across the last 30 days. Live USB session start
-        # to first installed-system checkin. NULL for in-flight or
-        # ISO-only sessions (never reached the installed boot).
-        rows = await conn.fetch(
+        # FIX-15 + plan v40-complete-iso §FIX-15 follow-up: guard
+        # on column presence so code shipped before migration 239
+        # applies doesn't blow up the endpoint (substrate panel
+        # polls every 60s; a 500 here hides every other SLA stat).
+        net_col = await conn.fetchval(
             """
-            SELECT sa.mac_address,
-                   sa.site_id,
-                   sa.first_checkin,
-                   ist.first_seen AS install_started_at,
-                   EXTRACT(EPOCH FROM (sa.first_checkin - ist.first_seen))/60 AS minutes_to_green
-              FROM site_appliances sa
-              LEFT JOIN install_sessions ist
-                     ON LOWER(ist.mac_address) = LOWER(sa.mac_address)
-                    AND ist.site_id = sa.site_id
-             WHERE sa.first_checkin IS NOT NULL
-               AND sa.first_checkin > NOW() - INTERVAL '30 days'
-               AND ist.first_seen IS NOT NULL
-               AND sa.first_checkin >= ist.first_seen
+            SELECT 1 FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name   = 'install_sessions'
+               AND column_name  = 'first_outbound_success_at'
             """
         )
-        samples = [float(r["minutes_to_green"]) for r in rows if r["minutes_to_green"] is not None]
-        samples.sort()
-        n = len(samples)
+        if net_col:
+            rows = await conn.fetch(
+                """
+                SELECT sa.mac_address,
+                       sa.site_id,
+                       sa.first_checkin,
+                       ist.first_seen                       AS install_started_at,
+                       ist.first_outbound_success_at        AS net_ready_at,
+                       EXTRACT(EPOCH FROM (sa.first_checkin - ist.first_seen))/60             AS minutes_to_auth_up,
+                       EXTRACT(EPOCH FROM (ist.first_outbound_success_at - ist.first_seen))/60 AS minutes_to_net_up
+                  FROM site_appliances sa
+                  LEFT JOIN install_sessions ist
+                         ON LOWER(ist.mac_address) = LOWER(sa.mac_address)
+                        AND ist.site_id = sa.site_id
+                 WHERE sa.first_checkin IS NOT NULL
+                   AND sa.first_checkin > NOW() - INTERVAL '30 days'
+                   AND ist.first_seen IS NOT NULL
+                   AND sa.first_checkin >= ist.first_seen
+                """
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT sa.mac_address,
+                       sa.site_id,
+                       sa.first_checkin,
+                       ist.first_seen AS install_started_at,
+                       NULL::timestamptz AS net_ready_at,
+                       EXTRACT(EPOCH FROM (sa.first_checkin - ist.first_seen))/60 AS minutes_to_auth_up,
+                       NULL::double precision AS minutes_to_net_up
+                  FROM site_appliances sa
+                  LEFT JOIN install_sessions ist
+                         ON LOWER(ist.mac_address) = LOWER(sa.mac_address)
+                        AND ist.site_id = sa.site_id
+                 WHERE sa.first_checkin IS NOT NULL
+                   AND sa.first_checkin > NOW() - INTERVAL '30 days'
+                   AND ist.first_seen IS NOT NULL
+                   AND sa.first_checkin >= ist.first_seen
+                """
+            )
 
-        def percentile(p: int) -> float | None:
-            if n == 0:
-                return None
-            idx = max(0, min(n - 1, int(round((p / 100.0) * (n - 1)))))
-            return round(samples[idx], 2)
+        auth_samples = sorted(
+            float(r["minutes_to_auth_up"])
+            for r in rows
+            if r["minutes_to_auth_up"] is not None and float(r["minutes_to_auth_up"]) >= 0
+        )
+        net_samples = sorted(
+            float(r["minutes_to_net_up"])
+            for r in rows
+            if r["minutes_to_net_up"] is not None and float(r["minutes_to_net_up"]) >= 0
+        )
 
-        breaches_5min = sum(1 for s in samples if s > 5.0)
+        def _stats(samples: list[float]) -> dict:
+            n = len(samples)
+
+            def percentile(p: int) -> float | None:
+                if n == 0:
+                    return None
+                idx = max(0, min(n - 1, int(round((p / 100.0) * (n - 1)))))
+                return round(samples[idx], 2)
+
+            return {
+                "sample_count": n,
+                "breaches_over_target": sum(1 for s in samples if s > 5.0),
+                "p50_minutes": percentile(50),
+                "p95_minutes": percentile(95),
+                "p99_minutes": percentile(99),
+                "max_minutes": round(samples[-1], 2) if samples else None,
+                "min_minutes": round(samples[0], 2) if samples else None,
+            }
+
+        auth_stats = _stats(auth_samples)
+        net_stats = _stats(net_samples)
 
     return {
-        "sample_count": n,
+        # Legacy flat shape kept intact so the existing
+        # AdminSubstrateHealth.tsx tiles render without a frontend
+        # deploy race. These values mirror auth_up.*.
+        "sample_count": auth_stats["sample_count"],
         "target_minutes": 5,
-        "breaches_over_target": breaches_5min,
-        "p50_minutes": percentile(50),
-        "p95_minutes": percentile(95),
-        "p99_minutes": percentile(99),
-        "max_minutes": round(samples[-1], 2) if samples else None,
-        "min_minutes": round(samples[0], 2) if samples else None,
+        "breaches_over_target": auth_stats["breaches_over_target"],
+        "p50_minutes": auth_stats["p50_minutes"],
+        "p95_minutes": auth_stats["p95_minutes"],
+        "p99_minutes": auth_stats["p99_minutes"],
+        "max_minutes": auth_stats["max_minutes"],
+        "min_minutes": auth_stats["min_minutes"],
+        # FIX-15 follow-up: two-metric split so the substrate panel
+        # + dashboard card can show net_up (earlier signal) alongside
+        # auth_up (end-to-end SLA). Column absence => net_up.sample_count=0.
+        "auth_up": auth_stats,
+        "net_up": net_stats,
+        "net_column_present": bool(net_col),
     }
 
 

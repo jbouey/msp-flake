@@ -888,6 +888,20 @@ EOF
   # ============================================================================
   networking = {
     useDHCP = true;
+
+    # FIX-9 (v40, 2026-04-23) — pin origin names to the VPS IP deterministically.
+    # Rationale: `networking.firewall.extraCommands` used to do `host -t A
+    # api.osiriscare.net` at rule-apply time and pin whatever Cloudflare
+    # returned. Cloudflare rotates frontend IPs under the name, so the
+    # pinned set goes stale and the daemon silently loses egress. Appliance
+    # traffic does not benefit from CF (authenticated, per-appliance API
+    # keys + Ed25519 evidence sigs carry the security weight), so go
+    # direct-to-origin. Origin VPS serves a valid TLS cert for these
+    # names (verified 2026-04-23 via `curl --resolve`).
+    extraHosts = ''
+      178.156.162.116 api.osiriscare.net
+    '';
+
     firewall = {
       enable = true;
       # 22=ssh, 80=status, 8080=compliance-agent-sensor, 50051=grpc, 8084=local-portal
@@ -936,11 +950,15 @@ EOF
         iptables -A MSP_EGRESS -o lo -j RETURN
         iptables -A MSP_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 
-        API_IPS=$(${pkgs.inetutils}/bin/host -t A api.osiriscare.net 2>/dev/null | ${pkgs.gawk}/bin/awk '/has address/ {print $4}' | head -5)
-        [ -z "$API_IPS" ] && API_IPS="178.156.162.116"
-        for ip in $API_IPS; do
-          iptables -A MSP_EGRESS -p tcp -d "$ip" --dport 443 -j RETURN
-        done
+        # FIX-9 (v40, 2026-04-23) — hardcoded origin allowlist, no runtime DNS.
+        # The previous cut did `host -t A api.osiriscare.net` here and
+        # pinned Cloudflare's rotating frontend IPs. When CF rotated, the
+        # firewall went deaf. `networking.extraHosts` above ensures every
+        # userspace resolver answers `api.osiriscare.net → 178.156.162.116`,
+        # so hardcoding the origin IP here is a consistent allowlist, not
+        # a divergent one. The `msp-egress-selfheal.service` (FIX-10) is
+        # the self-healing layer if the origin VPS ever moves.
+        iptables -A MSP_EGRESS -p tcp -d 178.156.162.116/32 --dport 443 -j RETURN
 
         iptables -A MSP_EGRESS -p udp --dport 53 -j RETURN
         iptables -A MSP_EGRESS -p tcp --dport 53 -j RETURN
@@ -968,10 +986,14 @@ EOF
         ip6tables -A MSP_EGRESS6 -o lo -j RETURN
         ip6tables -A MSP_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 
-        API_V6=$(${pkgs.inetutils}/bin/host -t AAAA api.osiriscare.net 2>/dev/null | ${pkgs.gawk}/bin/awk '/has IPv6 address/ {print $5}' | head -5)
-        for ip in $API_V6; do
-          ip6tables -A MSP_EGRESS6 -p tcp -d "$ip" --dport 443 -j RETURN
-        done
+        # FIX-9 (v40, 2026-04-23) — no IPv6 egress for the origin.
+        # VPS 178.156.162.116 is IPv4-only. A runtime `host -t AAAA` lookup
+        # here previously returned Cloudflare's v6 frontends, pinned them,
+        # and then went deaf on rotation — same bug class as v4. Since
+        # the origin has no v6, there's nothing to allow. If an IPv6-
+        # capable daemon tries the v6 path, it fails fast, and Go's
+        # `net.DefaultResolver` happy-eyeballs back to v4 → `extraHosts`
+        # pin → `178.156.162.116` → MSP_EGRESS allows it.
 
         # DNS + DHCPv6 + NTP + ICMPv6 (NDP is required for IPv6 to work at all)
         ip6tables -A MSP_EGRESS6 -p udp --dport 53 -j RETURN
@@ -1003,15 +1025,14 @@ EOF
     };
   };
 
-  # Gate H1-D fix: daily re-apply of the egress firewall rules so DNS
-  # changes to api.osiriscare.net (VPS migration, DR failover, etc.)
-  # propagate without requiring a full nixos-rebuild. The rules are
-  # resolved at rule-apply time, so restarting the firewall service
-  # re-runs the host lookup. Without this daily tick, the hardcoded
-  # 178.156.162.116 fallback is load-bearing forever — coordinated
-  # fleet brick risk.
+  # Gate H1-D: daily full re-apply of the egress firewall rules. Under
+  # v40's FIX-9 (IPs pinned via networking.extraHosts, no runtime DNS
+  # inside the firewall block), this is a safety-net — the MSP_EGRESS
+  # chain is already deterministic at activation. The daily tick exists
+  # to catch manual drift or partial service failures, and as a place
+  # to hook a future VPS-migration update flow.
   systemd.services.msp-egress-refresh = {
-    description = "Re-resolve api.osiriscare.net + re-apply egress firewall rules";
+    description = "Re-apply egress firewall rules (daily safety-net)";
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${pkgs.systemd}/bin/systemctl reload-or-restart firewall.service";
@@ -1026,6 +1047,53 @@ EOF
       AccuracySec = "5min";
       RandomizedDelaySec = "30min";  # scatter across the fleet
       Persistent = true;
+    };
+  };
+
+  # FIX-10 (v40, 2026-04-23) — 60-second self-heal for MSP_EGRESS.
+  #
+  # The daily msp-egress-refresh above is coarse; if MSP_EGRESS gets
+  # flushed (operator error, partial firewall service failure, NixOS
+  # activation hiccup), the appliance loses egress and stays dark for
+  # up to 24 h. This timer inspects the chain every 60 s and, if the
+  # origin allow rule for 178.156.162.116 is missing, triggers a
+  # firewall service reload that rebuilds the chain from config.
+  #
+  # The script writes a structured log line on every heal action so
+  # the log shipper's ERROR alerting catches it — a silent heal is
+  # just as dangerous as a silent drop.
+  systemd.services.msp-egress-selfheal = {
+    description = "Self-heal MSP_EGRESS if origin allow rule is missing";
+    path = [ pkgs.iptables pkgs.systemd pkgs.gawk pkgs.gnugrep ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = pkgs.writeShellScript "msp-egress-selfheal" ''
+        set -u
+        ORIGIN_IP="178.156.162.116"
+
+        # If the chain doesn't exist OR doesn't contain an allow rule
+        # for the origin on :443, trigger a firewall reload. We look
+        # for the hardcoded IP with or without /32 mask.
+        if ! ${pkgs.iptables}/bin/iptables -S MSP_EGRESS 2>/dev/null \
+             | ${pkgs.gnugrep}/bin/grep -Eq -- \
+               "-A MSP_EGRESS .*-d ''${ORIGIN_IP}(/32)?.*--dport 443.*-j RETURN"; then
+          echo "MSP_EGRESS_SELFHEAL: origin allow rule missing for ''${ORIGIN_IP} — reloading firewall" \
+            | ${pkgs.systemd}/bin/systemd-cat -t msp-egress-selfheal -p err
+          ${pkgs.systemd}/bin/systemctl reload-or-restart firewall.service || true
+        fi
+        exit 0
+      '';
+    };
+  };
+  systemd.timers.msp-egress-selfheal = {
+    description = "Timer: verify MSP_EGRESS origin allow rule every 60 s";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "2min";
+      OnUnitActiveSec = "60s";
+      AccuracySec = "10s";
+      # No RandomizedDelaySec — scatter is irrelevant; this is per-box
+      # health, not a coordinated fleet operation.
     };
   };
 
@@ -1407,6 +1475,124 @@ except Exception as e:
         fi
       }
 
+      # v40 FIX-11 (2026-04-23) — install-gate network diagnostic.
+      # Runs DNS → TCP/443 → TLS → GET /health and writes
+      # /var/lib/msp/install_gate_status.json so the beacon on :8443
+      # can tell the on-LAN operator EXACTLY which stage is failing.
+      # Non-blocking by design: the installed system keeps retrying
+      # provisioning even when the gate fails — the gate is for
+      # OBSERVABILITY, not for halting install (the installer-side
+      # gate is tracked separately, TBD). DNS-filter vs egress-ACL vs
+      # TLS-intercept vs app-down are now distinguishable without
+      # shelling in or reading journald.
+      run_network_gate_check() {
+        local status_file="/var/lib/msp/install_gate_status.json"
+        local tmp="$status_file.tmp"
+        local now
+        now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        local dns_ok="false" dns_ip=""
+        local tcp_ok="false"
+        local tls_ok="false"
+        local health_ok="false" health_code=""
+        local last_failed="none" last_error=""
+
+        # Stage 1: DNS — does api.osiriscare.net resolve at all?
+        dns_ip=$(${pkgs.inetutils}/bin/host -t A api.osiriscare.net 2>/dev/null \
+                 | ${pkgs.gawk}/bin/awk '/has address/ {print $4; exit}')
+        if [ -n "$dns_ip" ]; then
+          dns_ok="true"
+        else
+          last_failed="dns"
+          last_error="host -t A api.osiriscare.net returned no A record"
+        fi
+
+        # Stage 2: TCP + TLS (insecure) to origin IP via --resolve.
+        # Bypasses DNS so we isolate "can we reach the origin at all?"
+        # from "does DNS point somewhere we can reach?". -k so a
+        # TLS-intercept proxy doesn't get counted as a TCP failure.
+        local tcp_rc=0
+        ${pkgs.curl}/bin/curl -sS -k -o /dev/null \
+          --connect-timeout 5 --max-time 10 \
+          --resolve api.osiriscare.net:443:178.156.162.116 \
+          https://api.osiriscare.net/health >/dev/null 2>&1 \
+          || tcp_rc=$?
+        if [ "$tcp_rc" -eq 0 ]; then
+          tcp_ok="true"
+        elif [ "$last_failed" = "none" ]; then
+          last_failed="tcp_443"
+          last_error="TCP/443 to 178.156.162.116 failed (curl exit=$tcp_rc)"
+        fi
+
+        # Stage 3: TLS-verified HTTP GET /health via the real DNS path.
+        # Only runs when DNS + TCP both passed — no point testing TLS
+        # trust when we already know the earlier stage is broken.
+        if [ "$dns_ok" = "true" ] && [ "$tcp_ok" = "true" ]; then
+          local tls_out="" tls_rc=0
+          tls_out=$(${pkgs.curl}/bin/curl -sS -o /dev/null \
+                    -w "%{http_code}|%{ssl_verify_result}" \
+                    --connect-timeout 5 --max-time 10 \
+                    https://api.osiriscare.net/health 2>&1) \
+                    || tls_rc=$?
+          if [ "$tls_rc" -eq 0 ] && [ -n "$tls_out" ]; then
+            health_code="''${tls_out%%|*}"
+            local vr="''${tls_out##*|}"
+            if [ "$vr" = "0" ]; then
+              tls_ok="true"
+              if [ "$health_code" = "200" ]; then
+                health_ok="true"
+              elif [ "$last_failed" = "none" ]; then
+                last_failed="health"
+                last_error="/health returned HTTP $health_code"
+              fi
+            elif [ "$last_failed" = "none" ]; then
+              last_failed="tls"
+              last_error="TLS verify_result=$vr (chain/cert/intercept)"
+            fi
+          elif [ "$last_failed" = "none" ]; then
+            last_failed="tls"
+            last_error="curl TLS-verified path exit=$tls_rc"
+          fi
+        fi
+
+        local all_passed="false"
+        if [ "$dns_ok" = "true" ] && [ "$tcp_ok" = "true" ] \
+           && [ "$tls_ok" = "true" ] && [ "$health_ok" = "true" ]; then
+          all_passed="true"
+          last_failed="none"
+          last_error=""
+        fi
+
+        ${pkgs.jq}/bin/jq -n \
+          --arg now "$now" \
+          --arg dns_ok "$dns_ok" --arg dns_ip "$dns_ip" \
+          --arg tcp_ok "$tcp_ok" \
+          --arg tls_ok "$tls_ok" \
+          --arg health_ok "$health_ok" --arg health_code "$health_code" \
+          --arg last_failed "$last_failed" \
+          --arg last_error "$last_error" \
+          --arg all_passed "$all_passed" \
+          '{
+            schema_version: 1,
+            last_checked_at: $now,
+            dns:     {ok: ($dns_ok == "true"),    ip: $dns_ip},
+            tcp_443: {ok: ($tcp_ok == "true")},
+            tls:     {ok: ($tls_ok == "true")},
+            health:  {ok: ($health_ok == "true"), http_code: $health_code},
+            last_stage_failed: $last_failed,
+            last_error: $last_error,
+            all_passed: ($all_passed == "true")
+          }' > "$tmp" 2>/dev/null && mv "$tmp" "$status_file" || true
+
+        if [ "$all_passed" = "true" ]; then
+          log "NETWORK_GATE: all stages passed (DNS -> TCP/443 -> TLS -> /health=200)"
+        else
+          log "NETWORK_GATE_FAILED stage=$last_failed err=''${last_error}"
+          echo "msp-install-gate: NETWORK_GATE_FAILED stage=$last_failed last_error=''${last_error}" \
+            | ${pkgs.systemd}/bin/systemd-cat -t msp-install-gate -p err
+        fi
+        return 0
+      }
+
       mkdir -p /var/lib/msp
 
       if [ -f "$CONFIG_PATH" ]; then
@@ -1490,6 +1676,10 @@ except Exception as e:
 
       MAC_ENCODED=$(echo "$MAC_ADDR" | sed 's/:/%3A/g')
       PROVISION_URL="$API_URL/api/provision/$MAC_ENCODED"
+
+      # v40 FIX-11: snapshot network gate BEFORE any provisioning curl.
+      # The beacon surfaces which stage is failing to LAN operators.
+      run_network_gate_check
 
       # Phase 1: Initial connectivity retries (6 attempts, 10s apart)
       # Handles network not ready yet after boot.
@@ -1604,6 +1794,10 @@ except Exception as e:
         while [ ! -f "$CONFIG_PATH" ]; do
           sleep $SLOW_DELAY
           SLOW_ATTEMPT=$((SLOW_ATTEMPT + 1))
+
+          # v40 FIX-11: keep install_gate_status.json fresh every 5 min
+          # so the beacon's `state` reflects the current failure stage.
+          run_network_gate_check
 
           HTTP_CODE=$(${pkgs.curl}/bin/curl -s -w "%{http_code}" -o /tmp/provision-response.json \
             --connect-timeout 15 --max-time 45 "$PROVISION_URL" 2>/dev/null || echo "000")
@@ -1860,7 +2054,19 @@ except Exception as e:
       last_phonehome_ts=$(stat -c %Y /var/lib/msp/last_phonehome 2>/dev/null || echo 0)
       uptime_s=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
 
-      # v36 state-machine classifier.
+      # v40 FIX-11: surface msp-auto-provision's network gate result.
+      # install_gate_status.json is written by run_network_gate_check() in
+      # msp-auto-provision.service. Absent until the first provision pass.
+      install_gate="null"
+      install_gate_failed_stage=""
+      install_gate_all_passed="unknown"
+      if [ -f /var/lib/msp/install_gate_status.json ]; then
+        install_gate=$(cat /var/lib/msp/install_gate_status.json 2>/dev/null || echo "null")
+        install_gate_failed_stage=$(echo "$install_gate" | ${pkgs.jq}/bin/jq -r '.last_stage_failed // "none"' 2>/dev/null || echo "none")
+        install_gate_all_passed=$(echo "$install_gate" | ${pkgs.jq}/bin/jq -r '.all_passed // false' 2>/dev/null || echo "false")
+      fi
+
+      # v36 state-machine classifier (v40 FIX-11 extends with network_gate_failing).
       # Operator reads `state` + `last_error` and knows the next move.
       state="unknown"
       last_error=""
@@ -1873,6 +2079,13 @@ except Exception as e:
       elif [ "$dns_test" = "fail" ]; then
         state="dns_filter_suspected"
         last_error="cannot resolve api.osiriscare.net via local DNS"
+      elif [ "$install_gate_all_passed" = "false" ] && [ "$install_gate_failed_stage" != "none" ] && [ -n "$install_gate_failed_stage" ]; then
+        # Install gate ran and failed at a specific stage — more specific
+        # than the generic auth_or_network_failing fallback below. The
+        # stage name (tcp_443, tls, health) tells the LAN operator which
+        # layer is broken without them having to parse the JSON file.
+        state="network_gate_failing"
+        last_error="install gate failed at stage: $install_gate_failed_stage"
       elif [ "$last_phonehome_ts" -eq 0 ] || [ $(( $(date +%s) - $last_phonehome_ts )) -gt 900 ]; then
         state="auth_or_network_failing"
         last_error="last successful phonehome > 15 min ago; daemon may be auth-looping or egress-blocked"
@@ -1896,7 +2109,7 @@ except Exception as e:
 
       cat > "$OUT" <<JSON
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "boot_stage": "installed_system",
   "state": "$state",
@@ -1909,6 +2122,7 @@ except Exception as e:
   "last_phonehome_unix": $last_phonehome_ts,
   "uptime_seconds": $uptime_s,
   "network": $network_ifaces,
+  "install_gate_status": $install_gate,
   "net_survey": $net_survey,
   "provision_log_tail": $provision_log_tail
 }
@@ -2208,12 +2422,244 @@ JSON
   };
 
   # ============================================================================
-  # First-boot setup - SSH key provisioning and emergency access
+  # v40 FIX-16 — Phase 0 break-glass: generate passphrase BEFORE any
+  # network dependency. v39 shipped this logic inside msp-first-boot,
+  # which itself `after = network-online.target`. When DNS is broken
+  # (the exact firewall-determinism bug v40 FIX-9/10 addresses), that
+  # service never starts — the msp user is left with NO password, no
+  # recovery path. Physical console was bricked by a network fault.
+  #
+  # Three moves:
+  #   1. Passphrase generation is its own service, runs pre-network,
+  #      DefaultDependencies=no. Runs even if DNS is dead.
+  #   2. Passphrase encrypted at rest with AES-256-CBC PBKDF2-iter-100k.
+  #      Key material derived from MAC + /etc/machine-id. Anyone with
+  #      only the .enc file (log-scraper exfil, misconfigured backup,
+  #      leaked disk image without the motherboard) cannot decrypt it.
+  #   3. Backend submit moved to a separate timer-driven retry loop
+  #      (5-min cadence, success-marker idempotent) so a temporary
+  #      network outage during first boot doesn't leave Central Command
+  #      with no copy of the passphrase.
+  # ============================================================================
+  systemd.services.msp-breakglass-provision = {
+    description = "MSP Phase 0 — generate + encrypt break-glass passphrase (pre-network)";
+    wantedBy = [ "multi-user.target" ];
+    # NO network deps. local-fs + machine-id-commit is all we need.
+    # machine-id MUST be committed before we derive the KDF key, else
+    # the blob is un-decryptable on any later boot.
+    after = [ "local-fs.target" "systemd-machine-id-commit.service" ];
+    before = [ "network-pre.target" "msp-auto-provision.service" "msp-first-boot.service" ];
+
+    path = with pkgs; [ openssl coreutils shadow gnugrep ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      # Opt out of the implicit network-online wait that DefaultDependencies
+      # adds — the whole point is that this service succeeds even when
+      # the firewall + DNS are broken.
+      DefaultDependencies = "no";
+      # Explicit After/Before in unit section so systemd orders us
+      # before network-pre.target regardless of default ordering.
+      # (serviceConfig's After/Before are distinct from the Nix module
+      # `after`/`before`; both need to agree for pre-network ordering.)
+    };
+
+    unitConfig = {
+      DefaultDependencies = "no";
+      After = [ "local-fs.target" "systemd-machine-id-commit.service" ];
+      Before = [ "network-pre.target" "sysinit.target" "multi-user.target"
+                 "msp-auto-provision.service" "msp-first-boot.service" ];
+    };
+
+    script = ''
+      set -eu
+      CREDS_ENC="/var/lib/msp/.emergency-credentials.enc"
+      CREDS_RUN="/run/msp-breakglass-plaintext"   # tmpfs, this-boot-only
+      mkdir -p /var/lib/msp
+      chmod 700 /var/lib/msp
+
+      # Key material: MAC + /etc/machine-id. Either alone is
+      # discoverable; the pair requires physical possession of THIS
+      # motherboard + THIS disk.
+      MAC_ADDR=""
+      for iface in /sys/class/net/eth* /sys/class/net/en* /sys/class/net/*; do
+        [ -e "$iface" ] || continue
+        IFACE_NAME=$(basename "$iface")
+        [ "$IFACE_NAME" = "lo" ] && continue
+        [ -f "$iface/address" ] || continue
+        CANDIDATE=$(cat "$iface/address")
+        [ "$CANDIDATE" = "00:00:00:00:00:00" ] && continue
+        MAC_ADDR="$CANDIDATE"
+        break
+      done
+      MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || echo "no-machine-id")
+      # Version tag in the derivation string so we can rotate the KDF
+      # without breaking old blobs (future-proofing).
+      KEY_MATERIAL="osiris-breakglass-v1:$MAC_ADDR:$MACHINE_ID"
+
+      # Already-provisioned case: decrypt existing blob, stage plaintext
+      # in /run for this-boot submit. msp-first-boot / the submit timer
+      # consume /run — never the .enc file directly.
+      if [ -f "$CREDS_ENC" ]; then
+        if EMERGENCY_PASS=$(${pkgs.openssl}/bin/openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 \
+            -pass pass:"$KEY_MATERIAL" \
+            -in "$CREDS_ENC" 2>/dev/null); then
+          printf '%s' "$EMERGENCY_PASS" > "$CREDS_RUN"
+          chmod 600 "$CREDS_RUN"
+          echo "Phase 0: break-glass provisioned previously, plaintext staged"
+          exit 0
+        else
+          # MAC drift (e.g., NIC replaced) — preserve the old blob for
+          # forensic review rather than deleting, then regenerate.
+          BACKUP="$CREDS_ENC.undecryptable-$(date +%s)"
+          mv "$CREDS_ENC" "$BACKUP" || true
+          echo "Phase 0: WARN existing blob undecryptable (MAC/machine-id drift?) — regenerating, old blob at $BACKUP"
+        fi
+      fi
+
+      # Fresh provision: random passphrase, set on msp user, encrypt at rest.
+      EMERGENCY_PASS=$(${pkgs.openssl}/bin/openssl rand -base64 32 | tr -d '\n=' | tr '+/' '-_')
+      echo "msp:$EMERGENCY_PASS" | ${pkgs.shadow}/bin/chpasswd
+
+      printf '%s' "$EMERGENCY_PASS" | \
+        ${pkgs.openssl}/bin/openssl enc -aes-256-cbc -pbkdf2 -iter 100000 \
+          -salt -pass pass:"$KEY_MATERIAL" \
+          -out "$CREDS_ENC"
+      chmod 600 "$CREDS_ENC"
+
+      printf '%s' "$EMERGENCY_PASS" > "$CREDS_RUN"
+      chmod 600 "$CREDS_RUN"
+
+      echo "Phase 0: break-glass passphrase generated + encrypted at rest"
+    '';
+  };
+
+  # ============================================================================
+  # v40 FIX-16 — retry-forever submit loop. Runs every 5 min; exits
+  # fast once SUBMITTED_MARKER exists. Decouples submit success from
+  # first-boot sequencing: a box that provisions during a brief DNS
+  # outage still eventually gets its passphrase into the backend.
+  # ============================================================================
+  systemd.services.msp-breakglass-submit = {
+    description = "MSP break-glass passphrase submit (5-min retry-forever)";
+    after = [ "network-online.target" "msp-auto-provision.service" "msp-breakglass-provision.service" ];
+    wants = [ "network-online.target" ];
+
+    path = with pkgs; [ curl jq coreutils yq openssl ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      # NOT RemainAfterExit — we want to run repeatedly via timer.
+    };
+
+    script = ''
+      set -u
+      SUBMITTED_MARKER="/var/lib/msp/.emergency-credentials.submitted"
+      CREDS_ENC="/var/lib/msp/.emergency-credentials.enc"
+      CREDS_RUN="/run/msp-breakglass-plaintext"
+      CONFIG_PATH="/var/lib/msp/config.yaml"
+
+      # Idempotent: marker present => nothing to do.
+      if [ -f "$SUBMITTED_MARKER" ]; then
+        exit 0
+      fi
+
+      # Config might not be populated yet (msp-auto-provision still
+      # running). Treat as not-ready, try again next tick.
+      if [ ! -f "$CONFIG_PATH" ]; then
+        echo "submit: config.yaml not yet populated — retry in 5m"
+        exit 0
+      fi
+
+      SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
+      API_KEY=$(${pkgs.yq}/bin/yq -r '.api_key // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
+      APPL_ID=$(${pkgs.yq}/bin/yq -r '.appliance_id // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
+      API_ENDPOINT=$(${pkgs.yq}/bin/yq -r '.api_endpoint // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
+      API_ENDPOINT=''${API_ENDPOINT:-https://api.osiriscare.net}
+
+      if [ -z "$SITE_ID" ] || [ -z "$API_KEY" ] || [ -z "$APPL_ID" ]; then
+        echo "submit: site_id/api_key/appliance_id missing — retry in 5m"
+        exit 0
+      fi
+
+      # Prefer /run plaintext (staged by Phase 0). Fall back to
+      # decrypting the at-rest blob — same KDF, same key material.
+      EMERGENCY_PASS=""
+      if [ -f "$CREDS_RUN" ]; then
+        EMERGENCY_PASS=$(cat "$CREDS_RUN" 2>/dev/null || echo "")
+      fi
+      if [ -z "$EMERGENCY_PASS" ] && [ -f "$CREDS_ENC" ]; then
+        MAC_ADDR=""
+        for iface in /sys/class/net/eth* /sys/class/net/en* /sys/class/net/*; do
+          [ -e "$iface" ] || continue
+          IFACE_NAME=$(basename "$iface")
+          [ "$IFACE_NAME" = "lo" ] && continue
+          [ -f "$iface/address" ] || continue
+          CANDIDATE=$(cat "$iface/address")
+          [ "$CANDIDATE" = "00:00:00:00:00:00" ] && continue
+          MAC_ADDR="$CANDIDATE"
+          break
+        done
+        MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || echo "no-machine-id")
+        KEY_MATERIAL="osiris-breakglass-v1:$MAC_ADDR:$MACHINE_ID"
+        EMERGENCY_PASS=$(${pkgs.openssl}/bin/openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 \
+            -pass pass:"$KEY_MATERIAL" \
+            -in "$CREDS_ENC" 2>/dev/null || echo "")
+      fi
+      if [ -z "$EMERGENCY_PASS" ]; then
+        echo "submit: no passphrase available (provision service may not have run) — retry in 5m"
+        exit 0
+      fi
+
+      SUBMIT_PAYLOAD=$(${pkgs.jq}/bin/jq -n \
+        --arg site "$SITE_ID" \
+        --arg aid "$APPL_ID" \
+        --arg pass "$EMERGENCY_PASS" \
+        '{site_id: $site, appliance_id: $aid, passphrase: $pass}')
+
+      HTTP_CODE=$(${pkgs.curl}/bin/curl -sS -o /tmp/breakglass_submit.out \
+        -w "%{http_code}" --max-time 20 \
+        -H "Authorization: Bearer $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$SUBMIT_PAYLOAD" \
+        "$API_ENDPOINT/api/provision/breakglass-submit" 2>/dev/null || echo "000")
+
+      if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "204" ]; then
+        touch "$SUBMITTED_MARKER"
+        chmod 600 "$SUBMITTED_MARKER"
+        echo "submit: success — marker written"
+        # Wipe the /run plaintext now that the backend has it.
+        rm -f "$CREDS_RUN" 2>/dev/null || true
+      else
+        echo "submit: HTTP $HTTP_CODE — retry in 5m"
+      fi
+    '';
+  };
+
+  systemd.timers.msp-breakglass-submit = {
+    description = "Timer: retry break-glass submit every 5m until success";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "30s";
+      OnUnitActiveSec = "5min";
+      AccuracySec = "30s";
+      Persistent = true;
+    };
+  };
+
+  # ============================================================================
+  # First-boot setup - SSH key provisioning and MOTD
+  # v40 FIX-16: Phase R (break-glass) extracted to msp-breakglass-provision
+  # service (pre-network) + msp-breakglass-submit timer (retry-forever).
+  # This service is now purely SSH-keys + hostname + MOTD. Retained
+  # dependency on network-online because SSH key apply reads config.yaml
+  # which msp-auto-provision populates AFTER network is up.
   # ============================================================================
   systemd.services.msp-first-boot = {
-    description = "MSP Appliance First Boot Setup";
+    description = "MSP Appliance First Boot Setup (SSH keys + MOTD)";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" "msp-auto-provision.service" ];
+    after = [ "network-online.target" "msp-auto-provision.service" "msp-breakglass-provision.service" ];
     wants = [ "network-online.target" ];
 
     path = with pkgs; [ inetutils iproute2 gnugrep coreutils ];
@@ -2227,7 +2673,6 @@ JSON
       MARKER="/var/lib/msp/.initialized"
       CONFIG_PATH="/var/lib/msp/config.yaml"
       SSH_DIR="/home/msp/.ssh"
-      CREDS_FILE="/var/lib/msp/.emergency-credentials"
 
       if [ -f "$MARKER" ]; then
         exit 0
@@ -2235,80 +2680,18 @@ JSON
 
       echo "=== MSP Compliance Appliance First Boot Setup ==="
 
-      # Get MAC address for emergency password derivation
-      MAC_ADDR=""
-      for iface in /sys/class/net/eth* /sys/class/net/en* /sys/class/net/*; do
-        [ -e "$iface" ] || continue
-        IFACE_NAME=$(basename "$iface")
-        [ "$IFACE_NAME" = "lo" ] && continue
-        [ -f "$iface/address" ] || continue
-        CANDIDATE=$(cat "$iface/address")
-        [ "$CANDIDATE" = "00:00:00:00:00:00" ] && continue
-        MAC_ADDR="$CANDIDATE"
-        break
-      done
+      # v40 FIX-16: break-glass passphrase generation is handled by
+      # msp-breakglass-provision.service (Phase 0, pre-network) and
+      # submitted by msp-breakglass-submit.service + .timer (5-min
+      # retry). This service is now SSH keys + hostname + MOTD only.
 
-      # ─── Phase R: rotating break-glass passphrase ────────────────
-      # Replaces the MAC-derived `osiris-<sha256…>` password. The
-      # MAC is on the sticker + in every LAN ARP cache, making that
-      # derivation a permanent backdoor. Phase R: generate a random
-      # 32-byte passphrase ONCE per provisioning, set it on `msp`,
-      # submit encrypted-at-rest to /api/provision/breakglass-submit
-      # via the main daemon's bearer. Admin retrieves through the
-      # privileged chain with reason ≥20 chars + admin_audit_log
-      # entry visible on the customer's /api/client/privileged-
-      # actions feed (Phase H6). Backend submit happens after
-      # config-yaml load below — at this stage we generate + set
-      # locally so physical-console access is never bricked by a
-      # network failure.
-      if [ ! -f "$CREDS_FILE" ]; then
-        # 32 bytes of urandom → 43 base64url chars (≥192 bits entropy)
-        EMERGENCY_PASS=$(${pkgs.openssl}/bin/openssl rand -base64 32 | ${pkgs.coreutils}/bin/tr -d '\n=' | ${pkgs.coreutils}/bin/tr '+/' '-_')
-        echo "msp:$EMERGENCY_PASS" | ${pkgs.shadow}/bin/chpasswd
-        printf '%s\n' "$EMERGENCY_PASS" > "$CREDS_FILE"
-        chmod 600 "$CREDS_FILE"
-        echo "Phase R: random break-glass passphrase set for msp user"
-      else
-        EMERGENCY_PASS=$(cat "$CREDS_FILE" 2>/dev/null || echo "")
-        echo "Phase R: break-glass passphrase already set (reusing existing)"
-      fi
-
-      # Apply SSH keys from config.yaml + submit break-glass passphrase.
+      # Apply SSH keys from config.yaml + set hostname.
       if [ -f "$CONFIG_PATH" ]; then
         SITE_ID=$(${pkgs.yq}/bin/yq -r '.site_id // empty' "$CONFIG_PATH")
-        API_KEY=$(${pkgs.yq}/bin/yq -r '.api_key // empty' "$CONFIG_PATH")
-        APPL_ID=$(${pkgs.yq}/bin/yq -r '.appliance_id // empty' "$CONFIG_PATH")
-        API_ENDPOINT=$(${pkgs.yq}/bin/yq -r '.api_endpoint // empty' "$CONFIG_PATH")
-        API_ENDPOINT=''${API_ENDPOINT:-https://api.osiriscare.net}
 
         if [ -n "$SITE_ID" ]; then
           ${pkgs.inetutils}/bin/hostname "$SITE_ID"
           echo "Hostname set to: $SITE_ID"
-        fi
-
-        # Phase R: submit break-glass passphrase to backend.
-        # Idempotent — the backend endpoint upserts (version++ on
-        # re-submit). Non-fatal — if submit fails the passphrase is
-        # still usable at the physical console, and msp-first-boot
-        # will retry on next cold boot if $MARKER hasn't been written.
-        if [ -n "$SITE_ID" ] && [ -n "$API_KEY" ] && [ -n "$APPL_ID" ] && [ -n "''${EMERGENCY_PASS:-}" ]; then
-          SUBMIT_PAYLOAD=$(${pkgs.jq}/bin/jq -n \
-            --arg site "$SITE_ID" \
-            --arg aid "$APPL_ID" \
-            --arg pass "$EMERGENCY_PASS" \
-            '{site_id: $site, appliance_id: $aid, passphrase: $pass}')
-          if ${pkgs.curl}/bin/curl -sSfL --max-time 20 \
-              -H "Authorization: Bearer $API_KEY" \
-              -H "Content-Type: application/json" \
-              -d "$SUBMIT_PAYLOAD" \
-              "$API_ENDPOINT/api/provision/breakglass-submit" \
-              > /dev/null 2>&1; then
-            echo "Phase R: break-glass passphrase submitted to backend"
-          else
-            echo "Phase R: WARN submit failed — local-only for now"
-          fi
-        else
-          echo "Phase R: config missing site_id/api_key/appliance_id — deferring submit"
         fi
 
         # Extract and apply SSH authorized keys

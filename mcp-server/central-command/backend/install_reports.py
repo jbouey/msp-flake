@@ -104,6 +104,32 @@ class InstallReportComplete(BaseModel):
     duration_s: Optional[int] = None
 
 
+class InstallReportNetReady(BaseModel):
+    """v40 FIX-15 (Session 209, 2026-04-23 round-table cont.).
+
+    Posted by the installed-system msp-auto-provision.service the FIRST
+    time its 4-stage network gate (`run_network_gate_check`) passes
+    every stage — DNS resolves, TCP/443 connects to origin IP, TLS
+    verifies against the real DNS path, HTTP /health returns 200.
+
+    This is the "network works" signal — ships BEFORE the bearer-token
+    handshake (which is `site_appliances.first_checkin`). Gap between
+    the two is observable: network-up minus auth-up = time spent on
+    api-key provisioning. Both timestamps inform the installation SLA.
+    """
+
+    mac_address: str = Field(..., description="hex 12 uppercase, normalized by server")
+    installer_id: Optional[str] = Field(None, description="installer UUID if available")
+    resolved_ip: Optional[str] = Field(
+        None,
+        description="IP api.osiriscare.net resolved to at gate-pass time (cross-check origin IP drift)",
+    )
+    gate_stages_passed: List[str] = Field(
+        default_factory=list,
+        description="Ordered stages that returned ok=true on this successful pass",
+    )
+
+
 class InstallReportHalt(BaseModel):
     """Installer halted BEFORE complete — HW-compat gate, disk eligibility, etc.
 
@@ -244,6 +270,59 @@ async def post_install_complete(
         },
     )
     return {"status": "recorded"}
+
+
+@router.post("/report/net-ready", dependencies=[Depends(require_install_token)])
+async def post_install_net_ready(
+    report: InstallReportNetReady,
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """v40 FIX-15: record the first time the installed-system network gate passed.
+
+    Idempotent — subsequent POSTs do NOT overwrite the first-pass
+    timestamp. The column is monotonic; "first success" is defined as
+    the oldest observed success.
+
+    Returns `{status: "recorded", dedup: true}` if the timestamp was
+    already populated (caller already succeeded earlier), `dedup: false`
+    on the first pass.
+    """
+    # Normalize MAC (uppercase, hex only — match install_sessions storage).
+    mac = (report.mac_address or "").upper().replace(":", "").replace("-", "")
+    if len(mac) != 12 or not all(c in "0123456789ABCDEF" for c in mac):
+        raise HTTPException(status_code=400, detail="invalid mac_address")
+    mac_colon = ":".join(mac[i : i + 2] for i in range(0, 12, 2))
+
+    # UPDATE only if first_outbound_success_at IS NULL — preserves the
+    # oldest pass timestamp. Returns affected row count so we can tell
+    # the caller whether their POST was the first or a repeat.
+    result = await execute_with_retry(
+        db,
+        text(
+            """
+            UPDATE install_sessions
+               SET first_outbound_success_at = COALESCE(first_outbound_success_at, NOW()),
+                   api_resolved_ip = COALESCE(:resolved_ip, api_resolved_ip)
+             WHERE UPPER(mac_address) = :mac_colon
+               AND first_outbound_success_at IS NULL
+            """
+        ),
+        {"mac_colon": mac_colon, "resolved_ip": report.resolved_ip},
+    )
+    dedup = getattr(result, "rowcount", 0) == 0
+    await db.commit()
+
+    logger.info(
+        "Install net-ready recorded",
+        extra={
+            "mac": mac_colon,
+            "installer_id": report.installer_id,
+            "resolved_ip": report.resolved_ip,
+            "gate_stages_passed": report.gate_stages_passed,
+            "dedup": dedup,
+        },
+    )
+    return {"status": "recorded", "dedup": dedup}
 
 
 @router.post("/report/halt", dependencies=[Depends(require_install_token)])

@@ -46,16 +46,66 @@
   security.sudo = {
     enable = true;
     wheelNeedsPassword = true;  # Password required for sudo (HIPAA compliance)
-    # MSP user can run compliance-related commands without password
-    # All other commands require password for audit trail
+
+    # FIX-12 (v40, 2026-04-23) — narrow read-only diagnostic NOPASSWD.
+    #
+    # The `msp` user has full sudo via `wheel`, but `wheelNeedsPassword`
+    # makes each call cost a 43-char Phase R break-glass passphrase. That's
+    # the right posture for mutating actions but a mechanical barrier for
+    # read-only diagnostics. Today's 2026-04-23 site visit burned ~45 min
+    # at the physical console because every `iptables -L`, `ss`, and
+    # `journalctl -u firewall.service` needed the passphrase.
+    #
+    # This whitelist grants NOPASSWD for STRICTLY read-only commands. No
+    # writes, no restarts, no kills. Explicit flag sets for `ss` exclude
+    # `-K/--kill` — the only destructive ss flag. `journalctl -u <unit>`
+    # form is narrower than the previous `journalctl *` which would have
+    # allowed `journalctl --vacuum-size=0` (log wipe). Root stays locked
+    # (`hashedPassword = "!"` in appliance-disk-image.nix).
+    #
+    # Previously this block ALSO had `systemctl restart appliance-daemon`
+    # as NOPASSWD — removed because post-watchdog the restart path goes
+    # through the watchdog fleet-order handler, not through the msp user.
     extraRules = [
       {
         users = [ "msp" ];
         commands = [
-          # Only allow specific commands without password for automation
-          { command = "/run/current-system/sw/bin/systemctl restart appliance-daemon"; options = [ "NOPASSWD" ]; }
+          # Firewall inspection (read-only forms only — -L / -S / -nL).
+          { command = "/run/current-system/sw/bin/iptables -L"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/iptables -L *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/iptables -nL"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/iptables -nL *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/iptables -S"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/iptables -S *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ip6tables -L"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ip6tables -L *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ip6tables -nL"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ip6tables -nL *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ip6tables -S"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ip6tables -S *"; options = [ "NOPASSWD" ]; }
+          # Socket stats — explicit read flag sets only (NO ss -K).
+          { command = "/run/current-system/sw/bin/ss -tulpn"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ss -tulnp"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ss -an"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ss -s"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ss -tn"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ss -ltn"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/ss -i"; options = [ "NOPASSWD" ]; }
+          # Service status (read-only — no start/stop/restart/reload).
+          { command = "/run/current-system/sw/bin/systemctl status"; options = [ "NOPASSWD" ]; }
           { command = "/run/current-system/sw/bin/systemctl status *"; options = [ "NOPASSWD" ]; }
-          { command = "/run/current-system/sw/bin/journalctl *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/systemctl is-active *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/systemctl is-enabled *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/systemctl list-timers"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/systemctl list-units *"; options = [ "NOPASSWD" ]; }
+          # journalctl scoped to a unit (narrower than raw `journalctl *`
+          # which could do `--vacuum-size=0` = log wipe).
+          { command = "/run/current-system/sw/bin/journalctl -u *"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/journalctl -xeu *"; options = [ "NOPASSWD" ]; }
+          # Config / resolver / hosts read (exact paths only).
+          { command = "/run/current-system/sw/bin/cat /var/lib/msp/config.yaml"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/cat /etc/resolv.conf"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/cat /etc/hosts"; options = [ "NOPASSWD" ]; }
         ];
       }
     ];
