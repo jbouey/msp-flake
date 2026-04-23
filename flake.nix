@@ -269,7 +269,7 @@
             };
             services.log-watcher = {
               enable = true;
-              package = self.packages.${pkgs.system}.infra-watcher-fixed;
+              package = import ./flake/pkgs/infra-watcher-fixed.nix { inherit pkgs; };
               mcpUrl = "http://192.168.1.100:8000";
               logLevel = "INFO";
               schedule = "*:0/5";  # uncomment if your module supports scheduling
