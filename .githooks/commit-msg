@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# .githooks/commit-msg — runs AFTER the commit message is written.
+#
+# This hook is the partner to .githooks/pre-commit. The pre-commit
+# hook's `BREAKING:` bypass path tried to read .git/COMMIT_EDITMSG
+# during pre-commit, but git doesn't populate that file until AFTER
+# pre-commit returns — so the bypass silently failed on every
+# `git commit -m "BREAKING: ..."` invocation.
+#
+# Moving the BREAKING: check to commit-msg (where $1 points at the
+# populated message file) makes the bypass actually work. If the
+# pre-commit already passed (no Pydantic diff violations), this hook
+# is a no-op. If pre-commit FAILED because of a Pydantic diff, it
+# already blocked the commit — we never get here. The only case
+# this hook matters: pre-commit check would have failed BUT the user
+# is opting in via BREAKING: — currently handled via the env var
+# workaround, this replaces that with the proper commit-message path.
+#
+# Session 210-B, 2026-04-24 post-mortem follow-up.
+
+set -e
+
+COMMIT_MSG_FILE="$1"
+
+# If the message contains BREAKING: at any line start, set the env var
+# that pre-commit's pydantic_contract_check.py looks for on the NEXT
+# invocation. The current invocation already completed pre-commit
+# before this hook fires, so we can't retro-bypass — the pre-commit
+# hook needs to read the message directly. The real fix is to call
+# the contract check FROM HERE instead of from pre-commit.
+#
+# Strategy: run pydantic_contract_check here with BREAKING acknowledged
+# if the message includes it. The pre-commit version becomes a
+# best-effort early-warning; commit-msg is authoritative.
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Only gate when backend Python is staged.
+STAGED=$(git diff --cached --name-only --diff-filter=AM 2>/dev/null | grep -E '^mcp-server/central-command/backend/.*\.py$' || true)
+if [ -z "$STAGED" ]; then
+    exit 0
+fi
+
+# Read the actual commit message from the populated file.
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+BREAKING=""
+if echo "$COMMIT_MSG" | grep -qE '(^|\n)\s*BREAKING:'; then
+    BREAKING="1"
+fi
+
+# Re-run the contract check with knowledge of the commit message.
+# Export the env var so pydantic_contract_check.py treats BREAKING: as
+# acknowledged. If the pre-commit hook already passed cleanly (zero
+# violations), this is fast and prints success. If the pre-commit
+# hook was skipped (e.g. core.hooksPath not set) this layer still
+# enforces the check.
+export PYDANTIC_CONTRACT_BREAKING="$BREAKING"
+if ! python3 "$REPO_ROOT/scripts/pydantic_contract_check.py" >/dev/null 2>&1; then
+    echo "[commit-msg] ❌ pydantic contract check failed (re-run with BREAKING-awareness)."
+    echo ""
+    python3 "$REPO_ROOT/scripts/pydantic_contract_check.py"
+    exit 1
+fi

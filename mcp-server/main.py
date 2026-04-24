@@ -918,6 +918,19 @@ async def _flywheel_promotion_loop():
                         WHERE et.resolution_level = 'L2'
                           AND et.incident_type IS NOT NULL
                           AND et.runbook_id IS NOT NULL
+                          -- Exclude synthetic L2-* planner IDs (Jan 2026 legacy
+                          -- execution_telemetry rows). The current L2 planner
+                          -- canonicalizes before emitting but old rows persist.
+                          -- Session 210-B (2026-04-24): this filter was ALREADY
+                          -- in background_tasks.py:1189 but THIS duplicate loop
+                          -- here in main.py — which is the one actually
+                          -- scheduled by the task supervisor — was missing it.
+                          -- Migration 237 + substrate invariant
+                          -- synthetic_l2_pps_rows kept firing because this
+                          -- loop re-inserted the L2-* rows every 30 min. Dup
+                          -- loop is queued for removal (#143 follow-up); this
+                          -- filter stops the bleeding in the meantime.
+                          AND et.runbook_id NOT LIKE 'L2-%'
                         GROUP BY et.incident_type, et.runbook_id
                         HAVING COUNT(*) >= 10
                         ON CONFLICT (pattern_key) DO UPDATE SET

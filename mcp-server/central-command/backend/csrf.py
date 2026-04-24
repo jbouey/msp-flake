@@ -93,6 +93,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/users/invite/accept",  # Public invite acceptance (no session yet)
         "/api/users/invite/validate",  # Public invite validation (GET but token in body)
         "/api/partner-auth/logout",  # Logout should always work (no CSRF cookie after clear)
+        "/api/journal/upload",       # Appliance journal batch (API-key auth, machine-to-machine)
+                                      # Session 210-B 2026-04-24: was missing from exempt;
+                                      # every POST from msp-journal-upload.timer got CSRF-403,
+                                      # which is why journal_upload_events had 0 rows + the
+                                      # journal_upload_never_received invariant kept firing.
     }
 
     # Exempt path prefixes (for API-key authenticated, OAuth, webhooks, machine-to-machine)
