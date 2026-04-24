@@ -503,11 +503,30 @@ jobs:
         #   1. /health returns 200 — process is up and routing.
         #   2. /api/version asserts the running process's SHA matches
         #      this workflow's GITHUB_SHA. This catches the silent-no-op
-        #      deploy bug we hit on 2026-04-13: code on disk but the
-        #      Python process kept running stale modules. matches=true
-        #      means the restart actually replaced the interpreter.
+        #      deploy bug we hit on 2026-04-13.
+        #
+        # Session 210 (2026-04-24): poll /health for up to 120s instead
+        # of a one-shot sleep 15. Root cause: main.py's middleware +
+        # DB pool + asyncpg prepare-statement warm-up can exceed 15s
+        # under load. 4 deploys on 2026-04-24 (632d3408, 13ccb3eb,
+        # 676a2ece, 1938c579) false-failed on verify while the
+        # container was actually coming up healthy 10-20s later.
         run: |
-          sleep 15
+          echo "Polling /health for up to 120s (backend warm-up can exceed 15s)..."
+          HEALTH=""
+          for i in $(seq 1 24); do
+            HEALTH=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "curl -sf --max-time 3 http://localhost:8000/health" 2>/dev/null || true)
+            if echo "$HEALTH" | grep -q '"status":"ok"'; then
+              echo "Healthy at attempt $i (~$((i*5))s)"
+              break
+            fi
+            sleep 5
+          done
+          if ! echo "$HEALTH" | grep -q '"status":"ok"'; then
+            echo "FATAL: /health did not return status=ok within 120s"
+            echo "Last response: $HEALTH"
+            exit 1
+          fi
           HEALTH=$(ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} "curl -sf http://localhost:8000/health")
           echo "Health: $HEALTH"
           echo "$HEALTH" | grep -q '"status":"ok"' || exit 1
