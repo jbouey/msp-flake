@@ -695,6 +695,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="L2_ENABLED=true but <5 L2 decisions in the last 48 hours while the fleet has active appliances. Signals the LLM pipeline is silently offline (API key, circuit breaker, budget cap, or zero-result circuit). Added 2026-04-24 (Session 210) when re-enabling L2 after the 2026-04-12 kill switch so the NEXT silent death pages inside 48h instead of taking 30 days to notice. Automatically quiet when L2_ENABLED=false, so intentional maintenance doesn't create noise.",
         check=lambda c: _check_l2_decisions_stalled(c),
     ),
+    Assertion(
+        name="synthetic_l2_pps_rows",
+        severity="sev3",
+        description="platform_pattern_stats should never contain rows with L2-prefixed runbook_id (they are synthetic planner-internal IDs, excluded from aggregation by background_tasks.py:1189 `NOT LIKE 'L2-%'`). 2026-04-18 migration 237 DELETEd 2 such rows; Session 210 found them back with January timestamps despite no identified INSERT path. Rows were re-deleted. This invariant catches the next reappearance loud instead of silent.",
+        check=lambda c: _check_synthetic_l2_pps_rows(c),
+    ),
 ]
 
 
@@ -959,6 +965,17 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "multiple generations accumulate). Cross-check "
             "nixos_rebuild_success_drought — disk pressure is the most common "
             "root cause of a silent rebuild failure.",
+    },
+    "synthetic_l2_pps_rows": {
+        "display_name": "Synthetic L2-* runbook_id rows in platform_pattern_stats",
+        "recommended_action": "Cleanup: `DELETE FROM platform_pattern_stats WHERE runbook_id LIKE 'L2-%'`. "
+            "Then grep recent commits for platform_pattern_stats INSERT code and verify the "
+            "`NOT LIKE 'L2-%'` filter at background_tasks.py:1189 is still present in the "
+            "deployed container (`docker exec mcp-server grep -n \"NOT LIKE 'L2-%'\" "
+            "/app/dashboard_api/background_tasks.py`). If the filter is intact, the "
+            "resurrection mechanism is external (pg_restore or manual SQL) — check recent "
+            "DBA activity. Rows are HARMLESS in the promotion path (distinct_orgs=1 < 5 "
+            "default threshold) but indicate infrastructure drift worth investigating.",
     },
     "l2_decisions_stalled": {
         "display_name": "L2 LLM decisions silently stalled",
@@ -2336,6 +2353,60 @@ async def _check_flywheel_ledger_stalled(conn: asyncpg.Connection) -> List[Viola
                     "check the orchestrator loop heartbeat "
                     "(/api/admin/health/loops) and grep mcp-server logs for "
                     "orchestrator_transition_failed or safe_rollout_ledger_advance_failed."
+                ),
+            },
+        )
+    ]
+
+
+async def _check_synthetic_l2_pps_rows(conn: asyncpg.Connection) -> List[Violation]:
+    """Fire if any `L2-%` prefixed runbook_id shows up in
+    platform_pattern_stats.
+
+    Context: migration 237 on 2026-04-18 DELETEd 2 L2- rows + the same
+    commit added the `AND et.runbook_id NOT LIKE 'L2-%'` filter on the
+    Step-3 aggregation INSERT (background_tasks.py:1189). Yet on
+    2026-04-24 Session 210 found 2 L2- rows present again (ids 37921,
+    37927, with January timestamps — the same rows migration 237
+    deleted). The investigation couldn't identify the resurrection path
+    (no parallel INSERT code path, no admin_audit_log trail). Most
+    plausible: the code deploy + migration ran nearly atomic but the
+    container-restart race meant Step 3 had one final tick with old
+    code after migration DELETE ran. Any future reappearance is a
+    regression — either the filter broke or a new INSERT path landed.
+
+    Rows were DELETEd during Session 210. This invariant makes the
+    next reappearance LOUD instead of silent.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT pattern_key, runbook_id, incident_type,
+               first_seen::timestamptz(0) AS first_seen,
+               last_seen::timestamptz(0) AS last_seen
+          FROM platform_pattern_stats
+         WHERE runbook_id LIKE 'L2-%'
+         ORDER BY id
+         LIMIT 10
+        """
+    )
+    if not rows:
+        return []
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "affected_rows": len(rows),
+                "sample_pattern_keys": [r["pattern_key"] for r in rows[:5]],
+                "remediation": (
+                    "L2-prefixed runbook_ids should never appear in "
+                    "platform_pattern_stats — background_tasks.py:1189 filter "
+                    "excludes them. If they've reappeared, either the filter "
+                    "regressed or a new INSERT path landed. Immediate cleanup: "
+                    "`DELETE FROM platform_pattern_stats WHERE runbook_id LIKE 'L2-%'`. "
+                    "Then grep recent commits for 'platform_pattern_stats' INSERT "
+                    "and audit any changes to the aggregation SQL. Cross-reference "
+                    "migration 237 (the one-shot cleanup) — if the filter is fine, "
+                    "the resurrection mechanism must be external (pg_restore, manual SQL)."
                 ),
             },
         )
