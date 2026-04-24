@@ -129,7 +129,7 @@ export function requireField<T, K extends keyof T>(
   field: K,
   ctx: FieldContext,
 ): T[K] | undefined {
-  if (obj == null) {
+  if (obj === null || obj === undefined) {
     // The whole response is missing — a different failure class
     // (404, 500, aborted). Not this guard's concern.
     return undefined;
