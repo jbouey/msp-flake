@@ -84,6 +84,13 @@ type StateManager struct {
 	// Stale credential alert dedup: fire at most once per 24h per host.
 	lastStaleAlertMu sync.Mutex
 	lastStaleAlert   map[string]time.Time
+
+	// Server-sent directives (CheckinResponse fields added in cb962f5d).
+	// Apply every checkin cycle; behavior wired 2026-04-24 (Session 210).
+	directivesMu          sync.RWMutex
+	l2ConfidenceThreshold float64   // 0 → fall back to daemon-local default
+	maintenanceUntil      time.Time // zero-value → no window active
+	billingHold           bool
 }
 
 // NewStateManager creates a StateManager with all maps initialised.
@@ -477,6 +484,81 @@ func (sm *StateManager) IsSubscriptionActive() bool {
 	sm.subscriptionMu.RLock()
 	defer sm.subscriptionMu.RUnlock()
 	return sm.subscriptionStatus == "" || sm.subscriptionStatus == "active" || sm.subscriptionStatus == "trialing"
+}
+
+// ApplyServerDirectives applies the 3 CheckinResponse directives
+// (L2ConfidenceThreshold / MaintenanceUntil / BillingHold) to state and
+// logs on transition. Called once per successful checkin cycle.
+//
+// Values land in a single mutex-guarded section so reads from the
+// healing gate (IsHealingSuppressed) and the L2 gate
+// (GetL2ConfidenceThreshold) always see a consistent snapshot.
+func (sm *StateManager) ApplyServerDirectives(l2Threshold float64, maintenanceUntilRFC3339 string, billingHold bool) {
+	sm.directivesMu.Lock()
+	defer sm.directivesMu.Unlock()
+
+	if sm.l2ConfidenceThreshold != l2Threshold {
+		slog.Info("L2 confidence threshold changed",
+			"component", "daemon", "from", sm.l2ConfidenceThreshold, "to", l2Threshold)
+		sm.l2ConfidenceThreshold = l2Threshold
+	}
+
+	var parsed time.Time
+	if maintenanceUntilRFC3339 != "" {
+		if t, err := time.Parse(time.RFC3339, maintenanceUntilRFC3339); err == nil {
+			parsed = t
+		} else {
+			slog.Warn("maintenance_until parse failed — ignoring",
+				"component", "daemon", "value", maintenanceUntilRFC3339, "error", err.Error())
+		}
+	}
+	if !sm.maintenanceUntil.Equal(parsed) {
+		if parsed.IsZero() {
+			slog.Info("maintenance window cleared", "component", "daemon")
+		} else {
+			slog.Info("maintenance window set", "component", "daemon", "until", parsed.Format(time.RFC3339))
+		}
+		sm.maintenanceUntil = parsed
+	}
+
+	if sm.billingHold != billingHold {
+		slog.Info("billing hold state changed",
+			"component", "daemon", "from", sm.billingHold, "to", billingHold)
+		sm.billingHold = billingHold
+	}
+}
+
+// GetL2ConfidenceThreshold returns the server-sent minimum confidence
+// for executing L2 plans. A zero value means the server is not
+// directing a specific threshold — caller should use its local default.
+func (sm *StateManager) GetL2ConfidenceThreshold() float64 {
+	sm.directivesMu.RLock()
+	defer sm.directivesMu.RUnlock()
+	return sm.l2ConfidenceThreshold
+}
+
+// IsHealingSuppressed returns (true, reason) when the daemon must
+// NOT execute remediation actions due to a server-sent directive.
+// Drift scans and evidence submission are NOT affected — only
+// executeL2Action and any other L1/L2 remediation paths.
+//
+//	reason:
+//	  ""                — healing allowed
+//	  "maintenance"     — MaintenanceUntil is in the future
+//	  "billing_hold"    — BillingHold flag is set
+//
+// The two conditions are OR'd. Maintenance wins the reason string if
+// both are active — operators care more about "why" than strict precedence.
+func (sm *StateManager) IsHealingSuppressed() (bool, string) {
+	sm.directivesMu.RLock()
+	defer sm.directivesMu.RUnlock()
+	if !sm.maintenanceUntil.IsZero() && time.Now().Before(sm.maintenanceUntil) {
+		return true, "maintenance"
+	}
+	if sm.billingHold {
+		return true, "billing_hold"
+	}
+	return false, ""
 }
 
 // SetDisabledChecks replaces the disabled checks map.

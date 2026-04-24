@@ -1205,6 +1205,15 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		d.state.SetSubscriptionStatus(resp.SubscriptionStatus)
 	}
 
+	// Apply server-sent directives — struct fields shipped in cb962f5d,
+	// behavior wired 2026-04-24 (Session 210):
+	//   * L2ConfidenceThreshold → minimum confidence for executing an L2 plan
+	//   * MaintenanceUntil       → pauses healing while in the future
+	//   * BillingHold            → pauses healing while true
+	// Drift scans + evidence submission continue regardless; only the
+	// remediation path is gated. See StateManager.ApplyServerDirectives.
+	d.state.ApplyServerDirectives(resp.L2ConfidenceThreshold, resp.MaintenanceUntil, resp.BillingHold)
+
 	// Update disabled drift checks from site config
 	if len(resp.DisabledChecks) > 0 {
 		newMap := make(map[string]bool, len(resp.DisabledChecks))
@@ -1581,6 +1590,19 @@ func (d *Daemon) processHealRequests(ctx context.Context) {
 				continue
 			}
 
+			// Server-sent healing-suppression directives (Session 210).
+			// Drift detection + evidence submission are NOT gated — only
+			// remediation actions. Operator visibility into what's broken
+			// must continue during maintenance / billing-hold windows.
+			if suppressed, reason := d.state.IsHealingSuppressed(); suppressed {
+				slog.Info("healing suppressed by server directive",
+					"component", "daemon",
+					"reason", reason,
+					"hostname", req.Hostname,
+					"check_type", req.CheckType)
+				continue
+			}
+
 			d.healIncident(ctx, &req)
 		}
 	}
@@ -1735,9 +1757,16 @@ func (d *Daemon) healIncident(ctx context.Context, req *grpcserver.HealRequest) 
 			return
 		}
 
-		// In auto mode: execute if L2 found a viable plan (confidence >= 0.6, not escalated)
-		// RequiresApproval is only enforced in manual mode — auto mode auto-executes
-		canExecute := !decision.EscalateToL3 && decision.Confidence >= 0.6
+		// In auto mode: execute if L2 found a viable plan (confidence gate, not escalated)
+		// RequiresApproval is only enforced in manual mode — auto mode auto-executes.
+		// Server can send a fleet-wide confidence floor via CheckinResponse
+		// (Session 210 wiring). Zero value → fall back to the daemon-local
+		// default 0.6, which matches pre-210 behavior.
+		confidenceFloor := d.state.GetL2ConfidenceThreshold()
+		if confidenceFloor <= 0 {
+			confidenceFloor = 0.6
+		}
+		canExecute := !decision.EscalateToL3 && decision.Confidence >= confidenceFloor
 		if canExecute {
 			// Manual mode: L2 generates plan but requires human approval
 			if l2Mode == "manual" {
