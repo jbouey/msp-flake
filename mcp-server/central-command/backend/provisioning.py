@@ -593,6 +593,7 @@ async def get_provision_by_mac(mac_address: str):
 
             config = {
                 "site_id": site_id_val,
+                "appliance_id": appliance_id,
                 "api_key": raw_api_key,
                 "api_endpoint": API_BASE_URL,
                 "ssh_authorized_keys": ssh_keys

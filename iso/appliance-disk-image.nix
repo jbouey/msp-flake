@@ -2678,6 +2678,30 @@ JSON
       API_ENDPOINT=$(${pkgs.yq}/bin/yq -r '.api_endpoint // empty' "$CONFIG_PATH" 2>/dev/null || echo "")
       API_ENDPOINT=''${API_ENDPOINT:-https://api.osiriscare.net}
 
+      # Legacy config.yaml (v40.0–v40.7) omits appliance_id. Derive it
+      # from SITE_ID + primary MAC the same way the backend does
+      # (appliance_id = "{site_id}-{MAC-uppercase-colon-separated}" —
+      # see mcp-server/central-command/backend/provisioning.py
+      # get_provision_by_mac()). journal-upload has a similar fallback.
+      if [ -z "$APPL_ID" ] && [ -n "$SITE_ID" ]; then
+        MAC_FOR_AID=""
+        for iface in /sys/class/net/enp* /sys/class/net/eth* /sys/class/net/en* /sys/class/net/*; do
+          [ -e "$iface" ] || continue
+          IFACE_NAME=$(basename "$iface")
+          [ "$IFACE_NAME" = "lo" ] && continue
+          [ -f "$iface/address" ] || continue
+          CANDIDATE=$(cat "$iface/address")
+          [ "$CANDIDATE" = "00:00:00:00:00:00" ] && continue
+          MAC_FOR_AID="$CANDIDATE"
+          break
+        done
+        if [ -n "$MAC_FOR_AID" ]; then
+          MAC_UPPER=$(echo "$MAC_FOR_AID" | tr '[:lower:]' '[:upper:]')
+          APPL_ID="$SITE_ID-$MAC_UPPER"
+          echo "submit: appliance_id absent in config.yaml — derived $APPL_ID from MAC"
+        fi
+      fi
+
       if [ -z "$SITE_ID" ] || [ -z "$API_KEY" ] || [ -z "$APPL_ID" ]; then
         echo "submit: site_id/api_key/appliance_id missing — retry in 5m"
         exit 0
