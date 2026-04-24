@@ -2648,17 +2648,48 @@ async def _check_nixos_rebuild_success_drought(conn: asyncpg.Connection) -> List
     window, even if later failures followed — one success is enough to
     prove the path still works. Operator judgment takes over from there.
     """
+    # Session 210-B fix: nixos_rebuild orders now route through BOTH
+    # admin_orders (legacy) AND fleet_orders + fleet_order_completions
+    # (modern via fleet_cli.py). Previously this invariant only queried
+    # admin_orders so canary rebuilds issued via fleet_cli could succeed
+    # and STILL leave the drought firing. Query both tables + unioned.
     row = await conn.fetchrow(
         """
+        WITH admin AS (
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'completed') AS successes_7d,
+                COUNT(*) FILTER (WHERE status = 'failed')    AS failures_7d,
+                COUNT(*) FILTER (WHERE status = 'expired')   AS expired_7d,
+                MAX(completed_at) FILTER (WHERE status = 'completed')
+                    AS last_success_7d
+              FROM admin_orders
+             WHERE order_type = 'nixos_rebuild'
+               AND created_at > NOW() - INTERVAL '7 days'
+        ),
+        fleet AS (
+            -- Count distinct completions per (order, appliance). One
+            -- fleet_order can have N completions; each is a real attempt
+            -- on a real appliance.
+            SELECT
+                COUNT(*) FILTER (WHERE foc.status = 'completed') AS successes_7d,
+                COUNT(*) FILTER (WHERE foc.status = 'failed')    AS failures_7d,
+                0 AS expired_7d,
+                MAX(foc.completed_at) FILTER (WHERE foc.status = 'completed')
+                    AS last_success_7d
+              FROM fleet_order_completions foc
+              JOIN fleet_orders fo ON fo.id = foc.fleet_order_id
+             WHERE fo.order_type = 'nixos_rebuild'
+               AND foc.completed_at > NOW() - INTERVAL '7 days'
+        )
         SELECT
-            COUNT(*) FILTER (WHERE status = 'completed') AS successes_7d,
-            COUNT(*) FILTER (WHERE status = 'failed')    AS failures_7d,
-            COUNT(*) FILTER (WHERE status = 'expired')   AS expired_7d,
-            MAX(completed_at) FILTER (WHERE status = 'completed')
-                AS last_success_7d
-          FROM admin_orders
-         WHERE order_type = 'nixos_rebuild'
-           AND created_at > NOW() - INTERVAL '7 days'
+            (admin.successes_7d + fleet.successes_7d) AS successes_7d,
+            (admin.failures_7d  + fleet.failures_7d)  AS failures_7d,
+            (admin.expired_7d)                         AS expired_7d,
+            GREATEST(
+                COALESCE(admin.last_success_7d, TIMESTAMPTZ '-infinity'),
+                COALESCE(fleet.last_success_7d, TIMESTAMPTZ '-infinity')
+            ) AS last_success_7d
+          FROM admin, fleet
         """
     )
     if row is None:
@@ -2668,15 +2699,20 @@ async def _check_nixos_rebuild_success_drought(conn: asyncpg.Connection) -> List
     if successes > 0 or failures < 1:
         return []
 
-    # Anchor the "drought length" number with a separate query so we can
-    # report 59-days-since-success even when the 7-day window is empty
-    # of successes.
+    # Anchor the "drought length" number — look back 365d across BOTH
+    # tables so we can report "59 days since last success" cleanly.
     last_success_ever = await conn.fetchval(
         """
-        SELECT MAX(completed_at)
-          FROM admin_orders
-         WHERE order_type = 'nixos_rebuild'
-           AND status = 'completed'
+        SELECT MAX(ts) FROM (
+            SELECT MAX(completed_at) AS ts
+              FROM admin_orders
+             WHERE order_type = 'nixos_rebuild' AND status = 'completed'
+            UNION ALL
+            SELECT MAX(foc.completed_at)
+              FROM fleet_order_completions foc
+              JOIN fleet_orders fo ON fo.id = foc.fleet_order_id
+             WHERE fo.order_type = 'nixos_rebuild' AND foc.status = 'completed'
+        ) s
         """
     )
     days_since_success: Optional[int] = None
