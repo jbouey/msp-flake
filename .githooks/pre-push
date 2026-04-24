@@ -19,30 +19,57 @@ set -e
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
-# Only run when pushing work that actually touches the backend import
-# graph. Infra-only pushes (docs, tests for other subsystems, iso/)
-# don't need the load check.
+# Determine which subsystems the push touches. We gate two separate
+# local checks: (a) Python smoke-import for backend, (b) source-level
+# iso pytests for iso/*. Each only runs when relevant — infra-only
+# doc pushes stay under a second.
 CHANGED=$(git diff --name-only "@{u}..HEAD" 2>/dev/null || git diff --name-only "HEAD~5..HEAD")
-RELEVANT=0
+BACKEND_CHANGED=0
+ISO_CHANGED=0
 for f in $CHANGED; do
     case "$f" in
-        mcp-server/*) RELEVANT=1 ;;
+        mcp-server/*) BACKEND_CHANGED=1 ;;
+        iso/*)        ISO_CHANGED=1 ;;
     esac
 done
 
-if [ "$RELEVANT" -eq 0 ]; then
-    exit 0
+# Backend smoke-import (catches the 2026-04-15 ImportError-on-deploy class).
+if [ "$BACKEND_CHANGED" -eq 1 ]; then
+    echo "[pre-push] smoke-import check..."
+    cd "$REPO_ROOT/mcp-server"
+    if ! python3 -c "import main" >/dev/null 2>&1; then
+        echo "[pre-push] ❌ import main failed — push blocked"
+        echo ""
+        python3 -c "import main" 2>&1 | sed -n '/Traceback\|Error/,/^$/p' | head -20
+        echo ""
+        echo "[pre-push] Fix the import error, then re-push."
+        echo "[pre-push] Bypass (emergency only): git push --no-verify"
+        exit 1
+    fi
+    echo "[pre-push] ✓ import main clean"
+    cd "$REPO_ROOT"
 fi
 
-echo "[pre-push] smoke-import check..."
-cd "$REPO_ROOT/mcp-server"
-if ! python3 -c "import main" >/dev/null 2>&1; then
-    echo "[pre-push] ❌ import main failed — push blocked"
-    echo ""
-    python3 -c "import main" 2>&1 | sed -n '/Traceback\|Error/,/^$/p' | head -20
-    echo ""
-    echo "[pre-push] Fix the import error, then re-push."
-    echo "[pre-push] Bypass (emergency only): git push --no-verify"
-    exit 1
+# ISO source-level regression tests (v40.4 round-table rec #2).
+# Would have caught the v40.0 em-dash in b'...' SyntaxError + the
+# pkgs.inetutils/bin/host regression at push time instead of 4h
+# into a reflash + brick + audit cycle. Runs pure text-level
+# pytest against iso/appliance-disk-image.nix — no nix build, no
+# QEMU, < 200ms total. The server-side `test` job in GitHub
+# Actions covers the same ground but takes 5+ min; this is the
+# client-side fast-gate.
+if [ "$ISO_CHANGED" -eq 1 ]; then
+    echo "[pre-push] ISO regression pytests..."
+    cd "$REPO_ROOT/mcp-server/central-command/backend"
+    if ! python3 -m pytest tests/test_iso_*.py -q --tb=line >/dev/null 2>&1; then
+        echo "[pre-push] ❌ iso pytests failed — push blocked"
+        echo ""
+        python3 -m pytest tests/test_iso_*.py -q --tb=short 2>&1 | tail -30
+        echo ""
+        echo "[pre-push] Fix the iso regression, then re-push."
+        echo "[pre-push] Bypass (emergency only): git push --no-verify"
+        exit 1
+    fi
+    echo "[pre-push] ✓ iso pytests clean"
+    cd "$REPO_ROOT"
 fi
-echo "[pre-push] ✓ import main clean"

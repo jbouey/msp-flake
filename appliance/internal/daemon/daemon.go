@@ -192,12 +192,35 @@ func (d *Daemon) safeGo(name string, f func()) {
 // 401 auth failures indicate the current key is invalid. On success, updates
 // both the in-memory config and the config.yaml file atomically.
 func (d *Daemon) attemptRekey(ctx context.Context) {
-	log.Printf("[daemon] AUTH FAILED %d consecutive times — requesting rekey from Central Command",
-		d.consecutiveAuthFailures)
+	// v40.4 / daemon 0.4.8 (2026-04-23, round-table recommendation #5):
+	// structured log events on every rekey attempt so post-incident
+	// triage doesn't require hand-correlating api_keys inserts against
+	// daemon journals by timestamp. Key fields: consecutive (how many
+	// 401s triggered the rekey), old_prefix (first 8 chars of the
+	// outgoing key so we can grep api_keys for what was deactivated),
+	// new_prefix (first 8 chars of the incoming key), success bool,
+	// and the subsystems that got SetAPIKey'd on success.
+	oldKey := d.config.APIKey
+	oldPrefix := ""
+	if len(oldKey) >= 8 {
+		oldPrefix = oldKey[:8]
+	}
+	slog.Warn("auth rekey attempt",
+		"component", "auth",
+		"event", "rekey_attempt",
+		"consecutive", d.consecutiveAuthFailures,
+		"old_prefix", oldPrefix,
+	)
 
 	resp, err := d.phoneCli.RequestRekey(ctx)
 	if err != nil {
-		log.Printf("[daemon] Rekey failed: %v", err)
+		slog.Error("auth rekey failed",
+			"component", "auth",
+			"event", "rekey_failed",
+			"consecutive", d.consecutiveAuthFailures,
+			"old_prefix", oldPrefix,
+			"error", err.Error(),
+		)
 		return
 	}
 
@@ -230,7 +253,18 @@ func (d *Daemon) attemptRekey(ctx context.Context) {
 	}
 	d.consecutiveAuthFailures = 0
 
-	log.Printf("[daemon] Rekey successful — new API key written to %s, clients rotated", configPath)
+	newPrefix := ""
+	if len(resp.APIKey) >= 8 {
+		newPrefix = resp.APIKey[:8]
+	}
+	slog.Warn("auth rekey applied",
+		"component", "auth",
+		"event", "rekey_applied",
+		"old_prefix", oldPrefix,
+		"new_prefix", newPrefix,
+		"config_path", configPath,
+		"rotated_subsystems", []string{"phoneCli", "incidents", "telemetry", "logShipper"},
+	)
 }
 
 // isSubscriptionActive returns true if healing should be allowed.

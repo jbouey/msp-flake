@@ -117,6 +117,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         "/api/install/failure-report/",  # v36: per-MAC provisioning failure reports (X-Install-Token)
         "/api/install/net-survey/",      # v36: per-MAC first-boot network environment survey (X-Install-Token)
         "/incidents/",           # Incident resolve from appliances (machine-to-machine)
+        "/api/watchdog/",        # v40.4: watchdog bootstrap + events (per-appliance bearer auth, no browser session)
         "/api/escalations",      # Agent L3 escalations from appliances (machine-to-machine)
         # --- Webhooks (external service callbacks with their own auth) ---
         "/api/webhook/",

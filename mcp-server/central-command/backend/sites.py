@@ -3517,6 +3517,43 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 _health_json,
             )
 
+        # === STEP 3.0x: v40.4 first_outbound_success_at stamp ===
+        # Round-table Rec #4 (2026-04-23): install_sessions.first_outbound_
+        # success_at was historically set by the installer itself via
+        # /api/install/report/net-ready. That makes the column USELESS for
+        # detecting the installer-ran-once-then-silent class that bricked
+        # v40.0-v40.2 — the installer hit /start, completed the install,
+        # rebooted, and the installed system's 4-stage gate was what
+        # actually broke. The installer never called /net-ready so the
+        # column stayed NULL even after a perfectly-working installed
+        # system was checking in. provisioning_network_fail (Session 209)
+        # keys off this column and thus stayed blind.
+        #
+        # Fix: stamp first_outbound_success_at when the installed system
+        # posts its FIRST successful checkin — we're here, we auth'd,
+        # this IS outbound success. Scoped to install_sessions rows < 24h
+        # old so we don't retrocauselessly stamp ancient rows. Idempotent:
+        # IS NULL guard means repeat checkins don't churn the column.
+        # Savepoint-isolated so any failure (missing row, race) doesn't
+        # abort the parent checkin transaction.
+        if not _ghost_detected:
+            try:
+                async with conn.transaction():
+                    await conn.execute("""
+                        UPDATE install_sessions
+                           SET first_outbound_success_at = NOW()
+                         WHERE UPPER(mac_address) = UPPER($1)
+                           AND site_id = $2
+                           AND first_outbound_success_at IS NULL
+                           AND first_seen > NOW() - INTERVAL '24 hours'
+                    """, mac_normalized, checkin.site_id)
+            except Exception:
+                logger.error(
+                    "sites.checkin: install_sessions first_outbound stamp failed",
+                    exc_info=True,
+                    extra={"mac": mac_normalized, "site_id": checkin.site_id},
+                )
+
         # === STEP 3.0: Append heartbeat row (Migration 191) ===
         # One row per checkin. Append-only. Used for cadence detection,
         # uptime SLA, and dashboard rollup. Savepoint-isolated so an
