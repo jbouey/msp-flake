@@ -1788,7 +1788,7 @@ except Exception as e:
               sleep $RETRY_DELAY
               continue
             fi
-            ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
+            ${pkgs.yq}/bin/yq -y '.config' /tmp/provision-response.json > "$CONFIG_PATH"
             chmod 600 "$CONFIG_PATH"
             write_ssh_key /tmp/provision-response.json
             log "SUCCESS: Provisioning complete via MAC lookup"
@@ -1837,7 +1837,7 @@ except Exception as e:
                 rm -f /tmp/provision-response.json
                 continue
               fi
-              ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
+              ${pkgs.yq}/bin/yq -y '.config' /tmp/provision-response.json > "$CONFIG_PATH"
               chmod 600 "$CONFIG_PATH"
               write_ssh_key /tmp/provision-response.json
               log "SUCCESS: Provisioning complete via MAC lookup (poll #$POLL_COUNT)"
@@ -1920,7 +1920,7 @@ except Exception as e:
           if [ "$HTTP_CODE" = "200" ]; then
             if ${pkgs.jq}/bin/jq -e '.site_id' /tmp/provision-response.json >/dev/null 2>&1; then
               if verify_provision_signature /tmp/provision-response.json; then
-                ${pkgs.yq}/bin/yq -y '.' /tmp/provision-response.json > "$CONFIG_PATH"
+                ${pkgs.yq}/bin/yq -y '.config' /tmp/provision-response.json > "$CONFIG_PATH"
                 chmod 600 "$CONFIG_PATH"
                 write_ssh_key /tmp/provision-response.json
                 log "SUCCESS: Provisioning complete via persistent retry (attempt #$SLOW_ATTEMPT)"

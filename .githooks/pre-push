@@ -71,6 +71,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_iso_msp_narrow_sudo.py"
     "tests/test_iso_v40_3_classpath.py"
     "tests/test_iso_v40_4_self_heal.py"
+    "tests/test_iso_v40_6_config_yaml_flat.py"
     "tests/test_assertion_metadata_complete.py"
     "tests/test_substrate_docs_present.py"
 )
