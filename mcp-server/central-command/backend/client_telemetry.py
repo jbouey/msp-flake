@@ -66,14 +66,19 @@ class ClientFieldUndefinedEvent(BaseModel):
     ts: str = Field(max_length=40)  # ISO 8601 from client clock
 
 
-@router.post("/client-field-undefined", status_code=204)
+@router.post("/client-field-undefined", status_code=202)
 async def record_field_undefined(
     event: ClientFieldUndefinedEvent,
     request: Request,
     user: dict = Depends(auth_module.require_auth),
     db = Depends(get_db),
-) -> None:
-    """Record a single FIELD_UNDEFINED event. Returns 204 No Content.
+) -> dict:
+    """Record a single FIELD_UNDEFINED event. Returns 202 Accepted.
+
+    202 matches the best-effort async-ingest semantic (telemetry may or
+    may not persist on the path through the DB write). FastAPI disallows
+    a return-body annotation on 204 No Content, so 202 is the cleaner
+    status code here.
 
     Never raises on bad input beyond what Pydantic catches — telemetry
     failure must not break the frontend. Worst-case: event is dropped,
@@ -124,7 +129,8 @@ async def record_field_undefined(
     except Exception:
         # Telemetry ingest failure must not break the dashboard. Log
         # as ERROR (per CLAUDE.md "No silent write failures" rule)
-        # but return 204 to the client anyway.
+        # but return 202 to the client anyway — the whole point is that
+        # a failed telemetry write can't cascade into a broken UX.
         logger.error(
             "client_telemetry_ingest_failed",
             exc_info=True,
@@ -135,3 +141,4 @@ async def record_field_undefined(
             },
         )
         await db.rollback()
+    return {"accepted": True}

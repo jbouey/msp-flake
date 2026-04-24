@@ -7661,7 +7661,7 @@
         "type": "object"
       },
       "MagicLinkRequest": {
-        "description": "Request a magic link login.",
+        "description": "Request magic link via email.",
         "properties": {
           "email": {
             "format": "email",
@@ -14208,16 +14208,53 @@
       },
       "UserResponse": {
         "properties": {
-          "displayName": {
-            "title": "Displayname",
+          "created_at": {
+            "title": "Created At",
             "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
           },
           "id": {
             "title": "Id",
             "type": "string"
           },
+          "last_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Login"
+          },
           "role": {
             "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
             "type": "string"
           },
           "username": {
@@ -14228,8 +14265,12 @@
         "required": [
           "id",
           "username",
-          "displayName",
-          "role"
+          "email",
+          "display_name",
+          "role",
+          "status",
+          "last_login",
+          "created_at"
         ],
         "title": "UserResponse",
         "type": "object"
@@ -14682,6 +14723,49 @@
         "title": "WorkforceRecord",
         "type": "object"
       },
+      "dashboard_api___routes_impl__UserResponse": {
+        "properties": {
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "displayName",
+          "role"
+        ],
+        "title": "UserResponse",
+        "type": "object"
+      },
+      "dashboard_api__client_portal__MagicLinkRequest": {
+        "description": "Request a magic link login.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "MagicLinkRequest",
+        "type": "object"
+      },
       "dashboard_api__learning_api__ApproveRequest": {
         "properties": {
           "custom_name": {
@@ -14713,21 +14797,6 @@
           }
         },
         "title": "ApproveRequest",
-        "type": "object"
-      },
-      "dashboard_api__portal__MagicLinkRequest": {
-        "description": "Request magic link via email.",
-        "properties": {
-          "email": {
-            "format": "email",
-            "title": "Email",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email"
-        ],
-        "title": "MagicLinkRequest",
         "type": "object"
       },
       "dashboard_api__privileged_access_api__RejectRequest": {
@@ -14838,75 +14907,6 @@
           "username"
         ],
         "title": "CredentialCreate",
-        "type": "object"
-      },
-      "dashboard_api__users__UserResponse": {
-        "properties": {
-          "created_at": {
-            "title": "Created At",
-            "type": "string"
-          },
-          "display_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Display Name"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "last_login": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Login"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "username": {
-            "title": "Username",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "username",
-          "email",
-          "display_name",
-          "role",
-          "status",
-          "last_login",
-          "created_at"
-        ],
-        "title": "UserResponse",
         "type": "object"
       }
     }
@@ -16522,7 +16522,7 @@
     },
     "/api/admin/telemetry/client-field-undefined": {
       "post": {
-        "description": "Record a single FIELD_UNDEFINED event. Returns 204 No Content.\n\nNever raises on bad input beyond what Pydantic catches — telemetry\nfailure must not break the frontend. Worst-case: event is dropped,\nsubstrate invariant sees fewer events, spike doesn't fire, operator\ngets no alert. That's acceptable; the alternative (5xx from this\nendpoint breaking an already-broken page) is worse.",
+        "description": "Record a single FIELD_UNDEFINED event. Returns 202 Accepted.\n\n202 matches the best-effort async-ingest semantic (telemetry may or\nmay not persist on the path through the DB write). FastAPI disallows\na return-body annotation on 204 No Content, so 202 is the cleaner\nstatus code here.\n\nNever raises on bad input beyond what Pydantic catches — telemetry\nfailure must not break the frontend. Worst-case: event is dropped,\nsubstrate invariant sees fewer events, spike doesn't fire, operator\ngets no alert. That's acceptable; the alternative (5xx from this\nendpoint breaking an already-broken page) is worse.",
         "operationId": "record_field_undefined_api_admin_telemetry_client_field_undefined_post",
         "requestBody": {
           "content": {
@@ -16535,7 +16535,16 @@
           "required": true
         },
         "responses": {
-          "204": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Record Field Undefined Api Admin Telemetry Client Field Undefined Post",
+                  "type": "object"
+                }
+              }
+            },
             "description": "Successful Response"
           },
           "422": {
@@ -17723,7 +17732,7 @@
                 "schema": {
                   "anyOf": [
                     {
-                      "$ref": "#/components/schemas/UserResponse"
+                      "$ref": "#/components/schemas/dashboard_api___routes_impl__UserResponse"
                     },
                     {
                       "type": "null"
@@ -19773,7 +19782,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MagicLinkRequest"
+                "$ref": "#/components/schemas/dashboard_api__client_portal__MagicLinkRequest"
               }
             }
           },
@@ -50591,7 +50600,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__portal__MagicLinkRequest"
+                "$ref": "#/components/schemas/MagicLinkRequest"
               }
             }
           },
@@ -54131,7 +54140,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/dashboard_api__users__UserResponse"
+                    "$ref": "#/components/schemas/UserResponse"
                   },
                   "title": "Response List Users Api Users Get",
                   "type": "array"
@@ -54501,7 +54510,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/dashboard_api__users__UserResponse"
+                  "$ref": "#/components/schemas/UserResponse"
                 }
               }
             },
@@ -54804,7 +54813,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/dashboard_api__users__UserResponse"
+                  "$ref": "#/components/schemas/UserResponse"
                 }
               }
             },

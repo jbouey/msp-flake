@@ -999,7 +999,12 @@ export interface paths {
         put?: never;
         /**
          * Record Field Undefined
-         * @description Record a single FIELD_UNDEFINED event. Returns 204 No Content.
+         * @description Record a single FIELD_UNDEFINED event. Returns 202 Accepted.
+         *
+         *     202 matches the best-effort async-ingest semantic (telemetry may or
+         *     may not persist on the path through the DB write). FastAPI disallows
+         *     a return-body annotation on 204 No Content, so 202 is the cleaner
+         *     status code here.
          *
          *     Never raises on bad input beyond what Pydantic catches — telemetry
          *     failure must not break the frontend. Worst-case: event is dropped,
@@ -16478,10 +16483,15 @@ export interface components {
         };
         /** ApproveRequest */
         ApproveRequest: {
+            /** Custom Name */
+            custom_name?: string | null;
+            /**
+             * Deploy Immediately
+             * @default true
+             */
+            deploy_immediately: boolean;
             /** Notes */
             notes?: string | null;
-            /** Request Id */
-            request_id: string;
         };
         /** AssetInfo */
         AssetInfo: {
@@ -19347,7 +19357,7 @@ export interface components {
         };
         /**
          * MagicLinkRequest
-         * @description Request a magic link login.
+         * @description Request magic link via email.
          */
         MagicLinkRequest: {
             /**
@@ -22300,28 +22310,23 @@ export interface components {
             /** Termination Date */
             termination_date?: string | null;
         };
-        /** ApproveRequest */
-        dashboard_api__learning_api__ApproveRequest: {
-            /** Custom Name */
-            custom_name?: string | null;
-            /**
-             * Deploy Immediately
-             * @default true
-             */
-            deploy_immediately: boolean;
-            /** Notes */
-            notes?: string | null;
-        };
         /**
          * MagicLinkRequest
-         * @description Request magic link via email.
+         * @description Request a magic link login.
          */
-        dashboard_api__portal__MagicLinkRequest: {
+        dashboard_api__client_portal__MagicLinkRequest: {
             /**
              * Email
              * Format: email
              */
             email: string;
+        };
+        /** ApproveRequest */
+        dashboard_api__privileged_access_api__ApproveRequest: {
+            /** Notes */
+            notes?: string | null;
+            /** Request Id */
+            request_id: string;
         };
         /** RejectRequest */
         dashboard_api__privileged_access_api__RejectRequest: {
@@ -23636,11 +23641,15 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            204: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
             };
             /** @description Validation Error */
             422: {
@@ -25795,7 +25804,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MagicLinkRequest"];
+                "application/json": components["schemas"]["dashboard_api__client_portal__MagicLinkRequest"];
             };
         };
         responses: {
@@ -28175,7 +28184,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ApproveRequest"];
+                "application/json": components["schemas"]["dashboard_api__privileged_access_api__ApproveRequest"];
             };
         };
         responses: {
@@ -41027,7 +41036,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__learning_api__ApproveRequest"];
+                "application/json": components["schemas"]["ApproveRequest"];
             };
         };
         responses: {
@@ -44661,7 +44670,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__portal__MagicLinkRequest"];
+                "application/json": components["schemas"]["MagicLinkRequest"];
             };
         };
         responses: {
