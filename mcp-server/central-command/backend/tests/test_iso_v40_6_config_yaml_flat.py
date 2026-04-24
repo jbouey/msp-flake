@@ -154,6 +154,93 @@ def test_no_writes_to_deprecated_appliance_provisioning_api_key():
     )
 
 
+def test_migration_241_drops_api_key_column():
+    """v40.6 Split #1 stage 2: migration 241 DROPs the deprecated
+    `appliance_provisioning.api_key` column. If this test fails the
+    deprecation pipeline is broken — either the migration was
+    renamed/moved, or the DROP got removed, or someone added it back
+    as a new column."""
+    mig = (
+        _REPO_ROOT / "mcp-server" / "central-command" / "backend"
+        / "migrations" / "241_drop_appliance_provisioning_api_key.sql"
+    )
+    assert mig.exists(), (
+        "v40.6 regression: migration 241 (DROP appliance_provisioning.api_key) "
+        "is missing. Stage-2 of the split-#1 deprecation was reverted "
+        "or renamed without updating this test."
+    )
+    src = mig.read_text()
+    assert "ALTER TABLE appliance_provisioning" in src and "DROP COLUMN" in src, (
+        "v40.6 regression: migration 241 no longer contains the "
+        "`ALTER TABLE appliance_provisioning DROP COLUMN` statement. "
+        "Restore it; the stage-2 drop is the whole point of this file."
+    )
+    assert "api_key" in src, (
+        "v40.6 regression: migration 241 does not reference `api_key`. "
+        "That's the column this migration exists to drop."
+    )
+    # Idempotency — replay safety. `IF EXISTS` keeps the migration
+    # harmless if it's applied to a DB that already dropped the column.
+    assert "IF EXISTS" in src, (
+        "v40.6 regression: migration 241 lost its `IF EXISTS` guard. "
+        "Replay (re-apply) must be a no-op, not a failure."
+    )
+
+
+def test_adr_source_of_truth_hygiene_exists():
+    """The round-table ADR documenting the three-splits principle
+    must exist + reference each of the three closed splits.
+    Without this doc, future engineers have no 'why' context for
+    the VIEW / accessor / test discipline."""
+    adr = _REPO_ROOT / "docs" / "adr" / "2026-04-24-source-of-truth-hygiene.md"
+    assert adr.exists(), (
+        "v40.6 regression: the source-of-truth hygiene ADR was deleted. "
+        "It's the decision record that justifies the ban regexes in "
+        "this test file and the future design reviews. Restore it."
+    )
+    src = adr.read_text()
+    for marker in (
+        "appliance_provisioning.api_key",    # split 1 named
+        "config.yaml",                        # split 2 named
+        "CredentialProvider",                 # split 3 named
+        "One writer",                         # core principle
+    ):
+        assert marker in src, (
+            f"v40.6 regression: ADR lost reference to `{marker}`. "
+            f"If the ADR was restructured, keep the splits and "
+            f"principle statement visible — future engineers need "
+            f"the 'why'."
+        )
+
+
+def test_flake_exposes_appliance_boot_check():
+    """The QEMU boot-integration test must exist in flake.nix under
+    `checks.x86_64-linux.appliance-boot`. Source-level grep only;
+    running `nix flake check` is out of scope for pytest. This
+    test's job is to ensure the harness stays wired — not to run it."""
+    flake = _REPO_ROOT / "flake.nix"
+    src = flake.read_text()
+    assert "checks.x86_64-linux" in src, (
+        "v40.6 regression: flake.nix no longer exposes "
+        "`checks.x86_64-linux`. The QEMU boot-integration test "
+        "harness is gone. Without it, runtime regressions (missing "
+        "binary inside a derivation, Python SyntaxError in heredoc, "
+        "systemd deadlock) cannot be caught pre-ship."
+    )
+    assert "appliance-boot" in src, (
+        "v40.6 regression: the `appliance-boot` check is missing from "
+        "flake.nix. Restore it — the SWE round-table explicitly scoped "
+        "this as non-negotiable infrastructure."
+    )
+    assert "pkgs.testers.runNixOSTest" in src, (
+        "v40.6 regression: flake.nix no longer uses "
+        "`pkgs.testers.runNixOSTest`. That's the canonical NixOS VM "
+        "test framework; replacing it requires re-opening the round-"
+        "table (the alternative tooling needs to prove it can catch "
+        "systemd ordering + heredoc syntax + binary presence)."
+    )
+
+
 def test_signature_verifier_still_reads_config_block():
     """Belt-and-braces: `verify_provision_signature` must continue to
     verify against the `.config` subtree. If someone refactors the

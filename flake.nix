@@ -234,6 +234,103 @@
           memSize = 2048;  # More memory for the build VM
         };
 
+      # =================================================================
+      # v40.6 (2026-04-24, Principal SWE round-table) — QEMU boot-
+      # integration test harness.
+      #
+      # Catches the class of runtime regression that text-only pytest
+      # cannot see:
+      #   * missing binary inside a present nix derivation (v40.0 inetutils/host)
+      #   * Python SyntaxError in embedded heredoc scripts (v40.0 em-dash)
+      #   * systemd unit ordering deadlocks (v40.0 Phase 0 Before=[sysinit,multi-user])
+      #   * `set -euo pipefail` + command substitution fatal-exit bugs
+      #     (v40.3 DNS gate pre-`|| true`)
+      #   * any other "file presence assertions pass but the box won't boot" class
+      #
+      # Currently attr-level only (runs via `nix flake check` on demand).
+      # Next-session Task #129 wires this into the CI deploy gate so
+      # no ISO ships without a green boot test.
+      #
+      # Structure: two derivations — `appliance-boot-smoke` proves the
+      # testing framework works with our pinned nixpkgs (runs a
+      # minimal NixOS); `appliance-boot` imports the real disk-image
+      # config and asserts appliance-specific runtime properties.
+      # =================================================================
+      checks.x86_64-linux = let
+        pkgs = import nixpkgs { system = "x86_64-linux"; };
+      in {
+        # Framework-proof smoke test. Must always be green. If this
+        # fails, the testing framework itself is broken in our
+        # nixpkgs pin (not an appliance bug).
+        appliance-boot-smoke = pkgs.testers.runNixOSTest {
+          name = "appliance-boot-smoke";
+          nodes.machine = { config, pkgs, lib, ... }: {
+            networking.hostName = "test-smoke";
+            users.users.root.hashedPassword = "!";
+            services.getty.autologinUser = null;
+            system.stateVersion = "24.05";
+          };
+          testScript = ''
+            machine.wait_for_unit("multi-user.target", timeout=60)
+            machine.succeed("echo framework-up")
+          '';
+        };
+
+        # Real appliance boot test. Imports the production disk-image
+        # module, boots in QEMU, asserts the runtime properties that
+        # matter. Over time this becomes a CI deploy gate.
+        appliance-boot = pkgs.testers.runNixOSTest {
+          name = "appliance-boot";
+          nodes.machine = { config, pkgs, lib, ... }: {
+            imports = [ ./iso/appliance-disk-image.nix ];
+
+            # VM shim: the disk image declares real disk fileSystems
+            # and a boot loader. In test, QEMU provides its own.
+            fileSystems = lib.mkForce {
+              "/" = {
+                device = "/dev/vda";
+                fsType = "ext4";
+              };
+            };
+            boot.loader.systemd-boot.enable = lib.mkForce false;
+            boot.loader.grub.enable = lib.mkForce false;
+            boot.loader.grub.device = lib.mkForce "nodev";
+            lanzaboote.enable = lib.mkForce false;
+            virtualisation.memorySize = 2048;
+            virtualisation.diskSize = 4096;
+          };
+          # Failure signatures we deliberately test for — exit codes
+          # help triage: 1=phase0, 2=sshd, 3=daemon, 4=beacon.
+          testScript = ''
+            start_all()
+            # Phase 0: Break-glass passphrase must exist (tests the
+            # v40.1 deadlock fix + v40.3 binary classpath fix).
+            machine.wait_for_unit("msp-breakglass-provision.service", timeout=60)
+            machine.wait_for_file(
+                "/var/lib/msp/.emergency-credentials.enc", timeout=90
+            )
+            # Multi-user.target reaches (tests that nothing blocks
+            # user-space boot — the Phase 0 deadlock class).
+            machine.wait_for_unit("multi-user.target", timeout=120)
+            # SSH up (tests v40.1 sshd-on-boot rescue posture + the
+            # implicit "multi-user reached" assertion).
+            machine.wait_for_open_port(22, timeout=30)
+            # Beacon up on :8443 (tests v40.3 em-dash fix — Python
+            # heredoc parses cleanly).
+            machine.wait_for_unit("msp-status-beacon.service", timeout=60)
+            machine.wait_for_open_port(8443, timeout=30)
+            # Beacon returns JSON (tests the HTTP handler + that
+            # beacon.json got written).
+            machine.succeed(
+                "curl -sf http://127.0.0.1:8443/ "
+                "| python3 -c 'import json,sys; "
+                "d=json.load(sys.stdin); "
+                "assert \"state\" in d, \"beacon missing state field\"'"
+            )
+          '';
+        };
+      };
+
       # Example NixOS host (VM/container) using the module
       nixosConfigurations.log-watcher-test = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
