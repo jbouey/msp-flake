@@ -159,7 +159,7 @@ async def winrm_circuit_open(db, site_id: str) -> bool:
 # Pydantic Models
 # ============================================================================
 
-class CheckinRequest(BaseModel):
+class _AgentApiCheckinRequest(BaseModel):
     """Appliance check-in request."""
     site_id: str = Field(..., min_length=1, max_length=255)
     host_id: str = Field(..., min_length=1, max_length=255)
@@ -171,7 +171,7 @@ class CheckinRequest(BaseModel):
     public_key: Optional[str] = None
 
 
-class IncidentReport(BaseModel):
+class _AgentApiIncidentReport(BaseModel):
     """Incident reported by appliance."""
     site_id: str
     host_id: str
@@ -191,7 +191,7 @@ class IncidentReport(BaseModel):
         return v.lower()
 
 
-class DriftReport(BaseModel):
+class _AgentApiDriftReport(BaseModel):
     """Drift detection report from appliance."""
     site_id: str
     host_id: str
@@ -203,19 +203,19 @@ class DriftReport(BaseModel):
     hipaa_controls: Optional[List[str]] = None
 
 
-class OrderRequest(BaseModel):
+class _AgentApiOrderRequest(BaseModel):
     """Request for pending orders."""
     site_id: str
     host_id: str
 
 
-class OrderAcknowledgement(BaseModel):
+class _AgentApiOrderAcknowledgement(BaseModel):
     """Order acknowledgement from appliance."""
     site_id: str
     order_id: str
 
 
-class EvidenceSubmission(BaseModel):
+class _AgentApiEvidenceSubmission(BaseModel):
     """Evidence bundle submission."""
     bundle_id: str
     site_id: str
@@ -246,7 +246,7 @@ class EvidenceSubmission(BaseModel):
         return v
 
 
-class PatternReportInput(BaseModel):
+class _AgentApiPatternReportInput(BaseModel):
     """Pattern report from agent after successful healing."""
     site_id: str
     check_type: str
@@ -258,7 +258,7 @@ class PatternReportInput(BaseModel):
     reported_at: Optional[datetime] = None
 
 
-class PatternStatSync(BaseModel):
+class _AgentApiPatternStatSync(BaseModel):
     """Single pattern stat from agent."""
     pattern_signature: str
     total_occurrences: int
@@ -272,15 +272,15 @@ class PatternStatSync(BaseModel):
     promotion_eligible: bool = False
 
 
-class PatternStatsRequest(BaseModel):
+class _AgentApiPatternStatsRequest(BaseModel):
     """Batch pattern stats sync request from agent."""
     site_id: str
     appliance_id: str
     synced_at: str
-    pattern_stats: List[PatternStatSync]
+    pattern_stats: List[_AgentApiPatternStatSync]
 
 
-class PromotedRuleResponse(BaseModel):
+class _AgentApiPromotedRuleResponse(BaseModel):
     """Promoted rule for agent deployment."""
     rule_id: str
     pattern_signature: str
@@ -290,7 +290,7 @@ class PromotedRuleResponse(BaseModel):
     source: str = "server_promoted"
 
 
-class ExecutionTelemetryInput(BaseModel):
+class _AgentApiExecutionTelemetryInput(BaseModel):
     """Execution telemetry from agent. Accepts both wrapped and flat formats."""
     site_id: str
     execution: Optional[dict] = None
@@ -310,7 +310,7 @@ class L2PlanRequest(BaseModel):
     created_at: str = ""
 
 
-class ApplianceCheckinRequest(BaseModel):
+class _AgentApiApplianceCheckinRequest(BaseModel):
     """Appliance check-in from agent (uses different field names)."""
     site_id: str
     hostname: Optional[str] = None
@@ -328,7 +328,7 @@ class ApplianceCheckinRequest(BaseModel):
 
 @router.post("/checkin")
 async def checkin(
-    req: CheckinRequest,
+    req: _AgentApiCheckinRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
     auth_site_id: str = Depends(require_appliance_bearer),
@@ -532,7 +532,7 @@ async def get_orders(
 
 @router.post("/orders/acknowledge")
 async def acknowledge_order(
-    req: OrderAcknowledgement,
+    req: _AgentApiOrderAcknowledgement,
     db: AsyncSession = Depends(get_db),
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
@@ -566,7 +566,7 @@ async def acknowledge_order(
 
 @router.post("/incidents")
 async def report_incident(
-    incident: IncidentReport,
+    incident: _AgentApiIncidentReport,
     request: Request,
     db: AsyncSession = Depends(get_db),
     auth_site_id: str = Depends(require_appliance_bearer),
@@ -1522,7 +1522,7 @@ async def resolve_incident_by_type(
 
 @router.post("/drift")
 async def report_drift(
-    drift: DriftReport,
+    drift: _AgentApiDriftReport,
     db: AsyncSession = Depends(get_db),
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
@@ -1540,7 +1540,7 @@ async def report_drift(
         return {"status": "ok", "drifted": False, "action": "none"}
 
     # Convert to incident
-    incident = IncidentReport(
+    incident = _AgentApiIncidentReport(
         site_id=drift.site_id,
         host_id=drift.host_id,
         incident_type=f"drift:{drift.check_type}",
@@ -1567,7 +1567,7 @@ async def report_drift(
 
 @router.post("/agent/patterns")
 async def report_agent_pattern(
-    report: PatternReportInput,
+    report: _AgentApiPatternReportInput,
     db: AsyncSession = Depends(get_db),
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
@@ -1654,7 +1654,7 @@ async def report_agent_pattern(
 
 @router.post("/api/agent/sync/pattern-stats")
 async def sync_pattern_stats(
-    request: PatternStatsRequest,
+    request: _AgentApiPatternStatsRequest,
     db: AsyncSession = Depends(get_db),
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
@@ -1844,7 +1844,7 @@ async def get_promoted_rules(
 
 @router.post("/api/agent/executions")
 async def report_execution_telemetry(
-    request: ExecutionTelemetryInput,
+    request: _AgentApiExecutionTelemetryInput,
     db: AsyncSession = Depends(get_db),
     auth_site_id: str = Depends(require_appliance_bearer),
 ):
@@ -2753,7 +2753,7 @@ async def agent_sync_rules(
 
 @router.post("/api/appliances/checkin")
 async def appliances_checkin(
-    req: ApplianceCheckinRequest,
+    req: _AgentApiApplianceCheckinRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
     auth_site_id: str = Depends(require_appliance_bearer),

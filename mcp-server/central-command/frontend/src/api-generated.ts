@@ -17517,19 +17517,35 @@ export interface components {
              */
             ttl_days: number;
         };
-        /**
-         * CredentialCreate
-         * @description Model for creating site credentials.
-         */
+        /** CredentialCreate */
         CredentialCreate: {
+            /** Credential Name */
+            credential_name: string;
             /** Credential Type */
             credential_type: string;
+            /** Distro */
+            distro?: string | null;
             /** Domain */
             domain?: string | null;
-            /** Name */
-            name: string;
-            /** Password */
+            /** Host */
+            host: string;
+            /**
+             * Password
+             * @default
+             */
             password: string;
+            /**
+             * Port
+             * @default 22
+             */
+            port: number | null;
+            /** Private Key */
+            private_key?: string | null;
+            /**
+             * Use Ssl
+             * @default false
+             */
+            use_ssl: boolean | null;
             /** Username */
             username: string;
         };
@@ -19352,7 +19368,7 @@ export interface components {
         };
         /**
          * MagicLinkRequest
-         * @description Request magic link via email.
+         * @description Request a magic link login.
          */
         MagicLinkRequest: {
             /**
@@ -21123,6 +21139,8 @@ export interface components {
         RejectRequest: {
             /** Reason */
             reason: string;
+            /** Request Id */
+            request_id: string;
         };
         /**
          * RekeyRequest
@@ -22336,55 +22354,37 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** RejectRequest */
+        dashboard_api__learning_api__RejectRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * CredentialCreate
+         * @description Model for creating site credentials.
+         */
+        dashboard_api__partners__CredentialCreate: {
+            /** Credential Type */
+            credential_type: string;
+            /** Domain */
+            domain?: string | null;
+            /** Name */
+            name: string;
+            /** Password */
+            password: string;
+            /** Username */
+            username: string;
+        };
         /**
          * MagicLinkRequest
-         * @description Request a magic link login.
+         * @description Request magic link via email.
          */
-        dashboard_api__client_portal__MagicLinkRequest: {
+        dashboard_api__portal__MagicLinkRequest: {
             /**
              * Email
              * Format: email
              */
             email: string;
-        };
-        /** RejectRequest */
-        dashboard_api__privileged_access_api__RejectRequest: {
-            /** Reason */
-            reason: string;
-            /** Request Id */
-            request_id: string;
-        };
-        /** CredentialCreate */
-        dashboard_api__sites__CredentialCreate: {
-            /** Credential Name */
-            credential_name: string;
-            /** Credential Type */
-            credential_type: string;
-            /** Distro */
-            distro?: string | null;
-            /** Domain */
-            domain?: string | null;
-            /** Host */
-            host: string;
-            /**
-             * Password
-             * @default
-             */
-            password: string;
-            /**
-             * Port
-             * @default 22
-             */
-            port: number | null;
-            /** Private Key */
-            private_key?: string | null;
-            /**
-             * Use Ssl
-             * @default false
-             */
-            use_ssl: boolean | null;
-            /** Username */
-            username: string;
         };
     };
     responses: never;
@@ -25804,7 +25804,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__client_portal__MagicLinkRequest"];
+                "application/json": components["schemas"]["MagicLinkRequest"];
             };
         };
         responses: {
@@ -28324,7 +28324,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__privileged_access_api__RejectRequest"];
+                "application/json": components["schemas"]["RejectRequest"];
             };
         };
         responses: {
@@ -41075,7 +41075,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RejectRequest"];
+                "application/json": components["schemas"]["dashboard_api__learning_api__RejectRequest"];
             };
         };
         responses: {
@@ -43048,7 +43048,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CredentialCreate"];
+                "application/json": components["schemas"]["dashboard_api__partners__CredentialCreate"];
             };
         };
         responses: {
@@ -44670,7 +44670,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MagicLinkRequest"];
+                "application/json": components["schemas"]["dashboard_api__portal__MagicLinkRequest"];
             };
         };
         responses: {
@@ -46165,7 +46165,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__sites__CredentialCreate"];
+                "application/json": components["schemas"]["CredentialCreate"];
             };
         };
         responses: {

@@ -3559,11 +3559,25 @@
         "type": "object"
       },
       "CredentialCreate": {
-        "description": "Model for creating site credentials.",
         "properties": {
+          "credential_name": {
+            "title": "Credential Name",
+            "type": "string"
+          },
           "credential_type": {
             "title": "Credential Type",
             "type": "string"
+          },
+          "distro": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distro"
           },
           "domain": {
             "anyOf": [
@@ -3576,13 +3590,49 @@
             ],
             "title": "Domain"
           },
-          "name": {
-            "title": "Name",
+          "host": {
+            "title": "Host",
             "type": "string"
           },
           "password": {
+            "default": "",
             "title": "Password",
             "type": "string"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 22,
+            "title": "Port"
+          },
+          "private_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Private Key"
+          },
+          "use_ssl": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": false,
+            "title": "Use Ssl"
           },
           "username": {
             "title": "Username",
@@ -3590,10 +3640,10 @@
           }
         },
         "required": [
-          "name",
           "credential_type",
-          "username",
-          "password"
+          "credential_name",
+          "host",
+          "username"
         ],
         "title": "CredentialCreate",
         "type": "object"
@@ -7661,7 +7711,7 @@
         "type": "object"
       },
       "MagicLinkRequest": {
-        "description": "Request magic link via email.",
+        "description": "Request a magic link login.",
         "properties": {
           "email": {
             "format": "email",
@@ -11924,11 +11974,18 @@
       "RejectRequest": {
         "properties": {
           "reason": {
+            "maxLength": 1000,
+            "minLength": 10,
             "title": "Reason",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
             "type": "string"
           }
         },
         "required": [
+          "request_id",
           "reason"
         ],
         "title": "RejectRequest",
@@ -14784,61 +14841,25 @@
         "title": "UserResponse",
         "type": "object"
       },
-      "dashboard_api__client_portal__MagicLinkRequest": {
-        "description": "Request a magic link login.",
-        "properties": {
-          "email": {
-            "format": "email",
-            "title": "Email",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email"
-        ],
-        "title": "MagicLinkRequest",
-        "type": "object"
-      },
-      "dashboard_api__privileged_access_api__RejectRequest": {
+      "dashboard_api__learning_api__RejectRequest": {
         "properties": {
           "reason": {
-            "maxLength": 1000,
-            "minLength": 10,
             "title": "Reason",
-            "type": "string"
-          },
-          "request_id": {
-            "title": "Request Id",
             "type": "string"
           }
         },
         "required": [
-          "request_id",
           "reason"
         ],
         "title": "RejectRequest",
         "type": "object"
       },
-      "dashboard_api__sites__CredentialCreate": {
+      "dashboard_api__partners__CredentialCreate": {
+        "description": "Model for creating site credentials.",
         "properties": {
-          "credential_name": {
-            "title": "Credential Name",
-            "type": "string"
-          },
           "credential_type": {
             "title": "Credential Type",
             "type": "string"
-          },
-          "distro": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Distro"
           },
           "domain": {
             "anyOf": [
@@ -14851,49 +14872,13 @@
             ],
             "title": "Domain"
           },
-          "host": {
-            "title": "Host",
+          "name": {
+            "title": "Name",
             "type": "string"
           },
           "password": {
-            "default": "",
             "title": "Password",
             "type": "string"
-          },
-          "port": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": 22,
-            "title": "Port"
-          },
-          "private_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Private Key"
-          },
-          "use_ssl": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": false,
-            "title": "Use Ssl"
           },
           "username": {
             "title": "Username",
@@ -14901,12 +14886,27 @@
           }
         },
         "required": [
+          "name",
           "credential_type",
-          "credential_name",
-          "host",
-          "username"
+          "username",
+          "password"
         ],
         "title": "CredentialCreate",
+        "type": "object"
+      },
+      "dashboard_api__portal__MagicLinkRequest": {
+        "description": "Request magic link via email.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "MagicLinkRequest",
         "type": "object"
       }
     }
@@ -19782,7 +19782,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__client_portal__MagicLinkRequest"
+                "$ref": "#/components/schemas/MagicLinkRequest"
               }
             }
           },
@@ -23991,7 +23991,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__privileged_access_api__RejectRequest"
+                "$ref": "#/components/schemas/RejectRequest"
               }
             }
           },
@@ -43991,7 +43991,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RejectRequest"
+                "$ref": "#/components/schemas/dashboard_api__learning_api__RejectRequest"
               }
             }
           },
@@ -47755,7 +47755,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CredentialCreate"
+                "$ref": "#/components/schemas/dashboard_api__partners__CredentialCreate"
               }
             }
           },
@@ -50600,7 +50600,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MagicLinkRequest"
+                "$ref": "#/components/schemas/dashboard_api__portal__MagicLinkRequest"
               }
             }
           },
@@ -52956,7 +52956,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__sites__CredentialCreate"
+                "$ref": "#/components/schemas/CredentialCreate"
               }
             }
           },

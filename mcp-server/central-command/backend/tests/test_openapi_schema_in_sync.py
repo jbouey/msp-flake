@@ -159,15 +159,20 @@ def test_no_new_duplicate_pydantic_model_names():
     # NEVER raise it — that means a new duplicate was added, which deepens
     # the openapi non-determinism.
     BASELINE_DUPLICATE_COUNT = len(duplicates)
-    EXPECTED_MAX = 22  # current count as of Session 210 fix
+    # Lowered from 22 to 9 in Session 210-B after renaming the 12
+    # agent_api.py duplicates (which were all duplicates of main.py classes,
+    # agent_api.py router is no longer mounted). Remaining 9 each need
+    # individual disambiguation judgment (two real distinct features that
+    # happen to share a name) — queued as follow-up.
+    EXPECTED_MAX = 9
 
     assert BASELINE_DUPLICATE_COUNT <= EXPECTED_MAX, (
         f"Number of duplicate Pydantic class names is {BASELINE_DUPLICATE_COUNT}, "
-        f"exceeds the session-210 baseline of {EXPECTED_MAX}. A new duplicate "
+        f"exceeds the session-210-B baseline of {EXPECTED_MAX}. A new duplicate "
         f"was added — this deepens main.app.openapi() non-determinism.\n"
         f"Duplicates: {sorted(duplicates)}\n"
-        f"Fix: rename the new class to disambiguate (e.g. PromotedRuleApproveRequest "
-        f"vs PrivilegedApproveRequest), OR lower EXPECTED_MAX in this test if you "
+        f"Fix: rename the new class to disambiguate (e.g. _AgentApiCheckinRequest "
+        f"prefix for agent_api.py dups), OR lower EXPECTED_MAX in this test if you "
         f"ALSO removed a duplicate in the same commit."
     )
 
