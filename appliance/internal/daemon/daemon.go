@@ -38,7 +38,7 @@ import (
 
 // Version is set at build time via -ldflags.
 // Default "dev" indicates an untagged development build.
-var Version = "0.4.7"
+var Version = "0.4.8"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
@@ -214,9 +214,23 @@ func (d *Daemon) attemptRekey(ctx context.Context) {
 	// Update in-memory config and recreate HTTP client with new key
 	d.config.APIKey = resp.APIKey
 	d.phoneCli = NewPhoneHomeClient(d.config)
+	// v40.4 / daemon 0.4.8 (2026-04-23): propagate the new key to every
+	// sub-component that holds its own copy. Prior to this, only
+	// d.phoneCli saw the new key — d.incidents, d.telemetry, d.logShipper
+	// each kept the stale string captured at New() time forever, producing
+	// the split-brain 401-storm observed on /api/evidence/submit,
+	// /api/logs/ingest, /api/agent/executions (audit item #5). Each
+	// SetAPIKey is mutex-protected and nil-safe.
+	d.incidents.SetAPIKey(resp.APIKey)
+	if d.telemetry != nil {
+		d.telemetry.SetAPIKey(resp.APIKey)
+	}
+	if d.logShipper != nil {
+		d.logShipper.SetAPIKey(resp.APIKey)
+	}
 	d.consecutiveAuthFailures = 0
 
-	log.Printf("[daemon] Rekey successful — new API key written to %s, client recreated", configPath)
+	log.Printf("[daemon] Rekey successful — new API key written to %s, clients rotated", configPath)
 }
 
 // isSubscriptionActive returns true if healing should be allowed.

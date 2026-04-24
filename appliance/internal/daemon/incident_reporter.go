@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/phiscrub"
@@ -14,8 +15,17 @@ import (
 // incidentReporter sends drift findings to Central Command's POST /incidents
 // endpoint so they appear in the dashboard's incidents table.
 // This runs alongside the telemetry reporter (which feeds the learning loop).
+//
+// v40.4 / daemon 0.4.8 (2026-04-23): apiKey is mutex-protected so the
+// main daemon can rotate it after an auto-rekey without racing
+// concurrent HTTP goroutines. Prior to this, newIncidentReporter
+// captured the API key by value — a rekey updated d.config.APIKey
+// but this struct kept the stale string forever, causing the
+// split-brain 401-storm on /incidents endpoints while /checkin
+// returned 200 with the fresh key. See audit item #5.
 type incidentReporter struct {
 	endpoint  string // Base API endpoint
+	mu        sync.RWMutex
 	apiKey    string
 	siteID    string
 	client    *http.Client
@@ -31,6 +41,27 @@ func newIncidentReporter(endpoint, apiKey, siteID string) *incidentReporter {
 			Timeout: 10 * time.Second,
 		},
 	}
+}
+
+// SetAPIKey rotates the bearer token used for all future /incidents POSTs.
+// Safe to call concurrently with in-flight request goroutines; the RWMutex
+// guarantees the Bearer header built inside ReportDriftIncident / ReportHealed
+// sees either the old or new key atomically, never a torn read.
+func (r *incidentReporter) SetAPIKey(key string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.apiKey = key
+	r.mu.Unlock()
+}
+
+// currentAPIKey returns the key under a read lock — cheap, reentrant-safe,
+// guarantees no torn string read while SetAPIKey runs on another goroutine.
+func (r *incidentReporter) currentAPIKey() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.apiKey
 }
 
 // incidentPayload matches the backend IncidentReport model (main.py:254).
@@ -106,7 +137,7 @@ func (r *incidentReporter) ReportDriftIncident(
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.apiKey)
+	req.Header.Set("Authorization", "Bearer "+r.currentAPIKey())
 
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -160,7 +191,7 @@ func (r *incidentReporter) ReportHealed(
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.apiKey)
+	req.Header.Set("Authorization", "Bearer "+r.currentAPIKey())
 
 	resp, err := r.client.Do(req)
 	if err != nil {

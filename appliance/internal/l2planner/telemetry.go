@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/l2bridge"
@@ -15,8 +16,14 @@ import (
 // TelemetryReporter sends L2 execution outcomes to Central Command.
 // This feeds the data flywheel: L2 decisions are recorded, patterns accumulate,
 // and successful patterns get promoted to L1 rules.
+//
+// v40.4 / daemon 0.4.8 (2026-04-23): apiKey is mutex-protected so
+// main-daemon auto-rekey can rotate the bearer without racing
+// concurrent telemetry goroutines. See incident_reporter.go for
+// the same pattern + audit item #5.
 type TelemetryReporter struct {
 	endpoint    string // Base API endpoint (e.g. "https://api.osiriscare.net")
+	mu          sync.RWMutex
 	apiKey      string
 	siteID      string
 	applianceID string
@@ -39,6 +46,23 @@ func NewTelemetryReporter(endpoint, apiKey, siteID string) *TelemetryReporter {
 // SetApplianceID sets the appliance ID for telemetry reports.
 func (r *TelemetryReporter) SetApplianceID(id string) {
 	r.applianceID = id
+}
+
+// SetAPIKey rotates the bearer token. Safe to call concurrently with
+// in-flight Report* goroutines.
+func (r *TelemetryReporter) SetAPIKey(key string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.apiKey = key
+	r.mu.Unlock()
+}
+
+func (r *TelemetryReporter) currentAPIKey() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.apiKey
 }
 
 // executionData is the inner execution payload matching what the backend extracts.
@@ -135,7 +159,7 @@ func (r *TelemetryReporter) ReportExecution(
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.apiKey)
+	req.Header.Set("Authorization", "Bearer "+r.currentAPIKey())
 
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -208,7 +232,7 @@ func (r *TelemetryReporter) ReportL1Execution(
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.apiKey)
+	req.Header.Set("Authorization", "Bearer "+r.currentAPIKey())
 
 	resp, err := r.client.Do(req)
 	if err != nil {

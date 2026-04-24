@@ -53,10 +53,32 @@ type Config struct {
 }
 
 // Shipper tails journald and ships log batches.
+//
+// v40.4 / daemon 0.4.8: SetAPIKey rotates cfg.APIKey under s.mu so a
+// main-daemon auto-rekey can refresh the bearer used by future
+// shipJournalBatch POSTs without racing the flush goroutine. See
+// incident_reporter.go + audit item #5 for the full split-brain story.
 type Shipper struct {
 	cfg        Config
 	cursorFile string
 	mu         sync.Mutex
+}
+
+// SetAPIKey rotates the bearer used for future log-batch POSTs.
+// Safe to call concurrently with Run's flush goroutine.
+func (s *Shipper) SetAPIKey(key string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.cfg.APIKey = key
+	s.mu.Unlock()
+}
+
+func (s *Shipper) currentAPIKey() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.APIKey
 }
 
 // New creates a log shipper.
@@ -242,7 +264,7 @@ func (s *Shipper) postBatch(ctx context.Context, entries []logEntry) error {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("Authorization", "Bearer "+s.cfg.APIKey)
+	req.Header.Set("Authorization", "Bearer "+s.currentAPIKey())
 
 	resp, err := s.cfg.HTTPClient.Do(req)
 	if err != nil {
@@ -314,7 +336,7 @@ func (s *Shipper) ShipRemoteEntries(ctx context.Context, hostname string, entrie
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("Authorization", "Bearer "+s.cfg.APIKey)
+	req.Header.Set("Authorization", "Bearer "+s.currentAPIKey())
 
 	resp, err := s.cfg.HTTPClient.Do(req)
 	if err != nil {
