@@ -41,8 +41,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from . import auth as auth_module
-from .shared import execute_with_retry, get_db
+try:
+    from . import auth as auth_module
+    from .shared import execute_with_retry, get_db
+except ImportError:  # direct-module import (test path — no package context)
+    import auth as auth_module  # type: ignore[no-redef]
+    from shared import execute_with_retry, get_db  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 

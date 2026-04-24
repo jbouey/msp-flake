@@ -76,13 +76,14 @@ describe('apiFieldGuard.requireField', () => {
   });
 
   it('passes through when the whole response is null (different failure class)', () => {
-    const result = requireField(null, 'tier', { endpoint: '/api/site' });
+    // Explicit generic args — TS can't infer K when obj is null.
+    const result = requireField<SampleResponse, 'tier'>(null, 'tier', { endpoint: '/api/site' });
     expect(result).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('passes through when the whole response is undefined', () => {
-    const result = requireField(undefined, 'tier', { endpoint: '/api/site' });
+    const result = requireField<SampleResponse, 'tier'>(undefined, 'tier', { endpoint: '/api/site' });
     expect(result).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
   });
