@@ -1,0 +1,25 @@
+{
+  "_doc": {
+    "purpose": "Consumer-driven contract declarations — Session 210 Layer 2.",
+    "read_by": "scripts/consumer_contract_check.py in pre-push + CI",
+    "policy": "Each entry declares: an endpoint (path + method) and a list of fields the frontend reads. CI validates backend's committed openapi.json still provides those fields. If the backend drops a declared field, CI fails.",
+    "adding_entries": "When a frontend component reads a field from a backend response and we want to lock that contract: add the endpoint path + method + the field names it reads. Keep the list to fields that, if undefined, would break the UI (not speculative future-use).",
+    "owner": "Session 210 coach plan. Expand over time — seed below covers the critical dashboard flows observed as highest-blast-radius during the 2026-04 audits."
+  },
+  "contracts": [
+    {
+      "endpoint": "/health",
+      "method": "get",
+      "consumer_components": ["monitors", "Caddy healthcheck", "Docker healthcheck"],
+      "required_fields": ["status"],
+      "rationale": "Uptime monitors poll this. Must return {status: 'ok'}."
+    },
+    {
+      "endpoint": "/api/version",
+      "method": "get",
+      "consumer_components": ["CI post-deploy verify", "admin dashboards"],
+      "required_fields": ["runtime_sha", "disk_sha", "matches"],
+      "rationale": "CI post-deploy gate + drift detection depend on this exact shape. See main.py VersionResponse."
+    }
+  ]
+}

@@ -2139,7 +2139,14 @@ async def root():
         "description": "MSP Compliance Platform - Central Orchestration Server"
     }
 
-@app.get("/health", operation_id="health_get")
+class HealthResponse(BaseModel):
+    """Shape of GET /health. Part of the consumer.json contract —
+    uptime monitors, Docker healthcheck, Caddy all depend on the
+    `status` field being present."""
+    status: str
+
+
+@app.get("/health", operation_id="health_get", response_model=HealthResponse)
 @app.head("/health", operation_id="health_head", include_in_schema=False)
 async def health():
     """Public health check — uptime monitors, Docker healthcheck, Caddy.
@@ -2213,7 +2220,15 @@ def _read_disk_git_sha() -> str:
     return _read_release_sha_from_disk()
 
 
-@app.get("/api/version", operation_id="app_version_get")
+class VersionResponse(BaseModel):
+    """Shape of GET /api/version. Part of the consumer.json contract —
+    CI post-deploy verify + admin dashboards depend on this exact shape."""
+    runtime_sha: str
+    disk_sha: str
+    matches: bool
+
+
+@app.get("/api/version", operation_id="app_version_get", response_model=VersionResponse)
 @app.head("/api/version", operation_id="app_version_head", include_in_schema=False)
 async def app_version():
     """Public version endpoint. CI's post-deploy verify step asserts

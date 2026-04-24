@@ -16478,15 +16478,10 @@ export interface components {
         };
         /** ApproveRequest */
         ApproveRequest: {
-            /** Custom Name */
-            custom_name?: string | null;
-            /**
-             * Deploy Immediately
-             * @default true
-             */
-            deploy_immediately: boolean;
             /** Notes */
             notes?: string | null;
+            /** Request Id */
+            request_id: string;
         };
         /** AssetInfo */
         AssetInfo: {
@@ -17517,35 +17512,19 @@ export interface components {
              */
             ttl_days: number;
         };
-        /** CredentialCreate */
+        /**
+         * CredentialCreate
+         * @description Model for creating site credentials.
+         */
         CredentialCreate: {
-            /** Credential Name */
-            credential_name: string;
             /** Credential Type */
             credential_type: string;
-            /** Distro */
-            distro?: string | null;
             /** Domain */
             domain?: string | null;
-            /** Host */
-            host: string;
-            /**
-             * Password
-             * @default
-             */
+            /** Name */
+            name: string;
+            /** Password */
             password: string;
-            /**
-             * Port
-             * @default 22
-             */
-            port: number | null;
-            /** Private Key */
-            private_key?: string | null;
-            /**
-             * Use Ssl
-             * @default false
-             */
-            use_ssl: boolean | null;
             /** Username */
             username: string;
         };
@@ -18655,6 +18634,16 @@ export interface components {
              */
             overall: number;
             status: components["schemas"]["HealthStatus"];
+        };
+        /**
+         * HealthResponse
+         * @description Shape of GET /health. Part of the consumer.json contract —
+         *     uptime monitors, Docker healthcheck, Caddy all depend on the
+         *     `status` field being present.
+         */
+        HealthResponse: {
+            /** Status */
+            status: string;
         };
         /**
          * HealthStatus
@@ -21117,8 +21106,6 @@ export interface components {
         RejectRequest: {
             /** Reason */
             reason: string;
-            /** Request Id */
-            request_id: string;
         };
         /**
          * RekeyRequest
@@ -22158,20 +22145,12 @@ export interface components {
         };
         /** UserResponse */
         UserResponse: {
-            /** Created At */
-            created_at: string;
-            /** Display Name */
-            display_name: string | null;
-            /** Email */
-            email: string | null;
+            /** Displayname */
+            displayName: string;
             /** Id */
             id: string;
-            /** Last Login */
-            last_login: string | null;
             /** Role */
             role: string;
-            /** Status */
-            status: string;
             /** Username */
             username: string;
         };
@@ -22212,6 +22191,19 @@ export interface components {
             mfa_token: string;
             /** Totp Code */
             totp_code: string;
+        };
+        /**
+         * VersionResponse
+         * @description Shape of GET /api/version. Part of the consumer.json contract —
+         *     CI post-deploy verify + admin dashboards depend on this exact shape.
+         */
+        VersionResponse: {
+            /** Disk Sha */
+            disk_sha: string;
+            /** Matches */
+            matches: boolean;
+            /** Runtime Sha */
+            runtime_sha: string;
         };
         /**
          * WatchdogBootstrapRequest
@@ -22308,37 +22300,17 @@ export interface components {
             /** Termination Date */
             termination_date?: string | null;
         };
-        /** UserResponse */
-        dashboard_api___routes_impl__UserResponse: {
-            /** Displayname */
-            displayName: string;
-            /** Id */
-            id: string;
-            /** Role */
-            role: string;
-            /** Username */
-            username: string;
-        };
-        /** RejectRequest */
-        dashboard_api__learning_api__RejectRequest: {
-            /** Reason */
-            reason: string;
-        };
-        /**
-         * CredentialCreate
-         * @description Model for creating site credentials.
-         */
-        dashboard_api__partners__CredentialCreate: {
-            /** Credential Type */
-            credential_type: string;
-            /** Domain */
-            domain?: string | null;
-            /** Name */
-            name: string;
-            /** Password */
-            password: string;
-            /** Username */
-            username: string;
+        /** ApproveRequest */
+        dashboard_api__learning_api__ApproveRequest: {
+            /** Custom Name */
+            custom_name?: string | null;
+            /**
+             * Deploy Immediately
+             * @default true
+             */
+            deploy_immediately: boolean;
+            /** Notes */
+            notes?: string | null;
         };
         /**
          * MagicLinkRequest
@@ -22351,12 +22323,63 @@ export interface components {
              */
             email: string;
         };
-        /** ApproveRequest */
-        dashboard_api__privileged_access_api__ApproveRequest: {
-            /** Notes */
-            notes?: string | null;
+        /** RejectRequest */
+        dashboard_api__privileged_access_api__RejectRequest: {
+            /** Reason */
+            reason: string;
             /** Request Id */
             request_id: string;
+        };
+        /** CredentialCreate */
+        dashboard_api__sites__CredentialCreate: {
+            /** Credential Name */
+            credential_name: string;
+            /** Credential Type */
+            credential_type: string;
+            /** Distro */
+            distro?: string | null;
+            /** Domain */
+            domain?: string | null;
+            /** Host */
+            host: string;
+            /**
+             * Password
+             * @default
+             */
+            password: string;
+            /**
+             * Port
+             * @default 22
+             */
+            port: number | null;
+            /** Private Key */
+            private_key?: string | null;
+            /**
+             * Use Ssl
+             * @default false
+             */
+            use_ssl: boolean | null;
+            /** Username */
+            username: string;
+        };
+        /** UserResponse */
+        dashboard_api__users__UserResponse: {
+            /** Created At */
+            created_at: string;
+            /** Display Name */
+            display_name: string | null;
+            /** Email */
+            email: string | null;
+            /** Id */
+            id: string;
+            /** Last Login */
+            last_login: string | null;
+            /** Role */
+            role: string;
+            /** Status */
+            status: string;
+            /** Username */
+            username: string;
         };
     };
     responses: never;
@@ -24461,7 +24484,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["dashboard_api___routes_impl__UserResponse"] | null;
+                    "application/json": components["schemas"]["UserResponse"] | null;
                 };
             };
         };
@@ -28152,7 +28175,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__privileged_access_api__ApproveRequest"];
+                "application/json": components["schemas"]["ApproveRequest"];
             };
         };
         responses: {
@@ -28292,7 +28315,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RejectRequest"];
+                "application/json": components["schemas"]["dashboard_api__privileged_access_api__RejectRequest"];
             };
         };
         responses: {
@@ -41004,7 +41027,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ApproveRequest"];
+                "application/json": components["schemas"]["dashboard_api__learning_api__ApproveRequest"];
             };
         };
         responses: {
@@ -41043,7 +41066,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__learning_api__RejectRequest"];
+                "application/json": components["schemas"]["RejectRequest"];
             };
         };
         responses: {
@@ -43016,7 +43039,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__partners__CredentialCreate"];
+                "application/json": components["schemas"]["CredentialCreate"];
             };
         };
         responses: {
@@ -46133,7 +46156,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CredentialCreate"];
+                "application/json": components["schemas"]["dashboard_api__sites__CredentialCreate"];
             };
         };
         responses: {
@@ -47000,7 +47023,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserResponse"][];
+                    "application/json": components["schemas"]["dashboard_api__users__UserResponse"][];
                 };
             };
         };
@@ -47235,7 +47258,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserResponse"];
+                    "application/json": components["schemas"]["dashboard_api__users__UserResponse"];
                 };
             };
         };
@@ -47451,7 +47474,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserResponse"];
+                    "application/json": components["schemas"]["dashboard_api__users__UserResponse"];
                 };
             };
             /** @description Validation Error */
@@ -47546,7 +47569,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["VersionResponse"];
                 };
             };
         };
@@ -47931,7 +47954,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };
