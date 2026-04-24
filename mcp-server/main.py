@@ -2137,9 +2137,14 @@ async def root():
         "description": "MSP Compliance Platform - Central Orchestration Server"
     }
 
-@app.api_route("/health", methods=["GET", "HEAD"])
+@app.get("/health", operation_id="health_get")
+@app.head("/health", operation_id="health_head", include_in_schema=False)
 async def health():
-    """Public health check — uptime monitors, Docker healthcheck, Caddy."""
+    """Public health check — uptime monitors, Docker healthcheck, Caddy.
+
+    HEAD variant is registered for monitors that use HEAD but excluded
+    from OpenAPI to keep operation IDs unique (Session 210 codegen).
+    """
     return JSONResponse(content={"status": "ok"})
 
 
@@ -2206,7 +2211,8 @@ def _read_disk_git_sha() -> str:
     return _read_release_sha_from_disk()
 
 
-@app.api_route("/api/version", methods=["GET", "HEAD"])
+@app.get("/api/version", operation_id="app_version_get")
+@app.head("/api/version", operation_id="app_version_head", include_in_schema=False)
 async def app_version():
     """Public version endpoint. CI's post-deploy verify step asserts
     the running process's SHA matches the SHA of the commit that
@@ -2214,7 +2220,10 @@ async def app_version():
     actually restart the Python process — the bug we hit on
     2026-04-13 (12:12-18:03 UTC silent-no-op deploy window).
 
-    Public so monitors can scrape it without auth."""
+    Public so monitors can scrape it without auth.
+
+    HEAD variant registered for HEAD monitors but excluded from
+    OpenAPI schema to keep operation IDs unique."""
     runtime = _read_runtime_git_sha()
     disk = _read_disk_git_sha()
     return JSONResponse(content={

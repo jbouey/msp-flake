@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint src/",
-    "test": "vitest run"
+    "test": "vitest run",
+    "generate-api": "openapi-typescript ../openapi.json --output src/api-generated.ts"
   },
   "dependencies": {
     "@noble/ed25519": "^2.3.0",
@@ -35,6 +36,7 @@
     "eslint": "^10.0.2",
     "jsdom": "^28.1.0",
     "md-to-pdf": "^5.2.5",
+    "openapi-typescript": "^7.13.0",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.2.2",

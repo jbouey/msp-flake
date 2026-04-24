@@ -76,6 +76,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_assertion_metadata_complete.py"
     "tests/test_substrate_docs_present.py"
     "tests/test_pydantic_contract_check.py"
+    "tests/test_openapi_schema_in_sync.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
