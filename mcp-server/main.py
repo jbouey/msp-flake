@@ -46,6 +46,7 @@ from dashboard_api.portal import router as portal_router
 from dashboard_api.evidence_chain import router as evidence_router
 from dashboard_api.install_reports import router as install_router
 from dashboard_api.install_telemetry import router as install_telemetry_router
+from dashboard_api.client_telemetry import router as client_telemetry_router  # Session 210 Layer 3
 from dashboard_api.appliance_relocation_api import router as appliance_relocation_router
 from dashboard_api.chaos_lab import router as chaos_lab_router
 from dashboard_api.public_status import public_status_router, admin_status_router
@@ -1983,6 +1984,7 @@ app.include_router(portal_router)
 app.include_router(evidence_router)
 app.include_router(install_router)
 app.include_router(install_telemetry_router)  # v36: install failure + net-survey telemetry
+app.include_router(client_telemetry_router)   # Session 210: browser-side contract-drift telemetry
 app.include_router(appliance_relocation_router)  # v36: appliance move detection + ack (HIPAA §164.310(d)(1))
 app.include_router(chaos_lab_router)
 app.include_router(public_status_router)

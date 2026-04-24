@@ -696,6 +696,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_l2_decisions_stalled(c),
     ),
     Assertion(
+        name="frontend_field_undefined_spike",
+        severity="sev2",
+        description="Browser-side apiFieldGuard has seen >10 FIELD_UNDEFINED events from >=2 distinct sessions for the same (endpoint, field) pair in the last 5 min. Frontend code is reading a field the backend is no longer returning, and real users are hitting it. This invariant is Layer 3 of the Session 210 enterprise API reliability plan: even with Pydantic contract checks (Layer 6) and OpenAPI codegen (Layer 1) there's still a semantic-drift class (JSONB sub-fields, enum values, format changes) this catches at runtime. Auto-resolves when the spike passes (field populated again OR frontend updated to stop reading it).",
+        check=lambda c: _check_frontend_field_undefined_spike(c),
+    ),
+    Assertion(
         name="synthetic_l2_pps_rows",
         severity="sev3",
         description="platform_pattern_stats should never contain rows with L2-prefixed runbook_id (they are synthetic planner-internal IDs, excluded from aggregation by background_tasks.py:1189 `NOT LIKE 'L2-%'`). 2026-04-18 migration 237 DELETEd 2 such rows; Session 210 found them back with January timestamps despite no identified INSERT path. Rows were re-deleted. This invariant catches the next reappearance loud instead of silent.",
@@ -965,6 +971,23 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "multiple generations accumulate). Cross-check "
             "nixos_rebuild_success_drought — disk pressure is the most common "
             "root cause of a silent rebuild failure.",
+    },
+    "frontend_field_undefined_spike": {
+        "display_name": "Frontend reading fields the backend no longer returns",
+        "recommended_action": "API contract drift has reached prod. Triage: "
+            "(1) check the `details.endpoint` + `details.field_name` in the "
+            "violation row; that's the broken contract. "
+            "(2) grep the backend for the endpoint → find its Pydantic "
+            "response model → is the field declared? "
+            "(3) if the field was removed intentionally, update the frontend "
+            "component that reads it, then regenerate api-generated.ts "
+            "(`cd mcp-server/central-command/frontend && npm run generate-api`). "
+            "(4) if the field was never there, the frontend has an outdated "
+            "assumption — fix the component. "
+            "(5) if the field SHOULD be there, check whether a recent backend "
+            "deploy accidentally dropped it; roll back or hotfix. "
+            "Auto-resolves when events stop arriving for that (endpoint, field) "
+            "pair in a 5-minute window.",
     },
     "synthetic_l2_pps_rows": {
         "display_name": "Synthetic L2-* runbook_id rows in platform_pattern_stats",
@@ -2356,6 +2379,77 @@ async def _check_flywheel_ledger_stalled(conn: asyncpg.Connection) -> List[Viola
                 ),
             },
         )
+    ]
+
+
+async def _check_frontend_field_undefined_spike(conn: asyncpg.Connection) -> List[Violation]:
+    """Fire when browser-side apiFieldGuard has observed a spike of
+    FIELD_UNDEFINED events — frontend code reading a field that the
+    backend no longer provides (or never provided, per this endpoint).
+
+    Session 210 (2026-04-24) Layer 3 of enterprise API reliability. The
+    frontend emits these via /api/admin/telemetry/client-field-undefined;
+    this invariant reads the aggregation and pages operators when drift
+    reaches prod despite the Pydantic contract (Layer 6) and OpenAPI
+    codegen (Layer 1) gates.
+
+    Threshold: >10 events from distinct browser sessions in 5 min. Single
+    user mashing F5 after a deploy shouldn't page — but the same
+    (endpoint, field) drift hitting multiple users indicates real
+    contract drift that shipped.
+    """
+    # If the migration hasn't landed yet (e.g., first deploy after this
+    # commit but before Migration 242 applied), return no violations
+    # rather than raising.
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT endpoint, field_name,
+                   COUNT(*) AS event_count,
+                   COUNT(DISTINCT ip_address) AS distinct_sessions,
+                   MIN(recorded_at) AS first_seen,
+                   MAX(recorded_at) AS last_seen
+              FROM client_telemetry_events
+             WHERE event_kind = 'FIELD_UNDEFINED'
+               AND recorded_at > NOW() - INTERVAL '5 minutes'
+             GROUP BY endpoint, field_name
+             HAVING COUNT(*) > 10
+                AND COUNT(DISTINCT ip_address) >= 2
+             ORDER BY COUNT(*) DESC
+             LIMIT 20
+            """
+        )
+    except asyncpg.exceptions.UndefinedTableError:
+        return []
+
+    if not rows:
+        return []
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "endpoint": r["endpoint"],
+                "field_name": r["field_name"],
+                "event_count_5m": int(r["event_count"]),
+                "distinct_sessions": int(r["distinct_sessions"]),
+                "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
+                "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+                "remediation": (
+                    f"Frontend is reading {r['field_name']!r} from {r['endpoint']} "
+                    f"but the backend isn't returning it. Triage: "
+                    f"(1) grep backend for the endpoint → inspect the Pydantic "
+                    f"response model → is the field declared? "
+                    f"(2) `python3 scripts/export_openapi.py` and diff against "
+                    f"the committed openapi.json to see if the schema has drifted. "
+                    f"(3) If the field was intentionally removed, update the "
+                    f"frontend to stop reading it and regenerate "
+                    f"frontend/src/api-generated.ts. "
+                    f"(4) If the field was never there, the frontend has an "
+                    f"outdated assumption; fix the React component."
+                ),
+            },
+        )
+        for r in rows
     ]
 
 

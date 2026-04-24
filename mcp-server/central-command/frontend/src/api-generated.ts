@@ -988,6 +988,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/telemetry/client-field-undefined": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Field Undefined
+         * @description Record a single FIELD_UNDEFINED event. Returns 204 No Content.
+         *
+         *     Never raises on bad input beyond what Pydantic catches — telemetry
+         *     failure must not break the frontend. Worst-case: event is dropped,
+         *     substrate invariant sees fewer events, spike doesn't fire, operator
+         *     gets no alert. That's acceptable; the alternative (5xx from this
+         *     endpoint breaking an already-broken page) is worse.
+         */
+        post: operations["record_field_undefined_api_admin_telemetry_client_field_undefined_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/executions": {
         parameters: {
             query?: never;
@@ -16452,10 +16478,15 @@ export interface components {
         };
         /** ApproveRequest */
         ApproveRequest: {
+            /** Custom Name */
+            custom_name?: string | null;
+            /**
+             * Deploy Immediately
+             * @default true
+             */
+            deploy_immediately: boolean;
             /** Notes */
             notes?: string | null;
-            /** Request Id */
-            request_id: string;
         };
         /** AssetInfo */
         AssetInfo: {
@@ -16975,6 +17006,30 @@ export interface components {
              */
             tier: string;
         };
+        /**
+         * ClientFieldUndefinedEvent
+         * @description Payload from frontend's apiFieldGuard.requireField when a field
+         *     is undefined on an API response.
+         */
+        ClientFieldUndefinedEvent: {
+            /** Component */
+            component?: string | null;
+            /** Endpoint */
+            endpoint: string;
+            /** Field */
+            field: string;
+            /** Kind */
+            kind: string;
+            /** Observed Type */
+            observed_type: string;
+            /**
+             * Page
+             * @default
+             */
+            page: string;
+            /** Ts */
+            ts: string;
+        };
         /** ClientRejectRequest */
         ClientRejectRequest: {
             /** Reason */
@@ -17462,19 +17517,35 @@ export interface components {
              */
             ttl_days: number;
         };
-        /**
-         * CredentialCreate
-         * @description Model for creating site credentials.
-         */
+        /** CredentialCreate */
         CredentialCreate: {
+            /** Credential Name */
+            credential_name: string;
             /** Credential Type */
             credential_type: string;
+            /** Distro */
+            distro?: string | null;
             /** Domain */
             domain?: string | null;
-            /** Name */
-            name: string;
-            /** Password */
+            /** Host */
+            host: string;
+            /**
+             * Password
+             * @default
+             */
             password: string;
+            /**
+             * Port
+             * @default 22
+             */
+            port: number | null;
+            /** Private Key */
+            private_key?: string | null;
+            /**
+             * Use Ssl
+             * @default false
+             */
+            use_ssl: boolean | null;
             /** Username */
             username: string;
         };
@@ -21046,6 +21117,8 @@ export interface components {
         RejectRequest: {
             /** Reason */
             reason: string;
+            /** Request Id */
+            request_id: string;
         };
         /**
          * RekeyRequest
@@ -22085,12 +22158,20 @@ export interface components {
         };
         /** UserResponse */
         UserResponse: {
-            /** Displayname */
-            displayName: string;
+            /** Created At */
+            created_at: string;
+            /** Display Name */
+            display_name: string | null;
+            /** Email */
+            email: string | null;
             /** Id */
             id: string;
+            /** Last Login */
+            last_login: string | null;
             /** Role */
             role: string;
+            /** Status */
+            status: string;
             /** Username */
             username: string;
         };
@@ -22227,17 +22308,37 @@ export interface components {
             /** Termination Date */
             termination_date?: string | null;
         };
-        /** ApproveRequest */
-        dashboard_api__learning_api__ApproveRequest: {
-            /** Custom Name */
-            custom_name?: string | null;
-            /**
-             * Deploy Immediately
-             * @default true
-             */
-            deploy_immediately: boolean;
-            /** Notes */
-            notes?: string | null;
+        /** UserResponse */
+        dashboard_api___routes_impl__UserResponse: {
+            /** Displayname */
+            displayName: string;
+            /** Id */
+            id: string;
+            /** Role */
+            role: string;
+            /** Username */
+            username: string;
+        };
+        /** RejectRequest */
+        dashboard_api__learning_api__RejectRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * CredentialCreate
+         * @description Model for creating site credentials.
+         */
+        dashboard_api__partners__CredentialCreate: {
+            /** Credential Type */
+            credential_type: string;
+            /** Domain */
+            domain?: string | null;
+            /** Name */
+            name: string;
+            /** Password */
+            password: string;
+            /** Username */
+            username: string;
         };
         /**
          * MagicLinkRequest
@@ -22250,63 +22351,12 @@ export interface components {
              */
             email: string;
         };
-        /** RejectRequest */
-        dashboard_api__privileged_access_api__RejectRequest: {
-            /** Reason */
-            reason: string;
+        /** ApproveRequest */
+        dashboard_api__privileged_access_api__ApproveRequest: {
+            /** Notes */
+            notes?: string | null;
             /** Request Id */
             request_id: string;
-        };
-        /** CredentialCreate */
-        dashboard_api__sites__CredentialCreate: {
-            /** Credential Name */
-            credential_name: string;
-            /** Credential Type */
-            credential_type: string;
-            /** Distro */
-            distro?: string | null;
-            /** Domain */
-            domain?: string | null;
-            /** Host */
-            host: string;
-            /**
-             * Password
-             * @default
-             */
-            password: string;
-            /**
-             * Port
-             * @default 22
-             */
-            port: number | null;
-            /** Private Key */
-            private_key?: string | null;
-            /**
-             * Use Ssl
-             * @default false
-             */
-            use_ssl: boolean | null;
-            /** Username */
-            username: string;
-        };
-        /** UserResponse */
-        dashboard_api__users__UserResponse: {
-            /** Created At */
-            created_at: string;
-            /** Display Name */
-            display_name: string | null;
-            /** Email */
-            email: string | null;
-            /** Id */
-            id: string;
-            /** Last Login */
-            last_login: string | null;
-            /** Role */
-            role: string;
-            /** Status */
-            status: string;
-            /** Username */
-            username: string;
         };
     };
     responses: never;
@@ -23549,6 +23599,37 @@ export interface operations {
             };
         };
     };
+    record_field_undefined_api_admin_telemetry_client_field_undefined_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientFieldUndefinedEvent"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     report_execution_telemetry_api_agent_executions_post: {
         parameters: {
             query?: never;
@@ -24380,7 +24461,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserResponse"] | null;
+                    "application/json": components["schemas"]["dashboard_api___routes_impl__UserResponse"] | null;
                 };
             };
         };
@@ -28071,7 +28152,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ApproveRequest"];
+                "application/json": components["schemas"]["dashboard_api__privileged_access_api__ApproveRequest"];
             };
         };
         responses: {
@@ -28211,7 +28292,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__privileged_access_api__RejectRequest"];
+                "application/json": components["schemas"]["RejectRequest"];
             };
         };
         responses: {
@@ -40923,7 +41004,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__learning_api__ApproveRequest"];
+                "application/json": components["schemas"]["ApproveRequest"];
             };
         };
         responses: {
@@ -40962,7 +41043,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RejectRequest"];
+                "application/json": components["schemas"]["dashboard_api__learning_api__RejectRequest"];
             };
         };
         responses: {
@@ -42935,7 +43016,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CredentialCreate"];
+                "application/json": components["schemas"]["dashboard_api__partners__CredentialCreate"];
             };
         };
         responses: {
@@ -46052,7 +46133,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__sites__CredentialCreate"];
+                "application/json": components["schemas"]["CredentialCreate"];
             };
         };
         responses: {
@@ -46919,7 +47000,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["dashboard_api__users__UserResponse"][];
+                    "application/json": components["schemas"]["UserResponse"][];
                 };
             };
         };
@@ -47154,7 +47235,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["dashboard_api__users__UserResponse"];
+                    "application/json": components["schemas"]["UserResponse"];
                 };
             };
         };
@@ -47370,7 +47451,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["dashboard_api__users__UserResponse"];
+                    "application/json": components["schemas"]["UserResponse"];
                 };
             };
             /** @description Validation Error */

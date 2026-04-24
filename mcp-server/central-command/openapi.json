@@ -949,10 +949,25 @@
       },
       "ApproveRequest": {
         "properties": {
+          "custom_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Name"
+          },
+          "deploy_immediately": {
+            "default": true,
+            "title": "Deploy Immediately",
+            "type": "boolean"
+          },
           "notes": {
             "anyOf": [
               {
-                "maxLength": 1000,
                 "type": "string"
               },
               {
@@ -960,15 +975,8 @@
               }
             ],
             "title": "Notes"
-          },
-          "request_id": {
-            "title": "Request Id",
-            "type": "string"
           }
         },
-        "required": [
-          "request_id"
-        ],
         "title": "ApproveRequest",
         "type": "object"
       },
@@ -2352,6 +2360,63 @@
         "title": "ClientDetail",
         "type": "object"
       },
+      "ClientFieldUndefinedEvent": {
+        "description": "Payload from frontend's apiFieldGuard.requireField when a field\nis undefined on an API response.",
+        "properties": {
+          "component": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Component"
+          },
+          "endpoint": {
+            "maxLength": 200,
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "field": {
+            "maxLength": 100,
+            "title": "Field",
+            "type": "string"
+          },
+          "kind": {
+            "pattern": "^FIELD_UNDEFINED$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "observed_type": {
+            "maxLength": 30,
+            "title": "Observed Type",
+            "type": "string"
+          },
+          "page": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Page",
+            "type": "string"
+          },
+          "ts": {
+            "maxLength": 40,
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "endpoint",
+          "field",
+          "observed_type",
+          "ts"
+        ],
+        "title": "ClientFieldUndefinedEvent",
+        "type": "object"
+      },
       "ClientRejectRequest": {
         "properties": {
           "reason": {
@@ -3502,11 +3567,25 @@
         "type": "object"
       },
       "CredentialCreate": {
-        "description": "Model for creating site credentials.",
         "properties": {
+          "credential_name": {
+            "title": "Credential Name",
+            "type": "string"
+          },
           "credential_type": {
             "title": "Credential Type",
             "type": "string"
+          },
+          "distro": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distro"
           },
           "domain": {
             "anyOf": [
@@ -3519,13 +3598,49 @@
             ],
             "title": "Domain"
           },
-          "name": {
-            "title": "Name",
+          "host": {
+            "title": "Host",
             "type": "string"
           },
           "password": {
+            "default": "",
             "title": "Password",
             "type": "string"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 22,
+            "title": "Port"
+          },
+          "private_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Private Key"
+          },
+          "use_ssl": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": false,
+            "title": "Use Ssl"
           },
           "username": {
             "title": "Username",
@@ -3533,10 +3648,10 @@
           }
         },
         "required": [
-          "name",
           "credential_type",
-          "username",
-          "password"
+          "credential_name",
+          "host",
+          "username"
         ],
         "title": "CredentialCreate",
         "type": "object"
@@ -11820,11 +11935,18 @@
       "RejectRequest": {
         "properties": {
           "reason": {
+            "maxLength": 1000,
+            "minLength": 10,
             "title": "Reason",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
             "type": "string"
           }
         },
         "required": [
+          "request_id",
           "reason"
         ],
         "title": "RejectRequest",
@@ -14137,16 +14259,53 @@
       },
       "UserResponse": {
         "properties": {
-          "displayName": {
-            "title": "Displayname",
+          "created_at": {
+            "title": "Created At",
             "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
           },
           "id": {
             "title": "Id",
             "type": "string"
           },
+          "last_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Login"
+          },
           "role": {
             "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
             "type": "string"
           },
           "username": {
@@ -14157,8 +14316,12 @@
         "required": [
           "id",
           "username",
-          "displayName",
-          "role"
+          "email",
+          "display_name",
+          "role",
+          "status",
+          "last_login",
+          "created_at"
         ],
         "title": "UserResponse",
         "type": "object"
@@ -14587,37 +14750,85 @@
         "title": "WorkforceRecord",
         "type": "object"
       },
-      "dashboard_api__learning_api__ApproveRequest": {
+      "dashboard_api___routes_impl__UserResponse": {
         "properties": {
-          "custom_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Custom Name"
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
           },
-          "deploy_immediately": {
-            "default": true,
-            "title": "Deploy Immediately",
-            "type": "boolean"
+          "id": {
+            "title": "Id",
+            "type": "string"
           },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notes"
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
           }
         },
-        "title": "ApproveRequest",
+        "required": [
+          "id",
+          "username",
+          "displayName",
+          "role"
+        ],
+        "title": "UserResponse",
+        "type": "object"
+      },
+      "dashboard_api__learning_api__RejectRequest": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RejectRequest",
+        "type": "object"
+      },
+      "dashboard_api__partners__CredentialCreate": {
+        "description": "Model for creating site credentials.",
+        "properties": {
+          "credential_type": {
+            "title": "Credential Type",
+            "type": "string"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "credential_type",
+          "username",
+          "password"
+        ],
+        "title": "CredentialCreate",
         "type": "object"
       },
       "dashboard_api__portal__MagicLinkRequest": {
@@ -14635,13 +14846,19 @@
         "title": "MagicLinkRequest",
         "type": "object"
       },
-      "dashboard_api__privileged_access_api__RejectRequest": {
+      "dashboard_api__privileged_access_api__ApproveRequest": {
         "properties": {
-          "reason": {
-            "maxLength": 1000,
-            "minLength": 10,
-            "title": "Reason",
-            "type": "string"
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
           },
           "request_id": {
             "title": "Request Id",
@@ -14649,169 +14866,9 @@
           }
         },
         "required": [
-          "request_id",
-          "reason"
+          "request_id"
         ],
-        "title": "RejectRequest",
-        "type": "object"
-      },
-      "dashboard_api__sites__CredentialCreate": {
-        "properties": {
-          "credential_name": {
-            "title": "Credential Name",
-            "type": "string"
-          },
-          "credential_type": {
-            "title": "Credential Type",
-            "type": "string"
-          },
-          "distro": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Distro"
-          },
-          "domain": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Domain"
-          },
-          "host": {
-            "title": "Host",
-            "type": "string"
-          },
-          "password": {
-            "default": "",
-            "title": "Password",
-            "type": "string"
-          },
-          "port": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": 22,
-            "title": "Port"
-          },
-          "private_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Private Key"
-          },
-          "use_ssl": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": false,
-            "title": "Use Ssl"
-          },
-          "username": {
-            "title": "Username",
-            "type": "string"
-          }
-        },
-        "required": [
-          "credential_type",
-          "credential_name",
-          "host",
-          "username"
-        ],
-        "title": "CredentialCreate",
-        "type": "object"
-      },
-      "dashboard_api__users__UserResponse": {
-        "properties": {
-          "created_at": {
-            "title": "Created At",
-            "type": "string"
-          },
-          "display_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Display Name"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "last_login": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Login"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "username": {
-            "title": "Username",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "username",
-          "email",
-          "display_name",
-          "role",
-          "status",
-          "last_login",
-          "created_at"
-        ],
-        "title": "UserResponse",
+        "title": "ApproveRequest",
         "type": "object"
       }
     }
@@ -16425,6 +16482,41 @@
         ]
       }
     },
+    "/api/admin/telemetry/client-field-undefined": {
+      "post": {
+        "description": "Record a single FIELD_UNDEFINED event. Returns 204 No Content.\n\nNever raises on bad input beyond what Pydantic catches — telemetry\nfailure must not break the frontend. Worst-case: event is dropped,\nsubstrate invariant sees fewer events, spike doesn't fire, operator\ngets no alert. That's acceptable; the alternative (5xx from this\nendpoint breaking an already-broken page) is worse.",
+        "operationId": "record_field_undefined_api_admin_telemetry_client_field_undefined_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientFieldUndefinedEvent"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Field Undefined",
+        "tags": [
+          "telemetry"
+        ]
+      }
+    },
     "/api/agent/executions": {
       "post": {
         "description": "Receive rich execution telemetry from agents for learning engine.\n\nThis data feeds the learning system to analyze runbook effectiveness,\nidentify patterns for improvement, and track healing outcomes.\n\nAccepts two formats:\n- Wrapped: {site_id, execution: {...}, reported_at} (preferred)\n- Flat: {site_id, incident_id, ...} (legacy Go daemon compat)",
@@ -17593,7 +17685,7 @@
                 "schema": {
                   "anyOf": [
                     {
-                      "$ref": "#/components/schemas/UserResponse"
+                      "$ref": "#/components/schemas/dashboard_api___routes_impl__UserResponse"
                     },
                     {
                       "type": "null"
@@ -23666,7 +23758,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ApproveRequest"
+                "$ref": "#/components/schemas/dashboard_api__privileged_access_api__ApproveRequest"
               }
             }
           },
@@ -23852,7 +23944,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__privileged_access_api__RejectRequest"
+                "$ref": "#/components/schemas/RejectRequest"
               }
             }
           },
@@ -43776,7 +43868,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__learning_api__ApproveRequest"
+                "$ref": "#/components/schemas/ApproveRequest"
               }
             }
           },
@@ -43852,7 +43944,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RejectRequest"
+                "$ref": "#/components/schemas/dashboard_api__learning_api__RejectRequest"
               }
             }
           },
@@ -47616,7 +47708,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CredentialCreate"
+                "$ref": "#/components/schemas/dashboard_api__partners__CredentialCreate"
               }
             }
           },
@@ -52817,7 +52909,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__sites__CredentialCreate"
+                "$ref": "#/components/schemas/CredentialCreate"
               }
             }
           },
@@ -54001,7 +54093,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/dashboard_api__users__UserResponse"
+                    "$ref": "#/components/schemas/UserResponse"
                   },
                   "title": "Response List Users Api Users Get",
                   "type": "array"
@@ -54371,7 +54463,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/dashboard_api__users__UserResponse"
+                  "$ref": "#/components/schemas/UserResponse"
                 }
               }
             },
@@ -54674,7 +54766,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/dashboard_api__users__UserResponse"
+                  "$ref": "#/components/schemas/UserResponse"
                 }
               }
             },
