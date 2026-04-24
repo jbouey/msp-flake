@@ -30,9 +30,10 @@ COMMENT ON TABLE nonces IS
     'Rows older than NONCE_TTL (~10 min) are safe to prune; see '
     'assertions.py + substrate_runbooks for the cleanup job.';
 
-SELECT apply_migration(
-    240,
-    'nonces table for signature-auth anti-replay (fixes watchdog bootstrap 500)'
-);
+-- schema_migrations is self-recorded by migrate.py's apply_migration
+-- Python helper AFTER this commit. Do NOT call SELECT apply_migration()
+-- from SQL — that function does not exist as a DB-side entity in this
+-- deployment (it's a method on the Python migrator). Migration 235's
+-- header has the same warning.
 
 COMMIT;

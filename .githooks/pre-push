@@ -50,26 +50,42 @@ if [ "$BACKEND_CHANGED" -eq 1 ]; then
     cd "$REPO_ROOT"
 fi
 
-# ISO source-level regression tests (v40.4 round-table rec #2).
-# Would have caught the v40.0 em-dash in b'...' SyntaxError + the
-# pkgs.inetutils/bin/host regression at push time instead of 4h
-# into a reflash + brick + audit cycle. Runs pure text-level
-# pytest against iso/appliance-disk-image.nix — no nix build, no
-# QEMU, < 200ms total. The server-side `test` job in GitHub
-# Actions covers the same ground but takes 5+ min; this is the
-# client-side fast-gate.
-if [ "$ISO_CHANGED" -eq 1 ]; then
-    echo "[pre-push] ISO regression pytests..."
+# Source-level governance pytests (v40.5 round-table post-audit,
+# 2026-04-24). These tests read .nix / .py / .md files with
+# pathlib+regex; they do NOT require backend deps (asyncpg, pynacl,
+# pydantic v2) and run cleanly on the dev Python that isn't locked
+# to CI's pinned image. The full CI test suite still runs server-
+# side; this is the fast local gate that would have caught all 5 of
+# today's CI regressions (test_iso_msp_narrow_sudo + two on
+# test_assertion_metadata_complete + test_substrate_docs_present +
+# migration 240 line — the last needs server-side because it's a
+# deploy-time SQL error, out of scope for source checks).
+#
+# Each test file listed has been verified to run without backend
+# imports. Do NOT add test_*_pg.py or dep-heavy tests here — they
+# fail to collect locally and would turn every push into a --no-verify.
+SOURCE_LEVEL_TESTS=(
+    "tests/test_iso_breakglass_phase0.py"
+    "tests/test_iso_firewall_no_runtime_dns.py"
+    "tests/test_iso_install_gate.py"
+    "tests/test_iso_msp_narrow_sudo.py"
+    "tests/test_iso_v40_3_classpath.py"
+    "tests/test_iso_v40_4_self_heal.py"
+    "tests/test_assertion_metadata_complete.py"
+    "tests/test_substrate_docs_present.py"
+)
+if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
+    echo "[pre-push] source-level governance pytests..."
     cd "$REPO_ROOT/mcp-server/central-command/backend"
-    if ! python3 -m pytest tests/test_iso_*.py -q --tb=line >/dev/null 2>&1; then
-        echo "[pre-push] ❌ iso pytests failed — push blocked"
+    if ! python3 -m pytest "${SOURCE_LEVEL_TESTS[@]}" -q --tb=line >/dev/null 2>&1; then
+        echo "[pre-push] ❌ governance pytest failed — push blocked"
         echo ""
-        python3 -m pytest tests/test_iso_*.py -q --tb=short 2>&1 | tail -30
+        python3 -m pytest "${SOURCE_LEVEL_TESTS[@]}" -q --tb=short 2>&1 | tail -30
         echo ""
-        echo "[pre-push] Fix the iso regression, then re-push."
+        echo "[pre-push] Fix the regression, then re-push."
         echo "[pre-push] Bypass (emergency only): git push --no-verify"
         exit 1
     fi
-    echo "[pre-push] ✓ iso pytests clean"
+    echo "[pre-push] ✓ backend pytest clean"
     cd "$REPO_ROOT"
 fi
