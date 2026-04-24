@@ -509,7 +509,22 @@ async def get_provision_by_mac(mac_address: str):
     Returns config.yaml contents if MAC is registered in appliance_provisioning table.
 
     The MAC can be URL-encoded (84%3A3A%3A5B) or plain (84:3A:5B).
+
+    v40.4 (2026-04-23): this endpoint now MINTS A FRESH api_key on every
+    claimed-MAC call instead of handing back the stale legacy value
+    stored in appliance_provisioning.api_key. Prior behavior caused a
+    guaranteed AUTH_KEY_MISMATCH for every reflashed appliance that
+    had ever auto-rekeyed via /api/provision/rekey: the stored value
+    was the march-27 initial key, the active key in api_keys was the
+    post-rekey one, and the daemon's first checkin after reflash was
+    always rejected. Minting here is safe because the appliance-side
+    idempotency marker (v40.4 msp-auto-provision) guarantees this
+    endpoint is called exactly once per fresh disk lifecycle; repeat
+    calls skip at the appliance-side. The Migration-209 trigger on
+    api_keys auto-deactivates the prior active row for the same
+    (site_id, appliance_id) and writes a structured audit entry.
     """
+    import hashlib  # local import keeps module-level surface stable
     from urllib.parse import unquote
 
     pool = await get_pool()
@@ -519,7 +534,7 @@ async def get_provision_by_mac(mac_address: str):
     async with admin_connection(pool) as conn:
         # Check the appliance_provisioning table for MAC-based auto-provision
         provision = await conn.fetchrow("""
-            SELECT ap.site_id, ap.api_key,
+            SELECT ap.site_id,
                    COALESCE(ap.ssh_authorized_keys, '{}') as appliance_keys,
                    COALESCE(s.ssh_authorized_keys, '{}') as site_keys
             FROM appliance_provisioning ap
@@ -528,12 +543,43 @@ async def get_provision_by_mac(mac_address: str):
         """, mac)
 
         if provision and provision['site_id']:
-            # MAC is registered AND claimed to a site — return full config
-            await conn.execute("""
-                UPDATE appliance_provisioning
-                SET provisioned_at = COALESCE(provisioned_at, NOW())
-                WHERE UPPER(mac_address) = $1
-            """, mac)
+            # v40.4: mint a FRESH api_key + update appliance_provisioning
+            # + INSERT into api_keys (migration 209 trigger auto-
+            # deactivates prior active row). All three writes in one
+            # transaction so we can't end up with api_keys desynced
+            # from appliance_provisioning or from what we return.
+            site_id_val = provision['site_id']
+            appliance_id = f"{site_id_val}-{mac}"
+            raw_api_key = secrets.token_urlsafe(32)
+            api_key_hash = hashlib.sha256(raw_api_key.encode()).hexdigest()
+            key_prefix = raw_api_key[:8]
+
+            async with conn.transaction():
+                # api_keys: insert fresh active; trigger deactivates siblings.
+                await conn.execute("""
+                    INSERT INTO api_keys
+                        (site_id, appliance_id, key_hash, key_prefix,
+                         description, active, created_at)
+                    VALUES ($1, $2, $3, $4,
+                           'Minted by /api/provision/{mac} — fresh provision',
+                           true, NOW())
+                """, site_id_val, appliance_id, api_key_hash, key_prefix)
+
+                # appliance_provisioning: keep the canonical record in
+                # sync with api_keys. Future callers that read this
+                # table see the current key.
+                await conn.execute("""
+                    UPDATE appliance_provisioning
+                       SET api_key = $2,
+                           provisioned_at = COALESCE(provisioned_at, NOW())
+                     WHERE UPPER(mac_address) = $1
+                """, mac, raw_api_key)
+
+            logger.info(
+                "[provision] minted fresh api_key site=%s mac=%s "
+                "appliance_id=%s prefix=%s",
+                site_id_val, mac, appliance_id, key_prefix,
+            )
 
             # Merge appliance-specific and site-level SSH keys
             ssh_keys = list(set(
@@ -542,8 +588,8 @@ async def get_provision_by_mac(mac_address: str):
             ))
 
             config = {
-                "site_id": provision['site_id'],
-                "api_key": provision['api_key'],
+                "site_id": site_id_val,
+                "api_key": raw_api_key,
                 "api_endpoint": API_BASE_URL,
                 "ssh_authorized_keys": ssh_keys
             }

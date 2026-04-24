@@ -179,6 +179,65 @@ def test_msp_first_boot_no_longer_generates_passphrase():
     )
 
 
+def test_breakglass_provision_does_not_deadlock_user_space():
+    """v40.1 regression (2026-04-23): v40 shipped with
+    unitConfig.Before = [network-pre.target, sysinit.target,
+    multi-user.target, msp-auto-provision.service,
+    msp-first-boot.service]. Ordering a DefaultDependencies=no oneshot
+    before multi-user.target means ANY hang in Phase 0 (chpasswd lock,
+    openssl wedge, stuck loop device) blocks multi-user.target from
+    ever reaching — which blocks sshd, appliance-daemon, every user-
+    space unit, and every timer. Three reflashed appliances bricked
+    this way on the same day.
+
+    The fix: only order before the downstream consumers of Phase 0
+    output (msp-auto-provision, msp-first-boot) plus network-pre.target
+    so the KDF runs before the firewall. Never block sysinit or
+    multi-user."""
+    src = _src()
+    start = src.find("systemd.services.msp-breakglass-provision")
+    assert start > 0
+    block = src[start : start + 8000]
+
+    # Find the unitConfig.Before list specifically.
+    before_idx = block.find("Before = [")
+    assert before_idx > 0, (
+        "FIX-16 regression: msp-breakglass-provision lost its "
+        "unitConfig.Before ordering entirely. The KDF must still run "
+        "before network-pre.target."
+    )
+    # Probe the Before= list (ends at first ']').
+    end = block.find("]", before_idx)
+    before_list = block[before_idx:end]
+    assert '"sysinit.target"' not in before_list, (
+        "v40.1 regression: msp-breakglass-provision.unitConfig.Before "
+        "includes sysinit.target — this is the deadlock that bricked "
+        "v40 on 1D:0F:E5, 7C:D3, 91:B6:61. Remove it. See "
+        "docs/APPLIANCE_REINSTALL_V40_RUNBOOK.md §v40.1 changes."
+    )
+    assert '"multi-user.target"' not in before_list, (
+        "v40.1 regression: msp-breakglass-provision.unitConfig.Before "
+        "includes multi-user.target — this blocks all user-space if "
+        "Phase 0 hangs. sshd won't start, appliance-daemon won't "
+        "start, the box is unreachable. Remove it."
+    )
+
+
+def test_breakglass_provision_has_timeout_start_sec():
+    """v40.1 regression: serviceConfig must declare TimeoutStartSec so
+    a truly stuck Phase 0 (hardware lockup on /dev/random, NIC MAC
+    read hang, openssl segfault) fails the unit instead of hanging
+    boot indefinitely. 30s is generous for RNG + one chpasswd call."""
+    src = _src()
+    start = src.find("systemd.services.msp-breakglass-provision")
+    block = src[start : start + 8000]
+    assert "TimeoutStartSec" in block, (
+        "v40.1 regression: msp-breakglass-provision dropped "
+        "TimeoutStartSec. Without it a stuck Phase 0 hangs boot "
+        "forever. Keep the 30s cap."
+    )
+
+
 def test_msp_first_boot_depends_on_breakglass_provision():
     """Ordering belt-and-braces: msp-first-boot must run AFTER the
     Phase 0 service so SSH-key apply reads a system where the msp

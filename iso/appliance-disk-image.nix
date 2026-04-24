@@ -1330,22 +1330,46 @@ EOF
   # AuthorizedKeysFile is pointed at a dedicated break-glass file —
   # NOT /root/.ssh/authorized_keys — so the watchdog's per-session
   # writes can't accidentally accumulate into a permanent key store.
+  # v40.1 rescue posture: sshd ON BY DEFAULT, msp-user password auth.
+  # Rationale: v40 Phase 0 bricked 3/3 reflashed boxes because the Phase 0
+  # hang blocked multi-user.target AND the watchdog couldn't run a fleet
+  # order to turn sshd on. Chicken-and-egg. Until 24h stable-soak passes,
+  # SSH on boot is the only reliable rescue path. "Cut the cord" once v41
+  # proves Phase 0 doesn't hang in the wild — flip these two back to the
+  # pre-v40.1 values and re-test.
+  #
+  # msp-user password is the Phase 0 break-glass passphrase, retrievable
+  # by authenticated admin via /api/admin/appliance/{aid}/break-glass
+  # (5/hr rate limit, audit bundle on every retrieval).
+  #
+  # v40.2 escape hatch: a second AuthorizedKeysFile
+  # (/etc/msp-rescue-authorized-keys) is baked into the image declaratively
+  # with the operator's ed25519 pubkey. This gives a non-circular rescue
+  # path when break-glass submit hasn't happened yet (no CC row → no
+  # passphrase → no password auth). MUST be removed in v41 alongside the
+  # sshd-on-boot flip.
   services.openssh = {
     enable = lib.mkForce true;
     settings = {
       PermitRootLogin = lib.mkForce "prohibit-password";
-      PasswordAuthentication = lib.mkForce false;
-      AuthorizedKeysFile = lib.mkForce "/etc/msp-recovery-authorized-keys";
-      # Refuse connections if the break-glass keys file is empty —
-      # defense-in-depth if the watchdog fails to clean up. (sshd rejects
-      # empty-authorized_keys anyway, but being explicit is cheap.)
+      PasswordAuthentication = lib.mkForce true;          # v40.1: rescue
+      AuthorizedKeysFile = lib.mkForce "/etc/msp-recovery-authorized-keys /etc/msp-rescue-authorized-keys";
+      AllowUsers = [ "msp" ];                              # v40.1: msp ONLY
       StrictModes = true;
     };
   };
-  # Remove the multi-user.target wants-link so sshd does NOT start on
-  # boot. `systemctl start sshd` still works, which is exactly what the
-  # watchdog's enable_recovery_shell_24h handler needs.
-  systemd.services.sshd.wantedBy = lib.mkForce [];
+
+  # v40.2: operator rescue pubkey, baked into the image. Read-only symlink
+  # into the nix store. Watchdog's per-session writes still go to
+  # /etc/msp-recovery-authorized-keys (mutable, separate file).
+  environment.etc."msp-rescue-authorized-keys" = {
+    text = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBv6abzJDSfxWt00y2jtmZiubAiehkiLe/7KBot+6JHH jbouey@osiriscare.net\n";
+    mode = "0444";
+  };
+
+  # v40.1: sshd auto-starts at boot. Rescue posture — reverted in v41
+  # once the Phase 0 fix is soaked.
+  systemd.services.sshd.wantedBy = lib.mkForce [ "multi-user.target" ];
 
   # Root password intentionally left unset (lib.mkDefault allows a
   # top-level override for lab builds that want an override via SOPS).
@@ -1417,6 +1441,21 @@ EOF
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
+      # v40.4: self-heal on transient failure (DNS race at boot,
+      # provision endpoint flap, Central Command 5xx). Prior to v40.4
+      # this was a one-shot with no retry — a single exit!=0 left the
+      # box in a permanently-failed state requiring a power-cycle to
+      # retry. The StartLimitBurst/Interval caps prevent a truly-broken
+      # config (bad pubkey, unreachable API) from restart-spinning.
+      Restart = "on-failure";
+      RestartSec = "30s";
+    };
+    unitConfig = {
+      # 10 attempts over 10 min ~ covers DHCP lease acquisition, DNS
+      # propagation, brief CC 5xx. After that the unit goes to
+      # failed-permanent and the operator/watchdog takes over.
+      StartLimitBurst = 10;
+      StartLimitIntervalSec = "600";
     };
 
     script = ''
@@ -1424,10 +1463,50 @@ EOF
       CONFIG_PATH="/var/lib/msp/config.yaml"
       LOG_FILE="/var/lib/msp/provision.log"
       API_URL="https://api.osiriscare.net"
+      PROVISION_SUCCESS_MARKER="/var/lib/msp/.first-provision-success"
 
       log() {
         echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" | tee -a "$LOG_FILE"
       }
+
+      # v40.4: idempotency guard. If a prior boot successfully wrote
+      # config.yaml AND left the marker, skip re-provisioning. The
+      # daemon handles any needed key rotation via /api/provision/rekey
+      # on its own — this script's only job is the FIRST provision.
+      # Re-entering it on every boot would churn api_keys rows and
+      # pointlessly burn /api/provision/{mac} server time.
+      if [ -f "$PROVISION_SUCCESS_MARKER" ] && [ -f "$CONFIG_PATH" ]; then
+        log "Idempotency: config.yaml + success marker present — skipping re-provision."
+        exit 0
+      fi
+
+      # v40.3 (2026-04-23): fail loud if any referenced store binary is
+      # missing. This catches the class of bug that bricked 3/3 v40.x
+      # reflashed boxes: the pkgs.inetutils/bin/host reference silently
+      # stopped resolving after nixpkgs moved the host tool to
+      # bind.host (split output), which made the DNS-gate's first
+      # external command exit 127. `set -euo pipefail` then killed the
+      # whole script — no config.yaml written, daemon restart-looped
+      # forever, no checkin ever, no beacon, no breakglass submit.
+      # Five services blocked behind one wrong attribute path. Hard-
+      # failing here surfaces the next such regression in the first
+      # journal line instead of 29 minutes into a silent restart storm.
+      _bg_bin_check() {
+        local _bin
+        for _bin in "$@"; do
+          if [ ! -x "$_bin" ]; then
+            log "FATAL: missing referenced binary $_bin — nixpkgs pin likely regressed; see iso/appliance-disk-image.nix v40.3 change log."
+            exit 2
+          fi
+        done
+      }
+      _bg_bin_check \
+        ${pkgs.bind.host}/bin/host \
+        ${pkgs.gawk}/bin/awk \
+        ${pkgs.curl}/bin/curl \
+        ${pkgs.jq}/bin/jq \
+        ${pkgs.yq}/bin/yq \
+        ${pkgs.gnugrep}/bin/grep
 
       # Verify provisioning config signature from Central Command
       # Returns 0 if valid, 1 if invalid/missing
@@ -1497,8 +1576,18 @@ except Exception as e:
         local last_failed="none" last_error=""
 
         # Stage 1: DNS — does api.osiriscare.net resolve at all?
-        dns_ip=$(${pkgs.inetutils}/bin/host -t A api.osiriscare.net 2>/dev/null \
-                 | ${pkgs.gawk}/bin/awk '/has address/ {print $4; exit}')
+        # v40.4: trailing `|| true` honors the "non-blocking by design"
+        # contract in this function's header. Without it, `set -euo
+        # pipefail` (set at script top) made a DNS race at boot (host
+        # temporarily unresolvable because resolvconf hadn't written
+        # /etc/resolv.conf yet) fatal-exit the WHOLE provisioning run
+        # with status 1. v40.3 shipped this bug: .242 bricked, .246 got
+        # lucky by a few ms of DNS-ready timing. v40.4 makes the probe
+        # honest — it records failure, sets dns_ok="false", and lets
+        # the outer retry loop do its job.
+        dns_ip=""
+        dns_ip=$(${pkgs.bind.host}/bin/host -t A api.osiriscare.net 2>/dev/null \
+                 | ${pkgs.gawk}/bin/awk '/has address/ {print $4; exit}') || true
         if [ -n "$dns_ip" ]; then
           dns_ok="true"
         else
@@ -1703,6 +1792,7 @@ except Exception as e:
             chmod 600 "$CONFIG_PATH"
             write_ssh_key /tmp/provision-response.json
             log "SUCCESS: Provisioning complete via MAC lookup"
+            touch "$PROVISION_SUCCESS_MARKER"
             rm -f /tmp/provision-response.json
             exit 0
           fi
@@ -1751,6 +1841,7 @@ except Exception as e:
               chmod 600 "$CONFIG_PATH"
               write_ssh_key /tmp/provision-response.json
               log "SUCCESS: Provisioning complete via MAC lookup (poll #$POLL_COUNT)"
+              touch "$PROVISION_SUCCESS_MARKER"
               rm -f /tmp/provision-response.json
               exit 0
             fi
@@ -1808,8 +1899,10 @@ except Exception as e:
           # silently continue, since it means the same underlying
           # network issue as the provisioning failure.
           if [ "$HTTP_CODE" != "200" ]; then
-            RESOLVER_IP=$(${pkgs.gnugrep}/bin/grep '^nameserver' /etc/resolv.conf 2>/dev/null | ${pkgs.gawk}/bin/awk '{print $2}' | head -1)
-            RESOLVED_IP=$(${pkgs.inetutils}/bin/host -t A api.osiriscare.net 2>/dev/null | ${pkgs.gawk}/bin/awk '/has address/ {print $4}' | head -1)
+            # v40.4: telemetry probes must not fatal-exit the retry
+            # loop. Trailing `|| true` makes these truly best-effort.
+            RESOLVER_IP=$(${pkgs.gnugrep}/bin/grep '^nameserver' /etc/resolv.conf 2>/dev/null | ${pkgs.gawk}/bin/awk '{print $2}' | head -1 || true)
+            RESOLVED_IP=$(${pkgs.bind.host}/bin/host -t A api.osiriscare.net 2>/dev/null | ${pkgs.gawk}/bin/awk '/has address/ {print $4}' | head -1 || true)
             ${pkgs.curl}/bin/curl -s -m 8 -X POST \
               -H "Content-Type: application/json" \
               -H "X-Install-Token: ''${INSTALL_TOKEN:-osiriscare-installer-dev-only}" \
@@ -1831,6 +1924,7 @@ except Exception as e:
                 chmod 600 "$CONFIG_PATH"
                 write_ssh_key /tmp/provision-response.json
                 log "SUCCESS: Provisioning complete via persistent retry (attempt #$SLOW_ATTEMPT)"
+                touch "$PROVISION_SUCCESS_MARKER"
                 rm -f /tmp/provision-response.json
                 # Kick the daemon so it picks up the new config immediately
                 systemctl restart appliance-daemon 2>/dev/null || true
@@ -2040,7 +2134,7 @@ except Exception as e:
       daemon_status=$(systemctl is-active appliance-daemon 2>/dev/null || echo unknown)
       network_ifaces=$(${pkgs.iproute2}/bin/ip -j addr 2>/dev/null || echo '[]')
       dns_test="fail"
-      if ${pkgs.inetutils}/bin/host api.osiriscare.net 2>/dev/null | grep -q 'has address'; then
+      if ${pkgs.bind.host}/bin/host api.osiriscare.net 2>/dev/null | grep -q 'has address'; then
         dns_test="ok"
       fi
       config_present="false"
@@ -2169,7 +2263,7 @@ JSON
                   self.send_response(503)
                   self.send_header("Content-Type", "application/json")
                   self.end_headers()
-                  self.wfile.write(b'{"error":"beacon.json not yet written — msp-beacon-refresh may not have run"}')
+                  self.wfile.write(b'{"error":"beacon.json not yet written -- msp-beacon-refresh may not have run"}')
 
           def log_message(self, format, *args):
               # Suppress per-request noise; journald captures errors.
@@ -2455,20 +2549,26 @@ JSON
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      # Opt out of the implicit network-online wait that DefaultDependencies
-      # adds — the whole point is that this service succeeds even when
-      # the firewall + DNS are broken.
       DefaultDependencies = "no";
-      # Explicit After/Before in unit section so systemd orders us
-      # before network-pre.target regardless of default ordering.
-      # (serviceConfig's After/Before are distinct from the Nix module
-      # `after`/`before`; both need to agree for pre-network ordering.)
+      # v40.1: fail fast instead of blocking boot forever. If chpasswd or
+      # openssl wedges, the service fails after 30s and multi-user.target
+      # still reaches — sshd comes up and the box is rescuable.
+      TimeoutStartSec = "30s";
+      StandardOutput = "journal+console";
+      StandardError = "journal+console";
     };
 
     unitConfig = {
       DefaultDependencies = "no";
       After = [ "local-fs.target" "systemd-machine-id-commit.service" ];
-      Before = [ "network-pre.target" "sysinit.target" "multi-user.target"
+      # v40.1: REMOVED "sysinit.target" and "multi-user.target" from Before=.
+      # Those created an ordering deadlock: Phase 0 was required to finish
+      # before multi-user.target could reach, so any hang here (chpasswd,
+      # openssl, stuck loop device) bricked the whole user-space. v40 on
+      # 1D:0F:E5, 7C:D3, 91:B6:61 all bricked this way on 2026-04-23.
+      # We still order before network-pre + downstream services that
+      # consume the plaintext blob; everything else is free to boot.
+      Before = [ "network-pre.target"
                  "msp-auto-provision.service" "msp-first-boot.service" ];
     };
 

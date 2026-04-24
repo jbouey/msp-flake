@@ -416,11 +416,19 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 logger.exception("metrics: incidents query failed")
 
             # --- Healing execution telemetry (counter) ---
+            # The table's canonical column is `resolution_level`
+            # (L1/L2/L3/manual); we expose it as Prometheus label
+            # `tier` for backwards compat with existing dashboards.
+            # Prior to v40.4 this SELECT used `tier` directly and
+            # raised UndefinedColumnError on every scrape since
+            # 2026-04-21. The exception was eaten by the try/except
+            # so metrics dashboards silently lost healing counters
+            # for 48h+.
             try:
                 rows = await conn.fetch("""
-                    SELECT tier, success, COUNT(*) AS cnt
+                    SELECT resolution_level AS tier, success, COUNT(*) AS cnt
                     FROM execution_telemetry
-                    GROUP BY tier, success
+                    GROUP BY resolution_level, success
                 """)
                 values = []
                 for row in rows:
