@@ -1,7 +1,14 @@
-# CI test dependencies — pinned to versions that pass tests.
-# Production deps are in mcp-server/requirements.lock (Docker image).
-fastapi==0.135.3
-pydantic==2.12.5
+# CI test dependencies — MUST match requirements.lock (the Docker image pin)
+# or CI silently tests a different FastAPI/Pydantic than what prod runs.
+#
+# Session 210 (2026-04-24) post-mortem: 3-hour prod outage because this
+# file had fastapi==0.135.3 while requirements.lock had 0.115.6. The
+# 0.135.3 relaxed the status_code=204 + return-annotation assert; 0.115.6
+# enforces it. CI smoke-import passed, container crashlooped on import.
+# Any drift between this file and requirements.lock is a silent
+# CI-vs-prod test falsification — treat as a P0 correction.
+fastapi==0.115.6
+pydantic==2.10.3
 sqlalchemy==2.0.36
 asyncpg==0.30.0
 httpx==0.28.1
@@ -17,4 +24,4 @@ redis==5.2.1
 bcrypt==4.2.1
 pyotp==2.9.0
 minio==7.2.13
-uvicorn==0.34.0
+uvicorn==0.32.1
