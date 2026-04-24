@@ -140,6 +140,24 @@ services:
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # --- L2 LLM planner re-enable (Session 210, 2026-04-24) -----------------
+      # Kill switch flipped back ON after Session 206's Flywheel Spine + the 3
+      # cost gates (confidence floor 0.7, zero-result circuit, input gate)
+      # landed. Substrate invariant `l2_decisions_stalled` (assertions.py) will
+      # page inside 48h if the pipeline silently dies again.
+      #
+      # Provider dispatch order in l2_planner.py:1254-1266: Azure → OpenAI →
+      # Anthropic. With OPENAI_API_KEY/AZURE_* empty and ANTHROPIC_API_KEY
+      # populated, the Claude fallback is the only live path. Claude Haiku 4.5
+      # (claude-haiku-4-5-20251001, hardcoded at line 1264) is the model.
+      #
+      # MAX_DAILY_L2_CALLS is deliberately tight for the 72h re-enable window —
+      # raise to 200-500 after a clean soak. 100 calls/day ≈ $0.15/day on
+      # Haiku which is safely below the prior spend alarm.
+      L2_ENABLED: ${L2_ENABLED:-true}
+      MAX_DAILY_L2_CALLS: ${MAX_DAILY_L2_CALLS:-100}
+      L2_MIN_CONFIDENCE: ${L2_MIN_CONFIDENCE:-0.7}
+      L2_ZERO_RESULT_CIRCUIT_THRESHOLD: ${L2_ZERO_RESULT_CIRCUIT_THRESHOLD:-2}
       CHAOS_LAB_ENABLED: "true"
       CHAOS_LAB_SSH_PASS: "022006"
       SMTP_HOST: ${SMTP_HOST:-mail.privateemail.com}

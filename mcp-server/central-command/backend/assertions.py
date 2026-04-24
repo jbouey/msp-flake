@@ -689,6 +689,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="An appliance has surfaced a `No space left on device` error in a recent admin_order or fleet_order_completion within the last 24 hours. Disk pressure on /nix/store silently fails nixos_rebuild AND blocks evidence-bundle writes (the daemon cannot fsync the compliance bundle to disk). 2026-04-22 canary incident: 84:3A:5B:1D:0F:E5 rebuild failed with `writing to file: No space left on device` under a 5 GB /nix store — no substrate signal existed until the 0.4.7 diagnostic upgrade tail exposed the nix error. Mirror of vps_disk_pressure, scoped per-appliance. Auto-resolves when no matching error is observed in the 24h window.",
         check=lambda c: _check_appliance_disk_pressure(c),
     ),
+    Assertion(
+        name="l2_decisions_stalled",
+        severity="sev2",
+        description="L2_ENABLED=true but <5 L2 decisions in the last 48 hours while the fleet has active appliances. Signals the LLM pipeline is silently offline (API key, circuit breaker, budget cap, or zero-result circuit). Added 2026-04-24 (Session 210) when re-enabling L2 after the 2026-04-12 kill switch so the NEXT silent death pages inside 48h instead of taking 30 days to notice. Automatically quiet when L2_ENABLED=false, so intentional maintenance doesn't create noise.",
+        check=lambda c: _check_l2_decisions_stalled(c),
+    ),
 ]
 
 
@@ -953,6 +959,22 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "multiple generations accumulate). Cross-check "
             "nixos_rebuild_success_drought — disk pressure is the most common "
             "root cause of a silent rebuild failure.",
+    },
+    "l2_decisions_stalled": {
+        "display_name": "L2 LLM decisions silently stalled",
+        "recommended_action": "L2 is enabled but producing <5 decisions per 48h "
+            "with active appliances. Walk the cost-gate stack in order: "
+            "(1) verify LLM API key is valid + has credit — `docker exec mcp-server env | "
+            "grep -E 'ANTHROPIC|OPENAI|AZURE'`; "
+            "(2) check the circuit breaker — `docker logs mcp-server | grep -E 'L2 circuit breaker'` — "
+            "if OPENED, either wait for 15m cooldown or restart mcp-server to force reset; "
+            "(3) check daily call cap — `docker logs mcp-server | grep 'daily_limit_reached'` — "
+            "raise MAX_DAILY_L2_CALLS if legitimate load; "
+            "(4) check zero-result circuit clamps — `SELECT site_id, pattern_signature, COUNT(*) "
+            "FROM l2_decisions WHERE runbook_id IS NULL AND created_at > NOW() - INTERVAL '24 hours' "
+            "GROUP BY 1,2 HAVING COUNT(*) >= 2` — these pairs are paused until next UTC midnight; "
+            "(5) if L2 is meant to be disabled, set L2_ENABLED=false in docker-compose.yml and "
+            "restart mcp-server — this invariant goes silent automatically.",
     },
 }
 
@@ -2314,6 +2336,86 @@ async def _check_flywheel_ledger_stalled(conn: asyncpg.Connection) -> List[Viola
                     "check the orchestrator loop heartbeat "
                     "(/api/admin/health/loops) and grep mcp-server logs for "
                     "orchestrator_transition_failed or safe_rollout_ledger_advance_failed."
+                ),
+            },
+        )
+    ]
+
+
+async def _check_l2_decisions_stalled(conn: asyncpg.Connection) -> List[Violation]:
+    """Fire when L2_ENABLED=true but L2 decisions have fallen silent.
+
+    Context: 2026-04-12 a kill switch (L2_ENABLED=false) disabled L2
+    after Session 205 found 0.9% success rate + zero promoted_rule
+    deployments + unbounded API spend. Session 210 (2026-04-24)
+    re-enabled L2 after the Flywheel Spine + 3 cost gates (confidence
+    floor 0.7, zero-result circuit, input gate) landed.
+
+    THIS INVARIANT exists so the NEXT silent death doesn't hide for
+    30 days. Without it, the previous outage was discovered only by
+    an operator asking 'why no promotions?' during a manual audit.
+
+    Fires when ALL of these hold:
+      * L2_ENABLED=true in the running mcp-server process env
+      * Fleet has at least one appliance that checked in in the last
+        hour (no expectation of L2 activity when offline)
+      * l2_decisions table has < 5 rows in the last 48 hours
+
+    48h is the noise-tolerant floor — a quiet weekend with healthy
+    appliances can legitimately produce 0 incidents. Once the fleet
+    has any drift → L1 failure → L2 flow, 5 in 48h is trivially easy
+    to clear. Falling below signals either (a) LLM API broken, (b)
+    circuit breaker stuck open, (c) daily budget cap tripped and not
+    reset, (d) zero-result circuit clamped every pattern.
+    """
+    import os as _os
+    l2_enabled = _os.getenv("L2_ENABLED", "false").lower() in ("true", "1", "yes", "on")
+    if not l2_enabled:
+        return []
+
+    row = await conn.fetchrow(
+        """
+        WITH state AS (
+            SELECT COUNT(*) AS decisions_48h,
+                   MAX(created_at) AS latest_decision_at
+              FROM l2_decisions
+             WHERE created_at > NOW() - INTERVAL '48 hours'
+        ),
+        fleet AS (
+            SELECT COUNT(*) AS online
+              FROM site_appliances
+             WHERE deleted_at IS NULL
+               AND last_checkin > NOW() - INTERVAL '1 hour'
+        )
+        SELECT s.decisions_48h, s.latest_decision_at, f.online
+          FROM state s, fleet f
+        """
+    )
+    if row is None:
+        return []
+    decisions_48h = int(row["decisions_48h"] or 0)
+    online = int(row["online"] or 0)
+    if online < 1 or decisions_48h >= 5:
+        return []
+    latest = row["latest_decision_at"]
+    hours_since = None
+    if latest is not None:
+        hours_since = (datetime.now(timezone.utc) - latest).total_seconds() / 3600.0
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "l2_decisions_48h": decisions_48h,
+                "online_appliances_1h": online,
+                "latest_decision_at": latest.isoformat() if latest else None,
+                "hours_since_last_decision": hours_since,
+                "remediation": (
+                    "L2 appears silently stalled. Walk the cost-gate stack: "
+                    "(1) API key valid — `docker exec mcp-server env | grep -E 'ANTHROPIC|OPENAI|AZURE_OPENAI'`; "
+                    "(2) Circuit breaker state — `docker logs mcp-server | grep 'L2 circuit breaker'` — if OPENED, wait for cooldown or restart mcp-server to reset; "
+                    "(3) Daily call cap — `docker logs mcp-server | grep 'daily_limit_reached'`; raise MAX_DAILY_L2_CALLS if legitimate load; "
+                    "(4) Zero-result circuit — `SELECT site_id, pattern_signature, COUNT(*) FROM l2_decisions WHERE runbook_id IS NULL AND created_at > NOW() - INTERVAL '24 hours' GROUP BY 1,2 HAVING COUNT(*) >= 2` — these pairs are gated; "
+                    "(5) Intentional maintenance — if so, set L2_ENABLED=false in env and this invariant goes quiet."
                 ),
             },
         )
