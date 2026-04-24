@@ -157,6 +157,24 @@ Any deviation from this set is a v40-specific regression — capture the LAN bea
 
 Unchanged from v39 runbook §three-list reminder. v40 adds one invariant name (`provisioning_network_fail`) to the substrate lockstep — already wired in `ALL_ASSERTIONS` + `_DISPLAY_METADATA` + `substrate_runbooks/provisioning_network_fail.md`.
 
+## Appendix — auth-wedge rescue (added 2026-04-24 after the v40.x brick incident)
+
+If a reflashed appliance's SSH is up + beacon is up but `site_appliances.last_checkin` stays stale, the daemon is in the circuit-breaker silent-wedge class documented in [`docs/postmortems/2026-04-23-v40-appliance-brick-class.md`](../postmortems/2026-04-23-v40-appliance-brick-class.md). Recovery is **one command**:
+
+```bash
+# dry-run first — checks for drift without writing
+python3 mcp-server/central-command/backend/scripts/rescue_appliance.py <MAC>
+
+# if drift detected, apply with audit-trail reason
+python3 mcp-server/central-command/backend/scripts/rescue_appliance.py <MAC> \
+    --apply --reason "daemon wedged post-rekey rate-limit, reflash pending"
+```
+
+The script reads the daemon's live `config.yaml` top-level `api_key` via SSH, computes the SHA-256, compares against `api_keys.active` in DB, and — if they diverge — INSERTs a fresh active row with the matching hash (Migration 209's trigger deactivates the prior active). Daemon's next checkin cycle (within 60s) returns 200.
+
+**If the config.yaml already matches DB active AND the daemon is still silent**, the wedge is circuit-breaker state, not auth drift. Remediation: power-cycle the appliance. Fresh daemon → circuit breaker resets → existing config.yaml matches → checkin succeeds. This class is permanently eliminated by daemon 0.4.9 (Split #3 CredentialProvider, ISO v40.7+).
+
 ## Change log
 
 - 2026-04-23 — initial — drafted after v40 ISO build `2a596411`. Expects reflash order `1D:0F:E5 → 7C:D3 → 91:B6:61` to validate FIX-16 + FIX-11 on the known-bad canary first.
+- 2026-04-24 — added rescue-CLI appendix after the v40.x brick post-mortem. The CLI replaces hand-crafted `psql INSERT INTO api_keys` during the 2026-04-23 incident.
