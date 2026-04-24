@@ -630,10 +630,10 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_vps_disk_pressure(c),
     ),
     Assertion(
-        name="installed_but_silent",
+        name="installer_halted_early",
         severity="sev2",
-        description="install_sessions row ≥20 min old but site_appliances.last_checkin is NULL or predates the install_sessions row — the installer ran but the installed system never successfully checked in. Covers the v40.0-v40.2 bricking class that fired no other invariant for 4+ hours on 2026-04-23. Sibling to provisioning_stalled but fires on the outcome edge (installer stopped, installed never started) rather than the proxy (checkin_count≥3).",
-        check=lambda c: _check_installed_but_silent(c),
+        description="install_sessions row ≥20 min old, checkin_count < 5 (installer did not reach the older `installed_but_silent` threshold), AND site_appliances.last_checkin is NULL or predates the install_sessions row. Covers the v40.0-v40.2 bricking class where the installer posted /start once then completed and the installed system never checked in — zero other invariants fired for 4+ hours on 2026-04-23. Distinct from `installed_but_silent` (peak_count ≥ 5) because that one requires the installer to have looped multiple times; this one fires on the single-post-then-silent pattern.",
+        check=lambda c: _check_installer_halted_early(c),
     ),
     Assertion(
         name="provisioning_stalled",
@@ -857,17 +857,22 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "DNS filter / web proxy / firewall (Pi-hole, Umbrella, Fortinet, Sophos, Barracuda). "
             "Verify per-device rules if your filter has them — by-MAC whitelisting is common and easy to miss.",
     },
-    "installed_but_silent": {
-        "display_name": "Installer ran but the installed system never checked in",
+    "installer_halted_early": {
+        "display_name": "Installer posted /start once and then went silent",
         "recommended_action": "SSH in as msp with the ISO-embedded pubkey, then "
-            "`sudo systemctl status msp-auto-provision.service` (NOPASSWD on v40.4+). "
-            "If the service is failed, `sudo journalctl -u msp-auto-provision -n 100` — "
-            "typical cause as of v40.4 is a DNS race before resolvconf has written "
-            "/etc/resolv.conf. Restart msp-auto-provision to retry. If port 8443 "
-            "is open on the appliance, curl it — the beacon JSON names the broken stage. "
-            "If msp-auto-provision is succeeding but the daemon isn't checking in, "
-            "check for a split-brain auth bug (daemon sub-components holding stale "
-            "api_key after auto-rekey — see 2026-04-23 audit item #5).",
+            "`sudo -i` via the Phase R break-glass passphrase (retrieve via "
+            "/api/admin/appliance/{id}/break-glass, 5/hr rate-limited, audit-logged). "
+            "Once root: `systemctl status msp-auto-provision.service` + "
+            "`journalctl -u msp-auto-provision -n 100`. "
+            "Typical cause as of v40.4: a DNS race before resolvconf has written "
+            "/etc/resolv.conf. On v40.4+ msp-auto-provision has Restart=on-failure "
+            "+ StartLimitBurst=10 so transient failures self-heal; if it's stuck at "
+            "`failed` after the burst window the fix is a `systemctl restart` by "
+            "operator. Also check port 8443 beacon — the beacon JSON names the broken "
+            "stage. If msp-auto-provision is green but the daemon still isn't "
+            "checking in, check for the daemon split-brain auth bug (sub-components "
+            "holding stale api_key after auto-rekey — fixed in daemon 0.4.8, see "
+            "audit item #5).",
     },
     "appliance_moved_unack": {
         "display_name": "Appliance physically relocated — unacknowledged",
@@ -1790,7 +1795,7 @@ async def _check_provisioning_network_fail(conn: asyncpg.Connection) -> List[Vio
     return out
 
 
-async def _check_installed_but_silent(conn: asyncpg.Connection) -> List[Violation]:
+async def _check_installer_halted_early(conn: asyncpg.Connection) -> List[Violation]:
     """v40.4 (2026-04-23) — the SIBLING that finally ships.
 
     `provisioning_stalled` and `provisioning_network_fail` both require

@@ -98,15 +98,6 @@
           { command = "/run/current-system/sw/bin/systemctl is-enabled *"; options = [ "NOPASSWD" ]; }
           { command = "/run/current-system/sw/bin/systemctl list-timers"; options = [ "NOPASSWD" ]; }
           { command = "/run/current-system/sw/bin/systemctl list-units *"; options = [ "NOPASSWD" ]; }
-          # v40.4 (2026-04-23) — narrow remediation surface for
-          # msp-auto-provision. This is the ONLY service a LAN operator
-          # ever needs to restart to un-stick a DNS-raced boot; putting
-          # it in NOPASSWD means a wedged appliance can be nudged back
-          # without the break-glass passphrase. Still no `stop`, no
-          # mask/unmask, no generic `restart *`. If another service
-          # needs the same treatment later, add it explicitly.
-          { command = "/run/current-system/sw/bin/systemctl restart msp-auto-provision.service"; options = [ "NOPASSWD" ]; }
-          { command = "/run/current-system/sw/bin/systemctl start msp-auto-provision.service"; options = [ "NOPASSWD" ]; }
           # journalctl scoped to a unit (narrower than raw `journalctl *`
           # which could do `--vacuum-size=0` = log wipe).
           { command = "/run/current-system/sw/bin/journalctl -u *"; options = [ "NOPASSWD" ]; }

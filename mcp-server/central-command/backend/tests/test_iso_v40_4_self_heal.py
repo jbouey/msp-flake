@@ -160,45 +160,26 @@ def test_idempotency_marker_guard():
     )
 
 
-def test_msp_sudo_can_restart_auto_provision():
-    """v40.4 regression: msp user MUST have NOPASSWD sudo for
-    exactly `systemctl restart msp-auto-provision.service` and
-    `systemctl start msp-auto-provision.service`. Nothing broader —
-    no `restart *`, no `stop *`, no arbitrary unit names. This is
-    the narrow remediation surface that lets a LAN operator un-wedge
-    a stuck appliance without the break-glass passphrase."""
+def test_msp_sudo_nopasswd_stays_read_only():
+    """v40.4 (2026-04-23): an earlier pass added NOPASSWD entries for
+    `systemctl restart msp-auto-provision.service` + `start ...` to
+    give operator SSH a rescue path without the break-glass passphrase.
+    The FIX-12 regression test (test_iso_msp_narrow_sudo.
+    test_no_write_verbs_in_whitelist) caught that broadening on CI —
+    `restart` + `start` are write verbs that turn the NOPASSWD
+    surface into a privilege-escalation ramp. The recovery path stays
+    on the break-glass passphrase for rescue; v40.4+ has
+    `Restart=on-failure` + `StartLimitBurst=10` so the self-heal path
+    handles transient failures without operator intervention in the
+    first place."""
     src = _src(_CONFIG_NIX)
-    # The two exact NOPASSWD entries must be present.
-    for cmd in (
-        "/run/current-system/sw/bin/systemctl restart msp-auto-provision.service",
-        "/run/current-system/sw/bin/systemctl start msp-auto-provision.service",
+    for banned_token in (
+        "systemctl restart msp-auto-provision",
+        "systemctl start msp-auto-provision",
+        "systemctl stop msp-auto-provision",
     ):
-        pattern = re.compile(
-            r'\{\s*command\s*=\s*"'
-            + re.escape(cmd)
-            + r'"\s*;\s*options\s*=\s*\[\s*"NOPASSWD"\s*\]\s*;\s*\}'
-        )
-        assert pattern.search(src), (
-            f"v40.4 regression: NOPASSWD rule for `{cmd}` is missing "
-            "from iso/configuration.nix security.sudo.extraRules. "
-            "Without it, an operator can diagnose a wedged appliance "
-            "but cannot restart msp-auto-provision to un-stick it "
-            "— forcing a break-glass-passphrase detour or a power "
-            "cycle."
-        )
-    # Explicit ban on anything broader to prevent drift.
-    for banned in (
-        r'systemctl\s+restart\s+\*',
-        r'systemctl\s+stop\s+\*',
-        r'systemctl\s+start\s+\*',
-    ):
-        bad = re.search(
-            r'command\s*=\s*"[^"]*' + banned + r'[^"]*"[^;]*NOPASSWD',
-            src,
-        )
-        assert bad is None, (
-            f"v40.4 posture violation: a NOPASSWD rule matches `{banned}` "
-            f"(too broad). The msp sudo NOPASSWD list must stay narrow "
-            f"— each service that needs remote restart should be "
-            f"added explicitly by unit name."
+        assert banned_token not in src, (
+            f"v40.4 posture violation: `{banned_token}` appears in "
+            f"iso/configuration.nix — the NOPASSWD surface must stay "
+            f"read-only. Rescue via break-glass passphrase instead."
         )

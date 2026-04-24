@@ -1,8 +1,10 @@
-# installed_but_silent
+# installer_halted_early
 
 **Severity:** sev2
-**Display name:** Installer ran but the installed system never checked in
+**Display name:** Installer posted /start once and then went silent
 **Added:** 2026-04-23 (v40.4 round-table)
+
+**Note:** distinct from the older `installed_but_silent` (sev1, peak_count ≥ 5). This one fires on the **single-post-then-silent** pattern where the installer hit `/api/install/report/start` once and never produced another checkin, and the installed system also never came online. That's the exact class that bricked 3/3 v40.0-v40.2 appliances on 2026-04-23.
 
 ## What this means (plain English)
 
