@@ -158,6 +158,19 @@ def test_no_violation_on_single_user_noise():
     assert len(result) == 1
 
 
+def test_single_user_high_volume_path_surfaces():
+    """Session 210 round-table #6: the multi-user threshold missed the
+    single-tenant deployment where only 1 user hits a bug 50 times.
+    Python-side assertion is still loose (it trusts whatever SQL returns),
+    so this test is really about documenting the shape of row the SQL
+    side will now surface: COUNT > 30 from a single session."""
+    conn = _FakeConn(rows=[_row("/api/site", "tier", count=45, sessions=1)])
+    result = _run(_check_frontend_field_undefined_spike(conn))
+    assert len(result) == 1
+    assert result[0].details["event_count_5m"] == 45
+    assert result[0].details["distinct_sessions"] == 1
+
+
 def test_violation_fires_with_expected_details():
     conn = _FakeConn(rows=[_row("/api/portal/site/X", "tier", count=47, sessions=5)])
     result = _run(_check_frontend_field_undefined_spike(conn))

@@ -2401,6 +2401,15 @@ async def _check_frontend_field_undefined_spike(conn: asyncpg.Connection) -> Lis
     # If the migration hasn't landed yet (e.g., first deploy after this
     # commit but before Migration 242 applied), return no violations
     # rather than raising.
+    # Two trigger paths:
+    #   multi-user drift — 10+ events AND 2+ distinct sessions (catches real
+    #     contract breaks affecting many customers)
+    #   single-user high-volume — 30+ events even from 1 session (catches the
+    #     single-tenant deployment case where a legit bug hits only 1 user
+    #     hammering the page, which the multi-user path would miss)
+    # Either path fires the invariant. Session 210 round-table #6 added the
+    # single-user fallback — without it, small / single-tenant deployments
+    # had a dead invariant they'd never trip.
     try:
         rows = await conn.fetch(
             """
@@ -2413,8 +2422,8 @@ async def _check_frontend_field_undefined_spike(conn: asyncpg.Connection) -> Lis
              WHERE event_kind = 'FIELD_UNDEFINED'
                AND recorded_at > NOW() - INTERVAL '5 minutes'
              GROUP BY endpoint, field_name
-             HAVING COUNT(*) > 10
-                AND COUNT(DISTINCT ip_address) >= 2
+             HAVING (COUNT(*) > 10 AND COUNT(DISTINCT ip_address) >= 2)
+                 OR COUNT(*) > 30
              ORDER BY COUNT(*) DESC
              LIMIT 20
             """

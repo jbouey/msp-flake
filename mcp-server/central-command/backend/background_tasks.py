@@ -2884,3 +2884,44 @@ async def _raise_liveness_lie_if_not_suppressed(conn, row):
             f"Failed to send liveness-lie alert for {row['appliance_id']}",
             exc_info=True,
         )
+
+
+async def client_telemetry_retention_loop():
+    """Delete client_telemetry_events older than 30 days, every 24h.
+
+    Session 210 round-table #5. The telemetry table's docstring claims
+    30-day retention; this loop actually enforces it. Calls Migration 243's
+    prune_client_telemetry_events(30) function. Safe to run from any
+    replica — the function is idempotent.
+
+    Startup delay: 10 min. Avoids running during the post-boot migration
+    storm. Tolerates the pre-migration-243 window by logging + sleeping.
+    """
+    _hb("client_telemetry_retention")
+    await asyncio.sleep(600)
+    while True:
+        _hb("client_telemetry_retention")
+        try:
+            async with async_session() as db:
+                result = await db.execute(
+                    text("SELECT prune_client_telemetry_events(30) AS deleted")
+                )
+                deleted = result.scalar() or 0
+                await db.commit()
+                if deleted > 0:
+                    logger.info(
+                        "client_telemetry_retention pruned old events",
+                        deleted_count=int(deleted),
+                        retention_days=30,
+                    )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            # Pre-migration-243 case: function doesn't exist. Log once,
+            # keep sleeping. Next container restart catches the migration.
+            logger.error(
+                "client_telemetry_retention_failed",
+                exc_info=True,
+                extra={"error_class": type(e).__name__},
+            )
+        await asyncio.sleep(86400)  # 24h

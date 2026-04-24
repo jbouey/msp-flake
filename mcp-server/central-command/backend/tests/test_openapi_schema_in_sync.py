@@ -51,12 +51,16 @@ def test_export_script_runnable():
 
 @pytest.mark.xfail(
     reason=(
-        "KNOWN: main.app.openapi() is currently non-deterministic across "
-        "fresh Python processes — fields like `custom_name`, "
-        "`deploy_immediately` appear in some runs but not others. Root cause "
-        "is probably conditional route registration OR import-order-dependent "
-        "model discovery. Tracked as a follow-up; the other tests in this "
-        "file still enforce structural validity + no-duplicate operation IDs."
+        "KNOWN: main.app.openapi() is non-deterministic across fresh Python "
+        "processes because 21+ Pydantic BaseModel subclasses share the same "
+        "__name__ across multiple modules (e.g. ApproveRequest appears in "
+        "both privileged_access_api and learning_api). FastAPI uses "
+        "model.__name__ as the OpenAPI schema key — last-import-wins, and "
+        "import order varies. Session 210 fixed the single worst offender "
+        "(ApproveRequest → PromotedRuleApproveRequest in learning_api). "
+        "The other 20+ are tracked as backlog. Regression-prevention is "
+        "test_no_new_duplicate_pydantic_model_names below, which caps the "
+        "count at the current state so NEW duplicates can't land."
     ),
     strict=False,
 )
@@ -119,6 +123,52 @@ def test_schema_looks_structurally_valid():
     assert n_paths >= 100, (
         f"openapi.json has only {n_paths} paths — expected several hundred. "
         f"Did main.py fail to register routers?"
+    )
+
+
+def test_no_new_duplicate_pydantic_model_names():
+    """Session 210 round-table #1 regression-prevention gate.
+
+    Backend has 21+ Pydantic classes sharing __name__ across modules
+    (ApproveRequest in 2 modules, IncidentReport in 2, DriftReport in 2,
+    etc). Each duplicate contributes to main.app.openapi() non-determinism
+    because FastAPI uses __name__ as the schema key and last-import-wins.
+
+    This test caps the duplicate COUNT at the current baseline. Adding a
+    new duplicate fails the test; removing/renaming existing duplicates
+    lowers the baseline. Long-term goal: drive the baseline to zero.
+    Short-term goal: don't regress.
+    """
+    import re as _re
+    backend_root = REPO_ROOT / "mcp-server" / "central-command" / "backend"
+    pattern = _re.compile(r"^class ([A-Z][A-Za-z0-9_]*)\(BaseModel\):", _re.MULTILINE)
+    counts: dict[str, int] = {}
+    for py in backend_root.rglob("*.py"):
+        if "tests" in py.parts or "archived" in py.parts:
+            continue
+        try:
+            src = py.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for name in pattern.findall(src):
+            counts[name] = counts.get(name, 0) + 1
+
+    duplicates = {n: c for n, c in counts.items() if c > 1}
+    # Baseline locked 2026-04-24 after fixing ApproveRequest → PromotedRuleApproveRequest.
+    # To lower this, rename a duplicate class + decrement the number.
+    # NEVER raise it — that means a new duplicate was added, which deepens
+    # the openapi non-determinism.
+    BASELINE_DUPLICATE_COUNT = len(duplicates)
+    EXPECTED_MAX = 22  # current count as of Session 210 fix
+
+    assert BASELINE_DUPLICATE_COUNT <= EXPECTED_MAX, (
+        f"Number of duplicate Pydantic class names is {BASELINE_DUPLICATE_COUNT}, "
+        f"exceeds the session-210 baseline of {EXPECTED_MAX}. A new duplicate "
+        f"was added — this deepens main.app.openapi() non-determinism.\n"
+        f"Duplicates: {sorted(duplicates)}\n"
+        f"Fix: rename the new class to disambiguate (e.g. PromotedRuleApproveRequest "
+        f"vs PrivilegedApproveRequest), OR lower EXPECTED_MAX in this test if you "
+        f"ALSO removed a duplicate in the same commit."
     )
 
 

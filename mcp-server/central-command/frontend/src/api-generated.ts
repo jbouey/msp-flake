@@ -16483,15 +16483,10 @@ export interface components {
         };
         /** ApproveRequest */
         ApproveRequest: {
-            /** Custom Name */
-            custom_name?: string | null;
-            /**
-             * Deploy Immediately
-             * @default true
-             */
-            deploy_immediately: boolean;
             /** Notes */
             notes?: string | null;
+            /** Request Id */
+            request_id: string;
         };
         /** AssetInfo */
         AssetInfo: {
@@ -16759,8 +16754,8 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** BulkApproveRequest */
-        BulkApproveRequest: {
+        /** BulkPromotedRuleApproveRequest */
+        BulkPromotedRuleApproveRequest: {
             /**
              * Deploy Immediately
              * @default true
@@ -20683,6 +20678,18 @@ export interface components {
             /** Name */
             name?: string | null;
         };
+        /** PromotedRuleApproveRequest */
+        PromotedRuleApproveRequest: {
+            /** Custom Name */
+            custom_name?: string | null;
+            /**
+             * Deploy Immediately
+             * @default true
+             */
+            deploy_immediately: boolean;
+            /** Notes */
+            notes?: string | null;
+        };
         /**
          * PromotionApprovalRequest
          * @description Request to approve or reject a promotion candidate.
@@ -22155,12 +22162,20 @@ export interface components {
         };
         /** UserResponse */
         UserResponse: {
-            /** Displayname */
-            displayName: string;
+            /** Created At */
+            created_at: string;
+            /** Display Name */
+            display_name: string | null;
+            /** Email */
+            email: string | null;
             /** Id */
             id: string;
+            /** Last Login */
+            last_login: string | null;
             /** Role */
             role: string;
+            /** Status */
+            status: string;
             /** Username */
             username: string;
         };
@@ -22310,6 +22325,17 @@ export interface components {
             /** Termination Date */
             termination_date?: string | null;
         };
+        /** UserResponse */
+        dashboard_api___routes_impl__UserResponse: {
+            /** Displayname */
+            displayName: string;
+            /** Id */
+            id: string;
+            /** Role */
+            role: string;
+            /** Username */
+            username: string;
+        };
         /**
          * MagicLinkRequest
          * @description Request a magic link login.
@@ -22320,13 +22346,6 @@ export interface components {
              * Format: email
              */
             email: string;
-        };
-        /** ApproveRequest */
-        dashboard_api__privileged_access_api__ApproveRequest: {
-            /** Notes */
-            notes?: string | null;
-            /** Request Id */
-            request_id: string;
         };
         /** RejectRequest */
         dashboard_api__privileged_access_api__RejectRequest: {
@@ -22364,25 +22383,6 @@ export interface components {
              * @default false
              */
             use_ssl: boolean | null;
-            /** Username */
-            username: string;
-        };
-        /** UserResponse */
-        dashboard_api__users__UserResponse: {
-            /** Created At */
-            created_at: string;
-            /** Display Name */
-            display_name: string | null;
-            /** Email */
-            email: string | null;
-            /** Id */
-            id: string;
-            /** Last Login */
-            last_login: string | null;
-            /** Role */
-            role: string;
-            /** Status */
-            status: string;
             /** Username */
             username: string;
         };
@@ -24493,7 +24493,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserResponse"] | null;
+                    "application/json": components["schemas"]["dashboard_api___routes_impl__UserResponse"] | null;
                 };
             };
         };
@@ -28184,7 +28184,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__privileged_access_api__ApproveRequest"];
+                "application/json": components["schemas"]["ApproveRequest"];
             };
         };
         responses: {
@@ -40925,7 +40925,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BulkApproveRequest"];
+                "application/json": components["schemas"]["BulkPromotedRuleApproveRequest"];
             };
         };
         responses: {
@@ -41036,7 +41036,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ApproveRequest"];
+                "application/json": components["schemas"]["PromotedRuleApproveRequest"];
             };
         };
         responses: {
@@ -47032,7 +47032,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["dashboard_api__users__UserResponse"][];
+                    "application/json": components["schemas"]["UserResponse"][];
                 };
             };
         };
@@ -47267,7 +47267,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["dashboard_api__users__UserResponse"];
+                    "application/json": components["schemas"]["UserResponse"];
                 };
             };
         };
@@ -47483,7 +47483,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["dashboard_api__users__UserResponse"];
+                    "application/json": components["schemas"]["UserResponse"];
                 };
             };
             /** @description Validation Error */

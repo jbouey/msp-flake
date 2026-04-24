@@ -43,10 +43,10 @@ from sqlalchemy import text
 
 try:
     from . import auth as auth_module
-    from .shared import execute_with_retry, get_db
+    from .shared import check_rate_limit, execute_with_retry, get_db
 except ImportError:  # direct-module import (test path — no package context)
     import auth as auth_module  # type: ignore[no-redef]
-    from shared import execute_with_retry, get_db  # type: ignore[no-redef]
+    from shared import check_rate_limit, execute_with_retry, get_db  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,30 @@ async def record_field_undefined(
     gets no alert. That's acceptable; the alternative (5xx from this
     endpoint breaking an already-broken page) is worse.
     """
+    # Rate limit — 100 events/minute per authenticated user. Session 210
+    # round-table #4: session-auth'd endpoint but uncapped = an attacker
+    # (or a badly-behaved frontend loop) could fill client_telemetry_events.
+    # 100/min is generous given apiFieldGuard dedups at 60s per
+    # (endpoint, field) per browser, so a legitimate single user emits
+    # at most ~dozens per minute even during a chaotic contract drift.
+    user_key = f"user:{user.get('id') or user.get('user_id') or 'anon'}"
+    allowed, retry_after = await check_rate_limit(
+        user_key,
+        "client_field_undefined",
+        window_seconds=60,
+        max_requests=100,
+    )
+    if not allowed:
+        # Telemetry endpoints shouldn't hard-reject — just log and drop.
+        # Returning 429 would break the frontend's UI (apiFieldGuard
+        # catches errors but still, less noise is better). Silently
+        # discard by early return with the normal 202.
+        logger.warning(
+            "client_telemetry_rate_limited",
+            extra={"user_key": user_key, "retry_after": retry_after},
+        )
+        return {"accepted": False, "reason": "rate_limited"}
+
     # Parse client-provided timestamp defensively. A bad clock on the
     # client is not our problem — fall back to server NOW().
     client_ts: Optional[datetime] = None

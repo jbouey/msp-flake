@@ -1678,7 +1678,7 @@
         "title": "BroadcastOrderCreate",
         "type": "object"
       },
-      "BulkApproveRequest": {
+      "BulkPromotedRuleApproveRequest": {
         "properties": {
           "deploy_immediately": {
             "default": true,
@@ -1707,7 +1707,7 @@
         "required": [
           "pattern_ids"
         ],
-        "title": "BulkApproveRequest",
+        "title": "BulkPromotedRuleApproveRequest",
         "type": "object"
       },
       "BulkRejectRequest": {
@@ -10815,6 +10815,39 @@
         "title": "ProfileUpdate",
         "type": "object"
       },
+      "PromotedRuleApproveRequest": {
+        "properties": {
+          "custom_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Name"
+          },
+          "deploy_immediately": {
+            "default": true,
+            "title": "Deploy Immediately",
+            "type": "boolean"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "title": "PromotedRuleApproveRequest",
+        "type": "object"
+      },
       "PromotionApprovalRequest": {
         "description": "Request to approve or reject a promotion candidate.",
         "properties": {
@@ -14764,39 +14797,6 @@
           "email"
         ],
         "title": "MagicLinkRequest",
-        "type": "object"
-      },
-      "dashboard_api__learning_api__ApproveRequest": {
-        "properties": {
-          "custom_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Custom Name"
-          },
-          "deploy_immediately": {
-            "default": true,
-            "title": "Deploy Immediately",
-            "type": "boolean"
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notes"
-          }
-        },
-        "title": "ApproveRequest",
         "type": "object"
       },
       "dashboard_api__privileged_access_api__RejectRequest": {
@@ -43706,7 +43706,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BulkApproveRequest"
+                "$ref": "#/components/schemas/BulkPromotedRuleApproveRequest"
               }
             }
           },
@@ -43915,7 +43915,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__learning_api__ApproveRequest"
+                "$ref": "#/components/schemas/PromotedRuleApproveRequest"
               }
             }
           },

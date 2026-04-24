@@ -438,6 +438,42 @@ jobs:
             chmod 644 /opt/mcp-server/app/main.py
           EOF
 
+      - name: Pre-flight — container must be healthy before we touch it
+        # Session 210 (2026-04-24): the deploy workflow tried to run
+        # `docker exec mcp-server migrate.py` against a container that
+        # was crashlooping from a prior bad release (FastAPI 204 + return
+        # annotation crashed import). Each `docker exec` failed with
+        # "Container is restarting", the workflow errored, the rollback
+        # restored the SAME bad release, and the next deploy repeated
+        # the loop. Manual SSH intervention was the only escape.
+        #
+        # Fix: check the container state BEFORE touching it. Two cases:
+        #   * Container healthy or running → proceed
+        #   * Container restarting/exited → abort deploy, page human
+        run: |
+          ssh "${VPS_USER}@${VPS_HOST}" bash -s <<'EOF'
+            set -e
+            STATE=$(docker inspect -f '{{.State.Status}}' mcp-server 2>/dev/null || echo "missing")
+            HEALTH=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' mcp-server 2>/dev/null || echo "missing")
+            RESTARTS=$(docker inspect -f '{{.RestartCount}}' mcp-server 2>/dev/null || echo "0")
+            echo "container state=$STATE health=$HEALTH restarts=$RESTARTS"
+            if [ "$STATE" = "restarting" ] || [ "$STATE" = "exited" ] || [ "$STATE" = "dead" ]; then
+              echo "FATAL: mcp-server is not in a healthy state ($STATE)."
+              echo "Likely a prior deploy left bad code bind-mounted and the container"
+              echo "is crashlooping. Running migrations / rsync now would make it worse."
+              echo ""
+              echo "Manual recovery (operator): SSH to VPS, rsync the newest good"
+              echo "release from /opt/mcp-server/releases/<sha>/dashboard_api/ into"
+              echo "/opt/mcp-server/dashboard_api_mount/, then \`docker compose"
+              echo "restart mcp-server\`. Once /health returns 200, re-run this"
+              echo "workflow via workflow_dispatch."
+              exit 1
+            fi
+          EOF
+        env:
+          VPS_USER: ${{ env.VPS_USER }}
+          VPS_HOST: ${{ env.VPS_HOST }}
+
       - name: Run database migrations
         # Fail-closed: silent migration drift caused the 2026-04-12 90-min
         # fleet-order outage. If migrations fail, this step exits non-zero

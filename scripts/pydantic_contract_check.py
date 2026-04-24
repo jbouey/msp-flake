@@ -252,21 +252,54 @@ def _diff_models(
             continue
         old_by_name = {f.name: f for f in old.fields}
         new_by_name = {f.name: f for f in new.fields}
-        for name, old_field in old_by_name.items():
-            new_field = new_by_name.get(name)
-            if new_field is None:
-                # Field removed — OK only if old source had the deprecation
-                # annotation. Forcing the annotation to be in the OLD source
-                # means the author shipped the deprecation in a PRIOR commit,
-                # giving consumers time to migrate. Adding the annotation and
-                # removing the field in the SAME commit is NOT graceful.
-                if _field_has_deprecation(old_field, old.source_lines):
-                    continue
-                violations.append(Violation(
-                    path=path, cls_name=cls_name, kind="removed",
-                    field_name=name, old_type=old_field.type_repr, new_type="",
-                ))
-            elif new_field.type_repr != old_field.type_repr:
+        removed_names = set(old_by_name) - set(new_by_name)
+        added_names = set(new_by_name) - set(old_by_name)
+
+        # Session 210 round-table #2 — rename detection. A rename looks like
+        # (field X removed + field Y added with the same type). Without this
+        # pass, a rename squeaks through as "added field Y is backward-compat"
+        # while removed X quietly breaks downstream consumers. We flag it as
+        # a "renamed" violation requiring BREAKING: acknowledgment — same
+        # strictness as a type change. True-positive renames are rare; false
+        # positives are cheap to acknowledge (just add BREAKING: if justified).
+        renames: Dict[str, str] = {}  # old_name → new_name
+        for old_name in list(removed_names):
+            old_type = old_by_name[old_name].type_repr
+            candidates = [n for n in added_names if new_by_name[n].type_repr == old_type]
+            # Only claim a rename when the match is UNAMBIGUOUS (exactly one
+            # added field with the same type). Multiple same-type adds means
+            # the author probably did a bigger refactor — prefer to flag the
+            # removal cleanly rather than guess.
+            if len(candidates) == 1:
+                new_name = candidates[0]
+                renames[old_name] = new_name
+                removed_names.discard(old_name)
+                added_names.discard(new_name)
+        for old_name, new_name in renames.items():
+            violations.append(Violation(
+                path=path, cls_name=cls_name, kind="renamed",
+                field_name=old_name, old_type=old_by_name[old_name].type_repr,
+                new_type=f"(now named {new_name!r})",
+            ))
+
+        for name in removed_names:
+            old_field = old_by_name[name]
+            # Field removed — OK only if old source had the deprecation
+            # annotation. Forcing the annotation to be in the OLD source
+            # means the author shipped the deprecation in a PRIOR commit,
+            # giving consumers time to migrate. Adding the annotation and
+            # removing the field in the SAME commit is NOT graceful.
+            if _field_has_deprecation(old_field, old.source_lines):
+                continue
+            violations.append(Violation(
+                path=path, cls_name=cls_name, kind="removed",
+                field_name=name, old_type=old_field.type_repr, new_type="",
+            ))
+        # Type-change detection on still-present fields.
+        for name in set(old_by_name) & set(new_by_name):
+            old_field = old_by_name[name]
+            new_field = new_by_name[name]
+            if new_field.type_repr != old_field.type_repr:
                 violations.append(Violation(
                     path=path, cls_name=cls_name, kind="type_changed",
                     field_name=name, old_type=old_field.type_repr,

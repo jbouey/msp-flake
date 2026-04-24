@@ -207,6 +207,47 @@ def test_diff_class_removal_is_field_removal():
     assert {v.field_name for v in violations} == {"a", "b"}
 
 
+def test_diff_detects_unambiguous_rename():
+    """Session 210 round-table #2: X removed + Y added with same type = rename.
+    Flagged as 'renamed' violation requiring BREAKING: acknowledgment."""
+    old_src = "from pydantic import BaseModel\nclass Foo(BaseModel):\n    tier: str"
+    new_src = "from pydantic import BaseModel\nclass Foo(BaseModel):\n    plan: str"
+    violations = pcc._diff_models(
+        pathlib.Path("x.py"),
+        pcc._parse_models(old_src),
+        pcc._parse_models(new_src),
+    )
+    # Exactly ONE violation — a rename, NOT separate removal + addition.
+    assert len(violations) == 1, f"expected 1 rename violation, got {violations}"
+    assert violations[0].kind == "renamed"
+    assert violations[0].field_name == "tier"
+    assert "plan" in violations[0].new_type
+
+
+def test_diff_does_not_falsely_detect_rename_on_multiple_same_type_adds():
+    """When more than one same-type field is added, we can't UNAMBIGUOUSLY
+    pair the removal with an addition. Prefer to flag the removal cleanly
+    rather than guess the wrong match."""
+    old_src = "from pydantic import BaseModel\nclass Foo(BaseModel):\n    tier: str"
+    new_src = (
+        "from pydantic import BaseModel\n"
+        "class Foo(BaseModel):\n"
+        "    plan: str\n"
+        "    label: str\n"
+    )
+    violations = pcc._diff_models(
+        pathlib.Path("x.py"),
+        pcc._parse_models(old_src),
+        pcc._parse_models(new_src),
+    )
+    # Ambiguous — don't guess. Surface the removal of 'tier' as a plain removal.
+    kinds = [v.kind for v in violations]
+    assert "renamed" not in kinds, (
+        "must not claim a rename when multiple same-type additions are ambiguous"
+    )
+    assert "removed" in kinds
+
+
 def test_diff_ignores_type_equivalent_whitespace():
     # `Optional[int]` vs `Optional[int]` with different whitespace is still equal
     old_src = "from pydantic import BaseModel\nfrom typing import Optional\nclass Foo(BaseModel):\n    a: Optional[int]"

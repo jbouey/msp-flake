@@ -97,7 +97,7 @@ class PromotedRule(BaseModel):
     notes: Optional[str]
 
 
-class ApproveRequest(BaseModel):
+class PromotedRuleApproveRequest(BaseModel):
     deploy_immediately: bool = True
     custom_name: Optional[str] = None
     notes: Optional[str] = None
@@ -107,7 +107,7 @@ class RejectRequest(BaseModel):
     reason: str
 
 
-class BulkApproveRequest(BaseModel):
+class BulkPromotedRuleApproveRequest(BaseModel):
     pattern_ids: List[str]
     deploy_immediately: bool = True
     notes: Optional[str] = None
@@ -439,7 +439,7 @@ async def get_candidate_details(
 @partner_learning_router.post("/candidates/{pattern_id}/approve")
 async def approve_candidate(
     pattern_id: str,
-    request: ApproveRequest,
+    request: PromotedRuleApproveRequest,
     http_request: Request,
     partner=Depends(require_partner)
 ):
@@ -852,7 +852,7 @@ async def get_execution_history(
 
 @partner_learning_router.post("/candidates/bulk-approve")
 async def bulk_approve_candidates(
-    request: BulkApproveRequest,
+    request: BulkPromotedRuleApproveRequest,
     http_request: Request,
     partner=Depends(require_partner)
 ):
