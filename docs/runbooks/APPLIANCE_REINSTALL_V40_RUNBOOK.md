@@ -174,7 +174,28 @@ The script reads the daemon's live `config.yaml` top-level `api_key` via SSH, co
 
 **If the config.yaml already matches DB active AND the daemon is still silent**, the wedge is circuit-breaker state, not auth drift. Remediation: power-cycle the appliance. Fresh daemon → circuit breaker resets → existing config.yaml matches → checkin succeeds. This class is permanently eliminated by daemon 0.4.9 (Split #3 CredentialProvider, ISO v40.7+).
 
+## Appendix — v40.8 appliance_id fix (2026-04-24 afternoon)
+
+v40.0 through v40.7 shipped with a latent provisioning bug: the `/api/provision/{mac}` response's `config` dict had `{site_id, api_key, api_endpoint, ssh_authorized_keys}` — no `appliance_id`. `msp-auto-provision` wrote that verbatim to `config.yaml`, and `msp-breakglass-submit.service` then read `.appliance_id`, got null, and printed `submit: site_id/api_key/appliance_id missing — retry in 5m` forever. The bug was hidden on v40.0-v40.6 because those ISOs halted earlier in boot (Phase 0 deadlock, classpath, em-dash). v40.7's canary on `1D:0F:E5` reached submit for the first time and exposed it.
+
+**v40.8 fixes in two layers:**
+
+1. Backend `provisioning.py` (commit `d73d1fe9`): `appliance_id` added to the returned config dict. Fresh boxes get a complete `config.yaml` on first provision.
+2. ISO `msp-breakglass-submit` script: derive `APPL_ID` from `SITE_ID + MAC` when `config.yaml` omits it (mirrors the fallback already used by `msp-journal-upload`). Keeps v40.0-v40.7 legacy boxes working after upgrade.
+
+Regression locked in `mcp-server/central-command/backend/tests/test_iso_v40_8_appliance_id_in_config.py` (wired to `.githooks/pre-push`).
+
+v40.8 artifact provenance (VPS `178.156.162.116`):
+
+- Nix store path: `/nix/store/8fxq9q1ngf6cl776j2ng3swwsi7z77a9-osiriscare-appliance.iso/iso/osiriscare-appliance.iso`
+- Size: 2,335,047,680 bytes
+- SHA256: `c00882c08fcaab72735921640551f351cbd0e39ad6784efcf26ebc3ef65e085b`
+- Built from commit `d73d1fe9` (HEAD of `main` at build time, daemon 0.4.9 unchanged from v40.7).
+
+Reflash order is unchanged from v40.7 (canary first on `1D:0F:E5` = .242). Success criteria now explicitly includes bg_rows ≥ 1 within 5 min.
+
 ## Change log
 
 - 2026-04-23 — initial — drafted after v40 ISO build `2a596411`. Expects reflash order `1D:0F:E5 → 7C:D3 → 91:B6:61` to validate FIX-16 + FIX-11 on the known-bad canary first.
 - 2026-04-24 — added rescue-CLI appendix after the v40.x brick post-mortem. The CLI replaces hand-crafted `psql INSERT INTO api_keys` during the 2026-04-23 incident.
+- 2026-04-24 (afternoon) — added v40.8 appendix. v40.7 canary on `1D:0F:E5` exposed the pre-existing breakglass-submit appliance_id-missing bug; v40.8 closes it at backend + ISO script layers.
