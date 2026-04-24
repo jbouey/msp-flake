@@ -27,10 +27,20 @@ import re
 
 BACKEND_DIR = pathlib.Path(__file__).resolve().parent.parent
 BG_TASKS = BACKEND_DIR / "background_tasks.py"
+# Session 210-B deleted the dead duplicate _flywheel_promotion_loop
+# from background_tasks.py. The live loop (the one the scheduler actually
+# runs) lives in `mcp-server/main.py`. Platform-pattern aggregation +
+# L2-synthetic-ID filtering happen there now.
+REPO_ROOT = BACKEND_DIR.parents[2]
+MAIN_PY = REPO_ROOT / "mcp-server" / "main.py"
 
 
 def _source() -> str:
     return BG_TASKS.read_text(encoding="utf-8")
+
+
+def _live_flywheel_source() -> str:
+    return MAIN_PY.read_text(encoding="utf-8")
 
 
 def test_orphan_runbooks_query_joins_on_runbook_id():
@@ -79,10 +89,25 @@ def test_l2_synthetic_ids_excluded_from_platform_aggregation():
     phantom rows. Removing the guard would cause the 30-min aggregation
     loop to re-create those rows and spam `Skipping platform promotion:
     invalid runbook_id` warnings forever.
+
+    Session 210-B: the live `_flywheel_promotion_loop` lives in
+    `mcp-server/main.py` (background_tasks.py had a dead duplicate that
+    was deleted). The filter MUST live in the live copy.
     """
-    src = _source()
-    assert "NOT LIKE 'L2-%'" in src, (
-        "Platform-pattern aggregation query lost its synthetic-ID filter. "
-        "Re-add `AND et.runbook_id NOT LIKE 'L2-%'` to the WHERE clause "
-        "in the Step-3 INSERT INTO platform_pattern_stats block."
+    live_src = _live_flywheel_source()
+    assert "NOT LIKE 'L2-%'" in live_src, (
+        "Platform-pattern aggregation query in mcp-server/main.py lost its "
+        "synthetic-ID filter. Re-add `AND et.runbook_id NOT LIKE 'L2-%'` to "
+        "the WHERE clause in the Step-3 INSERT INTO platform_pattern_stats "
+        "block inside _flywheel_promotion_loop."
+    )
+    # Also assert the dead path is still dead: background_tasks.py must
+    # NOT re-introduce a flywheel_promotion_loop (Session 209 banned the
+    # pattern of two schedulers writing to the same tables).
+    bg_src = _source()
+    assert "async def flywheel_promotion_loop" not in bg_src, (
+        "background_tasks.py defines a flywheel_promotion_loop. Session "
+        "210-B deleted that duplicate because it shadowed the live copy "
+        "in mcp-server/main.py and re-created phantom L2-* rows. The live "
+        "loop is the one main.py schedules; don't resurrect the duplicate."
     )
