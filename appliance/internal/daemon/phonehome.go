@@ -409,6 +409,24 @@ type CheckinResponse struct {
 	// Nil when no reconcile is needed. Agent MUST Ed25519-verify against
 	// ServerPublicKey(s) before executing.
 	ReconcilePlan *ReconcilePlan `json:"reconcile_plan,omitempty"`
+	// Server-authoritative L2 confidence gate (minimum confidence required
+	// before the daemon acts on an L2 plan). Zero value falls back to the
+	// daemon's local default. Added 2026-04-24 after lockstep audit found
+	// the server had been sending 0.8 but daemon struct dropped it, so any
+	// fleet-wide threshold change was silently ignored.
+	L2ConfidenceThreshold float64 `json:"l2_confidence_threshold,omitempty"`
+	// Scheduled maintenance window end time (RFC3339). When populated and
+	// in the future, daemon SHOULD pause intrusive scans and auto-healing
+	// until this time passes. Behavior wiring lands in a follow-up PR;
+	// the field is declared here first so the value stops being silently
+	// dropped on unmarshal.
+	MaintenanceUntil string `json:"maintenance_until,omitempty"`
+	// Billing hold signal. When true, the site is in a delinquent or
+	// suspended state and the daemon SHOULD pause any remediation action
+	// that would incur operator liability (drift-check is still OK; the
+	// split is enforced by the daemon's healing gate). Behavior wiring
+	// lands in a follow-up PR.
+	BillingHold bool `json:"billing_hold,omitempty"`
 }
 
 // ReconcilePlan is the server-authoritative recovery plan for an agent

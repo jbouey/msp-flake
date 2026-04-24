@@ -342,20 +342,16 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
         elif claim.wg_pubkey and not WG_HUB_PUBKEY:
             logger.warning(f"Appliance {site_id} sent wg_pubkey but hub key not configured")
 
-        # Build initial config
-        config = {
-            "api_endpoint": API_BASE_URL,
-            "checkin_interval_seconds": 300,  # 5 min during provisioning
-            "discovery_enabled": True,
-            "network_range": provision['network_range'],  # May be None
-            "logging_level": "INFO",
-            "features": {
-                "compliance_checks": True,
-                "auto_healing": False,  # Disabled until fully activated
-                "evidence_collection": True,
-                "windows_scanning": True,
-            },
-        }
+        # Initial config returned to the CLI-driven claim flow.
+        # Historically this dict carried a dozen feature flags + thresholds
+        # (checkin_interval_seconds, discovery_enabled, network_range,
+        # logging_level, features{...}) — ALL of which had zero consumers
+        # on the appliance side (daemon reads its own keys from config.yaml
+        # and ignores this response body; see provisioning.py lockstep
+        # audit 2026-04-24). Kept empty to satisfy the ProvisionClaimResponse
+        # Pydantic contract; re-add fields here only when a real consumer
+        # exists.
+        config: dict = {}
 
         return ProvisionClaimResponse(
             status="claimed",
@@ -675,25 +671,15 @@ async def get_appliance_config(appliance_id: str):
         if not appliance:
             raise HTTPException(status_code=404, detail="Appliance not found")
 
-        # Build config based on tier
-        tier = appliance['tier'] or 'standard'
-
+        # Build config — only fields with a live appliance-side consumer.
+        # Pre-cleanup this dict shipped ~10 dead flags (tier, checkin_interval_seconds,
+        # compliance_checks_enabled, auto_healing_enabled, evidence_collection_enabled,
+        # windows_scanning_enabled, discovery_interval_hours, branding{...}). None
+        # were read by the daemon — see 2026-04-24 lockstep audit. Trimmed.
         config = {
             "api_endpoint": API_BASE_URL,
             "site_id": appliance['site_id'],
             "appliance_id": appliance_id,
-            "tier": tier,
-            "checkin_interval_seconds": 300 if tier == "premium" else 600,
-            "compliance_checks_enabled": True,
-            "auto_healing_enabled": tier in ("premium", "enterprise"),
-            "evidence_collection_enabled": True,
-            "windows_scanning_enabled": True,
-            "discovery_interval_hours": 24,
-            "branding": {
-                "brand_name": appliance['brand_name'],
-                "primary_color": appliance['primary_color'],
-                "logo_url": appliance['logo_url'],
-            },
         }
 
         return {

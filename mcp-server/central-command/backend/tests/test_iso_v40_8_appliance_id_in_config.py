@@ -24,7 +24,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PROVISIONING_PY = REPO_ROOT / "mcp-server/central-command/backend/provisioning.py"
+SITES_PY = REPO_ROOT / "mcp-server/central-command/backend/sites.py"
 DISK_IMAGE_NIX = REPO_ROOT / "iso/appliance-disk-image.nix"
+PHONEHOME_GO = REPO_ROOT / "appliance/internal/daemon/phonehome.go"
 
 
 def test_provisioning_config_dict_includes_appliance_id() -> None:
@@ -101,4 +103,97 @@ def test_appliance_id_format_matches_backend_convention() -> None:
     submit_block = src_iso[submit_idx:submit_idx + 5000]
     assert "tr '[:lower:]' '[:upper:]'" in submit_block, (
         "MAC normalization must uppercase to match backend convention"
+    )
+
+
+def test_claim_provision_code_config_is_empty_or_minimal() -> None:
+    """The config dict returned by claim_provision_code() has no live
+    appliance-side consumers. Pre-cleanup it shipped a dozen dead flags
+    (checkin_interval_seconds, discovery_enabled, network_range,
+    logging_level, features{...}). Trimmed to empty in the 2026-04-24
+    cleanup. Fail the test if any of the dead-field names reappear."""
+    src = PROVISIONING_PY.read_text()
+    # Locate claim_provision_code's config dict specifically.
+    anchor = 'async def claim_provision_code'
+    assert anchor in src
+    tail = src[src.index(anchor):]
+    # Stop at the function-end return statement so we only look inside this
+    # function's body.
+    body = tail[: tail.index('return ProvisionClaimResponse(')]
+
+    for dead in ('checkin_interval_seconds', 'discovery_enabled',
+                 'network_range', 'logging_level', 'compliance_checks',
+                 'auto_healing', 'evidence_collection', 'windows_scanning'):
+        assert f'"{dead}"' not in body, (
+            f"dead field {dead!r} reappeared in claim_provision_code config — "
+            "nothing on the appliance reads it; remove or wire a consumer first"
+        )
+
+
+def test_get_appliance_config_trimmed_to_live_fields() -> None:
+    """get_appliance_config()'s config dict must contain only fields with
+    a live appliance-side consumer (api_endpoint, site_id, appliance_id).
+    The 2026-04-24 cleanup removed tier/branding/compliance_checks_enabled/
+    auto_healing_enabled/evidence_collection_enabled/windows_scanning_enabled/
+    discovery_interval_hours/checkin_interval_seconds."""
+    src = PROVISIONING_PY.read_text()
+    anchor = 'async def get_appliance_config'
+    assert anchor in src
+    tail = src[src.index(anchor):]
+    body = tail[: tail.index('return {')]
+
+    for dead in ('tier', 'checkin_interval_seconds',
+                 'compliance_checks_enabled', 'auto_healing_enabled',
+                 'evidence_collection_enabled', 'windows_scanning_enabled',
+                 'discovery_interval_hours', 'branding'):
+        assert f'"{dead}"' not in body, (
+            f"dead field {dead!r} reappeared in get_appliance_config — "
+            "remove or wire a consumer before re-adding"
+        )
+
+
+def test_checkin_response_struct_unmarshals_server_directives() -> None:
+    """Go daemon's CheckinResponse struct MUST include fields for every
+    directive the server sends in /api/appliances/checkin response.
+    2026-04-24 lockstep audit found 3 missing: l2_confidence_threshold
+    (safety gate for auto-healing), maintenance_until (scheduled window),
+    billing_hold (delinquent account pause). Silently dropped because
+    Go's json.Unmarshal discards unknown fields. Behavior wiring lands
+    in a follow-up PR; this test locks the struct so the fields don't
+    regress back to being dropped."""
+    go_src = PHONEHOME_GO.read_text()
+    anchor = 'type CheckinResponse struct'
+    assert anchor in go_src, "CheckinResponse struct moved — test stale"
+    tail = go_src[go_src.index(anchor):]
+    # Close the struct body at the first unmatched closing brace.
+    body = tail[: tail.index('\n}\n') + 2]
+
+    for json_tag in ('"l2_confidence_threshold',
+                     '"maintenance_until',
+                     '"billing_hold'):
+        assert json_tag in body, (
+            f"CheckinResponse struct must declare a field with json tag "
+            f"{json_tag!r} so the server directive stops being silently "
+            f"dropped on unmarshal"
+        )
+
+
+def test_appliance_checkin_model_declares_wg_pubkey() -> None:
+    """ApplianceCheckin Pydantic model must declare wg_pubkey so Pydantic
+    does not silently drop it. Primary persistence is still
+    provisioning.py claim_provision_code (which UPDATEs sites.wg_pubkey
+    at claim time); this is defense-in-depth for daemon rekey scenarios."""
+    src = SITES_PY.read_text()
+    anchor = 'class ApplianceCheckin(BaseModel):'
+    assert anchor in src, "ApplianceCheckin class moved — test stale"
+    tail = src[src.index(anchor):]
+    # Narrow to the class body (next class or function).
+    body_end = min(
+        (tail.index('\nclass ', 1) if '\nclass ' in tail[1:] else len(tail)),
+        (tail.index('\ndef ', 1) if '\ndef ' in tail[1:] else len(tail)),
+    )
+    body = tail[:body_end]
+    assert 'wg_pubkey:' in body, (
+        "ApplianceCheckin must declare wg_pubkey so Pydantic doesn't silently "
+        "drop the daemon-side field on every checkin"
     )

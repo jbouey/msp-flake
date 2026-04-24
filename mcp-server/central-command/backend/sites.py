@@ -2627,6 +2627,13 @@ class ApplianceCheckin(BaseModel):
     deploy_results: Optional[list[Dict[str, Any]]] = None  # Results from previous deploy attempts
     wg_connected: bool = False  # Whether WireGuard tunnel is active
     wg_ip: Optional[str] = None  # WireGuard VPN IP (10.100.0.x)
+    # WireGuard public key. Primary persistence path is provisioning.py
+    # claim_provision_code() which UPDATEs sites.wg_pubkey on claim. This
+    # checkin field is defensive — if a daemon ever rekeys its WireGuard
+    # pair and the server's stored value drifts, the checkin handler can
+    # reconcile. 2026-04-24 lockstep audit flagged this as silently dropped
+    # by Pydantic (field was present on daemon side but absent here).
+    wg_pubkey: Optional[str] = None
     daemon_health: Optional[Dict[str, Any]] = None  # Go runtime stats (goroutines, heap, GC)
     bundle_hashes: Optional[List[Dict[str, str]]] = None  # Recent evidence bundle hashes for peer witnessing
     witness_attestations: Optional[List[Dict[str, str]]] = None  # Counter-signatures of sibling bundle hashes
