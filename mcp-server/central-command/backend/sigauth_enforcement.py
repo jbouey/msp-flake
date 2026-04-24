@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -184,7 +185,7 @@ async def _auto_promotion_tick(conn) -> dict:
            AND wo.total >= $2
            AND wo.fails = 0
         """,
-        f"{AUTO_PROMOTE_WINDOW_HOURS} hours",
+        timedelta(hours=AUTO_PROMOTE_WINDOW_HOURS),
         MIN_SAMPLES,
     )
 
