@@ -44,7 +44,7 @@ Organizations are the billing/compliance boundary. An org contains:
     severity: critical
   annotations:
     summary: "{{ $value }} orgs with expired BAAs"
-    runbook: docs/ORG_MANAGEMENT_RUNBOOK.md#baa-expiration
+    runbook: docs/runbooks/ORG_MANAGEMENT_RUNBOOK.md#baa-expiration
 
 - alert: OrgQuotaNearLimit
   expr: osiriscare_org_site_quota_pct > 90

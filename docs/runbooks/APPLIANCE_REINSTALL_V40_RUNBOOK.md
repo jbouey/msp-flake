@@ -1,6 +1,6 @@
 # Appliance Reinstall Runbook — v40 ISO (FIX-9 … FIX-16)
 
-**Status:** extends v39 runbook (`APPLIANCE_REINSTALL_V39_RUNBOOK.md`). Flashing + physical steps are identical; validation is different. Read this in conjunction with v39.
+**Status:** extends v39 runbook (`APPLIANCE_REINSTALL_V39_RUNBOOK.md`, same directory). Flashing + physical steps are identical; validation is different. Read this in conjunction with v39.
 
 ## What v40 changes vs. v39
 

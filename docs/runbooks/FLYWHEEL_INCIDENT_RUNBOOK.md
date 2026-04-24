@@ -40,7 +40,7 @@ The flywheel has 3 stages:
     severity: critical
   annotations:
     summary: "{{ $value }} approved candidates missing promoted_rules entry"
-    runbook: docs/FLYWHEEL_INCIDENT_RUNBOOK.md#stuck-candidates
+    runbook: docs/runbooks/FLYWHEEL_INCIDENT_RUNBOOK.md#stuck-candidates
 
 - alert: FlywheelStalled
   expr: osiriscare_flywheel_last_promotion_age_seconds > 604800
@@ -49,7 +49,7 @@ The flywheel has 3 stages:
     severity: warning
   annotations:
     summary: "No promotions in {{ $value | humanizeDuration }}"
-    runbook: docs/FLYWHEEL_INCIDENT_RUNBOOK.md#stalled-pipeline
+    runbook: docs/runbooks/FLYWHEEL_INCIDENT_RUNBOOK.md#stalled-pipeline
 ```
 
 ---

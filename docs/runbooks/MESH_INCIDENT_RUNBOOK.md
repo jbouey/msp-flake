@@ -43,7 +43,7 @@ OsirisCare uses a **backend-authoritative mesh** (Session 196):
     severity: critical
   annotations:
     summary: "{{ $value }} mesh sites have ring size disagreeing with online count"
-    runbook: "docs/MESH_INCIDENT_RUNBOOK.md#ring-drift"
+    runbook: "docs/runbooks/MESH_INCIDENT_RUNBOOK.md#ring-drift"
 
 - alert: MeshTargetOverlap
   expr: osiriscare_mesh_target_overlaps > 0
@@ -52,7 +52,7 @@ OsirisCare uses a **backend-authoritative mesh** (Session 196):
     severity: warning
   annotations:
     summary: "{{ $value }} targets are owned by multiple appliances (duplicate scans)"
-    runbook: "docs/MESH_INCIDENT_RUNBOOK.md#target-overlap"
+    runbook: "docs/runbooks/MESH_INCIDENT_RUNBOOK.md#target-overlap"
 
 - alert: MeshTargetOrphan
   expr: osiriscare_mesh_target_orphans > 0
@@ -61,7 +61,7 @@ OsirisCare uses a **backend-authoritative mesh** (Session 196):
     severity: critical
   annotations:
     summary: "{{ $value }} targets have no owner (coverage hole)"
-    runbook: "docs/MESH_INCIDENT_RUNBOOK.md#target-orphan"
+    runbook: "docs/runbooks/MESH_INCIDENT_RUNBOOK.md#target-orphan"
 
 - alert: MeshAssignmentThrashing
   expr: osiriscare_mesh_assignment_changes_1h > 50
@@ -70,7 +70,7 @@ OsirisCare uses a **backend-authoritative mesh** (Session 196):
     severity: warning
   annotations:
     summary: "Mesh assignments changing rapidly ({{ $value }}/hour)"
-    runbook: "docs/MESH_INCIDENT_RUNBOOK.md#thrashing"
+    runbook: "docs/runbooks/MESH_INCIDENT_RUNBOOK.md#thrashing"
 ```
 
 ### Backend Logs

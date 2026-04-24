@@ -10,7 +10,7 @@ Examples:
   python3 canary_post_reinstall.py 84:3A:5B:1D:0F:E5 north-valley-branch-2
 
 Pass criteria: admin_order completes with status='completed' and no
-error_message. See docs/APPLIANCE_REINSTALL_V39_RUNBOOK.md §Step 6 for
+error_message. See docs/runbooks/APPLIANCE_REINSTALL_V39_RUNBOOK.md §Step 6 for
 the full pass/fail matrix.
 
 Intended to run INSIDE the mcp-server container (has DATABASE_URL +

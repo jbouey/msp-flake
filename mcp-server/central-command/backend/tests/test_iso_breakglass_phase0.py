@@ -213,7 +213,7 @@ def test_breakglass_provision_does_not_deadlock_user_space():
         "v40.1 regression: msp-breakglass-provision.unitConfig.Before "
         "includes sysinit.target — this is the deadlock that bricked "
         "v40 on 1D:0F:E5, 7C:D3, 91:B6:61. Remove it. See "
-        "docs/APPLIANCE_REINSTALL_V40_RUNBOOK.md §v40.1 changes."
+        "docs/runbooks/APPLIANCE_REINSTALL_V40_RUNBOOK.md §v40.1 changes."
     )
     assert '"multi-user.target"' not in before_list, (
         "v40.1 regression: msp-breakglass-provision.unitConfig.Before "

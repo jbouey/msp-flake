@@ -29,7 +29,7 @@
     severity: warning
   annotations:
     summary: "OTS proofs not anchoring for {{ $value }}s"
-    runbook: "docs/OTS_INCIDENT_RUNBOOK.md#calendar-outage"
+    runbook: "docs/runbooks/OTS_INCIDENT_RUNBOOK.md#calendar-outage"
 
 - alert: OTSCalendarDown
   expr: osiriscare_ots_calendar_success_24h == 0
@@ -38,7 +38,7 @@
     severity: critical
   annotations:
     summary: "Calendar {{ $labels.calendar }} has 0 successful anchors in 24h"
-    runbook: "docs/OTS_INCIDENT_RUNBOOK.md#calendar-outage"
+    runbook: "docs/runbooks/OTS_INCIDENT_RUNBOOK.md#calendar-outage"
 ```
 
 ---
