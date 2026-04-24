@@ -630,6 +630,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_vps_disk_pressure(c),
     ),
     Assertion(
+        name="installed_but_silent",
+        severity="sev2",
+        description="install_sessions row ≥20 min old but site_appliances.last_checkin is NULL or predates the install_sessions row — the installer ran but the installed system never successfully checked in. Covers the v40.0-v40.2 bricking class that fired no other invariant for 4+ hours on 2026-04-23. Sibling to provisioning_stalled but fires on the outcome edge (installer stopped, installed never started) rather than the proxy (checkin_count≥3).",
+        check=lambda c: _check_installed_but_silent(c),
+    ),
+    Assertion(
         name="provisioning_stalled",
         severity="sev2",
         description="Installer phoned home (install_sessions fresh) but installed system never did (site_appliances stale or missing). 2026-04-15 t740 incident: Pi-hole blocked api.osiriscare.net → installed-system daemon couldn't resolve → silent brick. Most likely a DNS filter (Pi-hole / Umbrella / Fortinet / Sophos / Barracuda) on the site's network. Whitelist api.osiriscare.net.",
@@ -850,6 +856,18 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
         "recommended_action": "Whitelist api.osiriscare.net (port 443) on the site's "
             "DNS filter / web proxy / firewall (Pi-hole, Umbrella, Fortinet, Sophos, Barracuda). "
             "Verify per-device rules if your filter has them — by-MAC whitelisting is common and easy to miss.",
+    },
+    "installed_but_silent": {
+        "display_name": "Installer ran but the installed system never checked in",
+        "recommended_action": "SSH in as msp with the ISO-embedded pubkey, then "
+            "`sudo systemctl status msp-auto-provision.service` (NOPASSWD on v40.4+). "
+            "If the service is failed, `sudo journalctl -u msp-auto-provision -n 100` — "
+            "typical cause as of v40.4 is a DNS race before resolvconf has written "
+            "/etc/resolv.conf. Restart msp-auto-provision to retry. If port 8443 "
+            "is open on the appliance, curl it — the beacon JSON names the broken stage. "
+            "If msp-auto-provision is succeeding but the daemon isn't checking in, "
+            "check for a split-brain auth bug (daemon sub-components holding stale "
+            "api_key after auto-rekey — see 2026-04-23 audit item #5).",
     },
     "appliance_moved_unack": {
         "display_name": "Appliance physically relocated — unacknowledged",
@@ -1765,6 +1783,101 @@ async def _check_provisioning_network_fail(conn: asyncpg.Connection) -> List[Vio
                         "health). Typical fix is to whitelist "
                         "api.osiriscare.net (origin 178.156.162.116) on "
                         "the site's DNS filter / web proxy / firewall."
+                    ),
+                },
+            )
+        )
+    return out
+
+
+async def _check_installed_but_silent(conn: asyncpg.Connection) -> List[Violation]:
+    """v40.4 (2026-04-23) — the SIBLING that finally ships.
+
+    `provisioning_stalled` and `provisioning_network_fail` both require
+    `install_sessions.checkin_count >= 3` before they fire. That covers
+    the "installer is actively retrying" case, but is BLIND to the
+    exact failure mode that bricked 3/3 v40.0-v40.2 appliances for 4+
+    hours on 2026-04-23: the installer posts `/api/install/report/start`
+    exactly once (checkin_count=1), succeeds at writing `install_sessions`,
+    and then the whole install completes and reboots into the installed
+    system — which then FAILS to check in (DNS race in
+    run_network_gate_check, missing `host` binary, etc.). Nothing in
+    `install_sessions` ever advances past `first_seen`, and `site_appliances.
+    last_checkin` never updates. For 4+ hours, every existing invariant
+    stayed silent.
+
+    This invariant covers that class: fires when
+      * `install_sessions` has a row with `first_seen >= 20 min ago`
+        (installer hit /report/start then stopped)
+      * AND (`site_appliances` is missing OR `site_appliances.last_checkin
+        IS NULL` OR `last_checkin < install_sessions.first_seen`)
+        — the installed system NEVER successfully checked in
+           after the install_sessions row was created.
+
+    Severity is sev2 (not sev1) — the installer process COULD have
+    been interrupted legitimately (operator pulled the USB mid-install,
+    power cut). 20 min gives a real install enough time to finish + first
+    boot + first checkin on normal hardware.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT
+            iss.site_id,
+            iss.mac_address,
+            iss.hostname,
+            iss.ip_addresses,
+            iss.first_seen,
+            iss.last_seen,
+            iss.checkin_count,
+            iss.install_stage,
+            sa.last_checkin,
+            EXTRACT(EPOCH FROM (NOW() - iss.first_seen))/60 AS age_min
+          FROM install_sessions iss
+          LEFT JOIN site_appliances sa
+            ON UPPER(sa.mac_address) = UPPER(iss.mac_address)
+           AND sa.site_id = iss.site_id
+           AND sa.deleted_at IS NULL
+         WHERE iss.first_seen < NOW() - INTERVAL '20 minutes'
+           AND iss.first_seen > NOW() - INTERVAL '24 hours'
+           AND (
+                 sa.last_checkin IS NULL
+              OR sa.last_checkin < iss.first_seen
+           )
+        """
+    )
+    out: List[Violation] = []
+    for r in rows:
+        out.append(
+            Violation(
+                site_id=r["site_id"],
+                details={
+                    "mac_address": r["mac_address"],
+                    "hostname": r["hostname"],
+                    "ip_addresses": list(r["ip_addresses"] or []),
+                    "install_stage": r["install_stage"],
+                    "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
+                    "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+                    "checkin_count": int(r["checkin_count"] or 0),
+                    "age_min": round(float(r["age_min"]), 1),
+                    "site_appliance_last_checkin": (
+                        r["last_checkin"].isoformat()
+                        if r["last_checkin"] else None
+                    ),
+                    "hint": (
+                        "Installer posted /report/start and then stopped; "
+                        "the installed system has not produced a checkin. "
+                        "Most common cause as of v40.4: a DNS-race or "
+                        "classpath bug in msp-auto-provision.service on "
+                        "the installed system (see appliance-disk-image.nix "
+                        "run_network_gate_check). SSH in as `msp` with the "
+                        "ISO-embedded pubkey and `sudo systemctl status "
+                        "msp-auto-provision.service` / `sudo journalctl -u "
+                        "msp-auto-provision -n 100`. If it's failed, "
+                        "`sudo systemctl restart msp-auto-provision.service` "
+                        "(NOPASSWD). For a permanently-stuck box, check if "
+                        "port 8443 beacon is responding — the beacon JSON's "
+                        "`state` + `last_error` fields point at the exact "
+                        "failure stage."
                     ),
                 },
             )

@@ -500,18 +500,67 @@ async def require_appliance_bearer(request: Request) -> str:
                 pass  # Non-critical
         return row.site_id
 
-    # Auth failed — try to identify the appliance from the request body
-    # so we can track auth failures for dashboard visibility.
+    # Auth failed — try to identify the appliance so we can track
+    # auth failures for dashboard visibility AND so the invariant
+    # `auth_failure_lockout` (sev1) can surface an appliance that
+    # is 401-looping.
+    #
+    # v40.4 (2026-04-23): prior to this change, identification
+    # depended on the request body carrying `site_id` + `mac_address`
+    # at the top level. That works for /api/appliances/checkin but
+    # NOT for /api/evidence/submit, /api/logs/ingest,
+    # /api/agent/executions, which use a different payload shape
+    # (site_id is in the URL, or there's no MAC at all). Result:
+    # the auth-failure counter never incremented for those endpoints,
+    # and the invariant was blind to a whole class of auth failures.
+    #
+    # The fix below adds a second identification path: if the key
+    # hash matches an INACTIVE api_keys row (the key IS known, just
+    # rotated/deactivated), use that row's appliance_id. This works
+    # regardless of request body shape and handles the split-brain
+    # daemon bug where sub-components kept sending a stale key on
+    # evidence/logs/agent endpoints after auto-rekey.
+    appliance_id: str | None = None
+    site_id: str | None = None
+
+    # Path A: key hash matches an inactive row — we know whose key this was.
     try:
-        body_bytes = await request.body()
-        import json as _json
-        body = _json.loads(body_bytes)
-        site_id = body.get("site_id")
-        mac = body.get("mac_address")
-        if site_id and mac:
-            from dashboard_api.provisioning import normalize_mac
-            mac_norm = normalize_mac(mac)
-            appliance_id = f"{site_id}-{mac_norm}"
+        async with async_session() as db:
+            inactive_row = (
+                await db.execute(
+                    text("""
+                        SELECT ak.site_id, ak.appliance_id FROM api_keys ak
+                        WHERE ak.key_hash = :key_hash AND ak.active = false
+                        ORDER BY ak.created_at DESC
+                        LIMIT 1
+                    """),
+                    {"key_hash": key_hash},
+                )
+            ).fetchone()
+            if inactive_row and inactive_row.appliance_id:
+                appliance_id = inactive_row.appliance_id
+                site_id = inactive_row.site_id
+    except Exception:
+        logger.exception("shared.require_appliance_bearer: inactive-key lookup failed")
+
+    # Path B (fallback): body carries site_id + mac_address at top level.
+    if not appliance_id:
+        try:
+            body_bytes = await request.body()
+            import json as _json
+            body = _json.loads(body_bytes)
+            body_site_id = body.get("site_id")
+            body_mac = body.get("mac_address")
+            if body_site_id and body_mac:
+                from dashboard_api.provisioning import normalize_mac
+                mac_norm = normalize_mac(body_mac)
+                appliance_id = f"{body_site_id}-{mac_norm}"
+                site_id = body_site_id
+        except Exception:
+            pass  # Body parse fail — no identification available.
+
+    if appliance_id:
+        try:
             from dashboard_api.fleet import get_pool
             from dashboard_api.tenant_middleware import admin_connection
             pool = await get_pool()
@@ -523,18 +572,20 @@ async def require_appliance_bearer(request: Request) -> str:
                         auth_failure_since = COALESCE(auth_failure_since, NOW())
                     WHERE appliance_id = $1
                 """, appliance_id)
-            logger.warning(
-                "Auth failed for known appliance",
-                appliance_id=appliance_id,
-                site_id=site_id,
+        except Exception:
+            logger.exception(
+                "shared.require_appliance_bearer: auth_failure counter update failed",
+                extra={"appliance_id": appliance_id},
             )
-            raise HTTPException(
-                status_code=401,
-                detail={"error": "API key mismatch", "code": "AUTH_KEY_MISMATCH"}
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        pass  # Body parsing failed — fall through to generic 401
+        logger.warning(
+            "Auth failed for known appliance",
+            appliance_id=appliance_id,
+            site_id=site_id,
+            path=request.url.path,
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "API key mismatch", "code": "AUTH_KEY_MISMATCH"}
+        )
 
     raise HTTPException(status_code=401, detail="Invalid API key")
