@@ -1754,18 +1754,22 @@ async def claim_appliance_to_site(
     if not site.fetchone():
         raise HTTPException(status_code=404, detail="Site not found")
 
-    # Generate API key for the appliance
+    # v40.6 Split #1 (Principal SWE round-table 2026-04-24): mint the
+    # fresh api_key + register it in api_keys (sole source of truth)
+    # but STOP writing it to the deprecated appliance_provisioning.api_key
+    # column. That column is being dropped in a follow-up migration
+    # once no writers remain.
     import secrets
     import hashlib
     api_key = secrets.token_urlsafe(32)
 
     result = await execute_with_retry(db,text("""
         UPDATE appliance_provisioning
-        SET site_id = :site_id, api_key = :api_key, provisioned_at = NOW(),
+        SET site_id = :site_id, provisioned_at = NOW(),
             notes = COALESCE(notes, '') || ' | Claimed via dashboard'
         WHERE UPPER(mac_address) = :mac
         RETURNING id, mac_address, site_id
-    """), {"site_id": site_id, "api_key": api_key, "mac": mac_address})
+    """), {"site_id": site_id, "mac": mac_address})
     row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Appliance not found in provisioning table")
@@ -6755,24 +6759,26 @@ async def create_site_provision(
             "UPDATE sites SET client_contact_email = :email WHERE site_id = :sid"
         ), {"email": body.client_email.strip(), "sid": site_id})
 
-    # Generate API key for the new appliance
-    raw_key = secrets.token_urlsafe(32)
-
+    # v40.6 Split #1 (Principal SWE round-table 2026-04-24): the
+    # `appliance_provisioning.api_key` column is DEPRECATED and being
+    # dropped. The MAC lookup endpoint at /api/provision/{mac} now
+    # mints a fresh api_key on every call (minted-and-mirrored into
+    # api_keys.active, which is the sole source of truth for
+    # authorization). No caller reads appliance_provisioning.api_key
+    # anymore. Stop writing it here; the first appliance boot will
+    # trigger fresh-key generation via the provision endpoint.
     if body.mac_address:
         mac = body.mac_address.upper().strip()
-        # Insert into appliance_provisioning — the MAC lookup endpoint reads this
         await execute_with_retry(db, text("""
-            INSERT INTO appliance_provisioning (mac_address, site_id, api_key, notes, registered_at)
-            VALUES (:mac, :sid, :key, :notes, NOW())
+            INSERT INTO appliance_provisioning (mac_address, site_id, notes, registered_at)
+            VALUES (:mac, :sid, :notes, NOW())
             ON CONFLICT (mac_address) DO UPDATE SET
                 site_id = EXCLUDED.site_id,
-                api_key = EXCLUDED.api_key,
                 notes = EXCLUDED.notes,
                 registered_at = NOW()
         """), {
             "mac": mac,
             "sid": site_id,
-            "key": raw_key,
             "notes": f"Admin-provisioned by {user.get('username', 'unknown')}",
         })
         # Audit log
@@ -7091,14 +7097,18 @@ async def claim_unclaimed_appliance(
     if not site_row:
         raise HTTPException(status_code=404, detail="Site not found")
 
-    # Generate API key and claim
-    raw_key = secrets.token_urlsafe(32)
+    # v40.6 Split #1 (Principal SWE round-table 2026-04-24): assign
+    # the site — do NOT generate/store a raw api_key here. When the
+    # newly-claimed appliance next calls /api/provision/{mac}, that
+    # endpoint mints a fresh api_key + writes to api_keys.active (the
+    # sole source of truth). The `appliance_provisioning.api_key`
+    # column is deprecated and being dropped.
     await execute_with_retry(db, text("""
         UPDATE appliance_provisioning
-        SET site_id = :sid, api_key = :key,
+        SET site_id = :sid,
             notes = COALESCE(notes, '') || ' | Claimed by ' || :user || ' at ' || NOW()::text
         WHERE UPPER(mac_address) = :mac
-    """), {"sid": body.site_id, "key": raw_key, "mac": mac, "user": user.get("username", "admin")})
+    """), {"sid": body.site_id, "mac": mac, "user": user.get("username", "admin")})
 
     # Audit log
     await execute_with_retry(db, text("""

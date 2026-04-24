@@ -565,15 +565,19 @@ async def get_provision_by_mac(mac_address: str):
                            true, NOW())
                 """, site_id_val, appliance_id, api_key_hash, key_prefix)
 
-                # appliance_provisioning: keep the canonical record in
-                # sync with api_keys. Future callers that read this
-                # table see the current key.
+                # v40.6 Split #1 (Principal SWE round-table 2026-04-24):
+                # appliance_provisioning.api_key is DEPRECATED. This
+                # endpoint now mints on every call and never reads the
+                # stored value; no other reader remains. Stop writing
+                # the raw key here — the column gets DROPPED in a
+                # follow-up migration after a soak period confirms no
+                # regression. Still refresh provisioned_at for the
+                # audit timestamp.
                 await conn.execute("""
                     UPDATE appliance_provisioning
-                       SET api_key = $2,
-                           provisioned_at = COALESCE(provisioned_at, NOW())
+                       SET provisioned_at = COALESCE(provisioned_at, NOW())
                      WHERE UPPER(mac_address) = $1
-                """, mac, raw_api_key)
+                """, mac)
 
             logger.info(
                 "[provision] minted fresh api_key site=%s mac=%s "

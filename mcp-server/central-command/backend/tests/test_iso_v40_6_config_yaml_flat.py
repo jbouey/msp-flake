@@ -103,6 +103,57 @@ def test_no_full_response_yaml_dump_remains():
     )
 
 
+def test_no_writes_to_deprecated_appliance_provisioning_api_key():
+    """v40.6 Split #1: `appliance_provisioning.api_key` is deprecated
+    (being dropped in a follow-up migration). Every writer has been
+    migrated — the MAC lookup endpoint mints fresh on every call +
+    writes to api_keys, and the admin-provision handler no longer
+    populates the column. This test locks that in so a regression
+    doesn't re-introduce the split-brain before the column is dropped.
+
+    Allowed: reads (none exist anymore); the SELECT line in
+    provisioning.py that deliberately OMITs `ap.api_key` (comment-only
+    reference); past migration files (frozen history).
+    """
+    backend_root = _REPO_ROOT / "mcp-server" / "central-command" / "backend"
+    # Ban patterns — source code writes to the column via SQL.
+    banned = [
+        # INSERT that includes api_key as a column in the column list.
+        # Column list is parenthesized + on the same line or nearby.
+        re.compile(
+            r"INSERT\s+INTO\s+appliance_provisioning\s*\([^)]{0,400}\bapi_key\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        # UPDATE ... SET ... api_key = — bounded distance so we don't
+        # span across unrelated statements in the same string literal.
+        re.compile(
+            r"UPDATE\s+appliance_provisioning\b[\s\S]{0,80}?\bSET\b[\s\S]{0,200}?\bapi_key\s*=",
+            re.IGNORECASE,
+        ),
+    ]
+    # Walk every .py file in backend/, excluding tests and migrations.
+    violations: list[str] = []
+    for py in backend_root.rglob("*.py"):
+        if "/tests/" in str(py) or "/migrations/" in str(py):
+            continue
+        text = py.read_text()
+        for pat in banned:
+            for m in pat.finditer(text):
+                line_num = text[: m.start()].count("\n") + 1
+                violations.append(
+                    f"{py.relative_to(backend_root)}:{line_num}: {m.group(0)[:90]!r}"
+                )
+    assert not violations, (
+        "v40.6 Split #1 regression: a writer to "
+        "`appliance_provisioning.api_key` was added or re-added. That "
+        "column is deprecated — the sole source of truth for auth is "
+        "`api_keys WHERE active=true`. If you genuinely need to store "
+        "a raw key long-term, re-open the round-table first; otherwise "
+        "mint on every provision call.\n"
+        + "\n".join(violations)
+    )
+
+
 def test_signature_verifier_still_reads_config_block():
     """Belt-and-braces: `verify_provision_signature` must continue to
     verify against the `.config` subtree. If someone refactors the
