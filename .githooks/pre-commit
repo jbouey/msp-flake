@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — runs before `git commit`.
+#
+# Session 210 (2026-04-24) Layer 6 of enterprise API reliability:
+# block silent Pydantic contract breaks at author time.
+#
+# Bypass in emergencies (use sparingly; leaves no audit trail):
+#     git commit --no-verify
+#
+# Bypass by explicit opt-in (leaves audit trail in commit message):
+#     git commit -m "BREAKING: justification here"
+#
+# Activate on a fresh clone:
+#     scripts/setup-hooks.sh
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Only gate when backend Python files are staged. Keeps doc-only commits
+# and frontend-only commits fast.
+STAGED=$(git diff --cached --name-only --diff-filter=AM 2>/dev/null | grep -E '^mcp-server/central-command/backend/.*\.py$' || true)
+if [ -z "$STAGED" ]; then
+    exit 0
+fi
+
+echo "[pre-commit] pydantic contract check..."
+if ! python3 "$REPO_ROOT/scripts/pydantic_contract_check.py"; then
+    echo ""
+    echo "[pre-commit] commit blocked. See the policy options printed above."
+    exit 1
+fi
+echo "[pre-commit] ✓ no breaking Pydantic changes"
