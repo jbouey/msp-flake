@@ -32,7 +32,7 @@ func TestTelemetryReport(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reporter := NewTelemetryReporter(server.URL, "test-api-key", "test-site")
+	reporter := NewTelemetryReporter(server.URL, staticCreds{key: "test-api-key"}, "test-site")
 	reporter.SetApplianceID("test-appliance-001")
 
 	incident := &l2bridge.Incident{
@@ -113,7 +113,7 @@ func TestTelemetryReportFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reporter := NewTelemetryReporter(server.URL, "key", "site")
+	reporter := NewTelemetryReporter(server.URL, staticCreds{key: "key"}, "site")
 
 	incident := &l2bridge.Incident{
 		ID:           "test-1",
@@ -157,7 +157,7 @@ func TestTelemetryReportWithPatternSignature(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reporter := NewTelemetryReporter(server.URL, "key", "site")
+	reporter := NewTelemetryReporter(server.URL, staticCreds{key: "key"}, "site")
 
 	incident := &l2bridge.Incident{
 		ID:               "test-1",
@@ -181,7 +181,7 @@ func TestTelemetryReportWithPatternSignature(t *testing.T) {
 
 func TestTelemetryServerDown(t *testing.T) {
 	// Should not panic when server is unreachable
-	reporter := NewTelemetryReporter("http://localhost:1", "key", "site")
+	reporter := NewTelemetryReporter("http://localhost:1", staticCreds{key: "key"}, "site")
 
 	incident := &l2bridge.Incident{ID: "test-1", IncidentType: "test", HostID: "host"}
 	decision := &l2bridge.LLMDecision{ActionParams: map[string]interface{}{}}
@@ -204,7 +204,7 @@ func TestL1TelemetryReport(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reporter := NewTelemetryReporter(server.URL, "test-key", "test-site")
+	reporter := NewTelemetryReporter(server.URL, staticCreds{key: "test-key"}, "test-site")
 	reporter.SetApplianceID("appliance-001")
 
 	reporter.ReportL1Execution("drift-DC01-firewall-123", "DC01", "firewall_status", "RB-WIN-SEC-001", true, "", "", 250)
@@ -262,7 +262,7 @@ func TestL1TelemetryReportFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reporter := NewTelemetryReporter(server.URL, "key", "site")
+	reporter := NewTelemetryReporter(server.URL, staticCreds{key: "key"}, "site")
 	reporter.ReportL1Execution("test-1", "SRV01", "services", "RB-WIN-SVC-001", false, "service restart failed", "script_error", 500)
 
 	exec := receivedPayload.Execution

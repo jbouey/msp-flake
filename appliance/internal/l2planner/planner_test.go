@@ -10,6 +10,13 @@ import (
 	"github.com/osiriscare/appliance/internal/l2bridge"
 )
 
+// staticCreds is a fixed-key CredentialProvider for tests. Satisfies
+// the CredentialProvider interface without pulling in the daemon
+// package (avoids an import cycle).
+type staticCreds struct{ key string }
+
+func (s staticCreds) APIKey() string { return s.key }
+
 // mockCentralCommand creates a test server that mimics Central Command's /api/agent/l2/plan.
 func mockCentralCommand(t *testing.T, response *l2PlanResponse) *httptest.Server {
 	t.Helper()
@@ -67,7 +74,7 @@ func TestPlannerEndToEnd(t *testing.T) {
 	defer server.Close()
 
 	planner := NewPlanner(&PlannerConfig{
-		APIKey:      "test-site-api-key",
+		Creds:       staticCreds{key: "test-site-api-key"},
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
 		Budget:      DefaultBudgetConfig(),
@@ -125,7 +132,7 @@ func TestPlannerGuardrailBlocks(t *testing.T) {
 	defer server.Close()
 
 	planner := NewPlanner(&PlannerConfig{
-		APIKey:      "test-key",
+		Creds:       staticCreds{key: "test-key"},
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
 		Budget:      DefaultBudgetConfig(),
@@ -156,7 +163,7 @@ func TestPlannerGuardrailBlocks(t *testing.T) {
 
 func TestPlannerBudgetExhausted(t *testing.T) {
 	planner := NewPlanner(&PlannerConfig{
-		APIKey:      "test-key",
+		Creds:       staticCreds{key: "test-key"},
 		APIEndpoint: "http://unused",
 		SiteID:      "test-site",
 		Budget: BudgetConfig{
@@ -192,7 +199,7 @@ func TestPlannerCentralCommandError(t *testing.T) {
 	defer server.Close()
 
 	planner := NewPlanner(&PlannerConfig{
-		APIKey:      "test-key",
+		Creds:       staticCreds{key: "test-key"},
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
 		Budget:      DefaultBudgetConfig(),
@@ -214,12 +221,12 @@ func TestPlannerCentralCommandError(t *testing.T) {
 }
 
 func TestPlannerIsConnected(t *testing.T) {
-	p1 := NewPlanner(&PlannerConfig{APIKey: "has-key", APIEndpoint: "https://api.example.com"})
+	p1 := NewPlanner(&PlannerConfig{Creds: staticCreds{key: "has-key"}, APIEndpoint: "https://api.example.com"})
 	if !p1.IsConnected() {
 		t.Error("Should be connected with API key + endpoint")
 	}
 
-	p2 := NewPlanner(&PlannerConfig{APIKey: "", APIEndpoint: "https://api.example.com"})
+	p2 := NewPlanner(&PlannerConfig{Creds: staticCreds{key: ""}, APIEndpoint: "https://api.example.com"})
 	if p2.IsConnected() {
 		t.Error("Should not be connected without API key")
 	}
@@ -246,7 +253,7 @@ func TestPlanWithRetry(t *testing.T) {
 	defer server.Close()
 
 	planner := NewPlanner(&PlannerConfig{
-		APIKey:      "test-key",
+		Creds:       staticCreds{key: "test-key"},
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
 		Budget:      DefaultBudgetConfig(),
@@ -287,7 +294,7 @@ func TestPlannerPHIScrubbing(t *testing.T) {
 	defer server.Close()
 
 	planner := NewPlanner(&PlannerConfig{
-		APIKey:      "test-key",
+		Creds:       staticCreds{key: "test-key"},
 		APIEndpoint: server.URL,
 		SiteID:      "test-site",
 		Budget:      DefaultBudgetConfig(),

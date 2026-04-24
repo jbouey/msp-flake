@@ -121,7 +121,7 @@ func (r *TelemetryReporter) postTelemetry(body []byte) bool {
 		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.apiKey)
+	req.Header.Set("Authorization", "Bearer "+r.creds.APIKey())
 
 	resp, err := r.client.Do(req)
 	if err != nil {

@@ -39,10 +39,22 @@ type logEntry struct {
 	Boot string `json:"boot,omitempty"`
 }
 
+// CredentialProvider is the minimal interface this package needs.
+// Structural typing lets the daemon's Credentials type satisfy it
+// without an import cycle.
+type CredentialProvider interface {
+	APIKey() string
+}
+
 // Config for the log shipper.
+//
+// v40.6 / daemon 0.4.9 (2026-04-24): APIKey is no longer a local
+// string. Callers must supply a Credentials provider; the shipper
+// reads the current bearer on each POST. Eliminates the 0.4.8
+// SetAPIKey-mutex pattern.
 type Config struct {
 	APIEndpoint string // e.g. "https://api.osiriscare.net"
-	APIKey      string
+	Creds       CredentialProvider
 	SiteID      string
 	Hostname    string
 	StateDir    string        // persists cursor
@@ -52,33 +64,12 @@ type Config struct {
 	AllowFunc   func() bool // optional: if set, skip shipping when it returns false (circuit breaker)
 }
 
-// Shipper tails journald and ships log batches.
-//
-// v40.4 / daemon 0.4.8: SetAPIKey rotates cfg.APIKey under s.mu so a
-// main-daemon auto-rekey can refresh the bearer used by future
-// shipJournalBatch POSTs without racing the flush goroutine. See
-// incident_reporter.go + audit item #5 for the full split-brain story.
+// Shipper tails journald and ships log batches. mu still exists for
+// the cursor file state; auth is now provider-sourced.
 type Shipper struct {
 	cfg        Config
 	cursorFile string
 	mu         sync.Mutex
-}
-
-// SetAPIKey rotates the bearer used for future log-batch POSTs.
-// Safe to call concurrently with Run's flush goroutine.
-func (s *Shipper) SetAPIKey(key string) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	s.cfg.APIKey = key
-	s.mu.Unlock()
-}
-
-func (s *Shipper) currentAPIKey() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.cfg.APIKey
 }
 
 // New creates a log shipper.
@@ -264,7 +255,7 @@ func (s *Shipper) postBatch(ctx context.Context, entries []logEntry) error {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("Authorization", "Bearer "+s.currentAPIKey())
+	req.Header.Set("Authorization", "Bearer "+s.cfg.Creds.APIKey())
 
 	resp, err := s.cfg.HTTPClient.Do(req)
 	if err != nil {
@@ -336,7 +327,7 @@ func (s *Shipper) ShipRemoteEntries(ctx context.Context, hostname string, entrie
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("Authorization", "Bearer "+s.currentAPIKey())
+	req.Header.Set("Authorization", "Bearer "+s.cfg.Creds.APIKey())
 
 	resp, err := s.cfg.HTTPClient.Do(req)
 	if err != nil {

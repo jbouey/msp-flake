@@ -38,7 +38,7 @@ import (
 
 // Version is set at build time via -ldflags.
 // Default "dev" indicates an untagged development build.
-var Version = "0.4.8"
+var Version = "0.4.9"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
@@ -59,6 +59,15 @@ type winTarget struct {
 // Daemon is the main appliance daemon that orchestrates all subsystems.
 type Daemon struct {
 	config    *Config
+	// v40.6 (2026-04-24): Credentials is the single authoritative
+	// holder of the current bearer token. All outbound HTTP bearer
+	// reads — this file's Bearer-header sites, plus all sub-
+	// component packages (incident_reporter, l2planner.TelemetryReporter,
+	// logshipper.Shipper) — call creds.APIKey() per request. On
+	// auto-rekey we call creds.Set(newKey); propagation is
+	// instantaneous and lock-free. Replaces the 0.4.8 N-mirror
+	// SetAPIKey pattern.
+	creds     *Credentials
 	phoneCli  *PhoneHomeClient
 	grpcSrv   *grpcserver.Server
 	registry  *grpcserver.AgentRegistry
@@ -234,23 +243,15 @@ func (d *Daemon) attemptRekey(ctx context.Context) {
 		return
 	}
 
-	// Update in-memory config and recreate HTTP client with new key
+	// v40.6 (2026-04-24, Principal SWE round-table): one atomic swap.
+	// d.creds is the single source of truth for the bearer token. All
+	// sub-components read via creds.APIKey() per request — the instant
+	// after this Set returns, every new outbound request carries the
+	// new key. No SetAPIKey fan-out, no N-mirror propagation. Config
+	// + in-memory APIKey kept in sync for log/config-file observability.
+	d.creds.Set(resp.APIKey)
 	d.config.APIKey = resp.APIKey
 	d.phoneCli = NewPhoneHomeClient(d.config)
-	// v40.4 / daemon 0.4.8 (2026-04-23): propagate the new key to every
-	// sub-component that holds its own copy. Prior to this, only
-	// d.phoneCli saw the new key — d.incidents, d.telemetry, d.logShipper
-	// each kept the stale string captured at New() time forever, producing
-	// the split-brain 401-storm observed on /api/evidence/submit,
-	// /api/logs/ingest, /api/agent/executions (audit item #5). Each
-	// SetAPIKey is mutex-protected and nil-safe.
-	d.incidents.SetAPIKey(resp.APIKey)
-	if d.telemetry != nil {
-		d.telemetry.SetAPIKey(resp.APIKey)
-	}
-	if d.logShipper != nil {
-		d.logShipper.SetAPIKey(resp.APIKey)
-	}
 	d.consecutiveAuthFailures = 0
 
 	newPrefix := ""
@@ -263,7 +264,7 @@ func (d *Daemon) attemptRekey(ctx context.Context) {
 		"old_prefix", oldPrefix,
 		"new_prefix", newPrefix,
 		"config_path", configPath,
-		"rotated_subsystems", []string{"phoneCli", "incidents", "telemetry", "logShipper"},
+		"propagation", "shared_credential_provider",
 	)
 }
 
@@ -290,6 +291,9 @@ func New(cfg *Config) *Daemon {
 
 	d := &Daemon{
 		config:        cfg,
+		// v40.6 (2026-04-24): single source of truth for the current
+		// bearer token. All sub-components read via creds.APIKey().
+		creds:         NewCredentials(cfg.APIKey),
 		identity:      identity,
 		phoneCli:      NewPhoneHomeClientWithIdentity(cfg, identity),
 		registry:      grpcserver.NewAgentRegistryPersistent(cfg.StateDir),
@@ -327,7 +331,7 @@ func New(cfg *Config) *Daemon {
 	if cfg.L2Enabled {
 		d.l2Planner = l2planner.NewPlanner(&l2planner.PlannerConfig{
 			APIEndpoint: cfg.APIEndpoint, // Same Central Command endpoint as checkins
-			APIKey:      cfg.APIKey,      // Same site API key as checkins
+			Creds:       d.creds,         // v40.6: single source of truth for bearer
 			SiteID:      cfg.SiteID,
 			APITimeout:  time.Duration(cfg.L2APITimeoutSecs) * time.Second,
 			Budget: l2planner.BudgetConfig{
@@ -342,10 +346,13 @@ func New(cfg *Config) *Daemon {
 	}
 
 	// Initialize telemetry reporter for L1/L2 execution data flywheel
+	// v40.6: sub-components receive the shared d.creds Credentials
+	// and read the current bearer per-request. No more local cached
+	// strings + SetAPIKey mirrors.
 	if cfg.APIEndpoint != "" && cfg.APIKey != "" {
-		d.telemetry = l2planner.NewTelemetryReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
+		d.telemetry = l2planner.NewTelemetryReporter(cfg.APIEndpoint, d.creds, cfg.SiteID)
 		d.telemetry.EnableQueue(cfg.StateDir)
-		d.incidents = newIncidentReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
+		d.incidents = newIncidentReporter(cfg.APIEndpoint, d.creds, cfg.SiteID)
 		d.incidents.allowFunc = d.serverBreaker.Allow
 		log.Printf("[daemon] Telemetry + incident reporters initialized (endpoint=%s)", cfg.APIEndpoint)
 	}
@@ -355,7 +362,7 @@ func New(cfg *Config) *Daemon {
 		hostname, _ := os.Hostname()
 		d.logShipper = logshipper.New(logshipper.Config{
 			APIEndpoint: cfg.APIEndpoint,
-			APIKey:      cfg.APIKey,
+			Creds:       d.creds,
 			SiteID:      cfg.SiteID,
 			Hostname:    hostname,
 			StateDir:    cfg.StateDir,
@@ -1126,8 +1133,11 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 
 	// API key single-use rotation: server sends a new key on first checkin.
 	// The USB-provisioned key becomes useless after this point.
+	// v40.6: update shared credentials so sub-components pick up new
+	// key instantly. Config + in-memory APIKey kept in sync for logs.
 	if resp.RotatedAPIKey != "" {
 		log.Printf("[daemon] API key rotated by server — updating config")
+		d.creds.Set(resp.RotatedAPIKey)
 		d.config.APIKey = resp.RotatedAPIKey
 		configPath := filepath.Join(d.config.StateDir, "config.yaml")
 		if err := UpdateAPIKey(configPath, resp.RotatedAPIKey); err != nil {
@@ -1293,7 +1303,7 @@ func (d *Daemon) submitWitnessAttestations(ctx context.Context, attestations []W
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+d.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+d.creds.APIKey())
 	resp, err := d.phoneCli.client.Do(req)
 	if err != nil {
 		return err
@@ -1473,7 +1483,7 @@ func (d *Daemon) completeOrder(ctx context.Context, orderID string, success bool
 		return fmt.Errorf("create completion request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+d.config.APIKey)
+	httpReq.Header.Set("Authorization", "Bearer "+d.creds.APIKey())
 
 	resp, err := d.phoneCli.client.Do(httpReq)
 	if err != nil {

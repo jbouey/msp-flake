@@ -15,10 +15,15 @@ import (
 )
 
 // PlannerConfig holds configuration for the L2 planner.
+//
+// v40.6 (2026-04-24): auth is now provided via a CredentialProvider
+// (the daemon's shared Credentials), not a local APIKey string.
+// The planner reads creds.APIKey() per-request; updates from a
+// rekey are instantaneous.
 type PlannerConfig struct {
-	// Central Command connection (the appliance's existing API endpoint + key)
+	// Central Command connection (the appliance's existing API endpoint + creds)
 	APIEndpoint string // Central Command base URL (e.g. "https://api.osiriscare.net")
-	APIKey      string // Site API key for auth (same key used for checkins)
+	Creds       CredentialProvider
 	SiteID      string
 	APITimeout  time.Duration
 
@@ -89,9 +94,10 @@ func NewPlanner(cfg *PlannerConfig) *Planner {
 		knownHosts:    cfg.KnownHosts,
 	}
 
-	// Telemetry uses the same Central Command endpoint + key
-	if cfg.APIEndpoint != "" && cfg.APIKey != "" {
-		p.telemetry = NewTelemetryReporter(cfg.APIEndpoint, cfg.APIKey, cfg.SiteID)
+	// Telemetry shares the planner's CredentialProvider — one source
+	// of truth for the bearer across all Central Command traffic.
+	if cfg.APIEndpoint != "" && cfg.Creds != nil && cfg.Creds.APIKey() != "" {
+		p.telemetry = NewTelemetryReporter(cfg.APIEndpoint, cfg.Creds, cfg.SiteID)
 	}
 
 	return p
@@ -99,7 +105,7 @@ func NewPlanner(cfg *PlannerConfig) *Planner {
 
 // IsConnected returns true if the planner has Central Command credentials.
 func (p *Planner) IsConnected() bool {
-	return p.config.APIKey != "" && p.config.APIEndpoint != ""
+	return p.config.Creds != nil && p.config.Creds.APIKey() != "" && p.config.APIEndpoint != ""
 }
 
 // l2PlanRequest is the JSON body sent to Central Command's /api/agent/l2/plan.
@@ -306,7 +312,7 @@ func (p *Planner) callCentralCommand(req *l2PlanRequest) (*l2PlanResponse, error
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	httpReq.Header.Set("Authorization", "Bearer "+p.config.Creds.APIKey())
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {

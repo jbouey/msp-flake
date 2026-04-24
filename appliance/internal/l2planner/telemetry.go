@@ -7,24 +7,32 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/osiriscare/appliance/internal/l2bridge"
 )
 
+// CredentialProvider is the minimal interface l2planner needs from
+// the daemon's Credentials type. Structural typing — any type with
+// APIKey() string satisfies it.
+type CredentialProvider interface {
+	APIKey() string
+}
+
 // TelemetryReporter sends L2 execution outcomes to Central Command.
 // This feeds the data flywheel: L2 decisions are recorded, patterns accumulate,
 // and successful patterns get promoted to L1 rules.
 //
-// v40.4 / daemon 0.4.8 (2026-04-23): apiKey is mutex-protected so
-// main-daemon auto-rekey can rotate the bearer without racing
-// concurrent telemetry goroutines. See incident_reporter.go for
-// the same pattern + audit item #5.
+// v40.6 / daemon 0.4.9 (2026-04-24, Principal SWE round-table): auth
+// state lives entirely in the shared CredentialProvider. The prior
+// 0.4.8 pattern (local apiKey + RWMutex + SetAPIKey + currentAPIKey)
+// was a workaround for sub-component-drift after the daemon's
+// rekey; with a single-source provider, updates propagate on the
+// next request automatically — no manual sync step, no mutex on
+// this struct, no stale-copy class.
 type TelemetryReporter struct {
 	endpoint    string // Base API endpoint (e.g. "https://api.osiriscare.net")
-	mu          sync.RWMutex
-	apiKey      string
+	creds       CredentialProvider
 	siteID      string
 	applianceID string
 	client      *http.Client
@@ -32,10 +40,10 @@ type TelemetryReporter struct {
 }
 
 // NewTelemetryReporter creates a new telemetry reporter.
-func NewTelemetryReporter(endpoint, apiKey, siteID string) *TelemetryReporter {
+func NewTelemetryReporter(endpoint string, creds CredentialProvider, siteID string) *TelemetryReporter {
 	return &TelemetryReporter{
 		endpoint: endpoint,
-		apiKey:   apiKey,
+		creds:    creds,
 		siteID:   siteID,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
@@ -46,23 +54,6 @@ func NewTelemetryReporter(endpoint, apiKey, siteID string) *TelemetryReporter {
 // SetApplianceID sets the appliance ID for telemetry reports.
 func (r *TelemetryReporter) SetApplianceID(id string) {
 	r.applianceID = id
-}
-
-// SetAPIKey rotates the bearer token. Safe to call concurrently with
-// in-flight Report* goroutines.
-func (r *TelemetryReporter) SetAPIKey(key string) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.apiKey = key
-	r.mu.Unlock()
-}
-
-func (r *TelemetryReporter) currentAPIKey() string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.apiKey
 }
 
 // executionData is the inner execution payload matching what the backend extracts.
@@ -159,7 +150,7 @@ func (r *TelemetryReporter) ReportExecution(
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.currentAPIKey())
+	req.Header.Set("Authorization", "Bearer "+r.creds.APIKey())
 
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -232,7 +223,7 @@ func (r *TelemetryReporter) ReportL1Execution(
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.currentAPIKey())
+	req.Header.Set("Authorization", "Bearer "+r.creds.APIKey())
 
 	resp, err := r.client.Do(req)
 	if err != nil {
