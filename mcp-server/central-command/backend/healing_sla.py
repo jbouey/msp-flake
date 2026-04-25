@@ -117,8 +117,8 @@ async def _compute_hourly_sla():
                 # Send alert via existing notification + email pattern
                 await conn.execute("""
                     INSERT INTO notifications
-                        (id, type, title, message, severity, category, site_id, created_at)
-                    VALUES (gen_random_uuid(), 'system',
+                        (id, title, message, severity, category, site_id, created_at)
+                    VALUES (gen_random_uuid(),
                             'Healing SLA Breach',
                             $1, 'warning', 'healing_sla', $2, NOW())
                 """,

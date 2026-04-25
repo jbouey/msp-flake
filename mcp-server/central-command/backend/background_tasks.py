@@ -1092,20 +1092,31 @@ async def l2_auto_candidate_loop():
 
                     if not exists:
                         import uuid
+                        # Schema has no incident_type/check_type/
+                        # success_count/confidence_avg columns.
+                        # Map: success_count→total_occurrences,
+                        # confidence_avg→confidence_score, and stash
+                        # incident_type+check_type in promotion_reason
+                        # so the audit story survives.
+                        promotion_reason = (
+                            f"Auto-flywheel candidate for "
+                            f"{row['incident_type']} (check={row['incident_type']})"
+                        )
                         await conn.execute("""
                             INSERT INTO learning_promotion_candidates (
-                                id, site_id, pattern_signature, incident_type,
-                                recommended_action, check_type, success_count,
-                                confidence_avg, approval_status, created_at
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', NOW())
+                                id, site_id, pattern_signature,
+                                recommended_action, total_occurrences,
+                                confidence_score, promotion_reason,
+                                approval_status, created_at
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())
                             ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
-                                success_count = EXCLUDED.success_count,
-                                confidence_avg = EXCLUDED.confidence_avg
+                                total_occurrences = EXCLUDED.total_occurrences,
+                                confidence_score = EXCLUDED.confidence_score
                         """,
                             str(uuid.uuid4()), row['site_id'], sig,
-                            row['incident_type'], row['runbook_id'],
-                            row['incident_type'],
+                            row['runbook_id'],
                             row['success_count'], row['max_confidence'],
+                            promotion_reason,
                         )
                         created += 1
                         logger.info(
@@ -1186,7 +1197,7 @@ async def unregistered_device_alert_loop():
                         SELECT COUNT(*) FROM audit_log
                         WHERE event_type = 'unregistered_device_alert'
                         AND details->>'site_id' = $1
-                        AND created_at > NOW() - INTERVAL '24 hours'
+                        AND timestamp > NOW() - INTERVAL '24 hours'
                     """, site["site_id"])
 
                     if already_sent and already_sent > 0:
@@ -1240,9 +1251,12 @@ async def unregistered_device_alert_loop():
                     sent = await send_email(site["client_contact_email"], subject, body)
                     if sent:
                         logger.info(f"Unregistered device alert sent: {clinic} ({count} devices) → {site['client_contact_email']}")
-                        # Record in audit log for daily dedup
+                        # Record in audit log for daily dedup. The
+                        # audit_log table uses `timestamp`, not
+                        # `created_at` — schema linter caught this on
+                        # the 2026-04-25 baseline-grind pass.
                         await conn.execute("""
-                            INSERT INTO audit_log (event_type, details, created_at)
+                            INSERT INTO audit_log (event_type, details, timestamp)
                             VALUES ('unregistered_device_alert',
                                     $1::jsonb,
                                     NOW())
@@ -1399,24 +1413,30 @@ async def recurrence_auto_promotion_loop():
                 for row in candidates:
                     import uuid as _uuid
                     rule_id = f"FLYWHEEL-{row['incident_type'][:30]}-{str(_uuid.uuid4())[:8]}"
+                    # l1_rules has no `description` column — fold the
+                    # promotion reasoning into incident_pattern JSONB so
+                    # the audit story is preserved without a schema drift.
+                    pattern = {
+                        "incident_type": row["incident_type"],
+                        "description": f"Auto-promoted: L2 root-cause fix broke recurrence cycle. {row['reasoning'][:200]}",
+                    }
                     await conn.execute("""
                         INSERT INTO l1_rules (
                             rule_id, incident_pattern, runbook_id,
-                            confidence, enabled, source, description,
+                            confidence, enabled, source,
                             match_count, success_count, failure_count,
                             created_at
                         ) VALUES (
                             $1, $2::jsonb, $3,
-                            $4, true, 'flywheel_recurrence', $5,
+                            $4, true, 'flywheel_recurrence',
                             0, 0, 0, NOW()
                         )
                         ON CONFLICT (rule_id) DO NOTHING
                     """,
                         rule_id,
-                        json.dumps({"incident_type": row["incident_type"]}),
+                        json.dumps(pattern),
                         row["runbook_id"],
                         row["confidence"],
-                        f"Auto-promoted: L2 root-cause fix broke recurrence cycle. {row['reasoning'][:200]}",
                     )
 
                     # Mark velocity table as recurrence broken

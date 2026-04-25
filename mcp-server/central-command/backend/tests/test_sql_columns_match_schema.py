@@ -18,7 +18,10 @@ migration parser which was too lossy. This version replaces that
 with a JSON fixture extracted from prod's information_schema, so
 there's no parser-fragility risk — the schema source IS the schema.
 
-Refresh the fixture when migrations land that change columns:
+Refresh the fixture when migrations land that change columns. Two
+modes:
+
+(a) From a clean prod (preferred — no manual edits to the JSON):
 
     ssh root@178.156.162.116 "docker exec mcp-postgres psql -U mcp -d mcp -t -A -c '
         SELECT json_object_agg(table_name, columns) FROM (
@@ -32,6 +35,12 @@ Refresh the fixture when migrations land that change columns:
         d = {k: sorted(set(v)) for k, v in sorted(d.items())}
         json.dump(d, sys.stdout, indent=2, sort_keys=True)
     " > tests/fixtures/schema/prod_columns.json
+
+(b) Forward-merge a local migration before it deploys (lockstep with
+the migrations/N_*.sql files in the same PR). Edit the fixture in the
+same diff; CI deploy will run the migration and the post-deploy fixture
+will match. This is what the 2026-04-25 baseline-grind pass did with
+migrations 248 + 249.
 
 False-positive avoidance:
   * Subqueries / CTE INSERT-from-SELECT aren't conflated.
@@ -96,9 +105,15 @@ INSERT_RE = re.compile(
     r"INSERT\s+INTO\s+([a-zA-Z_][\w]*)\s*\(\s*([\w\s,\n]+?)\s*\)\s*(?:VALUES|SELECT)",
     re.IGNORECASE | re.DOTALL,
 )
-# UPDATE <table> SET col1 = ..., col2 = ...   (stop at WHERE / RETURNING / """)
+# UPDATE <table> SET col1 = ..., col2 = ...
+# Stop tokens, in order: SQL clauses (WHERE / RETURNING), triple-quote
+# string terminator, OR `\n<ws>"` / `\n<ws>)` / `\n<ws>'` — these cover
+# (a) end of a triple-quoted SQL block followed by Python kwargs, and
+# (b) implicit-string-concat in a docstring that happens to mention an
+# UPDATE statement (e.g. assertions.py recommended_action text).
 UPDATE_RE = re.compile(
-    r"UPDATE\s+([a-zA-Z_][\w]*)\s+SET\s+(.*?)(?:\bWHERE\b|\bRETURNING\b|\"\"\"|\s*$)",
+    r"UPDATE\s+([a-zA-Z_][\w]*)\s+SET\s+(.*?)"
+    r"(?:\bWHERE\b|\bRETURNING\b|\"\"\"|'''|\n\s*[\"')]|\)\s*$)",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -170,18 +185,19 @@ def test_schema_fixture_loaded(schema):
     assert "actor" not in schema["admin_audit_log"]
 
 
-# Ratchet baselines (same pattern as test_no_new_duplicate_pydantic_model_names).
-# Linter is strict-against-NEW-violations: lock the count at the current
-# state, fail CI if anyone introduces another. Lower these numbers as bugs
-# are fixed; never raise without explicit justification.
+# Ratchet baselines locked at ZERO on 2026-04-25 after the systematic
+# baseline-grind pass (#168). The starting count was 16 INSERT + 9
+# UPDATE; every violation was either fixed in code (column renames,
+# canonical-pattern alignment) or covered by a forward migration
+# (248 runbook_config notes, 249 site_credentials partner-UI columns).
 #
-# Most of the current-baseline violations are in older code paths that
-# would 500 on first call (e.g. UPDATE incidents SET resolved=...,
-# UPDATE partner_users SET magic_token_expires=...). Either the endpoints
-# are dead (unused) or no one's hit them in prod. Either way they're
-# real bugs that need fixing — tracked under #166.
-INSERT_BASELINE_MAX = 16
-UPDATE_BASELINE_MAX = 9
+# This file now enforces an absolute ceiling, paired with the
+# baseline-doesn't-regress test below — so adding a single column-name
+# typo fails CI immediately, AND lowering the ceiling without code
+# changes also fails (forces the constants and the codebase to stay
+# in lockstep).
+INSERT_BASELINE_MAX = 0
+UPDATE_BASELINE_MAX = 0
 
 
 def test_every_python_insert_references_real_columns(schema):
@@ -250,4 +266,45 @@ def test_every_python_update_references_real_columns(schema):
         "A new bug joined the list. Either fix it (and lower UPDATE_BASELINE_MAX) "
         "or justify the addition.\n"
         + "\n".join(f"  - {f}" for f in failures)
+    )
+
+
+def _count_violations(schema):
+    """Helper: count INSERT + UPDATE schema mismatches (no assert)."""
+    ins, upd = 0, 0
+    for py_path in _backend_py_files():
+        try:
+            src = py_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for tbl, cols, _ in _scan_inserts(src):
+            if tbl in SCHEMA_TRUST_GAPS or tbl not in schema:
+                continue
+            if cols - schema[tbl]:
+                ins += 1
+        for tbl, cols, _ in _scan_updates(src):
+            if tbl in SCHEMA_TRUST_GAPS or tbl not in schema:
+                continue
+            if cols - schema[tbl]:
+                upd += 1
+    return ins, upd
+
+
+def test_baseline_doesnt_regress_silently(schema):
+    """If anyone fixes a column-name bug, the ratchet baseline should
+    drop to match. This test fails LOUDLY when actual count is BELOW
+    the constants, forcing the operator to lower them in the same
+    commit. Prevents the 'lockstep with the floor' anti-pattern where
+    bugs creep back in unnoticed because the constant is too lax.
+
+    Mirrors the pattern in test_frontend_mutation_csrf.py.
+    """
+    ins, upd = _count_violations(schema)
+    assert ins == INSERT_BASELINE_MAX, (
+        f"INSERT violations={ins} but INSERT_BASELINE_MAX={INSERT_BASELINE_MAX}. "
+        "Adjust INSERT_BASELINE_MAX in this file to match the actual count."
+    )
+    assert upd == UPDATE_BASELINE_MAX, (
+        f"UPDATE violations={upd} but UPDATE_BASELINE_MAX={UPDATE_BASELINE_MAX}. "
+        "Adjust UPDATE_BASELINE_MAX in this file to match the actual count."
     )

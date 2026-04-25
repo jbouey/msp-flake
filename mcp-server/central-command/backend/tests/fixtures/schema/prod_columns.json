@@ -332,6 +332,7 @@
     "enabled",
     "modified_at",
     "modified_by",
+    "notes",
     "runbook_id"
   ],
   "appliance_updates": [
@@ -4212,14 +4213,22 @@
     "created_at",
     "credential_name",
     "credential_type",
+    "domain",
     "encrypted_data",
     "id",
+    "is_primary",
+    "last_validated_at",
+    "name",
     "overrides_org_credential_id",
+    "password_encrypted",
     "sensor_deployed",
     "sensor_deployed_at",
     "sensor_version",
     "site_id",
     "updated_at",
+    "username",
+    "validation_details",
+    "validation_status",
     "version"
   ],
   "site_drift_config": [
@@ -4274,6 +4283,7 @@
     "enabled",
     "modified_at",
     "modified_by",
+    "notes",
     "runbook_id",
     "site_id"
   ],

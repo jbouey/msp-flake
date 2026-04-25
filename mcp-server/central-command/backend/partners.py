@@ -1611,17 +1611,26 @@ async def update_partner_org_drift_config(
             org_id, partner['id']
         )
 
-        import json
+        # site_drift_config is keyed (site_id, check_type) — one row per
+        # (site, check) pair. The original code referenced a `disabled_checks`
+        # JSON column + `ON CONFLICT (site_id)` which neither exists nor is
+        # a valid unique key. Surfaced 2026-04-25 by audit Task #167.
+        # The sibling endpoint at partners.py:3756 uses the correct shape;
+        # mirror it here.
+        actor = f"partner:{partner.get('org_name', partner['id'])}"
         updated = 0
         async with conn.transaction():
             for row in site_rows:
-                await conn.execute("""
-                    INSERT INTO site_drift_config (site_id, disabled_checks)
-                    VALUES ($1, $2)
-                    ON CONFLICT (site_id) DO UPDATE SET
-                        disabled_checks = $2,
-                        updated_at = NOW()
-                """, row['site_id'], json.dumps(disabled_checks))
+                for check_type in disabled_checks:
+                    await conn.execute("""
+                        INSERT INTO site_drift_config
+                            (site_id, check_type, enabled, modified_by, modified_at)
+                        VALUES ($1, $2, false, $3, NOW())
+                        ON CONFLICT (site_id, check_type)
+                        DO UPDATE SET enabled = false,
+                                      modified_by = $3,
+                                      modified_at = NOW()
+                    """, row['site_id'], check_type, actor)
                 updated += 1
 
         await log_partner_site_action(
@@ -3219,7 +3228,7 @@ async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: d
 
         row = await conn.fetchrow("""
             INSERT INTO partner_users (
-                partner_id, email, name, role, magic_token, magic_token_expires
+                partner_id, email, name, role, magic_token, magic_token_expires_at
             ) VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id, email, name, role
         """,
@@ -3252,7 +3261,7 @@ async def generate_user_magic_link(partner_id: str, user_id: str, admin: dict = 
     async with admin_connection(pool) as conn:
         result = await conn.fetchrow("""
             UPDATE partner_users
-            SET magic_token = $1, magic_token_expires = $2
+            SET magic_token = $1, magic_token_expires_at = $2
             WHERE id = $3 AND partner_id = $4
             RETURNING email
         """, magic_token, magic_expires, _uid(user_id), _uid(partner_id))
@@ -4307,7 +4316,7 @@ async def validate_magic_link(request: MagicTokenValidate):
         # Find user with this magic token
         user = await conn.fetchrow("""
             SELECT pu.id, pu.partner_id, pu.email, pu.name, pu.role,
-                   pu.magic_token_expires, p.api_key_hash, p.name as partner_name,
+                   pu.magic_token_expires_at, p.api_key_hash, p.name as partner_name,
                    p.slug, p.status as partner_status
             FROM partner_users pu
             JOIN partners p ON p.id = pu.partner_id
@@ -4318,7 +4327,7 @@ async def validate_magic_link(request: MagicTokenValidate):
             raise HTTPException(status_code=401, detail="Invalid or expired magic link")
 
         # Check expiration
-        if user['magic_token_expires'] and user['magic_token_expires'] < datetime.now(timezone.utc):
+        if user['magic_token_expires_at'] and user['magic_token_expires_at'] < datetime.now(timezone.utc):
             raise HTTPException(status_code=401, detail="Magic link has expired")
 
         # Check partner is active
@@ -4328,7 +4337,7 @@ async def validate_magic_link(request: MagicTokenValidate):
         # Clear the magic token (single use)
         await conn.execute("""
             UPDATE partner_users
-            SET magic_token = NULL, magic_token_expires = NULL, last_login = NOW()
+            SET magic_token = NULL, magic_token_expires_at = NULL, last_login = NOW()
             WHERE id = $1
         """, user['id'])
 

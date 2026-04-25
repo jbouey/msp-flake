@@ -2967,7 +2967,7 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
         # Audit log
         try:
             await conn.execute("""
-                INSERT INTO audit_log (action, actor, target_type, target_id, details)
+                INSERT INTO audit_log (event_type, actor, resource_type, resource_id, details)
                 VALUES ($1, $2, 'site', $3, $4::jsonb)
             """,
                 f"healing_{action}",
@@ -2976,7 +2976,7 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
                 json.dumps({"order_id": str(row["id"]), "site_name": site["clinic_name"]}),
             )
         except Exception as e:
-            logger.warning(f"Audit log for healing toggle failed: {e}")
+            logger.error(f"Audit log for healing toggle failed: {e}", exc_info=True)
 
         logger.info(f"Healing {action} for site {site_id} by {user.get('username')} (order {row['id']})")
 

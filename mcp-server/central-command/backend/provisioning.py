@@ -475,14 +475,16 @@ async def provisioning_heartbeat(heartbeat: HeartbeatRequest, request: Request):
         """, heartbeat.mac_address.upper())
 
         if appliance:
-            # Update existing appliance
+            # Update existing appliance. site_appliances.ip_addresses is
+            # jsonb (list); wrap the client IP as a single-element array.
+            ip_blob = json.dumps([client_ip]) if client_ip else None
             await conn.execute("""
                 UPDATE site_appliances
                 SET last_checkin = NOW(),
-                    ip_address = COALESCE($1, ip_address),
+                    ip_addresses = COALESCE($1::jsonb, ip_addresses),
                     hostname = COALESCE($2, hostname)
                 WHERE appliance_id = $3
-            """, client_ip, heartbeat.hostname, appliance['appliance_id'])
+            """, ip_blob, heartbeat.hostname, appliance['appliance_id'])
 
             return {
                 "status": "known",

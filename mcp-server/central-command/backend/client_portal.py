@@ -4737,7 +4737,7 @@ async def action_client_alert(
         # Record audit trail
         await conn.execute("""
             INSERT INTO client_approvals
-                (id, org_id, site_id, incident_id, alert_id, action, acted_by, notes, created_at)
+                (id, org_id, site_id, incident_id, alert_id, action, acted_by, notes, acted_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
         """,
             approval_id,

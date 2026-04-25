@@ -294,18 +294,20 @@ async def sso_callback(
                     "SELECT name, current_partner_id FROM client_orgs WHERE id = $1", org_id
                 )
                 if org_row and org_row["current_partner_id"]:
+                    # Mirror alert_router.py canonical column set:
+                    # notification_type + summary (no title/metadata in
+                    # the schema). Org context goes into the summary.
                     await conn.execute("""
                         INSERT INTO partner_notifications (
-                            partner_id, event_type, title, message, metadata
-                        ) VALUES ($1, 'client_user_provisioned', $2, $3, $4::jsonb)
+                            partner_id, org_id, notification_type, summary
+                        ) VALUES ($1, $2, 'client_user_provisioned', $3)
                     """,
                         org_row["current_partner_id"],
-                        f"New user joined {org_row['name']}",
-                        f"{email} was auto-provisioned via SSO with viewer role.",
-                        json.dumps({"email": email, "org_id": str(org_id), "role": "viewer", "method": "sso"}),
+                        org_id,
+                        f"New user joined {org_row['name']}: {email} was auto-provisioned via SSO with viewer role.",
                     )
             except Exception as e:
-                logger.debug(f"Partner notification for SSO provision failed (non-fatal): {e}")
+                logger.warning(f"Partner notification for SSO provision failed (non-fatal): {e}")
 
         # MFA check
         if mfa_enabled:

@@ -830,22 +830,20 @@ class SyncEngine:
         Returns:
             Job ID for tracking
         """
-        import secrets
-
-        job_id = secrets.token_urlsafe(16)
-
-        # Create job record
-        await self.db.execute(
+        # integration_sync_jobs.id is UUID with gen_random_uuid()
+        # default; let Postgres mint it and capture via RETURNING. The
+        # original code used secrets.token_urlsafe (not a valid UUID).
+        # `scheduled_at` doesn't exist in the schema — the actual delay
+        # is enforced in-memory below via asyncio.create_task.
+        row = await self.db.execute(
             text("""
-                INSERT INTO integration_sync_jobs (id, integration_id, status, scheduled_at)
-                VALUES (:id, :integration_id, 'pending', :scheduled_at)
+                INSERT INTO integration_sync_jobs (integration_id, status)
+                VALUES (:integration_id, 'pending')
+                RETURNING id
             """),
-            {
-                "id": job_id,
-                "integration_id": integration_id,
-                "scheduled_at": datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
-            }
+            {"integration_id": integration_id},
         )
+        job_id = str(row.scalar_one())
         await self.db.commit()
 
         # Schedule the task (in production, this would use a task queue like Celery)

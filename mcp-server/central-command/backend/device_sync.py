@@ -661,7 +661,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
             if unregistered_count and unregistered_count > 0:
                 # Admin notification
                 await conn.execute("""
-                    INSERT INTO notifications (site_id, type, severity, title, message, created_at)
+                    INSERT INTO notifications (site_id, category, severity, title, message, created_at)
                     VALUES ($1, 'device_discovery', 'info',
                         $2, $3, NOW())
                     ON CONFLICT DO NOTHING

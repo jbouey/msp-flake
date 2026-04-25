@@ -638,10 +638,8 @@ async def resolve_incident(
         await conn.execute("""
             UPDATE incidents
             SET status = 'resolved',
-                resolved = true,
                 resolved_at = NOW(),
-                resolution_tier = 'manual',
-                updated_at = NOW()
+                resolution_tier = 'manual'
             WHERE id = $1
         """, incident_id)
 
@@ -683,27 +681,38 @@ async def escalate_incident(
             raise HTTPException(400, "Cannot escalate a resolved incident")
 
         ticket_id = str(secrets.token_hex(8))
+        # Mirror escalation_engine.py canonical column set: incident_type
+        # (not check_type), summary + recommended_action (not hostname /
+        # escalation_reason). Hostname is folded into summary.
+        hostname = row.get("hostname") or ""
+        check_type = row.get("check_type") or "unknown"
+        notes = body.notes or "Manual escalation from admin dashboard"
+        summary = (
+            f"{check_type} on {hostname}: {notes}" if hostname else f"{check_type}: {notes}"
+        )
         await conn.execute("""
             INSERT INTO escalation_tickets (
-                id, incident_id, site_id, check_type, hostname,
-                severity, status, escalation_reason, created_at, updated_at
+                id, incident_id, site_id, incident_type,
+                severity, status, summary, recommended_action,
+                created_at, updated_at
             ) VALUES (
-                $1, $2, $3, $4, $5,
-                $6, 'open', $7, NOW(), NOW()
+                $1, $2, $3, $4,
+                $5, 'open', $6, $7,
+                NOW(), NOW()
             )
         """,
             ticket_id,
             incident_id,
             row["site_id"],
-            row.get("check_type") or "unknown",
-            row.get("hostname") or "",
+            check_type,
             row["severity"],
-            body.notes or "Manual escalation from admin dashboard",
+            summary,
+            notes,
         )
 
         await conn.execute("""
             UPDATE incidents
-            SET resolution_tier = 'L3', updated_at = NOW()
+            SET resolution_tier = 'L3'
             WHERE id = $1
         """, incident_id)
 
