@@ -196,14 +196,15 @@ async def _nonce_seen(conn, fingerprint: str, nonce_hex: str) -> bool:
     with a distinct key prefix so the two populations don't mingle.
     """
     key = f"sigauth:{fingerprint}:{nonce_hex}"
-    # asyncpg binds Python timedelta directly to PG INTERVAL — passing a
-    # "<n> seconds" string raises 'str' object has no attribute 'days'
-    # inside asyncpg.pgproto.pgproto.interval_encode (every signature
-    # verification was failing inside the swallow-and-fall-back path,
-    # leaving sigauth_observations empty + the legacy_bearer_only_checkin
-    # invariant firing on otherwise-modern daemons).
+    # Bind asyncpg's Python timedelta directly (NOT an "<n> seconds"
+    # string — that raised 'str' object has no attribute 'days' inside
+    # asyncpg.pgproto.pgproto.interval_encode). Keep the explicit
+    # `$2::interval` cast so Postgres can resolve `NOW() - $2` at
+    # PREPARE time before parameter binding; without the cast the
+    # planner can't infer `$2`'s type and fails with
+    # "operator does not exist: timestamp with time zone > interval".
     row = await conn.fetchrow(
-        "SELECT 1 FROM nonces WHERE nonce = $1 AND created_at > NOW() - $2",
+        "SELECT 1 FROM nonces WHERE nonce = $1 AND created_at > NOW() - $2::interval",
         key,
         NONCE_TTL,
     )
