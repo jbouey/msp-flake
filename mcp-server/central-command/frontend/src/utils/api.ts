@@ -108,7 +108,12 @@ async function _fetchWithBase<T>(
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
-      credentials: 'same-origin',
+      // 'include' is a strict superset of 'same-origin' — same-origin
+      // requests still send cookies under 'include'. Aligning to
+      // 'include' makes fetchApi the single canonical mutation helper
+      // (matches OperatorAckPanel, SensorStatus, and the CSRF rule in
+      // CLAUDE.md) and survives a future move to api.osiriscare.net.
+      credentials: 'include',
       headers: {
         ...headers,
         ...(options?.headers as Record<string, string>),

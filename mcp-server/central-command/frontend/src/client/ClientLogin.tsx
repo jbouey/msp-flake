@@ -4,6 +4,7 @@ import { useClient } from './ClientContext';
 import { OsirisCareLeaf } from '../components/shared';
 import { BRANDING, SSO_LABELS, WHITE_LABEL } from '../constants';
 import { useBranding } from '../hooks/useBranding';
+import { csrfHeaders } from '../utils/csrf';
 
 interface ClientLoginProps {
   slug?: string;
@@ -68,7 +69,8 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
     try {
       const response = await fetch('/api/client/auth/sso/authorize', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ email: ssoEmail }),
       });
 
@@ -99,7 +101,8 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
     try {
       const response = await fetch('/api/client/auth/sso/authorize', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ email: trimmed }),
       });
 
@@ -126,7 +129,8 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
     try {
       const response = await fetch('/api/client/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       });
 
@@ -160,7 +164,8 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
     try {
       const response = await fetch('/api/client/auth/verify-totp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ mfa_token: mfaToken, totp_code: totpCode.trim() }),
       });
 
@@ -187,7 +192,8 @@ export const ClientLogin: React.FC<ClientLoginProps> = ({ slug: slugProp }) => {
     try {
       await fetch('/api/client/auth/request-magic-link', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ email: email.trim().toLowerCase() }),
       });
 

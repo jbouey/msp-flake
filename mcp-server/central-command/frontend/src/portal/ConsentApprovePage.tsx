@@ -11,6 +11,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { csrfHeaders } from '../utils/csrf';
 
 interface TokenDetails {
   site_id: string;
@@ -73,7 +74,8 @@ export const ConsentApprovePage: React.FC = () => {
     try {
       const res = await fetch(`/api/portal/consent/approve/${encodeURIComponent(token)}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ consented_by_email: email }),
       });
       if (!res.ok) {

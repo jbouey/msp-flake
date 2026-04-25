@@ -117,13 +117,18 @@ export const PartnerBilling: React.FC = () => {
   const handleSubscribe = async (priceId: string) => {
     setActionLoading(true);
     try {
+      // Always include cookies + CSRF; X-API-Key is additive (only
+      // for pure-API integrations). The previous pattern dropped both
+      // when apiKey was present, silently breaking the browser path
+      // if apiKey loaded as a stale truthy value.
       const response = await fetch('/api/billing/checkout', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({ price_id: priceId }),
       });
 
@@ -147,8 +152,11 @@ export const PartnerBilling: React.FC = () => {
     try {
       const response = await fetch('/api/billing/portal', {
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
-        credentials: apiKey ? undefined : 'include',
+        credentials: 'include',
+        headers: {
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
       });
 
       if (response.ok) {
@@ -175,8 +183,11 @@ export const PartnerBilling: React.FC = () => {
     try {
       const response = await fetch('/api/billing/subscription/cancel', {
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
-        credentials: apiKey ? undefined : 'include',
+        credentials: 'include',
+        headers: {
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
       });
 
       if (response.ok) {
@@ -197,8 +208,11 @@ export const PartnerBilling: React.FC = () => {
     try {
       const response = await fetch('/api/billing/subscription/reactivate', {
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
-        credentials: apiKey ? undefined : 'include',
+        credentials: 'include',
+        headers: {
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
       });
 
       if (response.ok) {

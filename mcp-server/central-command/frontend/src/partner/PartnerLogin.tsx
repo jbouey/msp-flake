@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { usePartner } from './PartnerContext';
 import { BRANDING } from '../constants';
+import { csrfHeaders } from '../utils/csrf';
 
 interface OAuthProviders {
   microsoft: boolean;
@@ -104,9 +105,13 @@ export const PartnerLogin: React.FC = () => {
 
     try {
       // SECURITY: POST token in body instead of URL to avoid exposure in server logs
+      // CSRF-exempt at backend (pre-session) but include 'include' +
+      // CSRF helper for linter compliance and to survive a future
+      // tightening of the EXEMPT_PATHS allowlist.
       const response = await fetch('/api/partners/auth/magic', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ token }),
       });
 
@@ -151,7 +156,8 @@ export const PartnerLogin: React.FC = () => {
     try {
       const response = await fetch('/api/partner-auth/email-login-api', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword }),
       });
 
@@ -186,7 +192,8 @@ export const PartnerLogin: React.FC = () => {
     try {
       const response = await fetch('/api/partner-auth/verify-totp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ mfa_token: mfaToken, totp_code: totpCode.trim() }),
       });
 
@@ -220,7 +227,8 @@ export const PartnerLogin: React.FC = () => {
     try {
       const response = await fetch('/api/partner-auth/email-signup', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({
           name: signupName.trim(),
           email: signupEmail.trim(),

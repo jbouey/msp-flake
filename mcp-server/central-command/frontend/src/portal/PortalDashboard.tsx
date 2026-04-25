@@ -10,6 +10,7 @@ import { ClientQuarterlyCoverage } from './ClientQuarterlyCoverage';
 import { ClientPartnerCTA } from './ClientPartnerCTA';
 import { ClientHelpFAQ } from './ClientHelpFAQ';
 import { ClientIncidentGlossary } from './ClientIncidentGlossary';
+import { csrfHeaders } from '../utils/csrf';
 
 interface PortalSite {
   site_id: string;
@@ -163,6 +164,7 @@ export const PortalDashboard: React.FC = () => {
       await fetch('/api/portal/auth/logout', {
         method: 'POST',
         credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
     } catch (e) {
       // Ignore errors

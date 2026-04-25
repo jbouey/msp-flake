@@ -111,7 +111,13 @@ def _violations() -> List[str]:
 # Baseline locked 2026-04-25 after auditing 60+ frontend mutation
 # fetches. Adding a NEW raw mutation is a regression. Lower this number
 # as files migrate to `fetchApi` (which auto-injects CSRF). Aim: 0.
-CSRF_BASELINE_MAX = 58
+#
+# 2026-04-25 baseline-grind pass: 58 → 41 after migrating the demo-path
+# raw fetches in PartnerBilling (4), PartnerLogin (4), ClientLogin (5),
+# ConsentApprovePage (1), PortalDashboard (1), SignupBaa (2) — 17 sites
+# closed in one wave. Remaining 41 are non-demo-path admin / partner /
+# client / portal mutations.
+CSRF_BASELINE_MAX = 41
 
 
 def test_no_new_frontend_mutations_without_csrf():

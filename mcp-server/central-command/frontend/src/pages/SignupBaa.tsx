@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { OsirisCareLeaf } from '../components/shared';
 import { BRANDING } from '../constants';
+import { csrfHeaders } from '../utils/csrf';
 
 // Short, stable acknowledgment statement that gets SHA256-hashed and
 // stored with the signature. The FULL BAA lives at /legal/baa —
@@ -87,7 +88,8 @@ export const SignupBaa: React.FC = () => {
         const hash = await sha256Hex(ACKNOWLEDGMENT_TEXT);
         const signRes = await fetch('/api/billing/signup/sign-baa', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
           body: JSON.stringify({
             signup_id: signupId,
             signer_name: signerName,
@@ -104,7 +106,8 @@ export const SignupBaa: React.FC = () => {
       const origin = window.location.origin;
       const checkoutRes = await fetch('/api/billing/signup/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({
           signup_id: signupId,
           success_url: `${origin}/signup/complete?signup_id=${encodeURIComponent(signupId)}`,
