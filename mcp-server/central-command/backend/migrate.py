@@ -167,8 +167,15 @@ async def apply_migration(
 
         return True
     except Exception as e:
-        print(f"  ERROR: Failed to apply {version}_{name}: {e}")
-        raise
+        # Print to stdout for human-readable CI logs, AND wrap the
+        # exception so the version is structurally embedded in the
+        # raised error chain. test_lifespan_pg_smoke (#183) extracts
+        # the version from the message to classify pre-/post-Session-205
+        # gaps; if we only printed and re-raised the bare asyncpg
+        # exception, that classification couldn't see the version.
+        msg = f"Failed to apply {version}_{name}: {e}"
+        print(f"  ERROR: {msg}")
+        raise RuntimeError(msg) from e
 
 
 async def rollback_migration(
