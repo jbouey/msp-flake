@@ -75,7 +75,7 @@ def test_relocate_writes_admin_audit_log():
     action='appliance.relocate' carrying both site_ids + reason."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 16000]
+    body = src[relocate_idx : relocate_idx + 20000]
     assert '"appliance.relocate"' in body
     assert "INSERT INTO admin_audit_log" in body
     assert '"from_site_id":' in body
@@ -98,7 +98,7 @@ def test_relocate_returns_ssh_snippet_for_legacy_daemon():
     fleet_order path instead — covered separately."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 16000]
+    body = src[relocate_idx : relocate_idx + 20000]
     assert '"ssh_snippet"' in body
     assert "<APPLIANCE_LAN_IP>" in body, (
         "ssh_snippet must use a placeholder for LAN IP (operator pastes it in)"
@@ -115,7 +115,7 @@ def test_relocate_version_gates_fleet_order_issuance():
     + stuck-active row in fleet_orders forever."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 16000]
+    body = src[relocate_idx : relocate_idx + 20000]
     assert "MIN_REPROVISION_VERSION" in body
     assert '"0.4.11"' in body, (
         "the version constant must literal-match the daemon's Version "
@@ -126,8 +126,18 @@ def test_relocate_version_gates_fleet_order_issuance():
     assert "INSERT INTO fleet_orders" in body, (
         "version_ok branch must issue the fleet_order"
     )
-    assert "'reprovision'" in body
+    # Order type literal can be single- or double-quoted depending on
+    # whether the row is built inline or via INSERT param. Accept either.
+    assert ("'reprovision'" in body) or ('"reprovision"' in body)
     assert "version_ok" in body, "branch on version is the gate"
+    # RT-5+1 hardening: per-appliance scoping must use the signed-payload
+    # mechanism (sign_admin_order with target_appliance_id). fleet_orders
+    # has no site_id/appliance_id columns; relying on those was the
+    # bug surfaced when the first reprovision order was issued.
+    assert "sign_admin_order" in body or "target_appliance_id" in body, (
+        "reprovision INSERT must scope via signed-payload target_appliance_id, "
+        "not by querying nonexistent fleet_orders columns"
+    )
 
 
 def test_relocate_defers_source_soft_delete():
@@ -136,7 +146,7 @@ def test_relocate_defers_source_soft_delete():
     today's orphan state if the move never lands."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 16000]
+    body = src[relocate_idx : relocate_idx + 20000]
     assert "'relocating'" in body, (
         "source row must transition to 'relocating', not 'relocated', "
         "until the finalize sweep confirms target checkin landed"
@@ -157,7 +167,7 @@ def test_relocate_records_relocation_tracker_row():
     so the finalize sweep + relocation_stalled invariant can find it."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 16000]
+    body = src[relocate_idx : relocate_idx + 20000]
     assert "INSERT INTO relocations" in body
     assert "'pending'" in body, "tracker row must start at status='pending'"
     assert "RETURNING id" in body, (
@@ -171,7 +181,7 @@ def test_relocate_emits_evidence_chain_bundle():
     evidence chain reflects the move."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 16000]
+    body = src[relocate_idx : relocate_idx + 20000]
     assert "from .appliance_relocation import emit_admin_relocation_bundle" in body
     assert "evidence_bundle_id" in body
     assert "UPDATE relocations SET evidence_bundle_id" in body, (
@@ -186,7 +196,7 @@ def test_relocate_uses_admin_connection_not_tenant():
     read both sites + write to both."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 16000]
+    body = src[relocate_idx : relocate_idx + 20000]
     assert "admin_connection(pool)" in body, (
         "relocate must use admin_connection — tenant_connection scopes to "
         "one site_id and would block the cross-site INSERT/UPDATE"
@@ -200,7 +210,7 @@ def test_relocate_refuses_concurrent_pending_for_same_mac():
     the operator gets a clean error."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 16000]
+    body = src[relocate_idx : relocate_idx + 20000]
     assert "status_code=409" in body, (
         "must surface a concurrent-pending move as 409, not let the "
         "DB constraint surface as a generic 500"

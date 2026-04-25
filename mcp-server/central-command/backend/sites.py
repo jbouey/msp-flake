@@ -2100,30 +2100,55 @@ async def relocate_appliance(
 
         # Step 5 (RT-5+1): if daemon supports it, issue the reprovision
         # fleet_order. Otherwise fall back to ssh_snippet (legacy path).
+        #
+        # fleet_orders is FLEET-WIDE — there are no site_id/appliance_id
+        # columns. Per-appliance scoping is done by embedding
+        # `target_appliance_id` in the SIGNED payload, which the
+        # daemon's processor.go::verifyHostScope filter checks before
+        # executing. Other daemons see the row but skip it because the
+        # target_appliance_id doesn't match their own ID.
         fleet_order_id = None
         if version_ok:
-            fleet_order_id = str(_uuid.uuid4())
-            await conn.execute(
+            from .order_signing import sign_admin_order
+            order_now = datetime.now(timezone.utc)
+            order_expires = order_now + timedelta(minutes=15)
+            order_params = {
+                "new_site_id": req.target_site_id,
+                "new_api_key": raw_api_key,
+                # daemon order-binding contract (processor.go references
+                # parameters.site_id when the handler runs).
+                "site_id": site_id,
+            }
+            # sign_admin_order embeds target_appliance_id in the signed
+            # payload. Only the daemon whose appliance_id matches will
+            # execute this order; siblings ignore.
+            nonce, signature, signed_payload = sign_admin_order(
+                "0", "reprovision", order_params,
+                order_now, order_expires,
+                target_appliance_id=appliance_id,
+            )
+            row = await conn.fetchrow(
                 """
                 INSERT INTO fleet_orders (
-                    id, site_id, appliance_id, order_type, parameters,
-                    status, created_at, created_by, expires_at
-                ) VALUES (
-                    $1, $2, $3, 'reprovision', $4,
-                    'active', NOW(), $5, NOW() + INTERVAL '15 minutes'
+                    order_type, parameters, status, expires_at, created_by,
+                    nonce, signature, signed_payload
                 )
+                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+                RETURNING id
                 """,
-                fleet_order_id, site_id, appliance_id,
-                _json.dumps({
-                    "new_site_id": req.target_site_id,
-                    "new_api_key": raw_api_key,
-                    "site_id": site_id,  # daemon order-binding contract
-                }),
+                "reprovision",
+                _json.dumps(order_params),
+                order_expires,
                 user.get("username", "unknown"),
+                nonce,
+                signature,
+                signed_payload,
             )
+            fleet_order_id = str(row["id"])
             logger.info(
-                "appliance.relocate: issued reprovision fleet_order id=%s for v%s daemon",
-                fleet_order_id, source["agent_version"],
+                "appliance.relocate: issued reprovision fleet_order id=%s for v%s daemon "
+                "target_appliance_id=%s",
+                fleet_order_id, source["agent_version"], appliance_id,
             )
         else:
             logger.info(
