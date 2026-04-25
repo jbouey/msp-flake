@@ -2548,11 +2548,17 @@ async def _check_l2_decisions_stalled(conn: asyncpg.Connection) -> List[Violatio
       * Fleet has at least one appliance that checked in in the last
         hour (no expectation of L2 activity when offline)
       * l2_decisions table has < 5 rows in the last 48 hours
-      * AND there's evidence the healing pipeline IS running but L2 is
-        the silent layer — i.e., either (a) ≥5 incident_remediation_steps
-        rows recorded in 48h (meaning L1 IS firing but L2 isn't), or
-        (b) ≥3 unresolved incidents older than 30 min with NO remediation
-        steps at all (the "silent escalation" pattern that masks L2 dying).
+      * AND there's evidence L2 SHOULD have fired but didn't — i.e.,
+        ≥3 FAILED L1 attempts in 48h. A failed L1 step means the
+        deterministic engine ran a runbook and reported a non-success
+        result; that incident NATURALLY escalates to L2. If we see
+        L1 failures but zero L2 decisions, L2 is silently broken.
+
+    L1 succeeding on every step is NOT a stall signal — it means L1
+    coverage is complete and L2 is correctly idle. The original
+    `remediation_steps_48h >= 5` gate fired on healthy L1-saturated
+    fleets and was wrong (Session 210-B 2026-04-25 audit found 85
+    successful L1 steps + 0 L2 decisions on a healthy NVB2 fleet).
 
     48h is the noise-tolerant floor — a quiet weekend with healthy
     appliances can legitimately produce 0 incidents. Once the fleet
@@ -2586,35 +2592,24 @@ async def _check_l2_decisions_stalled(conn: asyncpg.Connection) -> List[Violatio
              WHERE deleted_at IS NULL
                AND last_checkin > NOW() - INTERVAL '1 hour'
         ),
-        pipeline AS (
-            SELECT COUNT(*) AS remediation_steps_48h
+        l1_failures AS (
+            SELECT COUNT(*) AS failed_l1_steps_48h
               FROM incident_remediation_steps
              WHERE created_at > NOW() - INTERVAL '48 hours'
-        ),
-        silent_escalations AS (
-            SELECT COUNT(*) AS silent_count
-              FROM incidents i
-             WHERE i.status NOT IN ('resolved','closed')
-               AND i.created_at > NOW() - INTERVAL '48 hours'
-               AND i.created_at < NOW() - INTERVAL '30 minutes'
-               AND NOT EXISTS (
-                     SELECT 1 FROM incident_remediation_steps rs
-                      WHERE rs.incident_id = i.id
-               )
+               AND tier = 'L1'
+               AND result NOT IN ('order_created', 'success', 'completed', 'order_acked')
         )
         SELECT s.decisions_48h, s.latest_decision_at, f.online,
-               p.remediation_steps_48h, e.silent_count
-          FROM state s, fleet f, pipeline p, silent_escalations e
+               l.failed_l1_steps_48h
+          FROM state s, fleet f, l1_failures l
         """
     )
     if row is None:
         return []
     decisions_48h = int(row["decisions_48h"] or 0)
     online = int(row["online"] or 0)
-    remediation_steps_48h = int(row["remediation_steps_48h"] or 0)
-    silent_count = int(row["silent_count"] or 0)
-    pipeline_signal = remediation_steps_48h >= 5 or silent_count >= 3
-    if online < 1 or decisions_48h >= 5 or not pipeline_signal:
+    failed_l1_steps_48h = int(row["failed_l1_steps_48h"] or 0)
+    if online < 1 or decisions_48h >= 5 or failed_l1_steps_48h < 3:
         return []
     latest = row["latest_decision_at"]
     hours_since = None
@@ -2626,8 +2621,7 @@ async def _check_l2_decisions_stalled(conn: asyncpg.Connection) -> List[Violatio
             details={
                 "l2_decisions_48h": decisions_48h,
                 "online_appliances_1h": online,
-                "remediation_steps_48h": remediation_steps_48h,
-                "silent_escalations_48h": silent_count,
+                "failed_l1_steps_48h": failed_l1_steps_48h,
                 "latest_decision_at": latest.isoformat() if latest else None,
                 "hours_since_last_decision": hours_since,
                 "remediation": (

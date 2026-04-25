@@ -64,16 +64,16 @@ def test_l2_decisions_stalled_severity_sev2():
 # ---------------------------------------------------------------------------
 
 def _row(**kwargs):
-    """Default row shape — Session 210-B added remediation_steps_48h +
-    silent_count to the query so the assertion can distinguish
-    quiet-but-healthy from L2-actually-broken. Tests pass overrides
-    via kwargs."""
+    """Default row shape — Session 210-B refined the gate:
+    `failed_l1_steps_48h >= 3` is the only signal that L2 stalled
+    (L1 had failures that should have escalated). 85 successful L1
+    steps + zero L2 decisions = healthy (L1 covers everything).
+    Tests pass overrides via kwargs."""
     return {
         "decisions_48h": 0,
         "latest_decision_at": None,
         "online": 3,
-        "remediation_steps_48h": 10,  # pipeline IS active (default)
-        "silent_count": 0,
+        "failed_l1_steps_48h": 5,  # pipeline IS broken (default for fire-tests)
         **kwargs,
     }
 
@@ -127,40 +127,52 @@ def test_no_violation_when_decisions_above_threshold():
     assert result == []
 
 
-def test_no_violation_when_quiet_but_healthy():
-    """Session 210-B: when L1 covers every incident type the fleet is
-    seeing, L2 produces zero decisions but that is NOT a stall — it's
-    L1 successfully handling the load. Both pipeline_signal gates
-    (remediation_steps and silent_escalations) must be below threshold
-    for the invariant to stay quiet here."""
+def test_no_violation_when_l1_covers_everything():
+    """Session 210-B: when every L1 step in 48h succeeded
+    (failed_l1_steps_48h == 0), L2 staying silent is correct — L1
+    covered every incident type the fleet saw. The previous version
+    fired here for 12 days at NVB2 with 85 successful L1 steps + 0
+    L2 decisions, which is the healthy steady state of an L1-saturated
+    fleet, not a stall."""
     conn = _FakeConn(_row(
         decisions_48h=0,
-        remediation_steps_48h=2,  # L1 firing a tiny bit but not enough to expect L2
-        silent_count=0,           # no incidents going un-touched
+        failed_l1_steps_48h=0,  # L1 100% successful — nothing for L2 to do
     ))
     with patch.dict(os.environ, {"L2_ENABLED": "true"}, clear=False):
         result = _run(_check_l2_decisions_stalled(conn))
     assert result == [], (
-        "Quiet-but-healthy state (low L1 activity, zero silent escalations) "
-        "must not fire l2_decisions_stalled — the previous version mis-fired "
-        "for 12 days at NVB2 because L1 covered every incident type"
+        "L1-saturated state (0 failures) must not fire l2_decisions_stalled — "
+        "the previous version mis-fired for 12 days at NVB2 because the "
+        "pipeline_signal gate counted L1 successes as evidence of an L2 stall"
     )
+
+
+def test_no_violation_when_l1_failures_below_threshold():
+    """≤2 failed L1 steps is below the noise floor — could be a single
+    flaky runbook, not a system-wide L2 stall."""
+    conn = _FakeConn(_row(
+        decisions_48h=0,
+        failed_l1_steps_48h=2,
+    ))
+    with patch.dict(os.environ, {"L2_ENABLED": "true"}, clear=False):
+        result = _run(_check_l2_decisions_stalled(conn))
+    assert result == []
 
 
 # ---------------------------------------------------------------------------
 # Firing condition
 # ---------------------------------------------------------------------------
 
-def test_fires_when_l2_on_fleet_active_but_zero_decisions():
-    """The one scenario this invariant exists for: operator flipped
-    L2_ENABLED=true 48h+ ago, appliances are actively checking in, the
-    healing pipeline IS firing (remediation_steps_48h ≥ 5), yet
-    l2_decisions is empty. Fires with a detailed remediation."""
+def test_fires_when_l1_failures_pile_up_with_zero_l2_decisions():
+    """The one scenario this invariant exists for: L1 failed ≥3 times
+    in 48h (each natural escalation point to L2), yet l2_decisions is
+    empty. That means L2 is silently broken — the cost-gate stack
+    walk-through tells the operator how to debug."""
     conn = _FakeConn(_row(
         decisions_48h=0,
         latest_decision_at=None,
         online=3,
-        remediation_steps_48h=12,  # L1 IS firing → L2 should occasionally fire too
+        failed_l1_steps_48h=12,  # L1 had 12 failures → L2 should have run on each
     ))
     with patch.dict(os.environ, {"L2_ENABLED": "true"}, clear=False):
         result = _run(_check_l2_decisions_stalled(conn))
@@ -169,8 +181,7 @@ def test_fires_when_l2_on_fleet_active_but_zero_decisions():
     assert v.site_id is None, "this is a fleet-wide invariant, not per-site"
     assert v.details["l2_decisions_48h"] == 0
     assert v.details["online_appliances_1h"] == 3
-    assert v.details["remediation_steps_48h"] == 12
-    assert v.details["silent_escalations_48h"] == 0
+    assert v.details["failed_l1_steps_48h"] == 12
     assert "remediation" in v.details
     # The remediation must walk the operator through the cost-gate stack
     # — at minimum API key + circuit breaker + daily cap + zero-result + kill switch.
@@ -183,29 +194,13 @@ def test_fires_when_l2_on_fleet_active_but_zero_decisions():
         )
 
 
-def test_fires_when_silent_escalations_pile_up():
-    """Alternative pipeline_signal gate: even if L1 isn't firing,
-    ≥3 unresolved incidents older than 30min with NO remediation
-    steps means something is silently escalating past the healing
-    pipeline entirely — also a real stall worth paging on."""
-    conn = _FakeConn(_row(
-        decisions_48h=0,
-        remediation_steps_48h=0,  # L1 also silent
-        silent_count=5,           # but 5 incidents got nothing
-    ))
-    with patch.dict(os.environ, {"L2_ENABLED": "true"}, clear=False):
-        result = _run(_check_l2_decisions_stalled(conn))
-    assert len(result) == 1
-    assert result[0].details["silent_escalations_48h"] == 5
-
-
 def test_fires_when_decisions_under_threshold():
-    """3 decisions in 48h → still too few → fires when pipeline is active."""
+    """3 decisions in 48h → still too few → fires when L1 had failures."""
     conn = _FakeConn(_row(
         decisions_48h=3,
         latest_decision_at=datetime.now(timezone.utc) - timedelta(hours=20),
         online=2,
-        remediation_steps_48h=8,
+        failed_l1_steps_48h=8,
     ))
     with patch.dict(os.environ, {"L2_ENABLED": "true"}, clear=False):
         result = _run(_check_l2_decisions_stalled(conn))
