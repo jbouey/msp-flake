@@ -1890,6 +1890,239 @@ async def delete_appliance(site_id: str, appliance_id: str, user: dict = Depends
         }
 
 
+class RelocateApplianceRequest(BaseModel):
+    """Move an appliance from one site to another within the same org.
+
+    Session 210-B 2026-04-25 hardening #6: today's orphan recovery
+    surfaced the gap that a partner couldn't move an appliance between
+    their owned sites without three layers of manual ops (SQL, SSH,
+    config.yaml hand-edit). This endpoint makes it a first-class
+    administrative action with audit + scoping + key minting in one
+    atomic transaction.
+    """
+    target_site_id: str
+    reason: str  # Audit context, ≥ 20 chars
+
+
+@router.post("/{site_id}/appliances/{appliance_id}/relocate")
+async def relocate_appliance(
+    site_id: str,
+    appliance_id: str,
+    req: RelocateApplianceRequest,
+    request: Request,
+    user: dict = Depends(require_operator),
+):
+    """Relocate an appliance from `site_id` to `req.target_site_id`.
+
+    Atomic transaction:
+      1. Validate source row exists, target site exists, both belong to
+         the same client_org_id (cross-org moves not supported here —
+         that's a privileged-chain operation).
+      2. UPSERT site_appliances at the target site (new appliance_id).
+      3. Mint a fresh api_key, INSERT into api_keys for the target.
+      4. Soft-delete the source site_appliances row + deactivate its
+         api_keys (Migration 209 trigger handles same-(site,appliance)
+         dedup, but we also explicitly deactivate the OLD appliance_id
+         row since it's about to be unused).
+      5. Audit: admin_audit_log with action=appliance.relocate.
+
+    Daemon-side completion (until v0.4.11 ships the relocate_appliance
+    fleet-order handler): the response includes a one-shot SSH command
+    the operator runs against the appliance, atomically updating
+    config.yaml's site_id + api_key + restarting the daemon. After
+    daemon v0.4.11 lands, this endpoint will additionally issue a
+    fleet_order(type=relocate_appliance, params=...) and the daemon
+    will self-relocate without operator intervention.
+
+    Auth: require_operator. Cross-org enforcement: source.client_org_id
+    must equal target.client_org_id (a partner can move appliances
+    between their owned sites; a partner can NOT move an appliance to
+    a different partner's site).
+    """
+    if not req.target_site_id or req.target_site_id == site_id:
+        raise HTTPException(
+            status_code=400,
+            detail="target_site_id must be different from current site_id",
+        )
+    if not req.reason or len(req.reason.strip()) < 20:
+        raise HTTPException(
+            status_code=400,
+            detail="reason must be ≥ 20 chars (audit context)",
+        )
+
+    import hashlib
+    import secrets
+
+    pool = await get_pool()
+
+    async with admin_connection(pool) as conn:
+        # Step 1: validate source + target are same org.
+        source = await conn.fetchrow(
+            """
+            SELECT sa.id, sa.mac_address, sa.hostname, sa.legacy_uuid,
+                   s.client_org_id AS source_org
+              FROM site_appliances sa
+              JOIN sites s ON s.site_id = sa.site_id
+             WHERE sa.appliance_id = $1
+               AND sa.site_id = $2
+               AND sa.deleted_at IS NULL
+            """,
+            appliance_id, site_id,
+        )
+        if not source:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Appliance {appliance_id} not found in site {site_id}",
+            )
+
+        target = await conn.fetchrow(
+            "SELECT client_org_id FROM sites WHERE site_id = $1",
+            req.target_site_id,
+        )
+        if not target:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Target site {req.target_site_id!r} not found",
+            )
+        if source["source_org"] != target["client_org_id"]:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Cross-org appliance relocation requires privileged-chain "
+                    "approval and is not supported via this endpoint. Move both "
+                    "sites under the same client_org_id first, or use the "
+                    "/api/admin/cross-org-relocate flow (admin-only, attestation-gated)."
+                ),
+            )
+
+        mac = source["mac_address"]
+        new_appliance_id = f"{req.target_site_id}-{mac}"
+
+        # Step 2: UPSERT target row.
+        await conn.execute(
+            """
+            INSERT INTO site_appliances (
+                site_id, appliance_id, mac_address, hostname, status,
+                first_checkin, legacy_uuid, created_at
+            ) VALUES (
+                $1, $2, $3, $4, 'pending',
+                NOW() - INTERVAL '1 minute', $5, NOW()
+            )
+            ON CONFLICT (appliance_id) DO UPDATE SET
+                site_id = EXCLUDED.site_id,
+                deleted_at = NULL,
+                deleted_by = NULL,
+                status = 'pending',
+                auth_failure_since = NULL,
+                auth_failure_count = 0,
+                last_auth_failure = NULL
+            """,
+            req.target_site_id, new_appliance_id, mac,
+            source["hostname"] or f"relocated-{mac.replace(':','')}",
+            source["legacy_uuid"],
+        )
+
+        # Step 3: mint api_key for the target appliance_id.
+        raw_api_key = secrets.token_urlsafe(32)
+        api_key_hash = hashlib.sha256(raw_api_key.encode()).hexdigest()
+        await conn.execute(
+            """
+            INSERT INTO api_keys (
+                site_id, appliance_id, key_hash, key_prefix,
+                description, active, created_at
+            ) VALUES ($1, $2, $3, $4, $5, true, NOW())
+            """,
+            req.target_site_id, new_appliance_id,
+            api_key_hash, raw_api_key[:8],
+            f"Relocate by {user.get('username','?')} from {site_id}: {req.reason[:160]}",
+        )
+
+        # Step 4: soft-delete the source row + deactivate its keys.
+        await conn.execute(
+            """
+            UPDATE site_appliances
+               SET deleted_at = NOW(),
+                   deleted_by = $3,
+                   status = 'relocated'
+             WHERE appliance_id = $1
+               AND site_id = $2
+            """,
+            appliance_id, site_id, user.get("username", "unknown"),
+        )
+        await conn.execute(
+            """
+            UPDATE api_keys
+               SET active = false
+             WHERE site_id = $1
+               AND appliance_id = $2
+               AND active = true
+            """,
+            site_id, appliance_id,
+        )
+
+        # Step 5: audit log (admin_audit_log is append-only via Migration 151).
+        import json as _json
+        client_ip = request.client.host if request.client else None
+        await conn.execute(
+            """
+            INSERT INTO admin_audit_log
+              (action, actor, target, details, ip_address)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            "appliance.relocate",
+            user.get("username", "unknown"),
+            f"appliance:{mac}",
+            _json.dumps({
+                "from_site_id": site_id,
+                "to_site_id": req.target_site_id,
+                "from_appliance_id": appliance_id,
+                "to_appliance_id": new_appliance_id,
+                "reason": req.reason,
+            }),
+            client_ip,
+        )
+
+    logger.info(
+        "appliance.relocate: %s/%s → %s/%s by %s",
+        site_id, appliance_id, req.target_site_id, new_appliance_id,
+        user.get("username", "?"),
+    )
+
+    # Until daemon v0.4.11 ships the relocate fleet-order handler, the
+    # operator finishes the move via SSH. We embed the exact one-liner
+    # in the response so the UI can copy-paste it.
+    mac_lower = mac.lower()
+    emergency_pass_hash = hashlib.sha256(
+        f"osiriscare-emergency-{mac_lower}".encode()
+    ).hexdigest()[:8]
+    emergency_pass = f"osiris-{emergency_pass_hash}"
+    ssh_snippet = (
+        f"sshpass -p '{emergency_pass}' ssh -o StrictHostKeyChecking=accept-new "
+        f"msp@<APPLIANCE_LAN_IP> "
+        f"\"echo '{emergency_pass}' | sudo -S /run/current-system/sw/bin/bash -c '"
+        f"cp /var/lib/msp/config.yaml /var/lib/msp/config.yaml.bak.\\$(date -u +%s) && "
+        f"yq -i \\\".site_id = \\\\\\\"{req.target_site_id}\\\\\\\"\\\" /var/lib/msp/config.yaml && "
+        f"yq -i \\\".api_key = \\\\\\\"{raw_api_key}\\\\\\\"\\\" /var/lib/msp/config.yaml && "
+        f"chmod 600 /var/lib/msp/config.yaml && "
+        f"systemctl restart appliance-daemon"
+        f"'\""
+    )
+
+    return {
+        "status": "relocated",
+        "from": {"site_id": site_id, "appliance_id": appliance_id},
+        "to": {"site_id": req.target_site_id, "appliance_id": new_appliance_id},
+        "new_api_key": raw_api_key,
+        "ssh_snippet": ssh_snippet,
+        "next_step": (
+            "Run the ssh_snippet against the appliance's LAN IP to push the new "
+            "site_id + api_key. Daemon's next checkin will land cleanly under "
+            "the new site. Daemon v0.4.11+ will accept a relocate fleet-order "
+            "and automate this step."
+        ),
+    }
+
+
 class MeshTopologyRequest(BaseModel):
     """Set mesh topology mode for a site."""
     mesh_topology: str  # 'auto' or 'independent'
