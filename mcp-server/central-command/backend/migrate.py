@@ -148,10 +148,16 @@ async def apply_migration(
         await conn.execute(up_sql)
         execution_time = int((time.time() - start) * 1000)
 
-        # Record migration
+        # Record migration. ON CONFLICT DO NOTHING handles the case
+        # where a migration's own SQL body INSERTs its row (e.g. the
+        # bootstrap migration 000_schema_migrations). Without this,
+        # apply_migration on a fresh DB raised UniqueViolationError on
+        # 000 — never noticed in long-lived prod DBs because they were
+        # initialized before this code path existed.
         await conn.execute("""
             INSERT INTO schema_migrations (version, name, checksum, execution_time_ms)
             VALUES ($1, $2, $3, $4)
+            ON CONFLICT (version) DO NOTHING
         """, version, name, checksum, execution_time)
 
         return True
