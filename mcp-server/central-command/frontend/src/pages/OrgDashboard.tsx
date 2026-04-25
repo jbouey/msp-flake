@@ -5,6 +5,7 @@ import { GlassCard, Spinner, Badge } from '../components/shared';
 import { organizationsApi } from '../utils/api';
 import type { OrgSite, OrgCredential, OrgHealth } from '../utils/api';
 import { formatTimeAgo, getStatusConfig } from '../constants';
+import { scoreToBadgeVariant, scoreToBarColor } from '../constants/status';
 
 const formatRelativeTime = formatTimeAgo;
 
@@ -303,7 +304,7 @@ export const OrgDashboard: React.FC = () => {
                 <span className="text-sm text-label-primary w-40 truncate">{checkType.replace(/_/g, ' ')}</span>
                 <div className="flex-1 h-5 bg-fill-quaternary rounded-ios-sm overflow-hidden">
                   <div
-                    className={`h-full rounded-ios-sm transition-all duration-500 ${cat.score >= 80 ? 'bg-health-healthy' : cat.score >= 50 ? 'bg-health-warning' : 'bg-health-critical'}`}
+                    className={`h-full rounded-ios-sm transition-all duration-500 ${scoreToBarColor(cat.score)}`}
                     style={{ width: `${Math.max(cat.score, 2)}%` }}
                   />
                 </div>
@@ -385,20 +386,12 @@ export const OrgDashboard: React.FC = () => {
                   <span className="text-label-tertiary">/{site.appliance_count}</span>
                 </td>
                 <td className="px-4 py-3">
-                  <Badge variant={
-                    site.compliance_score >= 80 ? 'success' :
-                    site.compliance_score >= 50 ? 'warning' :
-                    site.compliance_score > 0 ? 'error' : 'default'
-                  }>
+                  <Badge variant={scoreToBadgeVariant(site.compliance_score)}>
                     {site.compliance_score > 0 ? `${site.compliance_score}%` : 'N/A'}
                   </Badge>
                 </td>
                 <td className="px-4 py-3">
-                  <Badge variant={
-                    site.healing_success_rate >= 80 ? 'success' :
-                    site.healing_success_rate >= 50 ? 'warning' :
-                    site.healing_success_rate > 0 ? 'error' : 'default'
-                  }>
+                  <Badge variant={scoreToBadgeVariant(site.healing_success_rate)}>
                     {site.healing_success_rate > 0 ? `${site.healing_success_rate}%` : 'N/A'}
                   </Badge>
                 </td>

@@ -267,6 +267,37 @@ export function getScoreStatus(score: number | null): StatusConfig {
   };
 }
 
+
+/**
+ * Compliance score → Badge variant. Single source of truth for the
+ * 90/70/50 canonical thresholds when the consumer is a `<Badge>`.
+ *
+ * Use this instead of inlining `score >= 80 ? 'success' : ...` —
+ * those thresholds drift over time and create demo-path inconsistency.
+ *
+ * Returns 'default' for null/zero (no data state) so the Badge renders
+ * the neutral "N/A" affordance rather than coloring "0%" critical.
+ */
+export function scoreToBadgeVariant(score: number | null): 'default' | 'success' | 'warning' | 'error' {
+  if (score === null || score === 0) return 'default';
+  if (score >= 90) return 'success';
+  if (score >= 70) return 'warning';
+  if (score >= 50) return 'warning';
+  return 'error';
+}
+
+
+/**
+ * Compliance score → Tailwind bg-* class for a fill bar. Same 90/70/50
+ * thresholds as getScoreStatus + scoreToBadgeVariant.
+ */
+export function scoreToBarColor(score: number): string {
+  if (score >= 90) return 'bg-health-healthy';
+  if (score >= 70) return 'bg-health-warning';
+  if (score >= 50) return 'bg-ios-orange';
+  return 'bg-health-critical';
+}
+
 // =============================================================================
 // FORMATTERS
 // =============================================================================

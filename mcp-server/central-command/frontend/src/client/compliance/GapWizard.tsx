@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { csrfHeaders } from '../../utils/csrf';
+import { scoreToBarColor } from '../../constants/status';
 
 interface Question {
   section: string;
@@ -149,7 +150,7 @@ export const GapWizard: React.FC<GapWizardProps> = ({ apiBase = '/api/client/com
               <div key={s.section} className="flex items-center gap-4">
                 <span className="text-sm text-slate-700 w-48">{s.label}</span>
                 <div className="flex-1 h-3 bg-slate-100 rounded-full">
-                  <div className={`h-full rounded-full ${s.score >= 80 ? 'bg-green-500' : s.score >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${s.score}%` }} />
+                  <div className={`h-full rounded-full ${scoreToBarColor(s.score)}`} style={{ width: `${s.score}%` }} />
                 </div>
                 <span className="text-sm font-medium text-slate-900 w-12 text-right">{s.score}%</span>
               </div>
