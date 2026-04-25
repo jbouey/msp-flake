@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
-  "session": 209,
-  "updated": "2026-04-24T01:09:00.320932Z",
+  "session": 211,
+  "updated": "2026-04-25T19:44:40.480126Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty.",
   "versions": {
     "agent": "0.4.6",
@@ -146,44 +146,7 @@
     "archived_sessions": ".agent/archive/",
     "user_memory": "~/.claude/projects/-Users-dad-Documents-Msp-Flakes/memory/"
   },
-  "completed_this_session": [
-    {
-      "when": "2026-04-18",
-      "what": "RLS P0 fix \u2014 AsyncSession.sync_session_class event target + after_begin SET LOCAL survives PgBouncer DISCARD ALL (commits ebb9f17 + 2ddc596). 2,608 rejections/2h \u2192 0/min."
-    },
-    {
-      "when": "2026-04-18",
-      "what": "evidence_chain_stalled sev1 substrate invariant (commit f6c6121) \u2014 outcome-layer detection of evidence INSERT failures regardless of root cause"
-    },
-    {
-      "when": "2026-04-18",
-      "what": "submit_evidence write path migrated to tenant_connection(site_id) + SET LOCAL app.current_tenant (commit 222beca + test update 91cb05f)"
-    },
-    {
-      "when": "2026-04-18",
-      "what": "Audit-p3 6-finding batch \u2014 cross-site /evidence, savepoint hygiene, dead dup path, payout job, commission (commit 9cec8ef)"
-    },
-    {
-      "when": "2026-04-18",
-      "what": "Dashboard null-safe self-heal pct + /flywheel-events 7d window + installer sentinel guard (commit 5ab3b79) \u2014 precedent for P2 nullable contract"
-    },
-    {
-      "when": "2026-04-18",
-      "what": "Flywheel ledger + platform spine restoration (commit e291def) \u2014 platform auto-promotion now issues per-site sync_promoted_rule fleet_orders + writes rollout_issued ledger events via safe_rollout_promoted_rule(scope='fleet'); flywheel_ledger_stalled sev1 invariant added"
-    },
-    {
-      "when": "2026-04-18",
-      "what": "P2 UI nullable-contract closure (commit 8d10b51) \u2014 nullable rates end-to-end, empty-state guards, pp vs % unit discipline across Dashboard + Learning + PartnerLearning. 109/109 vitest + tsc clean."
-    },
-    {
-      "when": "2026-04-18",
-      "what": "Dashboard SLA strip shared hook (commit b390adf) \u2014 extracted DashboardSLAStrip + Dashboard queryFn into useDashboardSLA; fixes queryKey-collision first-mounted-wins fetch semantics."
-    },
-    {
-      "when": "2026-04-18",
-      "what": "Round-table batch (commit 8ca5e67) \u2014 (1) flywheel reconciliation JOIN fix lr.rule_id\u2192lr.runbook_id (under-counted orphans 11 vs 12), (2) platform-pattern aggregation excludes synthetic L2-* ids + migration 237 clears 2 phantom pps rows (kills 110/day 'Skipping platform promotion' warnings), (3) osiriscare_substrate_violations_active gauge + Prom alert_rules.yml (sev1/2/3 tiers + EvidenceChainStalled / FlywheelLedgerStalled / ProvisioningStalled named alerts), (4) source-level regression pytest lockstep on both fixes. 47/47 flywheel tests pass."
-    }
-  ],
+  "completed_this_session": [],
   "iso_version": "v38",
   "latest_milestone": "Session 209: RLS P0 fix + flywheel recon JOIN + synth-pps cleanup + substrate Prom alerting wired"
 }
