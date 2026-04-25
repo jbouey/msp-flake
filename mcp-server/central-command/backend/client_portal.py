@@ -2542,12 +2542,18 @@ async def approve_promotion_candidate(
             # Insert promoted rule
             import uuid as uuid_mod
             partner_id = candidate["partner_id"]
+            # promoted_rules natural key is (site_id, rule_id) — same rule
+            # rolls out to many sites, each gets its own row. Migration 247
+            # added UNIQUE(site_id, rule_id). Pre-247 code used ON CONFLICT
+            # (rule_id) which raised InvalidColumnReferenceError because
+            # rule_id has no unique constraint alone. Surfaced 2026-04-25
+            # when the dashboard "Approve" button on /learning returned 500.
             await conn.execute("""
                 INSERT INTO promoted_rules (
                     rule_id, pattern_signature, site_id, partner_id,
                     rule_yaml, rule_json, notes, promoted_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-                ON CONFLICT (rule_id) DO UPDATE SET
+                ON CONFLICT (site_id, rule_id) DO UPDATE SET
                     status = 'active', notes = EXCLUDED.notes, promoted_at = NOW()
             """,
                 rule["id"], candidate["pattern_signature"],

@@ -7,6 +7,7 @@
 
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getCsrfTokenOrEmpty } from '../../utils/csrf';
 
 interface Sensor {
   hostname: string;
@@ -44,8 +45,15 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
 
   const deployMutation = useMutation({
     mutationFn: async (hostname: string) => {
+      // Session 210-B audit: raw fetch was missing both credentials:'include'
+      // and X-CSRF-Token — both endpoints fronted by the CSRF middleware,
+      // so unauthenticated/missing-CSRF requests 403'd. Fixed by adding
+      // both. Long-term migration to fetchApi (auto-injects both) is in
+      // the ratchet test backlog.
       const response = await fetch(`/api/sensors/sites/${siteId}/hosts/${hostname}/deploy`, {
         method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': getCsrfTokenOrEmpty() },
       });
       if (!response.ok) throw new Error('Deployment failed');
     },
@@ -60,6 +68,8 @@ const SensorStatus: React.FC<SensorStatusProps> = ({ siteId }) => {
     mutationFn: async (hostname: string) => {
       const response = await fetch(`/api/sensors/sites/${siteId}/hosts/${hostname}`, {
         method: 'DELETE',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': getCsrfTokenOrEmpty() },
       });
       if (!response.ok) throw new Error('Removal failed');
     },

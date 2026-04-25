@@ -18,6 +18,7 @@ import React, { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { GlassCard } from '../shared';
 import { useFlywheelSpine } from '../../hooks/useFleet';
+import { getCsrfTokenOrEmpty } from '../../utils/csrf';
 
 type Decision = 're_enable' | 'confirm_disable';
 
@@ -52,7 +53,10 @@ export const OperatorAckPanel: React.FC = () => {
       const res = await fetch('/api/dashboard/flywheel-spine/acknowledge', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': getCsrfTokenOrEmpty(),
+        },
         body: JSON.stringify({
           rule_id: open.ruleId,
           decision: open.decision,

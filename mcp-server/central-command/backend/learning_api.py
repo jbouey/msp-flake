@@ -915,12 +915,15 @@ async def bulk_approve_candidates(
                 rule = generate_rule_from_pattern(dict(candidate))
                 rule_yaml = rule_to_yaml(rule)
 
+                # See client_portal.py:2546 — same fix, same reason.
+                # promoted_rules natural key is (site_id, rule_id);
+                # Migration 247 added the UNIQUE index.
                 await conn.execute("""
                     INSERT INTO promoted_rules (
                         rule_id, pattern_signature, site_id, partner_id,
                         rule_yaml, rule_json, notes, promoted_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-                    ON CONFLICT (rule_id) DO UPDATE SET
+                    ON CONFLICT (site_id, rule_id) DO UPDATE SET
                         status = 'active', notes = EXCLUDED.notes, promoted_at = NOW()
                 """,
                     rule['id'], candidate['pattern_signature'],
