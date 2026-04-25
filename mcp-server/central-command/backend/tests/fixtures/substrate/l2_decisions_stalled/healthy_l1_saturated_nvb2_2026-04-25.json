@@ -1,0 +1,18 @@
+{
+    "_meta": {
+        "captured_from": "north-valley-branch-2 prod, 2026-04-25 05:48 UTC",
+        "scenario": "L1 covers every incident type the fleet sees. L2 idle. Healthy.",
+        "expected": "no violation",
+        "history": "Pre-fix (e64e1916), this fixture would have produced a violation because the gate counted L1 successes as evidence of an L2 stall. Post-fix (b2d4285e), it correctly stays silent because failed_l1_steps_48h=0."
+    },
+    "fetchrow_response": {
+        "decisions_48h": 0,
+        "latest_decision_at": null,
+        "online": 2,
+        "failed_l1_steps_48h": 0
+    },
+    "env": {
+        "L2_ENABLED": "true"
+    },
+    "expected_violation_count": 0
+}

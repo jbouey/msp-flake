@@ -1,0 +1,22 @@
+{
+    "_meta": {
+        "scenario": "Synthetic — L1 had failures but L2 didn't decision any of them. THIS IS A REAL STALL the invariant should catch.",
+        "expected": "1 violation — fleet-wide (site_id=null), with details.failed_l1_steps_48h >= 3"
+    },
+    "fetchrow_response": {
+        "decisions_48h": 0,
+        "latest_decision_at": null,
+        "online": 3,
+        "failed_l1_steps_48h": 12
+    },
+    "env": {
+        "L2_ENABLED": "true"
+    },
+    "expected_violation_count": 1,
+    "expected_details": {
+        "site_id": null,
+        "l2_decisions_48h": 0,
+        "online_appliances_1h": 3,
+        "failed_l1_steps_48h": 12
+    }
+}

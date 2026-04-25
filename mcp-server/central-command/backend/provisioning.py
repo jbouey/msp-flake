@@ -796,3 +796,197 @@ async def rekey_appliance(req: RekeyRequest, request: Request):
         "api_key": raw_api_key,
         "appliance_id": appliance_id,
     }
+
+
+class AdminRestoreRequest(BaseModel):
+    """Request to admin-restore an appliance whose site_appliances row
+    was deleted (e.g. by a cleanup pass) but whose physical box is
+    still alive and trying to check in.
+
+    Distinct from `RekeyRequest` because it explicitly creates the
+    site_appliances row if missing, which `/api/provision/rekey`
+    rejects as 'unknown appliance.' Reason ≥ 20 chars is required so
+    the audit log carries why we re-created the row.
+    """
+    site_id: str
+    mac_address: str
+    hostname: Optional[str] = None
+    hardware_id: Optional[str] = None
+    reason: str  # ≥ 20 chars, free-form audit context
+
+
+@router.post("/admin/restore")
+async def admin_restore_appliance(
+    req: AdminRestoreRequest,
+    request: Request,
+):
+    """ADMIN-ONLY recovery for orphaned appliances.
+
+    Use case (Session 210-B 2026-04-25): a manual cleanup pass deleted
+    `site_appliances` rows for a MAC but the physical box was still
+    alive. The standard `/api/provision/rekey` endpoint refuses to
+    re-key because it requires an existing row. This endpoint:
+
+      1. Verifies the site exists
+      2. UPSERTs the site_appliances row (status='pending' if new,
+         left alone if existing)
+      3. Mints a fresh api_key
+      4. Deactivates any prior active keys for this (site, appliance)
+      5. Writes an audit-log entry with the operator's reason
+
+    Auth: admin Bearer token. The endpoint is mounted on the public
+    API surface but require_admin gates it. We use FastAPI's regular
+    `Depends(require_admin)` rather than the appliance bearer because
+    the calling actor is an operator, not the appliance itself.
+
+    Rate limited via the same _rekey_cooldowns map as /rekey.
+
+    Returns the same shape as /rekey so the recovery script can be
+    a drop-in replacement.
+    """
+    # Lazy-import to avoid circular import (auth.py uses provisioning
+    # types in unrelated paths).
+    from .auth import require_admin
+    from fastapi import Depends as _Depends  # noqa: F401 — for symmetry
+    # Manually dispatch require_admin since FastAPI Depends can't be
+    # added retroactively to a function-scoped router.
+    user = await _resolve_admin(request)
+
+    if not req.reason or len(req.reason.strip()) < 20:
+        raise HTTPException(
+            status_code=400,
+            detail="reason must be ≥ 20 chars — audit-log context required",
+        )
+
+    import hashlib
+
+    pool = await get_pool()
+    mac_normalized = normalize_mac(req.mac_address)
+    appliance_id = f"{req.site_id}-{mac_normalized}"
+
+    # Rate limit (shares cooldown bucket with /rekey).
+    last_rekey = _rekey_cooldowns.get(appliance_id, 0)
+    if time.time() - last_rekey < REKEY_COOLDOWN_SECONDS:
+        remaining = int(REKEY_COOLDOWN_SECONDS - (time.time() - last_rekey))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Recovery rate limited. Retry in {remaining}s",
+        )
+
+    async with admin_connection(pool) as conn:
+        # Step 1: Verify the site exists.
+        site = await conn.fetchrow(
+            "SELECT site_id FROM sites WHERE site_id = $1", req.site_id
+        )
+        if not site:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Site {req.site_id!r} not found — create site first",
+            )
+
+        # Step 2: UPSERT site_appliances. Existing row is left alone
+        # (no overwrite of last_checkin / agent_version etc — those are
+        # daemon-driven). Only the missing-row case INSERTs.
+        existing = await conn.fetchrow(
+            """
+            SELECT appliance_id, first_checkin
+              FROM site_appliances
+             WHERE appliance_id = $1
+               AND site_id = $2
+            """,
+            appliance_id, req.site_id,
+        )
+        row_was_created = False
+        if not existing:
+            await conn.execute(
+                """
+                INSERT INTO site_appliances
+                  (site_id, appliance_id, mac_address, hostname, status, created_at)
+                VALUES ($1, $2, $3, $4, 'pending', NOW())
+                """,
+                req.site_id, appliance_id, mac_normalized, req.hostname,
+            )
+            row_was_created = True
+            logger.warning(
+                "admin_restore created site_appliances row: site=%s mac=%s reason=%r",
+                req.site_id, mac_normalized, req.reason,
+            )
+
+        # Step 3: Mint api_key + INSERT (Migration 209 trigger
+        # auto-deactivates any prior active rows for this
+        # (site_id, appliance_id) pair).
+        raw_api_key = secrets.token_urlsafe(32)
+        api_key_hash = hashlib.sha256(raw_api_key.encode()).hexdigest()
+
+        await conn.execute(
+            """
+            INSERT INTO api_keys (
+                site_id, appliance_id, key_hash, key_prefix,
+                description, active, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, true, NOW())
+            """,
+            req.site_id, appliance_id, api_key_hash, raw_api_key[:8],
+            f"Admin-restore by {user.get('username','?')}: {req.reason[:200]}",
+        )
+
+        # Step 4: Clear any auth-failure tracking (the row may have
+        # been re-INSERTed clean above, but if it was a legacy row that
+        # got bumped out of auth, this normalizes it).
+        await conn.execute(
+            """
+            UPDATE site_appliances
+               SET auth_failure_since = NULL,
+                   auth_failure_count = 0,
+                   last_auth_failure = NULL
+             WHERE appliance_id = $1
+            """,
+            appliance_id,
+        )
+
+        # Step 5: Audit log (NOT just /rekey style — this is operator
+        # action with a named human + a free-form reason).
+        client_ip = request.client.host if request.client else None
+        import json as _json
+        await conn.execute(
+            """
+            INSERT INTO admin_audit_log
+              (action, actor, target, details, ip_address)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            "appliance.admin_restore",
+            user.get("username", "unknown"),
+            f"appliance:{appliance_id}",
+            _json.dumps({
+                "site_id": req.site_id,
+                "mac": mac_normalized,
+                "row_was_created": row_was_created,
+                "reason": req.reason,
+            }),
+            client_ip,
+        )
+
+    _rekey_cooldowns[appliance_id] = time.time()
+    logger.info(
+        "admin_restore successful: appliance=%s site=%s row_was_created=%s actor=%s",
+        appliance_id, req.site_id, row_was_created, user.get("username", "?"),
+    )
+
+    return {
+        "status": "restored",
+        "api_key": raw_api_key,
+        "appliance_id": appliance_id,
+        "row_was_created": row_was_created,
+    }
+
+
+async def _resolve_admin(request: Request):
+    """Inline admin auth check.
+
+    Avoids the circular-import chain auth.py → ... → provisioning.py
+    by deferring the import. require_admin returns the caller's user
+    record dict or raises HTTPException(401/403).
+    """
+    from .auth import require_auth, require_admin
+    user = await require_auth(request)
+    return await require_admin(user)

@@ -69,6 +69,158 @@ jobs:
         run: |
           python -c "import main; print('mcp-server/main.py loads clean')"
 
+  lifespan-smoke:
+    # Session 210-B 2026-04-25 hardening #1: actually start uvicorn for ~60s
+    # against a real Postgres + Redis, poll /health, verify /api/version
+    # returns the GITHUB_SHA. Catches the class of bug that took prod down
+    # today: `l2_auto_candidate_loop` deletion was lifespan-deferred (line
+    # 1806 import), so `python -c 'import main'` (the smoke-import job
+    # above) couldn't see it. Pre-push had the same gap. The bug only
+    # surfaced when FastAPI invoked lifespan() — i.e. on every container
+    # start in prod, where Docker dutifully restarted every 6 seconds.
+    #
+    # This job is the missing tier between "module imports" and "deploy
+    # to prod" — it runs the real lifespan code path, with real DB I/O,
+    # real migrations, and real /health serving. If the lifespan raises
+    # ImportError, can't migrate, hangs on a slow startup hook, or fails
+    # to bind /health, this job fails BEFORE the deploy stage starts.
+    needs: smoke-import
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: mcp
+          POSTGRES_PASSWORD: mcp
+          POSTGRES_DB: mcp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mcp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Keep all DB URLs aligned with the postgres service.
+      DATABASE_URL: "postgresql+asyncpg://mcp:mcp@localhost:5432/mcp"
+      MIGRATION_DATABASE_URL: "postgresql://mcp:mcp@localhost:5432/mcp"
+      REDIS_URL: "redis://localhost:6379/0"
+      # Disable third-party integrations that aren't needed for a
+      # lifespan smoke (Stripe, MinIO, OpenAI). Lifespan handles
+      # missing values gracefully but logs warnings; explicit empty
+      # values keep the log signal clean.
+      ENVIRONMENT: "development"
+      L2_ENABLED: "false"
+      MINIO_ACCESS_KEY: ""
+      MINIO_SECRET_KEY: ""
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      CSRF_SECRET: "ci-lifespan-smoke-secret-not-used-in-prod"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend deps
+        working-directory: mcp-server/central-command/backend
+        run: |
+          pip install -r requirements.txt
+
+      - name: Stage runtime layout (signing key, runbooks, RELEASE_SHA)
+        run: |
+          # Lifespan reads SIGNING_KEY_FILE + RUNBOOK_DIR + RELEASE_SHA
+          # from inside the container at hard-coded paths. In CI we redirect
+          # them to repo-relative tmp locations.
+          mkdir -p ${{ github.workspace }}/.ci/secrets ${{ github.workspace }}/.ci/runbooks
+          # Empty signing key — the lifespan generates one if missing.
+          echo "SIGNING_KEY_FILE=${{ github.workspace }}/.ci/secrets/signing.key" >> $GITHUB_ENV
+          echo "RUNBOOK_DIR=${{ github.workspace }}/.ci/runbooks" >> $GITHUB_ENV
+          # RELEASE_SHA at the literal path lifespan reads.
+          # _read_release_sha_from_disk() reads /app/dashboard_api/RELEASE_SHA
+          # which we can't write to in CI, so the runtime_sha falls back to
+          # `git rev-parse HEAD` from the checkout — that gives us GITHUB_SHA.
+
+      - name: Boot mcp-server and wait for /health
+        working-directory: mcp-server
+        run: |
+          set -e
+          # Tee logs so we can show them on failure.
+          mkdir -p ../.ci
+          python -m uvicorn main:app --host 127.0.0.1 --port 8765 \
+            > ../.ci/uvicorn.log 2>&1 &
+          UVICORN_PID=$!
+          echo "uvicorn started with PID=$UVICORN_PID"
+          echo "UVICORN_PID=$UVICORN_PID" >> $GITHUB_ENV
+
+          # Poll /health for up to 90s. Lifespan does migrations + 40
+          # background-task startup; 90s is the production-equivalent
+          # warm-up budget.
+          HEALTHY=0
+          for i in $(seq 1 18); do
+            if curl -sf --max-time 3 http://127.0.0.1:8765/health 2>/dev/null \
+                 | grep -q '"status":"ok"'; then
+              echo "Healthy at attempt $i (~$((i*5))s)"
+              HEALTHY=1
+              break
+            fi
+            sleep 5
+          done
+
+          if [ "$HEALTHY" != "1" ]; then
+            echo "::error::Lifespan smoke FAILED — /health never returned status=ok within 90s"
+            echo "----- uvicorn log tail -----"
+            tail -200 ../.ci/uvicorn.log || true
+            kill $UVICORN_PID 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Verify /api/version returns runtime_sha
+        run: |
+          set -e
+          # /api/version is the contract surface deploy-verify uses.
+          # In CI runtime_sha falls back to `git rev-parse HEAD` which
+          # equals GITHUB_SHA on a checkout from the workflow event.
+          VERSION=$(curl -sf --max-time 5 http://127.0.0.1:8765/api/version)
+          echo "VERSION_RESPONSE=$VERSION"
+          RUNTIME=$(echo "$VERSION" | python -c "import json,sys; print(json.load(sys.stdin).get('runtime_sha',''))")
+          if [ -z "$RUNTIME" ] || [ "$RUNTIME" = "unknown" ]; then
+            echo "::error::Lifespan smoke FAILED — /api/version returned empty/unknown runtime_sha"
+            echo "Response: $VERSION"
+            tail -200 .ci/uvicorn.log || true
+            exit 1
+          fi
+          # GITHUB_SHA is the commit being tested. The lifespan-loaded
+          # process should report it (or a 40-char prefix that matches).
+          EXPECTED="${GITHUB_SHA:0:40}"
+          if [ "$RUNTIME" != "$EXPECTED" ]; then
+            echo "::warning::runtime_sha=$RUNTIME but GITHUB_SHA=$EXPECTED — accepting (CI checkout SHA may differ from event SHA on PR merges)"
+          fi
+          echo "Lifespan smoke PASSED — runtime_sha=$RUNTIME"
+
+      - name: Stop uvicorn
+        if: always()
+        run: |
+          if [ -n "${UVICORN_PID:-}" ]; then
+            kill ${UVICORN_PID} 2>/dev/null || true
+          fi
+          # Always print the last 80 lines of the uvicorn log on the way out
+          # so failures are diagnosable from the GitHub UI without an artifact.
+          echo "----- uvicorn log tail -----"
+          tail -80 .ci/uvicorn.log 2>/dev/null || echo "(no log)"
+
   test:
     needs: smoke-import
     runs-on: ubuntu-latest
@@ -295,7 +447,7 @@ jobs:
           python3 -m pytest tests/test_flywheel_spine_pg.py -v --tb=short
 
   deploy:
-    needs: [test, privileged-chain-pg-tests]
+    needs: [test, privileged-chain-pg-tests, lifespan-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

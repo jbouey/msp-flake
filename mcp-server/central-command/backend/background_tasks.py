@@ -2427,3 +2427,56 @@ async def client_telemetry_retention_loop():
                 extra={"error_class": type(e).__name__},
             )
         await asyncio.sleep(86400)  # 24h
+
+
+async def data_hygiene_gc_loop():
+    """Session 210-B 2026-04-25 hardening #3: bound the size of
+    high-cardinality tables that don't have on-write GC.
+
+    Calls Migration 244's prune_*() functions every 24h:
+      - prune_install_sessions(30)   — installer sessions older than 30d
+      - prune_nonces(4)              — sigauth nonces older than 4h
+      - prune_discovered_devices(60) — discovered devices unseen 60d+
+
+    Each prune is logged with deleted_count when > 0. Failures are
+    logged at error and we sleep — next cycle re-tries. Pre-migration-244
+    period is tolerated (function-not-exists is caught in the per-prune
+    try/except and only the first iteration warns).
+    """
+    _hb("data_hygiene_gc")
+    await asyncio.sleep(900)  # 15-min startup delay; runs after migrations settle
+    while True:
+        _hb("data_hygiene_gc")
+        for fn_call, args in [
+            ("prune_install_sessions", "(30)"),
+            ("prune_nonces", "(4)"),
+            ("prune_discovered_devices", "(60)"),
+        ]:
+            try:
+                async with async_session() as db:
+                    result = await db.execute(
+                        text(f"SELECT {fn_call}{args} AS deleted")
+                    )
+                    deleted = result.scalar() or 0
+                    await db.commit()
+                    if deleted > 0:
+                        logger.info(
+                            "data_hygiene_gc pruned",
+                            function=fn_call,
+                            deleted_count=int(deleted),
+                        )
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error(
+                    "data_hygiene_gc_failed",
+                    exc_info=True,
+                    extra={
+                        "function": fn_call,
+                        "error_class": type(e).__name__,
+                    },
+                )
+        try:
+            await asyncio.sleep(86400)  # 24h
+        except asyncio.CancelledError:
+            return
