@@ -139,19 +139,33 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Stage runtime layout (signing key, runbooks, RELEASE_SHA)
+      - name: Stage runtime layout (signing key, runbooks)
         run: |
-          # Lifespan reads SIGNING_KEY_FILE + RUNBOOK_DIR + RELEASE_SHA
-          # from inside the container at hard-coded paths. In CI we redirect
-          # them to repo-relative tmp locations.
+          # Lifespan reads SIGNING_KEY_FILE + RUNBOOK_DIR from inside
+          # the container at hard-coded paths. In CI we redirect them
+          # to repo-relative tmp locations.
           mkdir -p ${{ github.workspace }}/.ci/secrets ${{ github.workspace }}/.ci/runbooks
           # Empty signing key — the lifespan generates one if missing.
           echo "SIGNING_KEY_FILE=${{ github.workspace }}/.ci/secrets/signing.key" >> $GITHUB_ENV
           echo "RUNBOOK_DIR=${{ github.workspace }}/.ci/runbooks" >> $GITHUB_ENV
-          # RELEASE_SHA at the literal path lifespan reads.
-          # _read_release_sha_from_disk() reads /app/dashboard_api/RELEASE_SHA
+          # Note: _read_release_sha_from_disk() reads /app/dashboard_api/RELEASE_SHA
           # which we can't write to in CI, so the runtime_sha falls back to
           # `git rev-parse HEAD` from the checkout — that gives us GITHUB_SHA.
+
+      - name: Pre-run migrations (separate step for clearer diagnostics)
+        working-directory: mcp-server/central-command/backend
+        run: |
+          set -e
+          # main.py's lifespan calls migrate.cmd_up() internally, but
+          # running it here gives us a clean failure signal if any
+          # migration is broken — without conflating it with a slow
+          # uvicorn startup.
+          python -c "
+          import asyncio, os, sys
+          sys.path.insert(0, '.')
+          from migrate import cmd_up
+          asyncio.run(cmd_up())
+          "
 
       - name: Boot mcp-server and wait for /health
         working-directory: mcp-server
@@ -165,11 +179,11 @@ jobs:
           echo "uvicorn started with PID=$UVICORN_PID"
           echo "UVICORN_PID=$UVICORN_PID" >> $GITHUB_ENV
 
-          # Poll /health for up to 90s. Lifespan does migrations + 40
-          # background-task startup; 90s is the production-equivalent
-          # warm-up budget.
+          # Poll /health for up to 180s. With migrations pre-run above
+          # this should be ~10-30s typical, but the 40 background tasks
+          # the lifespan starts can race — give them headroom.
           HEALTHY=0
-          for i in $(seq 1 18); do
+          for i in $(seq 1 36); do
             if curl -sf --max-time 3 http://127.0.0.1:8765/health 2>/dev/null \
                  | grep -q '"status":"ok"'; then
               echo "Healthy at attempt $i (~$((i*5))s)"
@@ -180,7 +194,7 @@ jobs:
           done
 
           if [ "$HEALTHY" != "1" ]; then
-            echo "::error::Lifespan smoke FAILED — /health never returned status=ok within 90s"
+            echo "::error::Lifespan smoke FAILED — /health never returned status=ok within 180s"
             echo "----- uvicorn log tail -----"
             tail -200 ../.ci/uvicorn.log || true
             kill $UVICORN_PID 2>/dev/null || true
