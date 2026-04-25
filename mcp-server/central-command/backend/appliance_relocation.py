@@ -259,3 +259,131 @@ async def detect_and_record_relocation(
         "from_subnet": f"{prev_subnet}.0/24",
         "to_subnet": f"{curr_subnet}.0/24",
     }
+
+
+async def emit_admin_relocation_bundle(
+    conn: asyncpg.Connection,
+    *,
+    source_site_id: str,
+    target_site_id: str,
+    mac_address: str,
+    relocation_id: int,
+    actor: str,
+    reason: str,
+) -> Optional[str]:
+    """Admin-initiated sibling of detect_and_record_relocation.
+
+    Round-table RT-7 (Session 210-B 2026-04-25). Every relocation
+    issued via POST /api/sites/{site_id}/appliances/{aid}/relocate
+    writes a compliance_bundle so the customer's evidence chain
+    reflects the move with the same cryptographic footing as auto-
+    detected subnet-diff relocations.
+
+    Differences from the auto-detect path:
+      - check_result = 'admin_initiated' (vs 'detected') so the H6
+        feed can render "operator-initiated" vs "automatically
+        detected" with distinct UX
+      - summary carries actor + reason + relocation_id pointing at
+        relocations.id (the append-only tracker from Migration 245)
+      - bundle_id prefix is 'AR-ADMIN-' so the auditor can grep the
+        chain by initiation type
+
+    Bundle is hash-chained to the site's prior evidence (same as
+    every other compliance_bundles row). Returns the bundle_id on
+    success, or None on failure (logged at error). The relocate
+    endpoint logs missing bundles loudly so an evidence-chain gap
+    is visible without needing to query.
+
+    Notes:
+      - Hash-chains under the SOURCE site_id. The source site is
+        where the appliance lived before the move; auditor reading
+        that site's chain will see the relocation departure.
+      - Could also write a "arrival" bundle under the TARGET site,
+        but for now a single bundle on the source side is enough
+        — auditor can join via relocation_id.
+    """
+    now = datetime.now(timezone.utc)
+
+    check_record = {
+        "kind": "appliance_relocation",
+        "event": "admin_initiated_relocation",
+        "source_site_id": source_site_id,
+        "target_site_id": target_site_id,
+        "mac_address": mac_address,
+        "relocation_id": relocation_id,
+        "actor": actor,
+        "reason": reason,
+        "initiated_at": now.isoformat(),
+        "method": "POST /api/sites/.../relocate",
+    }
+    checks_payload = [check_record]
+    summary_payload = {
+        "event_type": "appliance_relocation_admin_initiated",
+        "evidence_class": "appliance_relocation",
+        "source_site_id": source_site_id,
+        "target_site_id": target_site_id,
+        "actor": actor,
+        "relocation_id": relocation_id,
+        "count": 1,
+    }
+
+    prev = await _get_prev_bundle(conn, source_site_id)
+    prev_bundle_id = prev["bundle_id"] if prev else None
+    prev_hash = prev["bundle_hash"] if prev else "0" * 64
+    chain_position = (prev["chain_position"] + 1) if prev else 0
+
+    canonical = _canonical(
+        {
+            "site_id": source_site_id,
+            "checked_at": now.isoformat(),
+            "check_type": "appliance_relocation",
+            "checks": checks_payload,
+            "summary": summary_payload,
+            "prev_hash": prev_hash,
+            "chain_position": chain_position,
+        }
+    )
+    bundle_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    chain_hash = hashlib.sha256(
+        (prev_hash + bundle_hash).encode("utf-8")
+    ).hexdigest()
+
+    signature_hex = _sign_bundle_hash(bundle_hash) or ""
+    bundle_id = f"AR-ADMIN-{now.strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}"
+
+    try:
+        await conn.execute(
+            """
+            INSERT INTO compliance_bundles (
+                site_id, bundle_id, bundle_hash, check_type, check_result,
+                checked_at, checks, summary,
+                agent_signature, signed_data, signature_valid,
+                prev_bundle_id, prev_hash, chain_position, chain_hash,
+                signature, signed_by, ots_status
+            ) VALUES (
+                $1, $2, $3, 'appliance_relocation', 'admin_initiated',
+                $4, $5::jsonb, $6::jsonb,
+                NULL, $7, true,
+                $8, $9, $10, $11,
+                $12, 'central-command-server', 'batching'
+            )
+            """,
+            source_site_id, bundle_id, bundle_hash,
+            now,
+            json.dumps(checks_payload), json.dumps(summary_payload),
+            canonical,
+            prev_bundle_id, prev_hash, chain_position, chain_hash,
+            signature_hex,
+        )
+    except Exception as e:
+        logger.error(
+            "admin_relocation_bundle write failed source=%s mac=%s err=%s",
+            source_site_id, mac_address, e, exc_info=True,
+        )
+        return None
+
+    logger.info(
+        "appliance_relocation_admin_initiated source=%s target=%s mac=%s actor=%s bundle=%s",
+        source_site_id, target_site_id, mac_address, actor, bundle_id,
+    )
+    return bundle_id

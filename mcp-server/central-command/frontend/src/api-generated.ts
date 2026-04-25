@@ -13816,6 +13816,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/provision/admin/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admin Restore Appliance
+         * @description ADMIN-ONLY recovery for orphaned appliances.
+         *
+         *     Use case (Session 210-B 2026-04-25): a manual cleanup pass deleted
+         *     `site_appliances` rows for a MAC but the physical box was still
+         *     alive. The standard `/api/provision/rekey` endpoint refuses to
+         *     re-key because it requires an existing row. This endpoint:
+         *
+         *       1. Verifies the site exists
+         *       2. UPSERTs the site_appliances row (status='pending' if new,
+         *          left alone if existing)
+         *       3. Mints a fresh api_key
+         *       4. Deactivates any prior active keys for this (site, appliance)
+         *       5. Writes an audit-log entry with the operator's reason
+         *
+         *     Auth: admin Bearer token. The endpoint is mounted on the public
+         *     API surface but require_admin gates it. We use FastAPI's regular
+         *     `Depends(require_admin)` rather than the appliance bearer because
+         *     the calling actor is an operator, not the appliance itself.
+         *
+         *     Rate limited via the same _rekey_cooldowns map as /rekey.
+         *
+         *     Returns the same shape as /rekey so the recovery script can be
+         *     a drop-in replacement.
+         */
+        post: operations["admin_restore_appliance_api_provision_admin_restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/provision/breakglass-submit": {
         parameters: {
             query?: never;
@@ -14760,6 +14802,51 @@ export interface paths {
         get: operations["get_pending_orders_api_sites__site_id__appliances__appliance_id__orders_pending_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sites/{site_id}/appliances/{appliance_id}/relocate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Relocate Appliance
+         * @description Relocate an appliance from `site_id` to `req.target_site_id`.
+         *
+         *     Atomic transaction:
+         *       1. Validate source row exists, target site exists, both belong to
+         *          the same client_org_id (cross-org moves not supported here —
+         *          that's a privileged-chain operation).
+         *       2. UPSERT site_appliances at the target site (new appliance_id).
+         *       3. Mint a fresh api_key, INSERT into api_keys for the target.
+         *       4. Soft-delete the source site_appliances row + deactivate its
+         *          api_keys (Migration 209 trigger handles same-(site,appliance)
+         *          dedup, but we also explicitly deactivate the OLD appliance_id
+         *          row since it's about to be unused).
+         *       5. Audit: admin_audit_log with action=appliance.relocate.
+         *
+         *     Daemon-side completion (until v0.4.11 ships the relocate_appliance
+         *     fleet-order handler): the response includes a one-shot SSH command
+         *     the operator runs against the appliance, atomically updating
+         *     config.yaml's site_id + api_key + restarting the daemon. After
+         *     daemon v0.4.11 lands, this endpoint will additionally issue a
+         *     fleet_order(type=relocate_appliance, params=...) and the daemon
+         *     will self-relocate without operator intervention.
+         *
+         *     Auth: require_operator. Cross-org enforcement: source.client_org_id
+         *     must equal target.client_org_id (a partner can move appliances
+         *     between their owned sites; a partner can NOT move an appliance to
+         *     a different partner's site).
+         */
+        post: operations["relocate_appliance_api_sites__site_id__appliances__appliance_id__relocate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -16221,6 +16308,29 @@ export interface components {
         AdminPayoutRun: {
             /** Period Start */
             period_start: string;
+        };
+        /**
+         * AdminRestoreRequest
+         * @description Request to admin-restore an appliance whose site_appliances row
+         *     was deleted (e.g. by a cleanup pass) but whose physical box is
+         *     still alive and trying to check in.
+         *
+         *     Distinct from `RekeyRequest` because it explicitly creates the
+         *     site_appliances row if missing, which `/api/provision/rekey`
+         *     rejects as 'unknown appliance.' Reason ≥ 20 chars is required so
+         *     the audit log carries why we re-created the row.
+         */
+        AdminRestoreRequest: {
+            /** Hardware Id */
+            hardware_id?: string | null;
+            /** Hostname */
+            hostname?: string | null;
+            /** Mac Address */
+            mac_address: string;
+            /** Reason */
+            reason: string;
+            /** Site Id */
+            site_id: string;
         };
         /**
          * AgentDeploymentReport
@@ -21242,6 +21352,23 @@ export interface components {
             size_bytes: number | null;
             /** Version */
             version: string;
+        };
+        /**
+         * RelocateApplianceRequest
+         * @description Move an appliance from one site to another within the same org.
+         *
+         *     Session 210-B 2026-04-25 hardening #6: today's orphan recovery
+         *     surfaced the gap that a partner couldn't move an appliance between
+         *     their owned sites without three layers of manual ops (SQL, SSH,
+         *     config.yaml hand-edit). This endpoint makes it a first-class
+         *     administrative action with audit + scoping + key minting in one
+         *     atomic transaction.
+         */
+        RelocateApplianceRequest: {
+            /** Reason */
+            reason: string;
+            /** Target Site Id */
+            target_site_id: string;
         };
         /** RelocationAck */
         RelocationAck: {
@@ -44690,6 +44817,39 @@ export interface operations {
             };
         };
     };
+    admin_restore_appliance_api_provision_admin_restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     submit_breakglass_api_provision_breakglass_submit_post: {
         parameters: {
             query?: never;
@@ -46129,6 +46289,42 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    relocate_appliance_api_sites__site_id__appliances__appliance_id__relocate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: string;
+                appliance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RelocateApplianceRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

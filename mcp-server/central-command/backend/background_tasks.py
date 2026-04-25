@@ -2430,13 +2430,21 @@ async def client_telemetry_retention_loop():
 
 
 async def data_hygiene_gc_loop():
-    """Session 210-B 2026-04-25 hardening #3: bound the size of
-    high-cardinality tables that don't have on-write GC.
+    """Session 210-B 2026-04-25 hardening #3 + RT-4: bound the size of
+    high-cardinality tables that don't have on-write GC, and finalize
+    pending appliance relocations.
 
     Calls Migration 244's prune_*() functions every 24h:
       - prune_install_sessions(30)   — installer sessions older than 30d
       - prune_nonces(4)              — sigauth nonces older than 4h
       - prune_discovered_devices(60) — discovered devices unseen 60d+
+
+    Calls Migration 245's finalize_pending_relocations() every cycle:
+      - flips 'pending' relocations whose target has checked in to
+        'completed' (and soft-deletes the source row + deactivates
+        source api_keys)
+      - flips 'pending' relocations older than 30 min to 'expired'
+        (substrate `relocation_stalled` invariant fires alongside)
 
     Each prune is logged with deleted_count when > 0. Failures are
     logged at error and we sleep — next cycle re-tries. Pre-migration-244
@@ -2478,5 +2486,55 @@ async def data_hygiene_gc_loop():
                 )
         try:
             await asyncio.sleep(86400)  # 24h
+        except asyncio.CancelledError:
+            return
+
+
+async def relocation_finalize_loop():
+    """Round-table RT-4 (Session 210-B 2026-04-25). Sweep
+    `relocations` table every 60s: flip 'pending' → 'completed' when
+    target site_appliances has checked in past initiated_at, OR
+    'pending' → 'expired' if 30 min has elapsed without a target
+    checkin.
+
+    Cadence is 60s (vs the daily prune cadence) so a daemon's
+    successful target checkin is reflected in the dashboard within
+    a minute. Calls Migration 245's finalize_pending_relocations()
+    SQL function; the heavy lifting is server-side in plpgsql.
+
+    Tolerates pre-Migration-245 deploys: function-not-exists is logged
+    once per cycle but the loop keeps going.
+    """
+    _hb("relocation_finalize")
+    await asyncio.sleep(120)  # short startup delay; runs after migrations
+    while True:
+        _hb("relocation_finalize")
+        try:
+            async with async_session() as db:
+                result = await db.execute(
+                    text("SELECT * FROM finalize_pending_relocations()")
+                )
+                row = result.first()
+                await db.commit()
+                if row:
+                    completed = int(row.completed_count or 0)
+                    expired = int(row.expired_count or 0)
+                    if completed > 0 or expired > 0:
+                        logger.info(
+                            "relocations finalized",
+                            completed_count=completed,
+                            expired_count=expired,
+                        )
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            # Pre-Migration-245 — function-not-exists. Log + sleep.
+            logger.error(
+                "relocation_finalize_failed",
+                exc_info=True,
+                extra={"error_class": type(e).__name__},
+            )
+        try:
+            await asyncio.sleep(60)
         except asyncio.CancelledError:
             return

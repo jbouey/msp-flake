@@ -117,6 +117,52 @@
         "title": "AdminPayoutRun",
         "type": "object"
       },
+      "AdminRestoreRequest": {
+        "description": "Request to admin-restore an appliance whose site_appliances row\nwas deleted (e.g. by a cleanup pass) but whose physical box is\nstill alive and trying to check in.\n\nDistinct from `RekeyRequest` because it explicitly creates the\nsite_appliances row if missing, which `/api/provision/rekey`\nrejects as 'unknown appliance.' Reason ≥ 20 chars is required so\nthe audit log carries why we re-created the row.",
+        "properties": {
+          "hardware_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hardware Id"
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname"
+          },
+          "mac_address": {
+            "title": "Mac Address",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "mac_address",
+          "reason"
+        ],
+        "title": "AdminRestoreRequest",
+        "type": "object"
+      },
       "AgentDeploymentReport": {
         "description": "Agent deployment results report from appliance.",
         "properties": {
@@ -12269,6 +12315,25 @@
           "is_latest"
         ],
         "title": "ReleaseResponse",
+        "type": "object"
+      },
+      "RelocateApplianceRequest": {
+        "description": "Move an appliance from one site to another within the same org.\n\nSession 210-B 2026-04-25 hardening #6: today's orphan recovery\nsurfaced the gap that a partner couldn't move an appliance between\ntheir owned sites without three layers of manual ops (SQL, SSH,\nconfig.yaml hand-edit). This endpoint makes it a first-class\nadministrative action with audit + scoping + key minting in one\natomic transaction.",
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "target_site_id": {
+            "title": "Target Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_site_id",
+          "reason"
+        ],
+        "title": "RelocateApplianceRequest",
         "type": "object"
       },
       "RelocationAck": {
@@ -50641,6 +50706,46 @@
         ]
       }
     },
+    "/api/provision/admin/restore": {
+      "post": {
+        "description": "ADMIN-ONLY recovery for orphaned appliances.\n\nUse case (Session 210-B 2026-04-25): a manual cleanup pass deleted\n`site_appliances` rows for a MAC but the physical box was still\nalive. The standard `/api/provision/rekey` endpoint refuses to\nre-key because it requires an existing row. This endpoint:\n\n  1. Verifies the site exists\n  2. UPSERTs the site_appliances row (status='pending' if new,\n     left alone if existing)\n  3. Mints a fresh api_key\n  4. Deactivates any prior active keys for this (site, appliance)\n  5. Writes an audit-log entry with the operator's reason\n\nAuth: admin Bearer token. The endpoint is mounted on the public\nAPI surface but require_admin gates it. We use FastAPI's regular\n`Depends(require_admin)` rather than the appliance bearer because\nthe calling actor is an operator, not the appliance itself.\n\nRate limited via the same _rekey_cooldowns map as /rekey.\n\nReturns the same shape as /rekey so the recovery script can be\na drop-in replacement.",
+        "operationId": "admin_restore_appliance_api_provision_admin_restore_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Restore Appliance",
+        "tags": [
+          "provisioning"
+        ]
+      }
+    },
     "/api/provision/breakglass-submit": {
       "post": {
         "description": "Main-daemon posts the locally-generated passphrase after first\nboot. Bearer must be the main daemon's per-appliance key\n(bearer_aid == req.appliance_id, no -watchdog suffix).\n\nUpsert: re-provisioning an appliance (flash + reinstall) generates\na NEW passphrase and replaces the old one. passphrase_version\nincrements so the admin history shows rotations.",
@@ -52939,6 +53044,66 @@
           }
         },
         "summary": "Get Pending Orders",
+        "tags": [
+          "sites"
+        ]
+      }
+    },
+    "/api/sites/{site_id}/appliances/{appliance_id}/relocate": {
+      "post": {
+        "description": "Relocate an appliance from `site_id` to `req.target_site_id`.\n\nAtomic transaction:\n  1. Validate source row exists, target site exists, both belong to\n     the same client_org_id (cross-org moves not supported here —\n     that's a privileged-chain operation).\n  2. UPSERT site_appliances at the target site (new appliance_id).\n  3. Mint a fresh api_key, INSERT into api_keys for the target.\n  4. Soft-delete the source site_appliances row + deactivate its\n     api_keys (Migration 209 trigger handles same-(site,appliance)\n     dedup, but we also explicitly deactivate the OLD appliance_id\n     row since it's about to be unused).\n  5. Audit: admin_audit_log with action=appliance.relocate.\n\nDaemon-side completion (until v0.4.11 ships the relocate_appliance\nfleet-order handler): the response includes a one-shot SSH command\nthe operator runs against the appliance, atomically updating\nconfig.yaml's site_id + api_key + restarting the daemon. After\ndaemon v0.4.11 lands, this endpoint will additionally issue a\nfleet_order(type=relocate_appliance, params=...) and the daemon\nwill self-relocate without operator intervention.\n\nAuth: require_operator. Cross-org enforcement: source.client_org_id\nmust equal target.client_org_id (a partner can move appliances\nbetween their owned sites; a partner can NOT move an appliance to\na different partner's site).",
+        "operationId": "relocate_appliance_api_sites__site_id__appliances__appliance_id__relocate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "appliance_id",
+            "required": true,
+            "schema": {
+              "title": "Appliance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelocateApplianceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Relocate Appliance",
         "tags": [
           "sites"
         ]

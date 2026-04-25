@@ -662,6 +662,22 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_appliance_moved_unack(c),
     ),
     Assertion(
+        name="relocation_stalled",
+        severity="sev2",
+        description=(
+            "An admin-initiated appliance relocation has been pending > 30 min — "
+            "the daemon never picked up its reprovision order or never produced "
+            "a successful checkin under the target site. Same risk class as "
+            "today's orphan: the source row is in 'relocating' state, the "
+            "target row exists but never received a checkin. Either the "
+            "daemon's offline, the reprovision order failed, or the daemon "
+            "version is too old to handle reprovision (should have been gated "
+            "by the relocate endpoint, but worth surfacing if the gate slipped). "
+            "Round-table RT-4 (Session 210-B 2026-04-25)."
+        ),
+        check=lambda c: _check_relocation_stalled(c),
+    ),
+    Assertion(
         name="phantom_detector_healthy",
         severity="sev1",
         description="The phantom_detector_loop (orthogonal liveness verifier) must heartbeat within 15 min. Silent crash = entire layer of phantom-appliance-online defense silently disabled. 2026-04-16 incident: schema drift crashed it for hours undetected.",
@@ -913,6 +929,17 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "category + free-text detail. If this move was NOT expected, treat as a security "
             "incident: verify physical location, check for tampering, investigate shadow IT. "
             "HIPAA §164.310(d)(1) audit trail.",
+    },
+    "relocation_stalled": {
+        "display_name": "Admin-initiated relocation stalled (>30 min pending)",
+        "recommended_action": "Daemon never completed the move. Walk the diagnostic "
+            "ladder: (1) is the appliance online; (2) does it report agent_version ≥ 0.4.11 "
+            "(required for fleet_order path); (3) was a reprovision fleet_order issued "
+            "(check details.fleet_order_id); (4) inspect the appliance's "
+            "/var/lib/msp/appliance-daemon.log for the order ACK + any error. To recover: "
+            "re-issue the relocate (same target_site_id) — endpoint is idempotent if the "
+            "previous attempt has expired/failed. Or manually push via the ssh_snippet path "
+            "(daemon < 0.4.11) using the new_api_key from the original response.",
     },
     "phantom_detector_healthy": {
         "display_name": "Phantom-appliance detector is not running",
@@ -2042,6 +2069,67 @@ async def _check_appliance_moved_unack(conn: asyncpg.Connection) -> List[Violati
                     "with a reason_category + free-text detail. If this move "
                     "was NOT expected, treat as a security incident: verify "
                     "physical location, check for tampering, investigate."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_relocation_stalled(conn: asyncpg.Connection) -> List[Violation]:
+    """Round-table RT-4 (Session 210-B 2026-04-25). An admin-initiated
+    relocation has been pending > 30 min. Either the daemon is offline,
+    the reprovision order failed, or the daemon version is too old to
+    handle reprovision (the relocate endpoint should have caught that
+    via its version-gate, but worth surfacing if the gate ever slips).
+
+    The finalize_pending_relocations() background sweep auto-flips
+    stalled rows to 'expired' status after 30 min. This invariant
+    fires on the SAME 30-min boundary so the dashboard alerts the
+    operator at the moment of expiration; the row stays at 'pending'
+    until the next sweep cycle, at which point it becomes 'expired'.
+    Either state is a real signal — daemon failed to complete the
+    move and operator must investigate.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT r.id, r.source_site_id, r.target_site_id,
+               r.source_appliance_id, r.target_appliance_id,
+               r.mac_address, r.actor, r.reason, r.fleet_order_id,
+               EXTRACT(EPOCH FROM (NOW() - r.initiated_at))/60 AS minutes_pending
+          FROM relocations r
+         WHERE r.status IN ('pending','expired')
+           AND r.initiated_at < NOW() - INTERVAL '30 minutes'
+           AND r.completed_at IS NULL
+        """
+    )
+    return [
+        Violation(
+            site_id=r["source_site_id"],
+            details={
+                "relocation_id": r["id"],
+                "mac_address": r["mac_address"],
+                "source_site_id": r["source_site_id"],
+                "target_site_id": r["target_site_id"],
+                "source_appliance_id": r["source_appliance_id"],
+                "target_appliance_id": r["target_appliance_id"],
+                "actor": r["actor"],
+                "reason": r["reason"],
+                "fleet_order_id": r["fleet_order_id"],
+                "minutes_pending": round(float(r["minutes_pending"]), 1),
+                "remediation": (
+                    "Daemon never completed the move. Investigate: "
+                    "(1) is the appliance online (check site_appliances."
+                    f"last_checkin for {r['source_appliance_id']!r}); "
+                    "(2) was a reprovision fleet_order issued "
+                    f"({'yes — id=' + r['fleet_order_id'] if r['fleet_order_id'] else 'NO — daemon < 0.4.11, ssh_snippet was returned to operator'}); "
+                    "(3) is the daemon version current (must be ≥ 0.4.11 for "
+                    "fleet_order path); (4) check the appliance's "
+                    "/var/lib/msp/appliance-daemon.log for the order receipt "
+                    "+ any error. To force completion: re-issue with the "
+                    "ssh_snippet from the original relocate response, OR "
+                    "manually finalize via UPDATE relocations SET status="
+                    "'failed', completed_at=NOW() WHERE id=$RELOCATION_ID."
                 ),
             },
         )

@@ -1827,6 +1827,7 @@ async def lifespan(app: FastAPI):
         mesh_reassignment_loop,
         client_telemetry_retention_loop,  # Session 210 round-table #5
         data_hygiene_gc_loop,             # Session 210-B hardening #3
+        relocation_finalize_loop,         # Session 210-B RT-4
     )
     from dashboard_api.privileged_access_notifier import privileged_notifier_loop
     from dashboard_api.chain_tamper_detector import chain_tamper_detector_loop
@@ -1879,6 +1880,7 @@ async def lifespan(app: FastAPI):
         ("sigauth_auto_promotion", sigauth_auto_promotion_loop),
         ("client_telemetry_retention", client_telemetry_retention_loop),
         ("data_hygiene_gc", data_hygiene_gc_loop),
+        ("relocation_finalize", relocation_finalize_loop),
     ]
 
     for name, fn in task_defs:

@@ -75,21 +75,30 @@ def test_relocate_writes_admin_audit_log():
     action='appliance.relocate' carrying both site_ids + reason."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 12000]
+    body = src[relocate_idx : relocate_idx + 16000]
     assert '"appliance.relocate"' in body
     assert "INSERT INTO admin_audit_log" in body
-    assert "from_site_id" in body
-    assert "to_site_id" in body
-    assert '"reason": req.reason' in body
+    assert '"from_site_id":' in body
+    assert '"to_site_id":' in body
+    assert '"reason":' in body
+    # Round-table RT additions: relocation_id + fleet_order_id +
+    # evidence_bundle_id + agent_version + method must all be on
+    # the audit row so the move is fully reconstructible.
+    assert '"relocation_id":' in body
+    assert '"fleet_order_id":' in body
+    assert '"evidence_bundle_id":' in body
+    assert '"agent_version":' in body
+    assert '"method":' in body
 
 
-def test_relocate_returns_ssh_snippet_for_daemon_completion():
-    """Until daemon v0.4.11 ships the relocate_appliance fleet-order
-    handler, the operator manually finishes the move via SSH. The
-    response MUST include the ready-to-paste ssh_snippet."""
+def test_relocate_returns_ssh_snippet_for_legacy_daemon():
+    """For daemons predating v0.4.11 (no reprovision handler), the
+    response MUST include the ready-to-paste ssh_snippet so the
+    operator can finish the move manually. Newer daemons get the
+    fleet_order path instead — covered separately."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 12000]
+    body = src[relocate_idx : relocate_idx + 16000]
     assert '"ssh_snippet"' in body
     assert "<APPLIANCE_LAN_IP>" in body, (
         "ssh_snippet must use a placeholder for LAN IP (operator pastes it in)"
@@ -98,25 +107,102 @@ def test_relocate_returns_ssh_snippet_for_daemon_completion():
     assert "systemctl restart appliance-daemon" in body
 
 
+def test_relocate_version_gates_fleet_order_issuance():
+    """Round-table RT-5: the relocate endpoint must check
+    site_appliances.agent_version and only issue the reprovision
+    fleet_order when the daemon is ≥ 0.4.11. v0.4.10 daemons get
+    ssh_snippet only — issuing the order to them = unknown_order_type
+    + stuck-active row in fleet_orders forever."""
+    src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
+    relocate_idx = src.find("async def relocate_appliance(")
+    body = src[relocate_idx : relocate_idx + 16000]
+    assert "MIN_REPROVISION_VERSION" in body
+    assert '"0.4.11"' in body, (
+        "the version constant must literal-match the daemon's Version "
+        "in appliance/internal/daemon/daemon.go — drift here means "
+        "the gate misfires"
+    )
+    assert "_version_supports_reprovision" in body
+    assert "INSERT INTO fleet_orders" in body, (
+        "version_ok branch must issue the fleet_order"
+    )
+    assert "'reprovision'" in body
+    assert "version_ok" in body, "branch on version is the gate"
+
+
+def test_relocate_defers_source_soft_delete():
+    """Round-table RT-3: source row must be marked status='relocating',
+    NOT soft-deleted eagerly. Eager soft-delete leaves the daemon in
+    today's orphan state if the move never lands."""
+    src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
+    relocate_idx = src.find("async def relocate_appliance(")
+    body = src[relocate_idx : relocate_idx + 16000]
+    assert "'relocating'" in body, (
+        "source row must transition to 'relocating', not 'relocated', "
+        "until the finalize sweep confirms target checkin landed"
+    )
+    # Source soft-delete (deleted_at = NOW()) MUST happen in the
+    # finalize_pending_relocations() SQL function (Migration 245),
+    # not inline in the endpoint body. The eager pattern is the bug
+    # we're closing.
+    assert "deleted_at = NOW()" not in body, (
+        "RT-3 regression: source soft-delete must be deferred to the "
+        "finalize_pending_relocations() sweep, not run eagerly in the "
+        "endpoint body"
+    )
+
+
+def test_relocate_records_relocation_tracker_row():
+    """RT-3: every relocate INSERTs a relocations row with status='pending'
+    so the finalize sweep + relocation_stalled invariant can find it."""
+    src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
+    relocate_idx = src.find("async def relocate_appliance(")
+    body = src[relocate_idx : relocate_idx + 16000]
+    assert "INSERT INTO relocations" in body
+    assert "'pending'" in body, "tracker row must start at status='pending'"
+    assert "RETURNING id" in body, (
+        "relocation_id is needed downstream — must be RETURNINGed and stored"
+    )
+
+
+def test_relocate_emits_evidence_chain_bundle():
+    """RT-7: every relocate writes a compliance_bundles row via
+    appliance_relocation.emit_admin_relocation_bundle so the customer's
+    evidence chain reflects the move."""
+    src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
+    relocate_idx = src.find("async def relocate_appliance(")
+    body = src[relocate_idx : relocate_idx + 16000]
+    assert "from .appliance_relocation import emit_admin_relocation_bundle" in body
+    assert "evidence_bundle_id" in body
+    assert "UPDATE relocations SET evidence_bundle_id" in body, (
+        "the relocation tracker row must carry the bundle pointer so "
+        "auditors can join the two append-only sources"
+    )
+
+
 def test_relocate_uses_admin_connection_not_tenant():
     """Relocation crosses two sites — `tenant_connection(site_id=...)`
     would only see one. Must use `admin_connection` so the txn can
     read both sites + write to both."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 12000]
+    body = src[relocate_idx : relocate_idx + 16000]
     assert "admin_connection(pool)" in body, (
         "relocate must use admin_connection — tenant_connection scopes to "
         "one site_id and would block the cross-site INSERT/UPDATE"
     )
 
 
-def test_relocate_deactivates_source_api_keys():
-    """The source api_key must be deactivated as part of the move so
-    a daemon that hasn't been reconfigured yet can't keep authing under
-    the old site."""
+def test_relocate_refuses_concurrent_pending_for_same_mac():
+    """Migration 245 enforces UNIQUE(mac, status) so a second 'pending'
+    row for the same MAC is impossible at the schema layer. The
+    endpoint surfaces this with a 409 BEFORE the constraint fires so
+    the operator gets a clean error."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
-    body = src[relocate_idx : relocate_idx + 12000]
-    assert "UPDATE api_keys" in body
-    assert "SET active = false" in body
+    body = src[relocate_idx : relocate_idx + 16000]
+    assert "status_code=409" in body, (
+        "must surface a concurrent-pending move as 409, not let the "
+        "DB constraint surface as a generic 500"
+    )
+    assert "already pending" in body or "pending" in body

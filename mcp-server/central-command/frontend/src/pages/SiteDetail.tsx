@@ -294,26 +294,42 @@ export const SiteDetail: React.FC = () => {
     );
   }
 
-  // Handle moving an appliance to a different site
-  const handleMoveAppliance = async (applianceId: string, targetSiteId: string) => {
-    if (!siteId) return;
+  // Handle relocating an appliance to a different site (RT-8).
+  // Calls /api/sites/.../relocate (the safe path with audit + evidence
+  // chain + reprovision fleet_order). Returns the response body so the
+  // modal can render fleet_order receipt OR ssh_snippet depending on
+  // daemon version.
+  const handleRelocateAppliance = async (
+    applianceId: string,
+    targetSiteId: string,
+    reason: string,
+  ) => {
+    if (!siteId) return null;
     try {
-      const res = await fetch(`/api/sites/${siteId}/appliances/${applianceId}/move`, {
+      const res = await fetch(`/api/sites/${siteId}/appliances/${applianceId}/relocate`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfTokenOrEmpty() },
-        body: JSON.stringify({ target_site_id: targetSiteId }),
+        body: JSON.stringify({ target_site_id: targetSiteId, reason }),
       });
       if (res.ok) {
-        showToast('Appliance moved successfully', 'success');
-        setShowMoveApplianceModal(null);
+        const body = await res.json();
+        showToast(
+          body.status === 'pending'
+            ? 'Reprovision order issued — daemon will self-relocate'
+            : 'Relocation prepared — manual SSH push required',
+          'success',
+        );
         queryClient.invalidateQueries({ queryKey: ['site', siteId] });
+        return body;
       } else {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-        showToast(`Failed to move appliance: ${err.detail}`, 'error');
+        showToast(`Failed to relocate appliance: ${err.detail}`, 'error');
+        return null;
       }
     } catch {
-      showToast('Failed to move appliance', 'error');
+      showToast('Failed to relocate appliance', 'error');
+      return null;
     }
   };
 
@@ -672,13 +688,13 @@ export const SiteDetail: React.FC = () => {
         />
       )}
 
-      {/* Move Appliance Modal */}
+      {/* Relocate Appliance Modal (RT-8 — uses /relocate endpoint) */}
       {showMoveApplianceModal && siteId && (
         <MoveApplianceModal
           applianceId={showMoveApplianceModal}
           currentSiteId={siteId}
           onClose={() => setShowMoveApplianceModal(null)}
-          onMove={handleMoveAppliance}
+          onRelocate={handleRelocateAppliance}
         />
       )}
 

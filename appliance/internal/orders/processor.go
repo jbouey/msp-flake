@@ -304,6 +304,7 @@ func NewProcessor(stateDir string, onComplete CompletionCallback) *Processor {
 	p.handlers["enable_emergency_access"] = p.handleEnableEmergencyAccess
 	p.handlers["disable_emergency_access"] = p.handleDisableEmergencyAccess
 	p.handlers["configure_dns"] = p.handleConfigureDNS
+	p.handlers["reprovision"] = p.handleReprovision
 	p.handlers["nix_gc"] = p.handleNixGC
 
 	return p
@@ -1246,6 +1247,116 @@ func (p *Processor) handleConfigureDNS(_ context.Context, params map[string]inte
 	}
 	return result, nil
 }
+
+// handleReprovision atomically rewrites /var/lib/msp/config.yaml with a new
+// site_id + api_key (and optional host_id), backs up the old config, ACKs
+// the order via the OLD api_key, and restarts the daemon. The next checkin
+// after restart lands under the NEW site with the NEW key.
+//
+// Pairs with the backend's POST /api/sites/{site_id}/appliances/{aid}/relocate
+// endpoint (sites.py). Closes today's manual-SSH gap: an admin/partner clicks
+// "relocate to site X" and the entire move happens server-side; no operator
+// keystrokes on the appliance.
+//
+// Order params (REQUIRED):
+//
+//	new_site_id: str
+//	new_api_key: str        — pre-minted server-side, will be in api_keys table
+//	                          with active=true under (new_site_id, new_appliance_id)
+//
+// Order params (OPTIONAL):
+//
+//	new_host_id: str        — defaults to existing host_id
+//	restart_delay_sec: int  — defaults to 3 (gives ack call time to land
+//	                          before systemctl restart kills the process)
+//
+// Idempotent in the sense that re-running the same order produces the same
+// final config.yaml — but the api_keys trigger means re-running this with
+// the SAME new_api_key after a successful first run will fail auth (Migration
+// 209 auto-deactivates older active rows for the same (site, appliance)
+// pair on every INSERT). Don't re-issue.
+func (p *Processor) handleReprovision(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	newSiteID, _ := params["new_site_id"].(string)
+	newAPIKey, _ := params["new_api_key"].(string)
+	if newSiteID == "" || newAPIKey == "" {
+		return nil, fmt.Errorf("new_site_id and new_api_key parameters required")
+	}
+	// Sanity guard: API keys are urlsafe base64 of 32 random bytes — at
+	// least 40 chars. Short input is almost certainly a typo or a
+	// truncated copy-paste; refuse early so we don't write a bricking
+	// config.yaml.
+	if len(newAPIKey) < 40 {
+		return nil, fmt.Errorf("new_api_key looks truncated (len=%d, expected ≥40)", len(newAPIKey))
+	}
+
+	configPath := "/var/lib/msp/config.yaml"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config.yaml: %w", err)
+	}
+
+	// Atomic backup BEFORE we touch anything.
+	backupPath := fmt.Sprintf("/var/lib/msp/config.yaml.bak.reprovision.%d", time.Now().Unix())
+	if err := os.WriteFile(backupPath, data, 0600); err != nil {
+		return nil, fmt.Errorf("failed to backup config.yaml: %w", err)
+	}
+
+	var config map[string]interface{}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config.yaml: %w", err)
+	}
+
+	oldSiteID, _ := config["site_id"].(string)
+	config["site_id"] = newSiteID
+	config["api_key"] = newAPIKey
+	if newHostID, ok := params["new_host_id"].(string); ok && newHostID != "" {
+		config["host_id"] = newHostID
+	}
+
+	out, err := yaml.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config.yaml: %w", err)
+	}
+
+	// Atomic write via tmp + rename so a crash mid-write can't leave a
+	// half-written config.yaml that bricks the daemon on next start.
+	tmpPath := configPath + ".tmp"
+	if err := os.WriteFile(tmpPath, out, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write tmp config: %w", err)
+	}
+	if err := os.Rename(tmpPath, configPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, fmt.Errorf("failed to rename tmp → config.yaml: %w", err)
+	}
+
+	log.Printf("[orders] reprovision: site_id %s → %s, backup=%s",
+		oldSiteID, newSiteID, backupPath)
+
+	// Schedule restart AFTER we return — gives the order-completion ACK
+	// time to land via the OLD api_key (the daemon's in-memory auth
+	// state still uses the cached pre-rewrite credentials until restart).
+	// systemd-run is fire-and-forget; the parent process exits cleanly
+	// when systemctl restart kills it.
+	restartDelay := 3
+	if d, ok := params["restart_delay_sec"].(float64); ok && d > 0 && d < 60 {
+		restartDelay = int(d)
+	}
+	go func() {
+		time.Sleep(time.Duration(restartDelay) * time.Second)
+		log.Printf("[orders] reprovision: restarting appliance-daemon to pick up new identity")
+		_ = exec.Command("systemctl", "restart", "appliance-daemon").Run()
+	}()
+
+	return map[string]interface{}{
+		"status":           "reprovisioned",
+		"old_site_id":      oldSiteID,
+		"new_site_id":      newSiteID,
+		"backup_path":      backupPath,
+		"restart_in_sec":   restartDelay,
+		"next_step":        "daemon will restart and check in under new site_id",
+	}, nil
+}
+
 
 func (p *Processor) handleDeploySensor(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
 	hostname, _ := params["hostname"].(string)

@@ -1952,14 +1952,34 @@ async def relocate_appliance(
 
     import hashlib
     import secrets
+    import uuid as _uuid
+    import json as _json
+
+    # Daemons that ship a `reprovision` order handler. Below this version
+    # the endpoint falls back to the ssh_snippet path. Round-table RT-5.
+    MIN_REPROVISION_VERSION = "0.4.11"
+
+    def _version_supports_reprovision(ver: Optional[str]) -> bool:
+        """True if the daemon's reported agent_version is ≥ 0.4.11.
+        Tolerates None/empty (returns False — assume legacy)."""
+        if not ver:
+            return False
+        try:
+            ver_tuple = tuple(int(p) for p in ver.split(".")[:3])
+            min_tuple = tuple(int(p) for p in MIN_REPROVISION_VERSION.split(".")[:3])
+            return ver_tuple >= min_tuple
+        except (ValueError, AttributeError):
+            return False
 
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
-        # Step 1: validate source + target are same org.
+        # Step 1: validate source + target are same org. Read agent_version
+        # for the version-gate (RT-5).
         source = await conn.fetchrow(
             """
             SELECT sa.id, sa.mac_address, sa.hostname, sa.legacy_uuid,
+                   sa.agent_version,
                    s.client_org_id AS source_org
               FROM site_appliances sa
               JOIN sites s ON s.site_id = sa.site_id
@@ -1995,8 +2015,29 @@ async def relocate_appliance(
                 ),
             )
 
+        # Refuse a second relocate when one is already pending for this
+        # MAC. Migration 245's UNIQUE(mac, status) catches it at the DB
+        # layer; we surface it with a 409 here.
+        existing = await conn.fetchval(
+            """
+            SELECT id FROM relocations
+             WHERE mac_address = $1 AND status = 'pending'
+            """,
+            source["mac_address"],
+        )
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"A relocation for MAC {source['mac_address']} is already "
+                    f"pending (relocations.id={existing}). Wait for it to "
+                    "complete, expire, or fail before issuing a new one."
+                ),
+            )
+
         mac = source["mac_address"]
         new_appliance_id = f"{req.target_site_id}-{mac}"
+        version_ok = _version_supports_reprovision(source["agent_version"])
 
         # Step 2: UPSERT target row.
         await conn.execute(
@@ -2037,31 +2078,111 @@ async def relocate_appliance(
             f"Relocate by {user.get('username','?')} from {site_id}: {req.reason[:160]}",
         )
 
-        # Step 4: soft-delete the source row + deactivate its keys.
+        # Step 4 (RT-3): mark source as 'relocating', NOT deleted. Keep
+        # the row alive so the daemon can keep checking in (unhappily,
+        # via 401 → auto-rekey path) until the move completes. The
+        # finalize_pending_relocations() sweep flips this to 'relocated'
+        # + soft-deletes the row only AFTER the target site shows a
+        # successful checkin.
         await conn.execute(
             """
             UPDATE site_appliances
-               SET deleted_at = NOW(),
-                   deleted_by = $3,
-                   status = 'relocated'
+               SET status = 'relocating'
              WHERE appliance_id = $1
                AND site_id = $2
             """,
-            appliance_id, site_id, user.get("username", "unknown"),
+            appliance_id, site_id,
         )
-        await conn.execute(
+        # Keep source api_keys ACTIVE for now — they need to stay valid
+        # until the daemon ACKs the reprovision order. If we deactivate
+        # them eagerly, the daemon's pending-order ACK fails with 401,
+        # the order looks "stuck" forever in the orchestrator's view.
+
+        # Step 5 (RT-5+1): if daemon supports it, issue the reprovision
+        # fleet_order. Otherwise fall back to ssh_snippet (legacy path).
+        fleet_order_id = None
+        if version_ok:
+            fleet_order_id = str(_uuid.uuid4())
+            await conn.execute(
+                """
+                INSERT INTO fleet_orders (
+                    id, site_id, appliance_id, order_type, parameters,
+                    status, created_at, created_by, expires_at
+                ) VALUES (
+                    $1, $2, $3, 'reprovision', $4,
+                    'active', NOW(), $5, NOW() + INTERVAL '15 minutes'
+                )
+                """,
+                fleet_order_id, site_id, appliance_id,
+                _json.dumps({
+                    "new_site_id": req.target_site_id,
+                    "new_api_key": raw_api_key,
+                    "site_id": site_id,  # daemon order-binding contract
+                }),
+                user.get("username", "unknown"),
+            )
+            logger.info(
+                "appliance.relocate: issued reprovision fleet_order id=%s for v%s daemon",
+                fleet_order_id, source["agent_version"],
+            )
+        else:
+            logger.info(
+                "appliance.relocate: daemon v%s < %s, returning ssh_snippet for manual completion",
+                source["agent_version"], MIN_REPROVISION_VERSION,
+            )
+
+        # Step 6 (RT-3): record the relocation tracker row. The
+        # finalize_pending_relocations() loop reads this; the
+        # relocation_stalled substrate invariant queries it.
+        relocation_id = await conn.fetchval(
             """
-            UPDATE api_keys
-               SET active = false
-             WHERE site_id = $1
-               AND appliance_id = $2
-               AND active = true
+            INSERT INTO relocations (
+                source_appliance_id, source_site_id,
+                target_appliance_id, target_site_id,
+                mac_address, status, reason, actor, fleet_order_id
+            ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8)
+            RETURNING id
             """,
-            site_id, appliance_id,
+            appliance_id, site_id,
+            new_appliance_id, req.target_site_id,
+            mac, req.reason, user.get("username", "unknown"),
+            fleet_order_id,
         )
 
-        # Step 5: audit log (admin_audit_log is append-only via Migration 151).
-        import json as _json
+        # Step 7 (RT-7): customer evidence-chain entry. Every
+        # relocation writes a compliance_bundles row keyed by check_type
+        # = 'appliance_relocation'. The bundle's bundle_id is recorded
+        # in relocations.evidence_bundle_id so an auditor can join the
+        # two append-only sources.
+        try:
+            from .appliance_relocation import emit_admin_relocation_bundle
+            evidence_bundle_id = await emit_admin_relocation_bundle(
+                conn,
+                source_site_id=site_id,
+                target_site_id=req.target_site_id,
+                mac_address=mac,
+                relocation_id=relocation_id,
+                actor=user.get("username", "unknown"),
+                reason=req.reason,
+            )
+            if evidence_bundle_id:
+                await conn.execute(
+                    "UPDATE relocations SET evidence_bundle_id = $1 WHERE id = $2",
+                    evidence_bundle_id, relocation_id,
+                )
+        except (ImportError, AttributeError) as e:
+            # Evidence helper not yet shipped — log loudly so the
+            # missing chain row is visible. Don't block the relocation
+            # itself; the audit_log entry below still captures the
+            # operator action even without the cryptographic chain.
+            logger.error(
+                "appliance.relocate: appliance_relocation.emit_admin_relocation_bundle "
+                "missing — relocation %s has no compliance_bundles row: %s",
+                relocation_id, e,
+            )
+            evidence_bundle_id = None
+
+        # Step 8: admin_audit_log (append-only via Migration 151).
         client_ip = request.client.host if request.client else None
         await conn.execute(
             """
@@ -2078,49 +2199,71 @@ async def relocate_appliance(
                 "from_appliance_id": appliance_id,
                 "to_appliance_id": new_appliance_id,
                 "reason": req.reason,
+                "relocation_id": relocation_id,
+                "fleet_order_id": fleet_order_id,
+                "evidence_bundle_id": evidence_bundle_id,
+                "agent_version": source["agent_version"],
+                "method": "fleet_order" if version_ok else "ssh_snippet",
             }),
             client_ip,
         )
 
     logger.info(
-        "appliance.relocate: %s/%s → %s/%s by %s",
+        "appliance.relocate: %s/%s → %s/%s by %s relocation_id=%s method=%s",
         site_id, appliance_id, req.target_site_id, new_appliance_id,
         user.get("username", "?"),
+        relocation_id, "fleet_order" if version_ok else "ssh_snippet",
     )
 
-    # Until daemon v0.4.11 ships the relocate fleet-order handler, the
-    # operator finishes the move via SSH. We embed the exact one-liner
-    # in the response so the UI can copy-paste it.
-    mac_lower = mac.lower()
-    emergency_pass_hash = hashlib.sha256(
-        f"osiriscare-emergency-{mac_lower}".encode()
-    ).hexdigest()[:8]
-    emergency_pass = f"osiris-{emergency_pass_hash}"
-    ssh_snippet = (
-        f"sshpass -p '{emergency_pass}' ssh -o StrictHostKeyChecking=accept-new "
-        f"msp@<APPLIANCE_LAN_IP> "
-        f"\"echo '{emergency_pass}' | sudo -S /run/current-system/sw/bin/bash -c '"
-        f"cp /var/lib/msp/config.yaml /var/lib/msp/config.yaml.bak.\\$(date -u +%s) && "
-        f"yq -i \\\".site_id = \\\\\\\"{req.target_site_id}\\\\\\\"\\\" /var/lib/msp/config.yaml && "
-        f"yq -i \\\".api_key = \\\\\\\"{raw_api_key}\\\\\\\"\\\" /var/lib/msp/config.yaml && "
-        f"chmod 600 /var/lib/msp/config.yaml && "
-        f"systemctl restart appliance-daemon"
-        f"'\""
-    )
-
-    return {
-        "status": "relocated",
+    # Build the response. Daemon-supported path returns order receipt;
+    # legacy path returns ssh_snippet for manual completion.
+    response: Dict[str, Any] = {
+        "status": "pending" if version_ok else "needs_manual_push",
         "from": {"site_id": site_id, "appliance_id": appliance_id},
         "to": {"site_id": req.target_site_id, "appliance_id": new_appliance_id},
         "new_api_key": raw_api_key,
-        "ssh_snippet": ssh_snippet,
-        "next_step": (
-            "Run the ssh_snippet against the appliance's LAN IP to push the new "
-            "site_id + api_key. Daemon's next checkin will land cleanly under "
-            "the new site. Daemon v0.4.11+ will accept a relocate fleet-order "
-            "and automate this step."
-        ),
+        "relocation_id": relocation_id,
+        "evidence_bundle_id": evidence_bundle_id,
+        "agent_version": source["agent_version"],
     }
+
+    if version_ok:
+        response["fleet_order_id"] = fleet_order_id
+        response["next_step"] = (
+            "Daemon will pick up the reprovision order on its next checkin "
+            "(≤60s) and self-relocate. Track via GET "
+            f"/api/admin/relocations/{relocation_id}. Source row will "
+            "auto-flip to 'relocated' once target checkin lands."
+        )
+    else:
+        # Legacy ssh_snippet for daemons < 0.4.11.
+        mac_lower = mac.lower()
+        emergency_pass_hash = hashlib.sha256(
+            f"osiriscare-emergency-{mac_lower}".encode()
+        ).hexdigest()[:8]
+        emergency_pass = f"osiris-{emergency_pass_hash}"
+        ssh_snippet = (
+            f"sshpass -p '{emergency_pass}' ssh -o StrictHostKeyChecking=accept-new "
+            f"msp@<APPLIANCE_LAN_IP> "
+            f"\"echo '{emergency_pass}' | sudo -S /run/current-system/sw/bin/bash -c '"
+            f"cp /var/lib/msp/config.yaml /var/lib/msp/config.yaml.bak.\\$(date -u +%s) && "
+            f"yq -i \\\".site_id = \\\\\\\"{req.target_site_id}\\\\\\\"\\\" /var/lib/msp/config.yaml && "
+            f"yq -i \\\".api_key = \\\\\\\"{raw_api_key}\\\\\\\"\\\" /var/lib/msp/config.yaml && "
+            f"chmod 600 /var/lib/msp/config.yaml && "
+            f"systemctl restart appliance-daemon"
+            f"'\""
+        )
+        response["ssh_snippet"] = ssh_snippet
+        response["next_step"] = (
+            f"Daemon agent_version={source['agent_version']} predates the "
+            f"reprovision fleet-order handler ({MIN_REPROVISION_VERSION}+). "
+            "Run the ssh_snippet against the appliance's LAN IP to push "
+            "site_id + api_key manually. Upgrade daemon to "
+            f"{MIN_REPROVISION_VERSION} via update_daemon order to enable "
+            "automatic relocate."
+        )
+
+    return response
 
 
 class MeshTopologyRequest(BaseModel):
