@@ -65,10 +65,12 @@ CREATE TABLE compliance_bundles (
 
 CREATE TABLE admin_audit_log (
     id BIGSERIAL PRIMARY KEY,
-    action TEXT NOT NULL,
-    target_type TEXT,
-    target_id TEXT,
+    user_id UUID,
+    username VARCHAR(100),
+    action VARCHAR(100) NOT NULL,
+    target VARCHAR(255),
     details JSONB,
+    ip_address VARCHAR(45),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -252,11 +254,15 @@ async def test_enforce_writes_audit_row_per_broken(conn):
     broken_count = await startup_invariants.enforce_startup_invariants(c)
     assert broken_count >= 2
 
-    # One audit row per broken invariant, actions STARTUP_INVARIANT_BROKEN
+    # One audit row per broken invariant, actions STARTUP_INVARIANT_BROKEN.
+    # Session 210-B 2026-04-25: schema collapsed `target_type`+`target_id`
+    # into a single `target` column with `<type>:<id>` shape. Test fixture
+    # CREATE TABLE above mirrors prod; the producer in
+    # startup_invariants.py emits f"invariant:{r.name}".
     rows = await c.fetch(
-        "SELECT target_id FROM admin_audit_log "
+        "SELECT target FROM admin_audit_log "
         "WHERE action = 'STARTUP_INVARIANT_BROKEN'"
     )
-    target_ids = {r["target_id"] for r in rows}
-    assert "INV-CHAIN-175" in target_ids
-    assert "INV-EVIDENCE-DELETE" in target_ids
+    targets = {r["target"] for r in rows}
+    assert "invariant:INV-CHAIN-175" in targets
+    assert "invariant:INV-EVIDENCE-DELETE" in targets

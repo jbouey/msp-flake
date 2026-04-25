@@ -135,18 +135,29 @@ class TestEnforcementCoverage:
 
     def test_no_bare_req_site_id_usage(self):
         """After enforcement, request body site_id should not be used directly
-        without first being overridden by auth_site_id in critical paths."""
-        # Check learning_api_main.py for the same pattern
-        learning_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "learning_api_main.py",
-        )
-        with open(learning_path) as f:
-            learning_source = f.read()
+        without first being overridden by auth_site_id in critical paths.
 
-        # Verify enforcement exists in learning_api_main.py
-        assert "auth_site_id" in learning_source
-        assert "403" in learning_source or "mismatch" in learning_source.lower()
+        Session 210-B 2026-04-25 audit: `learning_api_main.py` was deleted
+        as orphaned extraction (live versions of those endpoints have
+        always been in mcp-server/main.py). Test now checks main.py for
+        the same pattern.
+        """
+        main_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "..",
+            "main.py",
+        )
+        with open(main_path) as f:
+            main_source = f.read()
+
+        # Verify enforcement exists in main.py for the appliance-facing
+        # learning endpoints (PromotionReportRequest etc).
+        assert "auth_site_id" in main_source, (
+            "main.py must enforce auth_site_id on appliance-facing "
+            "endpoints. Without this an appliance with site-A token "
+            "could submit a promotion report claiming site-B."
+        )
+        assert "403" in main_source or "mismatch" in main_source.lower()
 
     def test_device_sync_enforcement(self):
         """device_sync.py must enforce auth_site_id."""
