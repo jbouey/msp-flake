@@ -103,7 +103,7 @@ def test_diff_detects_field_removal():
         class Foo(BaseModel):
             a: int
     """)
-    violations = pcc._diff_models(
+    violations, _ = pcc._diff_models(
         pathlib.Path("x.py"),
         pcc._parse_models(old_src),
         pcc._parse_models(new_src),
@@ -116,7 +116,7 @@ def test_diff_detects_field_removal():
 def test_diff_detects_type_change():
     old_src = "from pydantic import BaseModel\nclass Foo(BaseModel):\n    a: int"
     new_src = "from pydantic import BaseModel\nclass Foo(BaseModel):\n    a: str"
-    violations = pcc._diff_models(
+    violations, _ = pcc._diff_models(
         pathlib.Path("x.py"),
         pcc._parse_models(old_src),
         pcc._parse_models(new_src),
@@ -135,7 +135,7 @@ def test_diff_allows_field_addition():
             a: int
             b: str  # newly added, backwards-compatible
     """)
-    violations = pcc._diff_models(
+    violations, _ = pcc._diff_models(
         pathlib.Path("x.py"),
         pcc._parse_models(old_src),
         pcc._parse_models(new_src),
@@ -158,7 +158,7 @@ def test_diff_respects_prior_deprecation_annotation():
         class Foo(BaseModel):
             a: int
     """)
-    violations = pcc._diff_models(
+    violations, _ = pcc._diff_models(
         pathlib.Path("x.py"),
         pcc._parse_models(old_src),
         pcc._parse_models(new_src),
@@ -182,7 +182,7 @@ def test_diff_rejects_same_commit_deprecation():
         class Foo(BaseModel):
             a: int
     """)
-    violations = pcc._diff_models(
+    violations, _ = pcc._diff_models(
         pathlib.Path("x.py"),
         pcc._parse_models(old_src),
         pcc._parse_models(new_src),
@@ -198,7 +198,7 @@ def test_diff_class_removal_is_field_removal():
             b: str
     """)
     new_src = "from pydantic import BaseModel\n"
-    violations = pcc._diff_models(
+    violations, _ = pcc._diff_models(
         pathlib.Path("x.py"),
         pcc._parse_models(old_src),
         pcc._parse_models(new_src),
@@ -212,7 +212,7 @@ def test_diff_detects_unambiguous_rename():
     Flagged as 'renamed' violation requiring BREAKING: acknowledgment."""
     old_src = "from pydantic import BaseModel\nclass Foo(BaseModel):\n    tier: str"
     new_src = "from pydantic import BaseModel\nclass Foo(BaseModel):\n    plan: str"
-    violations = pcc._diff_models(
+    violations, _ = pcc._diff_models(
         pathlib.Path("x.py"),
         pcc._parse_models(old_src),
         pcc._parse_models(new_src),
@@ -235,7 +235,7 @@ def test_diff_does_not_falsely_detect_rename_on_multiple_same_type_adds():
         "    plan: str\n"
         "    label: str\n"
     )
-    violations = pcc._diff_models(
+    violations, _ = pcc._diff_models(
         pathlib.Path("x.py"),
         pcc._parse_models(old_src),
         pcc._parse_models(new_src),
@@ -252,13 +252,125 @@ def test_diff_ignores_type_equivalent_whitespace():
     # `Optional[int]` vs `Optional[int]` with different whitespace is still equal
     old_src = "from pydantic import BaseModel\nfrom typing import Optional\nclass Foo(BaseModel):\n    a: Optional[int]"
     new_src = "from pydantic import BaseModel\nfrom typing import Optional\nclass Foo(BaseModel):\n    a:   Optional[int]"
-    violations = pcc._diff_models(
+    violations, _ = pcc._diff_models(
         pathlib.Path("x.py"),
         pcc._parse_models(old_src),
         pcc._parse_models(new_src),
     )
     # ast.unparse normalizes whitespace, so this should pass.
     assert violations == []
+
+
+def test_diff_class_rename_only_no_field_changes_is_not_a_violation():
+    """Session 210-B: class rename with identical field shape should NOT
+    block the commit. The wire contract (field names + types) is preserved;
+    only the OpenAPI $ref key changes. Renames are surfaced as INFORMATIONAL
+    via the second tuple element, not as violations."""
+    old_src = (
+        "from pydantic import BaseModel\n"
+        "class CheckinRequest(BaseModel):\n"
+        "    site_id: str\n"
+        "    host_id: str\n"
+    )
+    new_src = (
+        "from pydantic import BaseModel\n"
+        "class _AgentApiCheckinRequest(BaseModel):\n"
+        "    site_id: str\n"
+        "    host_id: str\n"
+    )
+    violations, renames = pcc._diff_models(
+        pathlib.Path("x.py"),
+        pcc._parse_models(old_src),
+        pcc._parse_models(new_src),
+    )
+    assert violations == [], (
+        "class rename with unchanged field signature must produce zero "
+        f"field-removal violations, got: {[(v.kind, v.field_name) for v in violations]}"
+    )
+    assert renames == {"CheckinRequest": "_AgentApiCheckinRequest"}
+
+
+def test_diff_class_rename_with_field_change_still_blocks():
+    """If the author renames AND modifies the class, the field-level
+    changes must still surface — only the rename half is auto-permitted.
+    """
+    old_src = (
+        "from pydantic import BaseModel\n"
+        "class CheckinRequest(BaseModel):\n"
+        "    site_id: str\n"
+        "    host_id: str\n"
+    )
+    new_src = (
+        "from pydantic import BaseModel\n"
+        "class _AgentApiCheckinRequest(BaseModel):\n"
+        "    site_id: int\n"  # type changed
+        "    host_id: str\n"
+    )
+    violations, renames = pcc._diff_models(
+        pathlib.Path("x.py"),
+        pcc._parse_models(old_src),
+        pcc._parse_models(new_src),
+    )
+    # Signature differs (str vs int), so this is NOT detected as a rename.
+    # Both classes count: old class fully removed, new class fully added.
+    # site_id and host_id appear as REMOVED on the old class (unless
+    # deprecation annotation present).
+    assert renames == {}, "type change means signatures differ, not a rename"
+    kinds = sorted({v.kind for v in violations})
+    assert "removed" in kinds
+
+
+def test_diff_class_rename_ambiguous_when_two_added_share_signature():
+    """If TWO new classes have the same signature as a removed class, we
+    can't unambiguously pick the rename target — surface as field removals
+    so the human reviews each."""
+    old_src = (
+        "from pydantic import BaseModel\n"
+        "class Foo(BaseModel):\n"
+        "    a: str\n"
+        "    b: int\n"
+    )
+    new_src = (
+        "from pydantic import BaseModel\n"
+        "class Bar(BaseModel):\n"
+        "    a: str\n"
+        "    b: int\n"
+        "class Baz(BaseModel):\n"
+        "    a: str\n"
+        "    b: int\n"
+    )
+    violations, renames = pcc._diff_models(
+        pathlib.Path("x.py"),
+        pcc._parse_models(old_src),
+        pcc._parse_models(new_src),
+    )
+    assert renames == {}, "ambiguous match — must not guess"
+    # Foo's fields a, b should appear as removals.
+    field_names = sorted(v.field_name for v in violations)
+    assert field_names == ["a", "b"]
+
+
+def test_diff_class_rename_skips_empty_signature():
+    """An empty (no annotated fields) signature is too weak a fingerprint
+    for rename detection — skip those classes."""
+    old_src = (
+        "from pydantic import BaseModel\n"
+        "class Empty1(BaseModel):\n"
+        "    pass\n"
+    )
+    new_src = (
+        "from pydantic import BaseModel\n"
+        "class Empty2(BaseModel):\n"
+        "    pass\n"
+    )
+    violations, renames = pcc._diff_models(
+        pathlib.Path("x.py"),
+        pcc._parse_models(old_src),
+        pcc._parse_models(new_src),
+    )
+    # No fields removed (the class had none) and no rename detected.
+    assert violations == []
+    assert renames == {}
 
 
 # ---------------------------------------------------------------------------

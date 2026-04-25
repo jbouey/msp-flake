@@ -230,13 +230,80 @@ class Violation:
     new_type: str
 
 
+def _class_signature(model: Model) -> Tuple[Tuple[str, str], ...]:
+    """Stable signature for a class — sorted set of (name, type) pairs.
+
+    Two classes with the same signature have IDENTICAL Pydantic shape:
+    every field name + type matches. That's the only thing downstream
+    consumers depend on. Class name is deliberately not part of this —
+    the signature exists to detect class-level renames where the wire
+    contract didn't actually change.
+    """
+    return tuple(sorted((f.name, f.type_repr) for f in model.fields))
+
+
+def _detect_class_renames(
+    old_models: Dict[str, Model],
+    new_models: Dict[str, Model],
+) -> Dict[str, str]:
+    """Session 210-B class-level rename detection.
+
+    A class rename appears in the diff as (class X removed, class Y added)
+    where X and Y have IDENTICAL field signatures (same fields, same types).
+    Without detection, the diff looks like N field-removals from X — which
+    blocks the commit even though nothing about the wire contract changed.
+
+    Returns {old_class_name: new_class_name} for renames detected.
+
+    Only claims a rename when the signature match is UNAMBIGUOUS (exactly
+    one added class with the same shape) — more than one means the author
+    is doing a bigger refactor and we should surface the field removals
+    so the human reviews each.
+    """
+    old_class_names = set(old_models) - set(new_models)
+    new_class_names = set(new_models) - set(old_models)
+    new_signatures: Dict[Tuple[Tuple[str, str], ...], List[str]] = {}
+    for n in new_class_names:
+        sig = _class_signature(new_models[n])
+        if not sig:
+            # Empty signature (no annotated fields) is too ambiguous to
+            # use for rename detection — skip it.
+            continue
+        new_signatures.setdefault(sig, []).append(n)
+    renames: Dict[str, str] = {}
+    for old_name in old_class_names:
+        old_sig = _class_signature(old_models[old_name])
+        if not old_sig:
+            continue
+        candidates = new_signatures.get(old_sig, [])
+        if len(candidates) == 1:
+            renames[old_name] = candidates[0]
+            # Mark the new-side class as consumed so we don't double-match
+            # if two old classes share the same signature.
+            new_signatures[old_sig] = []
+    return renames
+
+
 def _diff_models(
     path: Path,
     old_models: Dict[str, Model],
     new_models: Dict[str, Model],
-) -> List[Violation]:
+) -> Tuple[List[Violation], Dict[str, str]]:
+    """Returns (violations, class_renames_detected).
+
+    Class renames are NOT in the violations list — a class rename with
+    identical field shape is wire-contract-safe (FastAPI's OpenAPI $ref
+    key changes, but the request/response data shape is preserved).
+    They're logged informationally so the author and reviewer notice
+    the change, but they don't block the commit on their own.
+    """
     violations: List[Violation] = []
+    class_renames = _detect_class_renames(old_models, new_models)
+
     for cls_name, old in old_models.items():
+        if cls_name in class_renames:
+            # Class rename — skip the per-field violation generation.
+            continue
         new = new_models.get(cls_name)
         if new is None:
             # Class removed entirely — treat as N field removals, but only
@@ -305,7 +372,7 @@ def _diff_models(
                     field_name=name, old_type=old_field.type_repr,
                     new_type=new_field.type_repr,
                 ))
-    return violations
+    return violations, class_renames
 
 
 def main() -> int:
@@ -314,6 +381,7 @@ def main() -> int:
         return 0  # nothing backend-Pythonic in this commit
 
     all_violations: List[Violation] = []
+    all_class_renames: List[Tuple[Path, str, str]] = []
     for path in files:
         new_src = _read_staged(path)
         old_src = _read_head(path)
@@ -325,7 +393,24 @@ def main() -> int:
             new_models = _parse_models(new_src)
         except SystemExit:
             return 2
-        all_violations.extend(_diff_models(path, old_models, new_models))
+        viols, renames = _diff_models(path, old_models, new_models)
+        all_violations.extend(viols)
+        for old_name, new_name in renames.items():
+            all_class_renames.append((path, old_name, new_name))
+
+    # Log class renames informationally — they're wire-contract-safe (the
+    # field shape didn't change; only the OpenAPI $ref key did) so they
+    # don't block the commit. But surfacing them in the hook output keeps
+    # them visible in the author's commit log.
+    if all_class_renames:
+        print(
+            f"[pydantic-contract] detected {len(all_class_renames)} class "
+            "rename(s) with unchanged field signature — permitted without "
+            "BREAKING: (wire contract preserved):",
+            file=sys.stderr,
+        )
+        for path, old_name, new_name in all_class_renames:
+            print(f"  RENAMED  {path}::{old_name} → {new_name}", file=sys.stderr)
 
     if not all_violations:
         return 0
