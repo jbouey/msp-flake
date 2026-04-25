@@ -61,9 +61,10 @@ input). Treat as a possible security event until ruled out.
    WHERE site_id = '<site>' AND mac_address = '<MAC>';
   ```
   Mismatch = wrong key on file → rekey via fleet_cli. Do NOT compare
-  to `site_appliances.agent_public_key` — that's the EVIDENCE-bundle
-  signing key, a different key by design (Session 211 / #179). The
-  legacy fallback that mistakenly used it was removed.
+  the daemon fingerprint against the legacy evidence-bundle column on
+  `site_appliances` — that's an entirely different signing key by
+  design (Session 211 / #179), and the unsound fallback that
+  mistakenly used it for sigauth has been removed.
 - **If keys match but signatures still fail**, the canonical input is
   drifting. Capture a failed request body + headers in the daemon log
   (it logs the canonical bytes it signed) and replay verification
