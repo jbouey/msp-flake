@@ -560,6 +560,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_signature_verification_failures(c),
     ),
     Assertion(
+        name="sigauth_crypto_failures",
+        severity="sev1",
+        description="Subset of signature_verification_failures filtered to the adversarial-reason set (invalid_signature, bad_signature_format, nonce_replay). Distinct priority signal: crypto-level fail = real attack / drift; conjunction with the umbrella = security incident; umbrella alone = enrollment/clock debt (2026-04-25)",
+        check=lambda c: _check_sigauth_crypto_failures(c),
+    ),
+    Assertion(
         name="claim_cert_expired_in_use",
         severity="sev1",
         description="Claims must only be accepted from CAs in their validity window; an expired/revoked CA being used means a code-path bypassed _validate_claim_cert (Week 4)",
@@ -820,8 +826,25 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
     },
     "signature_verification_failures": {
         "display_name": "Agent signature verification failing",
-        "recommended_action": "Likely mesh / Vault flip skew. Verify signing_backend matches deployed mesh pubkey. "
-            "During Vault cutover, check multi-trust rollover is complete (both keys in trust set).",
+        "recommended_action": "Umbrella signal — fires on ANY sigauth fail "
+            "(crypto + operational + enrollment). Check the conjunction with "
+            "sigauth_crypto_failures: BOTH open = real crypto/attack signal "
+            "(see that runbook); umbrella alone = enrollment debt or clock "
+            "skew. Inspect details.reasons to classify. Common causes: "
+            "appliance not yet enrolled (no provisioning_claim_events row), "
+            "daemon clock skew > 5min, bad timestamp parsing.",
+    },
+    "sigauth_crypto_failures": {
+        "display_name": "Agent signature CRYPTO-fails (priority signal)",
+        "recommended_action": "Real crypto-level mismatch — wrong key, "
+            "tampered body, replay, or canonical-input drift between "
+            "deployed daemon and server. NOT enrollment debt. Steps: "
+            "(1) verify the daemon's /var/lib/msp/agent.fingerprint matches "
+            "site_appliances.agent_public_key fingerprint for the SAME mac; "
+            "(2) check signature_auth.py canonical input vs "
+            "phonehome.go::signRequest canonical (must be byte-identical); "
+            "(3) if both check out, suspect active forgery or stolen key — "
+            "rotate the appliance identity via fleet_cli rekey + revoke.",
     },
     "claim_cert_expired_in_use": {
         "display_name": "Expired claim cert still being used",
@@ -1211,13 +1234,37 @@ async def _check_legacy_bearer_only_checkin(conn: asyncpg.Connection) -> List[Vi
     ]
 
 
+# Adversarial-reason subset of sigauth fail reasons. These mean the
+# signature itself is broken — wrong key, replay attack, malformed
+# signature, or canonical-input drift between daemon and server.
+# Distinct from the operational subset (unknown_pubkey, clock_skew,
+# bad_timestamp, bad_nonce, no_headers) which signal enrollment debt
+# or daemon misconfiguration, NOT crypto compromise.
+#
+# Note: `bad_body_hash` is a documented reason code in
+# `signature_auth.py::SignatureVerifyResult` but is never emitted as a
+# distinct reason — body-hash mismatches surface as `invalid_signature`
+# because the body hash is folded into the canonical signed input and
+# Ed25519 verify fails as a unit. So the canonical reason set is
+# explicitly the four below.
+CRYPTO_FAIL_REASONS = frozenset({
+    "invalid_signature",
+    "bad_signature_format",
+    "nonce_replay",
+})
+
+
 async def _check_signature_verification_failures(conn: asyncpg.Connection) -> List[Violation]:
     """Per-site fail rate over the last hour of observed signatures.
 
-    Floor of 5 samples to avoid false-flagging on a fresh site that
-    happens to have its first checkin fail. Threshold of 5% — well
-    above expected noise (sigs should have a ~0% fail rate when
-    the daemon and server are in lockstep)."""
+    Umbrella signal: ANY sigauth fail counts (crypto + operational +
+    enrollment). Floor of 5 samples to avoid false-flagging on a fresh
+    site that happens to have its first checkin fail. Threshold of 5%.
+
+    Priority sub-signal lives in `_check_sigauth_crypto_failures` and
+    fires only on the adversarial-reason subset — see CRYPTO_FAIL_REASONS.
+    Both invariants can fire simultaneously; the conjunction means a
+    real attack/drift, the umbrella alone means enrollment debt."""
     rows = await conn.fetch(
         """
         SELECT site_id,
@@ -1239,6 +1286,51 @@ async def _check_signature_verification_failures(conn: asyncpg.Connection) -> Li
                 "failures": r["failures"],
                 "fail_rate_pct": round(r["failures"] * 100.0 / r["total"], 1),
                 "reasons": list(r["reasons"] or []),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_sigauth_crypto_failures(conn: asyncpg.Connection) -> List[Violation]:
+    """Per-site rate of CRYPTO-level sigauth fails — wrong key, tampered
+    body, replay, canonical drift. Distinct from the umbrella
+    `signature_verification_failures` invariant: this one filters to the
+    adversarial-reason subset and fires at sev1 priority because a
+    sustained crypto-fail rate is a security signal, not an operational
+    one.
+
+    When BOTH this and `signature_verification_failures` are open for
+    the same site, treat as a security incident (real key compromise,
+    canonical-input drift between deployed daemon and server, or active
+    forgery). When only the umbrella fires (and this one doesn't),
+    treat as enrollment / clock-skew debt — annoying but not a breach."""
+    crypto_reasons = list(CRYPTO_FAIL_REASONS)
+    rows = await conn.fetch(
+        """
+        SELECT site_id,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE valid = false AND reason = ANY($1::text[])) AS crypto_failures,
+               array_agg(DISTINCT reason)
+                  FILTER (WHERE valid = false AND reason = ANY($1::text[])) AS reasons
+          FROM sigauth_observations
+         WHERE observed_at > NOW() - INTERVAL '1 hour'
+      GROUP BY site_id
+        HAVING COUNT(*) >= 5
+           AND COUNT(*) FILTER (WHERE valid = false AND reason = ANY($1::text[]))
+                * 100.0 / COUNT(*) > 5
+        """,
+        crypto_reasons,
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "total_samples": r["total"],
+                "crypto_failures": r["crypto_failures"],
+                "fail_rate_pct": round(r["crypto_failures"] * 100.0 / r["total"], 1),
+                "reasons": list(r["reasons"] or []),
+                "classification": "adversarial",
             },
         )
         for r in rows
