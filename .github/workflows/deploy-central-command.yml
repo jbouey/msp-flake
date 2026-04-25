@@ -228,6 +228,19 @@ jobs:
         run: |
           python3 -m pytest tests/test_retention_verifier_pg.py -v --tb=short
 
+      - name: Lifespan smoke against post-migration Postgres
+        # #154 — drives main.lifespan() against a real PG with every
+        # migration applied. Catches the runtime-only classes the AST
+        # smoke test (test_lifespan_imports_resolve.py) can't see:
+        # trigger-fire SQL syntax errors, queries against renamed
+        # columns, background-task supervisor construction failures,
+        # migrate.cmd_up() ordering bugs.
+        env:
+          PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
+        working-directory: mcp-server/central-command/backend
+        run: |
+          python3 -m pytest tests/test_lifespan_pg_smoke.py -v --tb=short
+
       - name: Sig-verify fingerprint divergence test
         env:
           PG_TEST_URL: postgresql://mcp:mcp@localhost:5432/mcp
