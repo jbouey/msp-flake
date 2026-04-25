@@ -82,8 +82,13 @@ def get_migration_files() -> List[Tuple[str, str, Path]]:
     migrations = []
 
     for sql_file in sorted(MIGRATIONS_DIR.glob("*.sql")):
-        # Parse version from filename: 001_name.sql -> (001, name)
-        match = re.match(r'^(\d{3})_(.+)\.sql$', sql_file.name)
+        # Parse version from filename: 001_name.sql -> (001, name).
+        # Optional single lowercase letter suffix (e.g. 000a_legacy.sql)
+        # supports bootstrap insertions between existing numbered
+        # migrations without renumbering the ledger. Sort order:
+        # `000_x.sql` < `000a_x.sql` < `001_x.sql` because '_' (0x5F)
+        # < 'a' (0x61) < '0' (0x30) reversed at the digit boundary.
+        match = re.match(r'^(\d{3}[a-z]?)_(.+)\.sql$', sql_file.name)
         if match:
             version, name = match.groups()
             migrations.append((version, name, sql_file))
