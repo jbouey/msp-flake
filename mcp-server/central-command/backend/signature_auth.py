@@ -32,9 +32,11 @@ Server verification order:
   2. Timestamp within ±60s of server UTC.
   3. Nonce has not been seen in the last 2 hours for this appliance.
   4. Resolve expected pubkey via v_current_appliance_identity for
-     (site_id, mac_address). Fall back to site_appliances.agent_public_key
-     if the view returns nothing (daemons that already had a key before
-     Migration 210).
+     (site_id, mac_address). The legacy site_appliances.agent_public_key
+     fallback was removed (Session 211, #179) — that column held the
+     EVIDENCE-bundle key, not the IDENTITY key sigauth needs. A MAC
+     without a `provisioning_claim_events` row now returns
+     `unknown_pubkey` (the honest reason).
   5. Reconstruct canonical_input; verify ed25519 signature.
 
 The function returns a SignatureVerifyResult describing what happened.
@@ -152,11 +154,39 @@ async def _resolve_pubkey(
 ) -> Optional[tuple[str, str]]:
     """Return (pubkey_hex, fingerprint) for (site_id, mac_address).
 
-    Resolution order:
-      1. v_current_appliance_identity (Migration 210) — post-enrollment
-      2. site_appliances.agent_public_key — pre-enrollment legacy field
+    Sole resolution source: `v_current_appliance_identity` (Migration
+    210), which materializes the latest claimed identity pubkey from
+    `provisioning_claim_events`. Returns None when no claim event has
+    landed — caller treats this as `unknown_pubkey`.
 
-    Both checks are cheap indexed lookups.
+    *Legacy fallback removed (Session 211, 2026-04-25, #179).*
+    The previous fallback read `site_appliances.agent_public_key`
+    when the identity view was empty. That column holds the
+    EVIDENCE-bundle signing key (per CLAUDE.md Session 196 — used by
+    `evidence_chain.py` to verify bundles). Sigauth needs the
+    IDENTITY signing key (a separate key the daemon writes to
+    `/var/lib/msp/agent.key` and signs requests with). The two are
+    different by design (key separation). The fallback was returning
+    the wrong key whenever it was hit; sigauth would fail with
+    `invalid_signature` even on legitimate traffic. Substrate
+    invariant `signature_verification_failures` correctly identified
+    100% fail rate as a result. Dropping the unsound fallback flips
+    those failures to `unknown_pubkey` (the honest reason) — sigauth
+    is still observe-mode (fail-open), so no production traffic is
+    blocked. Strict-mode rollout will require closing the daemon's
+    identity-pubkey-upload gap first; that's tracked as separate work.
+
+    Operator recovery: if you see a MAC stuck on `unknown_pubkey`,
+    the appliance has not enrolled an identity pubkey via
+    `provisioning_claim_events`. Recovery options:
+      - Standard rekey: `fleet_cli orders rekey --site <id> --mac <mac>`
+        (the daemon's auto-rekey loop will then upload its identity
+        on next checkin, IF the daemon is v0.3.84+).
+      - Manual recovery: `scripts/recover_legacy_appliance.sh <site_id>
+        <mac> <ip>` mints a fresh API key + claim event server-side.
+      - Admin restore: `POST /api/provision/admin/restore` for the
+        orphan-row class. See substrate runbook
+        `signature_verification_failures.md` for the full ladder.
     """
     row = await conn.fetchrow(
         """
@@ -169,20 +199,6 @@ async def _resolve_pubkey(
     )
     if row:
         return row["agent_pubkey_hex"], row["agent_pubkey_fingerprint"]
-
-    # Legacy fallback: site_appliances.agent_public_key.
-    row = await conn.fetchrow(
-        """
-        SELECT agent_public_key
-          FROM site_appliances
-         WHERE site_id = $1 AND mac_address = $2 AND deleted_at IS NULL
-        """,
-        site_id,
-        mac_address,
-    )
-    if row and row["agent_public_key"]:
-        pk = row["agent_public_key"]
-        return pk, _fingerprint(pk)
 
     return None
 

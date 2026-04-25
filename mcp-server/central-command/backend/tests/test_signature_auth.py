@@ -428,3 +428,93 @@ async def test_signature_wrong_length_rejected():
     )
     assert result.valid is False
     assert result.reason == "bad_signature_format"
+
+
+# ---------------------------------------------------------------------------
+# Legacy-fallback removal — regression guard for #179 (Session 211)
+# ---------------------------------------------------------------------------
+#
+# `_resolve_pubkey` USED to read `site_appliances.agent_public_key` as a
+# fallback when `v_current_appliance_identity` had no row. That column
+# holds the EVIDENCE-bundle signing key, not the IDENTITY signing key
+# sigauth needs (CLAUDE.md Session 196 — different key files on the
+# daemon). The fallback returned the wrong key whenever it was hit;
+# sigauth then failed with `invalid_signature` even on legitimate
+# traffic. Substrate `signature_verification_failures` correctly
+# flagged 100% fail on north-valley-branch-2 because of this.
+#
+# These tests lock in the post-removal behavior: when the identity
+# view is empty, `_resolve_pubkey` returns None even if
+# `site_appliances` has a populated `agent_public_key`. Sigauth then
+# reports `unknown_pubkey` (the honest reason), not `invalid_signature`.
+
+
+def _fake_conn_legacy_only(legacy_pubkey_hex: str):
+    """Fake conn where v_current_appliance_identity is empty but
+    site_appliances has a populated agent_public_key. Pre-removal,
+    _resolve_pubkey returned the legacy key; post-removal, it returns
+    None (the site_appliances branch is no longer queried)."""
+    conn = AsyncMock()
+
+    async def fetchrow(query, *args):
+        if "v_current_appliance_identity" in query:
+            return None
+        if "site_appliances" in query:
+            # If this branch ever fires post-removal, the legacy
+            # fallback has been re-added — these tests assert it
+            # is NOT.
+            return {"agent_public_key": legacy_pubkey_hex}
+        return None
+
+    conn.fetchrow = fetchrow
+    return conn
+
+
+@pytest.mark.asyncio
+async def test_resolve_pubkey_no_legacy_fallback():
+    """v_current empty + site_appliances populated → _resolve_pubkey
+    returns None. Locks in the #179 fix: the unsound legacy fallback
+    is gone."""
+    conn = _fake_conn_legacy_only("0" * 64)
+    result = await signature_auth._resolve_pubkey(
+        conn, site_id="s", mac_address="AA:BB:CC:DD:EE:FF",
+    )
+    assert result is None, (
+        "Expected None when v_current_appliance_identity has no row. "
+        "If this assertion fires, the legacy site_appliances.agent_public_key "
+        "fallback has been re-added — that fallback returns the EVIDENCE "
+        "key, not the IDENTITY key, and silently produces 100% sigauth "
+        "fail rate. See #179."
+    )
+
+
+@pytest.mark.asyncio
+async def test_verify_returns_unknown_pubkey_when_only_legacy_row_exists():
+    """End-to-end: a request from a MAC with no claim event but a
+    populated legacy site_appliances row returns reason=unknown_pubkey,
+    NOT reason=invalid_signature. The substrate's
+    sigauth_crypto_failures invariant relies on this distinction —
+    real crypto fails should be the priority signal, not enrollment
+    debt masquerading as crypto fails."""
+    _, pub_hex = _make_keypair()
+    conn = _fake_conn_legacy_only(pub_hex)
+    # 64-byte signature blob is well-formed; what matters is the
+    # pubkey-lookup result before signature verify.
+    sig = base64.urlsafe_b64encode(b"x" * 64).rstrip(b"=").decode()
+    req = _fake_request(
+        "POST", "/x",
+        {
+            "X-Appliance-Signature": sig,
+            "X-Appliance-Timestamp": _ts_now(),
+            "X-Appliance-Nonce": "0f" * 16,
+        },
+    )
+    result = await signature_auth.verify_appliance_signature(
+        req, conn=conn, site_id="s", mac_address="AA:BB", body_bytes=b"",
+    )
+    assert result.valid is False
+    assert result.reason == "unknown_pubkey", (
+        f"Expected reason=unknown_pubkey (no claim event), got "
+        f"reason={result.reason!r}. The legacy fallback may have been "
+        f"re-added — see #179."
+    )

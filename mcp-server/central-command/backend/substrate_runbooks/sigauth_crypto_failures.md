@@ -53,11 +53,17 @@ input). Treat as a possible security event until ruled out.
   - `/etc/osiriscare-identity.json` (operator-readable manifest with
     the same fingerprint under `.fingerprint`).
   Both are written by the daemon at first-boot identity creation and
-  stay in sync. Compare to `SHA256(site_appliances.agent_public_key)[0:16]`
-  for the same MAC. Mismatch = wrong key on file → rekey via fleet_cli.
-  (See task #179: the server-side fallback is currently unsound —
-  this comparison may show a "match" against the evidence key rather
-  than the identity key. The fix tracks under that ticket.)
+  stay in sync. Compare to the IDENTITY pubkey fingerprint stored
+  server-side:
+  ```
+  SELECT agent_pubkey_fingerprint
+    FROM v_current_appliance_identity
+   WHERE site_id = '<site>' AND mac_address = '<MAC>';
+  ```
+  Mismatch = wrong key on file → rekey via fleet_cli. Do NOT compare
+  to `site_appliances.agent_public_key` — that's the EVIDENCE-bundle
+  signing key, a different key by design (Session 211 / #179). The
+  legacy fallback that mistakenly used it was removed.
 - **If keys match but signatures still fail**, the canonical input is
   drifting. Capture a failed request body + headers in the daemon log
   (it logs the canonical bytes it signed) and replay verification
