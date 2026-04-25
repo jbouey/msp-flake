@@ -3,8 +3,8 @@ Shared state and dependencies for the MCP Server.
 
 This module holds references to global state (signing keys, MinIO client,
 runbooks, Redis, DB session) that are initialized in main.py's lifespan
-and consumed by extracted route modules (agent_api, learning_api_main,
-infra_api, background_tasks).
+and consumed by extracted route modules (agent_api, infra_api,
+background_tasks).
 
 Design rationale: Using module-level references avoids circular imports
 between main.py and the extracted modules. main.py calls the init_*

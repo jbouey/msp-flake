@@ -39,7 +39,8 @@ import (
 // Version is set at build time via -ldflags.
 // Default "dev" indicates an untagged development build.
 // 0.4.11: reprovision order handler (Session 210-B 2026-04-25 hardening #6).
-var Version = "0.4.11"
+// 0.4.12: reprovision in dangerousOrderTypes (Session 210-B audit P1).
+var Version = "0.4.12"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {

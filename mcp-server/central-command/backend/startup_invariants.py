@@ -332,16 +332,15 @@ async def enforce_startup_invariants(conn, metrics_registry=None) -> int:
                 await conn.execute(
                     """
                     INSERT INTO admin_audit_log
-                    (action, target_type, target_id, details, created_at)
+                    (action, target, details, created_at)
                     VALUES (
                         'STARTUP_INVARIANT_BROKEN',
-                        'invariant',
                         $1,
                         $2::jsonb,
                         NOW()
                     )
                     """,
-                    r.name,
+                    f"invariant:{r.name}",
                     json.dumps({
                         "invariant": r.name,
                         "detail": r.detail,

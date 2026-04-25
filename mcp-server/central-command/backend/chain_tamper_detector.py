@@ -213,16 +213,15 @@ async def chain_tamper_detector_loop():
                                 await conn.execute(
                                     """
                                     INSERT INTO admin_audit_log
-                                    (action, target_type, target_id, details, created_at)
+                                    (action, target, details, created_at)
                                     VALUES (
                                         'CHAIN_TAMPER_DETECTED',
-                                        'site',
                                         $1,
                                         $2::jsonb,
                                         NOW()
                                     )
                                     """,
-                                    sid,
+                                    f"site:{sid}",
                                     __import__("json").dumps({
                                         "site_id": sid,
                                         "verified": verified,

@@ -534,6 +534,10 @@ var dangerousOrderTypes = map[string]bool{
 	"update_agent":                true,
 	"enable_emergency_access":     true,
 	"disable_emergency_access":    true,
+	// reprovision rewrites the daemon's identity (site_id + api_key)
+	// — at least as dangerous as update_daemon. v0.4.12 (Session 210-B
+	// 2026-04-25) adds it to the deny-without-pubkey list.
+	"reprovision": true,
 }
 
 func (p *Processor) verifySignature(order *Order) error {

@@ -239,13 +239,13 @@ async def retention_verifier_loop():
                             await conn.execute(
                                 """
                                 INSERT INTO admin_audit_log
-                                (action, target_type, target_id, details, created_at)
+                                (action, target, details, created_at)
                                 VALUES (
                                     'PROOF_OF_RETENTION_SAMPLE',
-                                    'site', $1, $2::jsonb, NOW()
+                                    $1, $2::jsonb, NOW()
                                 )
                                 """,
-                                sid,
+                                f"site:{sid}",
                                 json.dumps({
                                     "site_id": sid,
                                     "sampled": summary["total_sampled"],

@@ -31,6 +31,19 @@ func TestReprovisionOrderTypeRegistered(t *testing.T) {
 	}
 }
 
+// TestReprovisionInDangerousOrderTypes locks in the v0.4.12 hardening.
+// `reprovision` rewrites the daemon's identity (site_id + api_key) — at
+// least as dangerous as update_daemon. It MUST be rejected pre-checkin
+// (before the server pubkey is available) so an unsigned identity flip
+// can't be injected. Removing this from the map without explicit
+// re-justification would resurrect a security gap.
+func TestReprovisionInDangerousOrderTypes(t *testing.T) {
+	if !dangerousOrderTypes["reprovision"] {
+		t.Fatal("reprovision MUST be in dangerousOrderTypes — identity-rewriting orders" +
+			" must NEVER execute pre-checkin without server-pubkey verification")
+	}
+}
+
 func TestReprovisionRejectsMissingParams(t *testing.T) {
 	p := NewProcessor(t.TempDir(), nil)
 	ctx := context.Background()

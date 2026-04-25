@@ -56,6 +56,14 @@ VALID_ORDER_TYPES = {
     # 2026-04-22: reclaim disk in /nix/store. Non-privileged; idempotent.
     # Surfaces bytes_freed in the completion payload.
     "nix_gc",
+    # Session 210-B 2026-04-25 audit P1 — daemon handlers that lacked
+    # a CLI path. clear_winrm_pin / enable_healing / disable_healing
+    # already had Go handlers but couldn't be issued from this CLI.
+    # reprovision is intentionally NOT here — issued by the relocate
+    # endpoint (sites.py), not by operator CLI.
+    "clear_winrm_pin",
+    "enable_healing",
+    "disable_healing",
 }
 
 DEFAULT_PARAMS = {
