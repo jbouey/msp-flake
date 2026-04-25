@@ -567,8 +567,8 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 row = await conn.fetchrow("""
                     SELECT
                         COUNT(*) as total_devices,
-                        COUNT(*) FILTER (WHERE last_seen > NOW() - INTERVAL '24 hours') as active_24h,
-                        COUNT(*) FILTER (WHERE last_seen < NOW() - INTERVAL '7 days') as stale_7d
+                        COUNT(*) FILTER (WHERE last_seen_at > NOW() - INTERVAL '24 hours') as active_24h,
+                        COUNT(*) FILTER (WHERE last_seen_at < NOW() - INTERVAL '7 days') as stale_7d
                     FROM discovered_devices
                 """)
                 sections.append(_gauge(
@@ -930,18 +930,22 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- OTS proof pipeline health (gauge) ---
             try:
+                # FILTER clauses must attach to an aggregate function
+                # call directly — `EXTRACT(...) FILTER (...)` is a
+                # syntax error because EXTRACT is scalar. Move the
+                # FILTER inside, attached to MIN()/MAX().
                 row = await conn.fetchrow("""
                     SELECT
                         COUNT(*) FILTER (WHERE status = 'anchored') as anchored,
                         COUNT(*) FILTER (WHERE status = 'pending') as pending,
                         COUNT(*) FILTER (WHERE status = 'expired') as expired,
                         COUNT(*) FILTER (WHERE status = 'verified') as verified,
-                        EXTRACT(EPOCH FROM (NOW() - MIN(submitted_at))) FILTER (
-                            WHERE status = 'pending'
-                        ) as oldest_pending_age_seconds,
-                        EXTRACT(EPOCH FROM (NOW() - MAX(anchored_at))) FILTER (
-                            WHERE status = 'anchored'
-                        ) as latest_anchor_age_seconds
+                        EXTRACT(EPOCH FROM (
+                            NOW() - MIN(submitted_at) FILTER (WHERE status = 'pending')
+                        )) as oldest_pending_age_seconds,
+                        EXTRACT(EPOCH FROM (
+                            NOW() - MAX(anchored_at) FILTER (WHERE status = 'anchored')
+                        )) as latest_anchor_age_seconds
                     FROM ots_proofs
                 """)
                 sections.append(_gauge(
