@@ -196,10 +196,16 @@ async def _nonce_seen(conn, fingerprint: str, nonce_hex: str) -> bool:
     with a distinct key prefix so the two populations don't mingle.
     """
     key = f"sigauth:{fingerprint}:{nonce_hex}"
+    # asyncpg binds Python timedelta directly to PG INTERVAL — passing a
+    # "<n> seconds" string raises 'str' object has no attribute 'days'
+    # inside asyncpg.pgproto.pgproto.interval_encode (every signature
+    # verification was failing inside the swallow-and-fall-back path,
+    # leaving sigauth_observations empty + the legacy_bearer_only_checkin
+    # invariant firing on otherwise-modern daemons).
     row = await conn.fetchrow(
-        "SELECT 1 FROM nonces WHERE nonce = $1 AND created_at > NOW() - $2::interval",
+        "SELECT 1 FROM nonces WHERE nonce = $1 AND created_at > NOW() - $2",
         key,
-        f"{int(NONCE_TTL.total_seconds())} seconds",
+        NONCE_TTL,
     )
     return row is not None
 

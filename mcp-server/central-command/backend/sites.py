@@ -1833,7 +1833,7 @@ async def get_mesh_scan_assignments(site_id: str, user: dict = Depends(require_a
                    dd.owner_appliance_id,
                    sa.hostname as appliance_hostname,
                    sa.mac_address as appliance_mac,
-                   dd.last_seen
+                   dd.last_seen_at
             FROM discovered_devices dd
             LEFT JOIN site_appliances sa ON dd.owner_appliance_id = sa.id
             WHERE dd.site_id = $1
@@ -1849,7 +1849,7 @@ async def get_mesh_scan_assignments(site_id: str, user: dict = Depends(require_a
                 'target_os': row['os_name'],
                 'scanned_by': row['appliance_hostname'] or (row['owner_appliance_id'] or 'unassigned'),
                 'appliance_mac': row['appliance_mac'],
-                'last_seen': row['last_seen'].isoformat() if row['last_seen'] else None,
+                'last_seen': row['last_seen_at'].isoformat() if row['last_seen_at'] else None,
             })
 
         return {

@@ -278,14 +278,28 @@ async def _check_discovered_devices_freshness(conn: asyncpg.Connection) -> List[
     last_seen_at fresher than 1h. If the canary is scanning but the
     sibling MAC stopped showing up, either the box is genuinely
     powered down OR there's a case-mismatch UPSERT bug. Either way
-    the operator needs to know."""
+    the operator needs to know.
+
+    Session 210-B 2026-04-24: discovered_devices does NOT have a
+    UNIQUE(mac_address, site_id). Multiple rows per pair are normal
+    (each scan can insert a new row). The freshness check must look
+    at MAX(last_seen_at) per (MAC, site_id) — joining the raw table
+    multiplies violations 1-per-stale-row even when a fresh row
+    exists for the same MAC.
+    """
     rows = await conn.fetch(
         """
+        WITH dd_freshest AS (
+            SELECT LOWER(mac_address) AS mac, site_id,
+                   MAX(last_seen_at) AS last_seen_at
+              FROM discovered_devices
+             GROUP BY LOWER(mac_address), site_id
+        )
         SELECT sa.site_id, sa.mac_address, sa.hostname,
                EXTRACT(EPOCH FROM (NOW() - dd.last_seen_at))/3600 AS hours_stale
           FROM site_appliances sa
-     LEFT JOIN discovered_devices dd
-            ON LOWER(dd.mac_address) = LOWER(sa.mac_address)
+     LEFT JOIN dd_freshest dd
+            ON dd.mac = LOWER(sa.mac_address)
            AND dd.site_id = sa.site_id
          WHERE sa.deleted_at IS NULL
            AND sa.status = 'online'
@@ -2534,6 +2548,11 @@ async def _check_l2_decisions_stalled(conn: asyncpg.Connection) -> List[Violatio
       * Fleet has at least one appliance that checked in in the last
         hour (no expectation of L2 activity when offline)
       * l2_decisions table has < 5 rows in the last 48 hours
+      * AND there's evidence the healing pipeline IS running but L2 is
+        the silent layer — i.e., either (a) ≥5 incident_remediation_steps
+        rows recorded in 48h (meaning L1 IS firing but L2 isn't), or
+        (b) ≥3 unresolved incidents older than 30 min with NO remediation
+        steps at all (the "silent escalation" pattern that masks L2 dying).
 
     48h is the noise-tolerant floor — a quiet weekend with healthy
     appliances can legitimately produce 0 incidents. Once the fleet
@@ -2541,6 +2560,12 @@ async def _check_l2_decisions_stalled(conn: asyncpg.Connection) -> List[Violatio
     to clear. Falling below signals either (a) LLM API broken, (b)
     circuit breaker stuck open, (c) daily budget cap tripped and not
     reset, (d) zero-result circuit clamped every pattern.
+
+    Session 210-B 2026-04-24: pre-refinement, this fired even when L1
+    correctly handled every incident (the L2 endpoint short-circuits
+    in <40ms on L1 match without writing to l2_decisions). The
+    `pipeline_signal` gate above prevents false positives during
+    quiet-but-healthy periods where L1 carries the load.
     """
     import os as _os
     l2_enabled = _os.getenv("L2_ENABLED", "false").lower() in ("true", "1", "yes", "on")
@@ -2560,16 +2585,36 @@ async def _check_l2_decisions_stalled(conn: asyncpg.Connection) -> List[Violatio
               FROM site_appliances
              WHERE deleted_at IS NULL
                AND last_checkin > NOW() - INTERVAL '1 hour'
+        ),
+        pipeline AS (
+            SELECT COUNT(*) AS remediation_steps_48h
+              FROM incident_remediation_steps
+             WHERE created_at > NOW() - INTERVAL '48 hours'
+        ),
+        silent_escalations AS (
+            SELECT COUNT(*) AS silent_count
+              FROM incidents i
+             WHERE i.status NOT IN ('resolved','closed')
+               AND i.created_at > NOW() - INTERVAL '48 hours'
+               AND i.created_at < NOW() - INTERVAL '30 minutes'
+               AND NOT EXISTS (
+                     SELECT 1 FROM incident_remediation_steps rs
+                      WHERE rs.incident_id = i.id
+               )
         )
-        SELECT s.decisions_48h, s.latest_decision_at, f.online
-          FROM state s, fleet f
+        SELECT s.decisions_48h, s.latest_decision_at, f.online,
+               p.remediation_steps_48h, e.silent_count
+          FROM state s, fleet f, pipeline p, silent_escalations e
         """
     )
     if row is None:
         return []
     decisions_48h = int(row["decisions_48h"] or 0)
     online = int(row["online"] or 0)
-    if online < 1 or decisions_48h >= 5:
+    remediation_steps_48h = int(row["remediation_steps_48h"] or 0)
+    silent_count = int(row["silent_count"] or 0)
+    pipeline_signal = remediation_steps_48h >= 5 or silent_count >= 3
+    if online < 1 or decisions_48h >= 5 or not pipeline_signal:
         return []
     latest = row["latest_decision_at"]
     hours_since = None
@@ -2581,6 +2626,8 @@ async def _check_l2_decisions_stalled(conn: asyncpg.Connection) -> List[Violatio
             details={
                 "l2_decisions_48h": decisions_48h,
                 "online_appliances_1h": online,
+                "remediation_steps_48h": remediation_steps_48h,
+                "silent_escalations_48h": silent_count,
                 "latest_decision_at": latest.isoformat() if latest else None,
                 "hours_since_last_decision": hours_since,
                 "remediation": (
