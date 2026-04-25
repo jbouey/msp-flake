@@ -44,7 +44,7 @@ describe('fetchApi (via fleetApi)', () => {
     const callArgs = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(callArgs[0]).toBe('/api/dashboard/fleet');
     expect(callArgs[1]).toMatchObject({
-      credentials: 'same-origin',
+      credentials: 'include',
     });
   });
 
