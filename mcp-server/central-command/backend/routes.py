@@ -4042,7 +4042,7 @@ class LoginResponse(BaseModel):
     error: Optional[str] = None
 
 
-class UserResponse(BaseModel):
+class LoginUserResponse(BaseModel):
     id: str
     username: str
     displayName: str
@@ -4162,7 +4162,7 @@ async def logout(
     raise HTTPException(status_code=401, detail="No token provided")
 
 
-@auth_router.get("/me", response_model=Optional[UserResponse])
+@auth_router.get("/me", response_model=Optional[LoginUserResponse])
 async def get_current_user(
     http_request: Request,
     db: AsyncSession = Depends(get_db)
@@ -4188,7 +4188,7 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    return UserResponse(
+    return LoginUserResponse(
         id=user["id"],
         username=user["username"],
         displayName=user["displayName"],

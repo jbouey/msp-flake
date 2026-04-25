@@ -1356,7 +1356,7 @@
             "type": "string"
           },
           "file": {
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "type": "string"
           },
@@ -1379,7 +1379,7 @@
             "type": "string"
           },
           "file": {
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "type": "string"
           },
@@ -1398,14 +1398,14 @@
       "Body_upload_evidence_worm_evidence_upload_post": {
         "properties": {
           "bundle": {
+            "contentMediaType": "application/octet-stream",
             "description": "Evidence bundle JSON file",
-            "format": "binary",
             "title": "Bundle",
             "type": "string"
           },
           "signature": {
+            "contentMediaType": "application/octet-stream",
             "description": "Detached Ed25519 signature file",
-            "format": "binary",
             "title": "Signature",
             "type": "string"
           }
@@ -1710,7 +1710,7 @@
         "title": "BulkPromotedRuleApproveRequest",
         "type": "object"
       },
-      "BulkRejectRequest": {
+      "BulkPromotedRuleRejectRequest": {
         "properties": {
           "pattern_ids": {
             "items": {
@@ -1728,7 +1728,7 @@
           "pattern_ids",
           "reason"
         ],
-        "title": "BulkRejectRequest",
+        "title": "BulkPromotedRuleRejectRequest",
         "type": "object"
       },
       "BundleInfo": {
@@ -2407,6 +2407,21 @@
           "ts"
         ],
         "title": "ClientFieldUndefinedEvent",
+        "type": "object"
+      },
+      "ClientMagicLinkRequest": {
+        "description": "Request a magic link login.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "ClientMagicLinkRequest",
         "type": "object"
       },
       "ClientRejectRequest": {
@@ -7682,6 +7697,34 @@
         "title": "LoginResponse",
         "type": "object"
       },
+      "LoginUserResponse": {
+        "properties": {
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "displayName",
+          "role"
+        ],
+        "title": "LoginUserResponse",
+        "type": "object"
+      },
       "MagicLinkConsumeRequest": {
         "properties": {
           "rejection_reason": {
@@ -7711,7 +7754,7 @@
         "type": "object"
       },
       "MagicLinkRequest": {
-        "description": "Request a magic link login.",
+        "description": "Request magic link via email.",
         "properties": {
           "email": {
             "format": "email",
@@ -9477,6 +9520,46 @@
         "title": "PartnerCreate",
         "type": "object"
       },
+      "PartnerCredentialCreate": {
+        "description": "Model for creating site credentials.",
+        "properties": {
+          "credential_type": {
+            "title": "Credential Type",
+            "type": "string"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "credential_type",
+          "username",
+          "password"
+        ],
+        "title": "PartnerCredentialCreate",
+        "type": "object"
+      },
       "PartnerMaintenanceRequest": {
         "properties": {
           "duration_hours": {
@@ -10896,6 +10979,19 @@
           }
         },
         "title": "PromotedRuleApproveRequest",
+        "type": "object"
+      },
+      "PromotedRuleRejectRequest": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "PromotedRuleRejectRequest",
         "type": "object"
       },
       "PromotionApprovalRequest": {
@@ -14445,6 +14541,13 @@
       },
       "ValidationError": {
         "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
           "loc": {
             "items": {
               "anyOf": [
@@ -14811,102 +14914,6 @@
           "start_date"
         ],
         "title": "WorkforceRecord",
-        "type": "object"
-      },
-      "dashboard_api___routes_impl__UserResponse": {
-        "properties": {
-          "displayName": {
-            "title": "Displayname",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
-          },
-          "username": {
-            "title": "Username",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "username",
-          "displayName",
-          "role"
-        ],
-        "title": "UserResponse",
-        "type": "object"
-      },
-      "dashboard_api__learning_api__RejectRequest": {
-        "properties": {
-          "reason": {
-            "title": "Reason",
-            "type": "string"
-          }
-        },
-        "required": [
-          "reason"
-        ],
-        "title": "RejectRequest",
-        "type": "object"
-      },
-      "dashboard_api__partners__CredentialCreate": {
-        "description": "Model for creating site credentials.",
-        "properties": {
-          "credential_type": {
-            "title": "Credential Type",
-            "type": "string"
-          },
-          "domain": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Domain"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "password": {
-            "title": "Password",
-            "type": "string"
-          },
-          "username": {
-            "title": "Username",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "credential_type",
-          "username",
-          "password"
-        ],
-        "title": "CredentialCreate",
-        "type": "object"
-      },
-      "dashboard_api__portal__MagicLinkRequest": {
-        "description": "Request magic link via email.",
-        "properties": {
-          "email": {
-            "format": "email",
-            "title": "Email",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email"
-        ],
-        "title": "MagicLinkRequest",
         "type": "object"
       }
     }
@@ -17732,7 +17739,7 @@
                 "schema": {
                   "anyOf": [
                     {
-                      "$ref": "#/components/schemas/dashboard_api___routes_impl__UserResponse"
+                      "$ref": "#/components/schemas/LoginUserResponse"
                     },
                     {
                       "type": "null"
@@ -19782,7 +19789,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MagicLinkRequest"
+                "$ref": "#/components/schemas/ClientMagicLinkRequest"
               }
             }
           },
@@ -43773,7 +43780,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BulkRejectRequest"
+                "$ref": "#/components/schemas/BulkPromotedRuleRejectRequest"
               }
             }
           },
@@ -43991,7 +43998,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__learning_api__RejectRequest"
+                "$ref": "#/components/schemas/PromotedRuleRejectRequest"
               }
             }
           },
@@ -47755,7 +47762,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__partners__CredentialCreate"
+                "$ref": "#/components/schemas/PartnerCredentialCreate"
               }
             }
           },
@@ -50600,7 +50607,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/dashboard_api__portal__MagicLinkRequest"
+                "$ref": "#/components/schemas/MagicLinkRequest"
               }
             }
           },

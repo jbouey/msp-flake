@@ -67,23 +67,6 @@ class LearningStats(BaseModel):
     avg_success_rate: float
 
 
-class PromotionCandidate(BaseModel):
-    id: str
-    pattern_signature: str
-    site_id: str
-    site_name: str
-    total_occurrences: int
-    l1_resolutions: int
-    l2_resolutions: int
-    l3_resolutions: int
-    success_rate: float
-    avg_resolution_time_ms: Optional[float]
-    recommended_action: Optional[str]
-    first_seen: Optional[str]
-    last_seen: Optional[str]
-    approval_status: str
-
-
 class PromotedRule(BaseModel):
     id: str
     rule_id: str
@@ -103,7 +86,7 @@ class PromotedRuleApproveRequest(BaseModel):
     notes: Optional[str] = None
 
 
-class RejectRequest(BaseModel):
+class PromotedRuleRejectRequest(BaseModel):
     reason: str
 
 
@@ -113,7 +96,7 @@ class BulkPromotedRuleApproveRequest(BaseModel):
     notes: Optional[str] = None
 
 
-class BulkRejectRequest(BaseModel):
+class BulkPromotedRuleRejectRequest(BaseModel):
     pattern_ids: List[str]
     reason: str
 
@@ -606,7 +589,7 @@ async def approve_candidate(
 @partner_learning_router.post("/candidates/{pattern_id}/reject")
 async def reject_candidate(
     pattern_id: str,
-    request: RejectRequest,
+    request: PromotedRuleRejectRequest,
     http_request: Request,
     partner=Depends(require_partner)
 ):
@@ -1073,7 +1056,7 @@ async def bulk_approve_candidates(
 
 @partner_learning_router.post("/candidates/bulk-reject")
 async def bulk_reject_candidates(
-    request: BulkRejectRequest,
+    request: BulkPromotedRuleRejectRequest,
     http_request: Request,
     partner=Depends(require_partner)
 ):

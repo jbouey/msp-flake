@@ -49,21 +49,6 @@ def test_export_script_runnable():
     assert EXPORT_SCRIPT.stat().st_mode & 0o111, "export_openapi.py must be executable"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "KNOWN: main.app.openapi() is non-deterministic across fresh Python "
-        "processes because 21+ Pydantic BaseModel subclasses share the same "
-        "__name__ across multiple modules (e.g. ApproveRequest appears in "
-        "both privileged_access_api and learning_api). FastAPI uses "
-        "model.__name__ as the OpenAPI schema key — last-import-wins, and "
-        "import order varies. Session 210 fixed the single worst offender "
-        "(ApproveRequest → PromotedRuleApproveRequest in learning_api). "
-        "The other 20+ are tracked as backlog. Regression-prevention is "
-        "test_no_new_duplicate_pydantic_model_names below, which caps the "
-        "count at the current state so NEW duplicates can't land."
-    ),
-    strict=False,
-)
 def test_schema_is_deterministic():
     """Re-running export_openapi.py against the committed schema SHOULD
     produce byte-identical output. Currently xfail — see the decorator."""
@@ -159,12 +144,18 @@ def test_no_new_duplicate_pydantic_model_names():
     # NEVER raise it — that means a new duplicate was added, which deepens
     # the openapi non-determinism.
     BASELINE_DUPLICATE_COUNT = len(duplicates)
-    # Lowered from 22 to 9 in Session 210-B after renaming the 12
-    # agent_api.py duplicates (which were all duplicates of main.py classes,
-    # agent_api.py router is no longer mounted). Remaining 9 each need
-    # individual disambiguation judgment (two real distinct features that
-    # happen to share a name) — queued as follow-up.
-    EXPECTED_MAX = 9
+    # Session 210-B (2026-04-25): driven to 0. Sequence:
+    # 22 → 9: agent_api.py 12-class _AgentApi prefix rename (commit 7b3afbc7)
+    # 9 → 5: stale entries already cleared by other Session 210 work
+    # 5 → 0: this commit — file-local renames + one dead-code deletion:
+    #   partners.py        CredentialCreate    → PartnerCredentialCreate
+    #   client_portal.py   MagicLinkRequest    → ClientMagicLinkRequest
+    #   learning_api.py    RejectRequest       → PromotedRuleRejectRequest
+    #   learning_api.py    BulkRejectRequest   → BulkPromotedRuleRejectRequest
+    #   learning_api.py    PromotionCandidate  (deleted — was dead code)
+    #   routes.py          UserResponse        → LoginUserResponse
+    # Adding any new duplicate fails this test.
+    EXPECTED_MAX = 0
 
     assert BASELINE_DUPLICATE_COUNT <= EXPECTED_MAX, (
         f"Number of duplicate Pydantic class names is {BASELINE_DUPLICATE_COUNT}, "

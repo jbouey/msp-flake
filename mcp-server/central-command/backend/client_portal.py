@@ -128,7 +128,7 @@ auth_router = APIRouter(prefix="/client", tags=["client-portal"])
 # MODELS
 # =============================================================================
 
-class MagicLinkRequest(BaseModel):
+class ClientMagicLinkRequest(BaseModel):
     """Request a magic link login."""
     email: EmailStr
 
@@ -336,7 +336,7 @@ async def _audit_client_action(
 # =============================================================================
 
 @public_router.post("/request-magic-link")
-async def request_magic_link(request: MagicLinkRequest, http_request: Request):
+async def request_magic_link(request: ClientMagicLinkRequest, http_request: Request):
     """Send magic link to user's email.
 
     Rate limited per source IP via the existing rate limiter (Session

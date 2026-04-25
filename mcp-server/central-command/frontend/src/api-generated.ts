@@ -16623,10 +16623,7 @@ export interface components {
         Body_companion_upload_document_api_companion_clients__org_id__documents_upload_post: {
             /** Description */
             description?: string;
-            /**
-             * File
-             * Format: binary
-             */
+            /** File */
             file: string;
             /** Module Key */
             module_key: string;
@@ -16635,10 +16632,7 @@ export interface components {
         Body_upload_document_api_client_compliance_documents_upload_post: {
             /** Description */
             description?: string;
-            /**
-             * File
-             * Format: binary
-             */
+            /** File */
             file: string;
             /** Module Key */
             module_key: string;
@@ -16647,13 +16641,11 @@ export interface components {
         Body_upload_evidence_worm_evidence_upload_post: {
             /**
              * Bundle
-             * Format: binary
              * @description Evidence bundle JSON file
              */
             bundle: string;
             /**
              * Signature
-             * Format: binary
              * @description Detached Ed25519 signature file
              */
             signature?: string;
@@ -16766,8 +16758,8 @@ export interface components {
             /** Pattern Ids */
             pattern_ids: string[];
         };
-        /** BulkRejectRequest */
-        BulkRejectRequest: {
+        /** BulkPromotedRuleRejectRequest */
+        BulkPromotedRuleRejectRequest: {
             /** Pattern Ids */
             pattern_ids: string[];
             /** Reason */
@@ -17029,6 +17021,17 @@ export interface components {
             page: string;
             /** Ts */
             ts: string;
+        };
+        /**
+         * ClientMagicLinkRequest
+         * @description Request a magic link login.
+         */
+        ClientMagicLinkRequest: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
         };
         /** ClientRejectRequest */
         ClientRejectRequest: {
@@ -19356,6 +19359,17 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** LoginUserResponse */
+        LoginUserResponse: {
+            /** Displayname */
+            displayName: string;
+            /** Id */
+            id: string;
+            /** Role */
+            role: string;
+            /** Username */
+            username: string;
+        };
         /** MagicLinkConsumeRequest */
         MagicLinkConsumeRequest: {
             /**
@@ -19368,7 +19382,7 @@ export interface components {
         };
         /**
          * MagicLinkRequest
-         * @description Request a magic link login.
+         * @description Request magic link via email.
          */
         MagicLinkRequest: {
             /**
@@ -20101,6 +20115,22 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /**
+         * PartnerCredentialCreate
+         * @description Model for creating site credentials.
+         */
+        PartnerCredentialCreate: {
+            /** Credential Type */
+            credential_type: string;
+            /** Domain */
+            domain?: string | null;
+            /** Name */
+            name: string;
+            /** Password */
+            password: string;
+            /** Username */
+            username: string;
+        };
         /** PartnerMaintenanceRequest */
         PartnerMaintenanceRequest: {
             /** Duration Hours */
@@ -20705,6 +20735,11 @@ export interface components {
             deploy_immediately: boolean;
             /** Notes */
             notes?: string | null;
+        };
+        /** PromotedRuleRejectRequest */
+        PromotedRuleRejectRequest: {
+            /** Reason */
+            reason: string;
         };
         /**
          * PromotionApprovalRequest
@@ -22221,6 +22256,10 @@ export interface components {
         };
         /** ValidationError */
         ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
             /** Location */
             loc: (string | number)[];
             /** Message */
@@ -22342,49 +22381,6 @@ export interface components {
             systems?: string[] | null;
             /** Termination Date */
             termination_date?: string | null;
-        };
-        /** UserResponse */
-        dashboard_api___routes_impl__UserResponse: {
-            /** Displayname */
-            displayName: string;
-            /** Id */
-            id: string;
-            /** Role */
-            role: string;
-            /** Username */
-            username: string;
-        };
-        /** RejectRequest */
-        dashboard_api__learning_api__RejectRequest: {
-            /** Reason */
-            reason: string;
-        };
-        /**
-         * CredentialCreate
-         * @description Model for creating site credentials.
-         */
-        dashboard_api__partners__CredentialCreate: {
-            /** Credential Type */
-            credential_type: string;
-            /** Domain */
-            domain?: string | null;
-            /** Name */
-            name: string;
-            /** Password */
-            password: string;
-            /** Username */
-            username: string;
-        };
-        /**
-         * MagicLinkRequest
-         * @description Request magic link via email.
-         */
-        dashboard_api__portal__MagicLinkRequest: {
-            /**
-             * Email
-             * Format: email
-             */
-            email: string;
         };
     };
     responses: never;
@@ -24493,7 +24489,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["dashboard_api___routes_impl__UserResponse"] | null;
+                    "application/json": components["schemas"]["LoginUserResponse"] | null;
                 };
             };
         };
@@ -25804,7 +25800,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MagicLinkRequest"];
+                "application/json": components["schemas"]["ClientMagicLinkRequest"];
             };
         };
         responses: {
@@ -40962,7 +40958,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BulkRejectRequest"];
+                "application/json": components["schemas"]["BulkPromotedRuleRejectRequest"];
             };
         };
         responses: {
@@ -41075,7 +41071,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__learning_api__RejectRequest"];
+                "application/json": components["schemas"]["PromotedRuleRejectRequest"];
             };
         };
         responses: {
@@ -43048,7 +43044,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__partners__CredentialCreate"];
+                "application/json": components["schemas"]["PartnerCredentialCreate"];
             };
         };
         responses: {
@@ -44670,7 +44666,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["dashboard_api__portal__MagicLinkRequest"];
+                "application/json": components["schemas"]["MagicLinkRequest"];
             };
         };
         responses: {

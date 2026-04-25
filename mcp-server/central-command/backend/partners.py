@@ -3271,7 +3271,7 @@ async def generate_user_magic_link(partner_id: str, user_id: str, admin: dict = 
 # DISCOVERY & CREDENTIAL ENDPOINTS
 # =============================================================================
 
-class CredentialCreate(BaseModel):
+class PartnerCredentialCreate(BaseModel):
     """Model for creating site credentials."""
     name: str
     credential_type: str  # domain_admin, service_account, local_admin
@@ -3478,7 +3478,7 @@ async def get_partner_site_detail(request: Request, site_id: str, partner=Depend
 async def add_site_credentials(
     request: Request,
     site_id: str,
-    credential: CredentialCreate,
+    credential: PartnerCredentialCreate,
     partner=Depends(require_partner)
 ):
     """Add credentials for a site."""
