@@ -449,57 +449,114 @@ async def test_signature_wrong_length_rejected():
 # reports `unknown_pubkey` (the honest reason), not `invalid_signature`.
 
 
-def _fake_conn_legacy_only(legacy_pubkey_hex: str):
-    """Fake conn where v_current_appliance_identity is empty but
-    site_appliances has a populated agent_public_key. Pre-removal,
-    _resolve_pubkey returned the legacy key; post-removal, it returns
-    None (the site_appliances branch is no longer queried)."""
+def _fake_conn_no_identity(view_pubkey_hex: Optional[str] = None,
+                            view_fingerprint: Optional[str] = None):
+    """Fake conn modeling: site_appliances has NO agent_identity_public_key
+    populated (column is NULL → query's WHERE clause filters out the
+    row, fetchrow returns None). v_current_appliance_identity may or
+    may not have a row.
+    Used to test the resolution chain without the new identity-key
+    hot path firing."""
     conn = AsyncMock()
 
     async def fetchrow(query, *args):
-        if "v_current_appliance_identity" in query:
+        if "agent_identity_public_key" in query:
+            # Identity-key column NULL → WHERE clause filters out.
             return None
-        if "site_appliances" in query:
-            # If this branch ever fires post-removal, the legacy
-            # fallback has been re-added — these tests assert it
-            # is NOT.
-            return {"agent_public_key": legacy_pubkey_hex}
+        if "v_current_appliance_identity" in query:
+            if view_pubkey_hex:
+                return {
+                    "agent_pubkey_hex": view_pubkey_hex,
+                    "agent_pubkey_fingerprint": view_fingerprint,
+                }
+            return None
         return None
 
     conn.fetchrow = fetchrow
     return conn
 
 
+def _fake_conn_with_identity(identity_pubkey_hex: str):
+    """Fake conn where the new agent_identity_public_key column is
+    populated (Commit A wrote it). v_current_appliance_identity
+    irrelevant — identity column wins as priority 1."""
+    conn = AsyncMock()
+
+    async def fetchrow(query, *args):
+        if "agent_identity_public_key" in query:
+            return {"agent_identity_public_key": identity_pubkey_hex}
+        if "v_current_appliance_identity" in query:
+            # If reached, the identity-key fast path didn't return —
+            # tests using this fake fail loudly.
+            raise AssertionError(
+                "v_current_appliance_identity queried — should NOT "
+                "happen when agent_identity_public_key column is set"
+            )
+        return None
+
+    conn.fetchrow = fetchrow
+    return conn
+
+
+# Need Optional import for the new helper.
+from typing import Optional  # noqa: E402
+
+
 @pytest.mark.asyncio
-async def test_resolve_pubkey_no_legacy_fallback():
-    """v_current empty + site_appliances populated → _resolve_pubkey
-    returns None. Locks in the #179 fix: the unsound legacy fallback
-    is gone."""
-    conn = _fake_conn_legacy_only("0" * 64)
+async def test_resolve_pubkey_uses_identity_column_first():
+    """Commit C priority: when site_appliances.agent_identity_public_key
+    is populated, _resolve_pubkey returns it WITHOUT querying the
+    legacy v_current_appliance_identity view. Locks the new ordering."""
+    pk = "a" * 64
+    conn = _fake_conn_with_identity(pk)
+    result = await signature_auth._resolve_pubkey(
+        conn, site_id="s", mac_address="AA:BB:CC:DD:EE:FF",
+    )
+    assert result is not None
+    pubkey, fp = result
+    assert pubkey == pk
+    assert fp == signature_auth._fingerprint(pk)
+
+
+@pytest.mark.asyncio
+async def test_resolve_pubkey_falls_back_to_view_when_identity_null():
+    """Commit C fallback: identity column NULL but v_current view has
+    a row → return the view's pubkey. Covers daemons that have a
+    claim event but haven't yet checked in with v0.4.13+."""
+    view_pk = "b" * 64
+    view_fp = signature_auth._fingerprint(view_pk)
+    conn = _fake_conn_no_identity(view_pubkey_hex=view_pk, view_fingerprint=view_fp)
+    result = await signature_auth._resolve_pubkey(
+        conn, site_id="s", mac_address="AA:BB:CC:DD:EE:FF",
+    )
+    assert result == (view_pk, view_fp)
+
+
+@pytest.mark.asyncio
+async def test_resolve_pubkey_returns_none_when_neither_source_has_data():
+    """Commit C: no identity column, no view row → None
+    (= unknown_pubkey for the caller). Replaces the post-Step-3 test
+    of the same intent — semantics preserved, only the fake's shape
+    changed because the column queried is different."""
+    conn = _fake_conn_no_identity(view_pubkey_hex=None)
     result = await signature_auth._resolve_pubkey(
         conn, site_id="s", mac_address="AA:BB:CC:DD:EE:FF",
     )
     assert result is None, (
-        "Expected None when v_current_appliance_identity has no row. "
-        "If this assertion fires, the legacy site_appliances.agent_public_key "
-        "fallback has been re-added — that fallback returns the EVIDENCE "
-        "key, not the IDENTITY key, and silently produces 100% sigauth "
-        "fail rate. See #179."
+        "Expected None when neither agent_identity_public_key nor "
+        "v_current_appliance_identity has a row for this MAC. If this "
+        "fires, an unsound fallback may have been re-added — see #179."
     )
 
 
 @pytest.mark.asyncio
-async def test_verify_returns_unknown_pubkey_when_only_legacy_row_exists():
-    """End-to-end: a request from a MAC with no claim event but a
-    populated legacy site_appliances row returns reason=unknown_pubkey,
-    NOT reason=invalid_signature. The substrate's
-    sigauth_crypto_failures invariant relies on this distinction —
-    real crypto fails should be the priority signal, not enrollment
-    debt masquerading as crypto fails."""
-    _, pub_hex = _make_keypair()
-    conn = _fake_conn_legacy_only(pub_hex)
-    # 64-byte signature blob is well-formed; what matters is the
-    # pubkey-lookup result before signature verify.
+async def test_verify_returns_unknown_pubkey_when_no_sources_have_data():
+    """End-to-end: a MAC with neither identity column nor claim event
+    returns reason=unknown_pubkey, NOT reason=invalid_signature.
+    The substrate's sigauth_crypto_failures invariant depends on
+    this distinction — real crypto fails should be the priority
+    signal, not enrollment debt masquerading as crypto fails."""
+    conn = _fake_conn_no_identity()
     sig = base64.urlsafe_b64encode(b"x" * 64).rstrip(b"=").decode()
     req = _fake_request(
         "POST", "/x",
@@ -513,8 +570,4 @@ async def test_verify_returns_unknown_pubkey_when_only_legacy_row_exists():
         req, conn=conn, site_id="s", mac_address="AA:BB", body_bytes=b"",
     )
     assert result.valid is False
-    assert result.reason == "unknown_pubkey", (
-        f"Expected reason=unknown_pubkey (no claim event), got "
-        f"reason={result.reason!r}. The legacy fallback may have been "
-        f"re-added — see #179."
-    )
+    assert result.reason == "unknown_pubkey"

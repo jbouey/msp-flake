@@ -154,40 +154,57 @@ async def _resolve_pubkey(
 ) -> Optional[tuple[str, str]]:
     """Return (pubkey_hex, fingerprint) for (site_id, mac_address).
 
-    Sole resolution source: `v_current_appliance_identity` (Migration
-    210), which materializes the latest claimed identity pubkey from
-    `provisioning_claim_events`. Returns None when no claim event has
-    landed — caller treats this as `unknown_pubkey`.
+    Resolution order (#179 Commit C, 2026-04-25):
+      1. `site_appliances.agent_identity_public_key` — populated at
+         checkin time from the daemon's IDENTITY pubkey
+         (phonehome.go::AgentIdentityPublicKey, daemon v0.4.13+).
+         This is the authoritative source for verifying sigauth
+         request signatures on actively-checking-in appliances.
+      2. `v_current_appliance_identity` — historic provisioning-claim
+         identity. Pre-#179 this was the only source. Kept as a
+         fallback for sites that have completed a claim event but
+         haven't yet checked in with v0.4.13 (or have no daemon
+         actively running).
+      3. Return None — caller treats as `unknown_pubkey`. Honest
+         signal: we don't know how to verify this MAC's signatures
+         yet. Substrate signature_verification_failures fires; an
+         operator either deploys v0.4.13 or runs the recovery script.
 
-    *Legacy fallback removed (Session 211, 2026-04-25, #179).*
-    The previous fallback read `site_appliances.agent_public_key`
-    when the identity view was empty. That column holds the
-    EVIDENCE-bundle signing key (per CLAUDE.md Session 196 — used by
-    `evidence_chain.py` to verify bundles). Sigauth needs the
-    IDENTITY signing key (a separate key the daemon writes to
-    `/var/lib/msp/agent.key` and signs requests with). The two are
-    different by design (key separation). The fallback was returning
-    the wrong key whenever it was hit; sigauth would fail with
-    `invalid_signature` even on legitimate traffic. Substrate
-    invariant `signature_verification_failures` correctly identified
-    100% fail rate as a result. Dropping the unsound fallback flips
-    those failures to `unknown_pubkey` (the honest reason) — sigauth
-    is still observe-mode (fail-open), so no production traffic is
-    blocked. Strict-mode rollout will require closing the daemon's
-    identity-pubkey-upload gap first; that's tracked as separate work.
+    *Legacy fallback to `site_appliances.agent_public_key` removed
+    in Session 211 / #179.* That column holds the EVIDENCE-bundle
+    signing key (Session 196 — `evidence_chain.py` reads it). Sigauth
+    needs the IDENTITY signing key. They're different keys by design
+    (key separation). The new
+    `site_appliances.agent_identity_public_key` column added by
+    migration 251 is the correct sigauth-side source.
 
-    Operator recovery: if you see a MAC stuck on `unknown_pubkey`,
-    the appliance has not enrolled an identity pubkey via
-    `provisioning_claim_events`. Recovery options:
-      - Standard rekey: `fleet_cli orders rekey --site <id> --mac <mac>`
-        (the daemon's auto-rekey loop will then upload its identity
-        on next checkin, IF the daemon is v0.3.84+).
-      - Manual recovery: `scripts/recover_legacy_appliance.sh <site_id>
-        <mac> <ip>` mints a fresh API key + claim event server-side.
-      - Admin restore: `POST /api/provision/admin/restore` for the
-        orphan-row class. See substrate runbook
-        `signature_verification_failures.md` for the full ladder.
+    Operator recovery for `unknown_pubkey`:
+      - Best path: roll the daemon to v0.4.13+ — its next checkin
+        populates agent_identity_public_key automatically.
+      - Standard rekey: `fleet_cli orders rekey --site <id> --mac <mac>`.
+      - Manual recovery: `scripts/recover_legacy_appliance.sh
+        <site_id> <mac> <ip>` mints a fresh API key + claim event.
+      - Admin restore: `POST /api/provision/admin/restore` for orphan-row.
+    See substrate runbook signature_verification_failures.md.
     """
+    # 1. Hot path: identity pubkey persisted by Commit A's STEP 3.6c.
+    #    Compute fingerprint locally — the column stores raw hex.
+    row = await conn.fetchrow(
+        """
+        SELECT agent_identity_public_key
+          FROM site_appliances
+         WHERE site_id = $1 AND mac_address = $2
+           AND deleted_at IS NULL
+           AND agent_identity_public_key IS NOT NULL
+        """,
+        site_id,
+        mac_address,
+    )
+    if row and row["agent_identity_public_key"]:
+        pk = row["agent_identity_public_key"]
+        return pk, _fingerprint(pk)
+
+    # 2. Fallback: provisioning-claim identity view.
     row = await conn.fetchrow(
         """
         SELECT agent_pubkey_hex, agent_pubkey_fingerprint
