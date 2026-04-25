@@ -237,6 +237,8 @@ const pageTitles: Record<string, string> = {
   '/partners': 'Partners',
   '/users': 'User Management',
   '/runbooks': 'Runbook Library',
+  '/admin/substrate-health': 'Substrate Health',
+  '/admin/substrate/runbooks': 'Substrate Runbook Library',
   '/runbook-config': 'Runbook Configuration',
   '/learning': 'Learning Loop',
   '/rule-builder': 'L1 Rule Builder',
