@@ -61,13 +61,55 @@ CREATE TABLE IF NOT EXISTS sites (
 --
 -- HOW TO EXTEND THIS STUB:
 -- If a fresh-CI `cmd_up()` fails with
---   `column "X" does not exist of relation "sites"`
--- it means a future migration references a legacy `sites` column
--- that this stub doesn't include. Add it as a nullable column above
--- (no default unless the app code actually relies on one). Don't
--- copy the prod column shape verbatim — only what the migration
--- ledger actually needs. The point of this file is "minimum surface,"
--- not "prod schema mirror."
+--   `column "X" does not exist of relation "<table>"`
+-- it means a future migration references a legacy column that this
+-- stub doesn't include. Add it as a nullable column above (no default
+-- unless app code actually relies on one). Don't copy the prod
+-- column shape verbatim — only what the migration ledger needs.
+-- The point of this file is "minimum surface," not "prod schema mirror."
+
+-- ============================================================================
+-- runbooks: legacy (created outside the migration ledger; prod has UUID id +
+-- runbook_id UNIQUE + steps JSONB; migration 005's CREATE TABLE IF NOT EXISTS
+-- uses VARCHAR id; later migrations 010/027/051/076/090 INSERT (runbook_id,
+-- ..., steps) which 005's poorer schema can't accept on a fresh CI Postgres).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS runbooks (
+    -- 005 inserts string ids like 'RB-WIN-PATCH-001'; later migrations
+    -- don't pass id at all and rely on a default. Use VARCHAR with a
+    -- gen_random_uuid()::text default so BOTH paths work.
+    id VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    -- ON CONFLICT (runbook_id) target for migrations 010+.
+    runbook_id VARCHAR(100) UNIQUE,
+    name VARCHAR(255) NOT NULL DEFAULT '',
+    description TEXT,
+    category VARCHAR(100),
+    check_type VARCHAR(100),
+    severity VARCHAR(50) DEFAULT 'medium',
+    is_disruptive BOOLEAN DEFAULT FALSE,
+    requires_maintenance_window BOOLEAN DEFAULT FALSE,
+    hipaa_controls TEXT[],
+    steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+    parameters_schema JSONB,
+    enabled BOOLEAN DEFAULT TRUE,
+    version VARCHAR(50) DEFAULT '1.0',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================================
+-- control_runbook_mapping: legacy (no migration creates it; prod has it +
+-- migration 086 INSERTs 160 mapping rows). Without this stub, migration 086
+-- aborts on fresh CI with `relation "control_runbook_mapping" does not exist`.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS control_runbook_mapping (
+    id BIGSERIAL PRIMARY KEY,
+    framework_id TEXT NOT NULL,
+    control_id TEXT NOT NULL,
+    runbook_id TEXT NOT NULL,
+    is_primary BOOLEAN DEFAULT TRUE,
+    UNIQUE (framework_id, control_id, runbook_id)
+);
 
 -- DOWN
 -- DROP TABLE IF EXISTS sites; -- only safe if the prod table is empty

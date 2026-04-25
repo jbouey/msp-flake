@@ -253,7 +253,14 @@ CREATE INDEX IF NOT EXISTS idx_physical_org ON hipaa_physical_safeguards(org_id)
 CREATE INDEX IF NOT EXISTS idx_officers_org ON hipaa_officers(org_id);
 CREATE INDEX IF NOT EXISTS idx_gap_org ON hipaa_gap_responses(org_id);
 
--- Record migration
-INSERT INTO schema_migrations (version, description)
-VALUES (48, 'HIPAA administrative compliance modules')
+-- Record migration. The column is `name`, not `description` — the
+-- original was a typo that worked on prod only because version 48
+-- was backfilled into schema_migrations before this body ever ran
+-- (CLAUDE.md "Pre-Session-205 files were backfilled once"). Fresh
+-- CI runs this body and the typo aborted cmd_up. apply_migration
+-- writes the real ledger row anyway, so this INSERT is redundant —
+-- but kept idempotent + correct for completeness. version is text
+-- in schema_migrations so the literal goes through as-is.
+INSERT INTO schema_migrations (version, name)
+VALUES ('48', 'HIPAA administrative compliance modules')
 ON CONFLICT (version) DO NOTHING;
