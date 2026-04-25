@@ -115,12 +115,19 @@ async def promote_candidate(
         "confidence": confidence,
     }
 
+    # promoted_rules natural key is (site_id, rule_id) — same rule can
+    # be rolled out to multiple sites, each with its own row. Migration
+    # 247 added UNIQUE(site_id, rule_id) so this ON CONFLICT works.
+    # Pre-247 the ON CONFLICT clause silently failed at runtime with
+    # InvalidColumnReferenceError (no unique constraint on rule_id
+    # alone). Surfaced 2026-04-25 when the dashboard's "Approve"
+    # button on /learning returned 500 on first click.
     await conn.execute("""
         INSERT INTO promoted_rules (
             rule_id, pattern_signature, site_id, partner_id,
             rule_yaml, rule_json, notes, status, promoted_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW())
-        ON CONFLICT (rule_id) DO UPDATE SET
+        ON CONFLICT (site_id, rule_id) DO UPDATE SET
             status = 'active',
             notes = EXCLUDED.notes,
             promoted_at = NOW()
