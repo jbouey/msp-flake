@@ -109,15 +109,24 @@ def _violations() -> List[str]:
 
 
 # Baseline locked 2026-04-25 after auditing 60+ frontend mutation
-# fetches. Adding a NEW raw mutation is a regression. Lower this number
-# as files migrate to `fetchApi` (which auto-injects CSRF). Aim: 0.
+# fetches. Adding a NEW raw mutation is a regression — fail CI.
+# Reaching CSRF_BASELINE_MAX = 0 means every state-changing fetch
+# in the frontend either uses fetchApi or includes both
+# credentials:'include' AND a csrfHeaders()/X-CSRF-Token reference.
 #
-# 2026-04-25 baseline-grind pass: 58 → 41 after migrating the demo-path
-# raw fetches in PartnerBilling (4), PartnerLogin (4), ClientLogin (5),
-# ConsentApprovePage (1), PortalDashboard (1), SignupBaa (2) — 17 sites
-# closed in one wave. Remaining 41 are non-demo-path admin / partner /
-# client / portal mutations.
-CSRF_BASELINE_MAX = 41
+# History:
+# - 2026-04-25 first lock: 58 (initial audit count)
+# - 2026-04-25 demo-path wave: 58 → 41 (PartnerBilling, login pages,
+#   ConsentApprovePage, PortalDashboard, SignupBaa — 17 sites)
+# - 2026-04-25 mechanical grind: 41 → 0 (3 parallel agents,
+#   23 files: partner/ × 8, portal/ × 5, pages/+contexts/+client/+
+#   companion/+components/ × 10 files). Locked.
+#
+# Round-table also caught the apiKey-gated anti-pattern
+# (`credentials: apiKey ? undefined : 'include'`) in 11+ partner
+# files; the grind pass corrected those to the canonical additive
+# form (cookies + CSRF unconditional, X-API-Key additive).
+CSRF_BASELINE_MAX = 0
 
 
 def test_no_new_frontend_mutations_without_csrf():

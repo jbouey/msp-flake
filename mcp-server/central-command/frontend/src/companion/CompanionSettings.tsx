@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { companionColors, companionShadows } from './companion-tokens';
+import { csrfHeaders } from '../utils/csrf';
 
 interface CompanionPrefs {
   display_name: string;
@@ -42,7 +43,7 @@ export const CompanionSettings: React.FC = () => {
       const res = await fetch('/api/companion/me/preferences', {
         method: 'PUT',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify(prefs),
       });
       if (res.ok) {

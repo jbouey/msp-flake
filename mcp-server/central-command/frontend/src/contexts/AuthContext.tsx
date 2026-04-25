@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { csrfHeaders } from '../utils/csrf';
 
 interface User {
   id?: string;
@@ -106,8 +107,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...csrfHeaders(),
         },
-        credentials: 'same-origin',
+        credentials: 'include',
         body: JSON.stringify({ username, password }),
       });
 
@@ -133,7 +135,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       await fetch(`${API_BASE}/auth/logout`, {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
     } catch {
       // Logout request failed — clear local state anyway

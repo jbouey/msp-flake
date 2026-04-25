@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useIdleTimeout } from '../hooks/useIdleTimeout';
 import { IdleTimeoutWarning } from '../components/shared/IdleTimeoutWarning';
+import { csrfHeaders } from '../utils/csrf';
 
 interface ClientOrg {
   id: string;
@@ -74,6 +75,7 @@ export const ClientProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       await fetch('/api/client/auth/logout', {
         method: 'POST',
         credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
     } catch (e) {
       console.error('Logout request failed:', e);

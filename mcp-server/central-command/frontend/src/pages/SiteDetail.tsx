@@ -23,7 +23,7 @@ import type {
 import { fleetUpdatesApi, type FleetStats } from '../utils/api';
 import { ComplianceHealthInfographic } from '../client/ComplianceHealthInfographic';
 import { DevicesAtRisk } from '../client/DevicesAtRisk';
-import { getCsrfTokenOrEmpty } from '../utils/csrf';
+import { csrfHeaders, getCsrfTokenOrEmpty } from '../utils/csrf';
 import { ApplianceCard } from './site-detail/components/ApplianceCard';
 import { OnboardingProgress } from './site-detail/components/OnboardingProgress';
 import { SiteActionToolbar } from './site-detail/components/SiteActionToolbar';
@@ -192,7 +192,8 @@ export const SiteDetail: React.FC = () => {
     try {
       const response = await fetch(`/api/portal/sites/${siteId}/generate-token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
       });
       if (!response.ok) {
         throw new Error('Failed to generate portal link');

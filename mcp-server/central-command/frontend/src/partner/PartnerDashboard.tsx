@@ -134,14 +134,14 @@ export const PartnerDashboard: React.FC = () => {
 
     setCreating(true);
     try {
-      const headers: HeadersInit = apiKey
-        ? { 'Content-Type': 'application/json', 'X-API-Key': apiKey }
-        : { 'Content-Type': 'application/json', ...csrfHeaders() };
-
       const response = await fetch('/api/partners/me/provisions', {
         method: 'POST',
-        headers,
-        credentials: apiKey ? undefined : 'include',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
         body: JSON.stringify({
           target_client_name: newClientName.trim(),
           expires_days: 30,
@@ -183,13 +183,14 @@ export const PartnerDashboard: React.FC = () => {
     setBulkError(null);
     setBulkResult(null);
     try {
-      const headers: HeadersInit = apiKey
-        ? { 'Content-Type': 'application/json', 'X-API-Key': apiKey }
-        : { 'Content-Type': 'application/json', ...csrfHeaders() };
       const response = await fetch('/api/partners/me/provisions/bulk', {
         method: 'POST',
-        headers,
-        credentials: apiKey ? undefined : 'include',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
         body: JSON.stringify({ entries, expires_days: 30 }),
       });
       if (!response.ok) {
@@ -212,11 +213,14 @@ export const PartnerDashboard: React.FC = () => {
     if (!isAuthenticated) return;
 
     try {
-      const fetchOptions: RequestInit = apiKey
-        ? { method: 'DELETE', headers: { 'X-API-Key': apiKey } }
-        : { method: 'DELETE', credentials: 'include', headers: { ...csrfHeaders() } };
-
-      await fetch(`/api/partners/me/provisions/${id}`, fetchOptions);
+      await fetch(`/api/partners/me/provisions/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
+      });
       setRevokeConfirmId(null);
       loadData();
     } catch (e) {

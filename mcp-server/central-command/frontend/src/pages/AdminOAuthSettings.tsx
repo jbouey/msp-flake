@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { csrfHeaders } from '../utils/csrf';
 
 function getCsrfToken(): string {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
@@ -159,7 +160,8 @@ export const AdminOAuthSettings: React.FC = () => {
     try {
       const response = await fetch(`/api/admin/oauth/approve/${userId}`, {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
 
       if (response.ok) {
@@ -180,7 +182,8 @@ export const AdminOAuthSettings: React.FC = () => {
     try {
       const response = await fetch(`/api/admin/oauth/reject/${userId}`, {
         method: 'DELETE',
-        credentials: 'same-origin',
+        credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
 
       if (response.ok) {

@@ -127,11 +127,12 @@ export const PartnerLearning: React.FC = () => {
     try {
       const response = await fetch(`/api/partners/me/learning/candidates/${selectedCandidate.id}/approve`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
           deploy_immediately: true,
           custom_name: customName || undefined,
@@ -166,11 +167,12 @@ export const PartnerLearning: React.FC = () => {
     try {
       const response = await fetch(`/api/partners/me/learning/candidates/${selectedCandidate.id}/reject`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({ reason: rejectReason }),
       });
 
@@ -197,8 +199,11 @@ export const PartnerLearning: React.FC = () => {
     try {
       const response = await fetch(`/api/partners/me/learning/promoted-rules/${rule.rule_id}/status?status=${newStatus}`, {
         method: 'PATCH',
-        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
-        credentials: apiKey ? undefined : 'include',
+        credentials: 'include',
+        headers: {
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
       });
 
       if (response.ok) {
@@ -243,11 +248,12 @@ export const PartnerLearning: React.FC = () => {
     try {
       const response = await fetch('/api/partners/me/learning/candidates/bulk-approve', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
           pattern_ids: Array.from(selectedIds),
           deploy_immediately: true,
@@ -278,11 +284,12 @@ export const PartnerLearning: React.FC = () => {
     try {
       const response = await fetch('/api/partners/me/learning/candidates/bulk-reject', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
           pattern_ids: Array.from(selectedIds),
           reason: bulkRejectReason,

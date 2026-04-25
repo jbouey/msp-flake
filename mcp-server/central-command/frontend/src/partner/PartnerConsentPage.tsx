@@ -8,6 +8,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { csrfHeaders } from '../utils/csrf';
 
 interface Entry {
   class_id: string;
@@ -178,7 +179,7 @@ const RequestConsentModal: React.FC<{
       const res = await fetch(`/api/partners/me/sites/${siteId}/consent/request`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({
           class_id: klass.class_id,
           requested_for_email: forEmail,

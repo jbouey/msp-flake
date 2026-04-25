@@ -118,11 +118,12 @@ export const PartnerComplianceSettings: React.FC = () => {
     try {
       const response = await fetch('/api/partners/me/compliance/defaults', {
         method: 'PUT',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
           default_frameworks: selectedFrameworks,
           default_industry: selectedIndustry,
@@ -148,8 +149,11 @@ export const PartnerComplianceSettings: React.FC = () => {
     try {
       const response = await fetch(`/api/partners/me/sites/${siteId}/compliance/apply-preset?industry=${industry}`, {
         method: 'POST',
-        headers: apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() },
-        credentials: apiKey ? undefined : 'include',
+        credentials: 'include',
+        headers: {
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
       });
 
       if (response.ok) {
@@ -169,11 +173,12 @@ export const PartnerComplianceSettings: React.FC = () => {
     try {
       const response = await fetch(`/api/partners/me/sites/${siteId}/compliance`, {
         method: 'PUT',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
           enabled_frameworks: siteFrameworks,
           industry: siteIndustry || null,

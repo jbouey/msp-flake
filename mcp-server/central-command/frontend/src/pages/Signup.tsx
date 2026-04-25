@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { OsirisCareLeaf } from '../components/shared';
 import { BRANDING } from '../constants';
+import { csrfHeaders } from '../utils/csrf';
 
 const PLANS: Record<string, { name: string; price: string; cadence: string; description: string }> = {
   pilot: {
@@ -137,7 +138,8 @@ export const Signup: React.FC = () => {
       }
       const res = await fetch('/api/billing/signup/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify(body),
       });
       if (!res.ok) {

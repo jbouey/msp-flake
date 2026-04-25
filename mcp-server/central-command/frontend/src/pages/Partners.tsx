@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { formatTimeAgo } from '../constants';
+import { csrfHeaders } from '../utils/csrf';
 
 // Read CSRF token from cookie for state-changing requests
 function getCsrfToken(): string {
@@ -1109,7 +1110,8 @@ export const Partners: React.FC = () => {
     try {
       const response = await fetch(`/api/admin/partners/approve/${partnerId}`, {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
       if (response.ok) {
         fetchPendingPartners();
@@ -1134,7 +1136,8 @@ export const Partners: React.FC = () => {
     try {
       const response = await fetch(`/api/admin/partners/reject/${partnerId}`, {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
       if (response.ok) {
         fetchPendingPartners();

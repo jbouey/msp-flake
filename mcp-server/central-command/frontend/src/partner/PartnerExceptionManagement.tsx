@@ -71,7 +71,7 @@ interface ExceptionAuditEntry {
 // API functions - uses cookie-based auth (OAuth session) or partner_api_key
 const getAuthHeaders = (): Record<string, string> => {
   const apiKey = localStorage.getItem('partner_api_key');
-  return apiKey ? { 'X-API-Key': apiKey } : { ...csrfHeaders() };
+  return apiKey ? { 'X-API-Key': apiKey } : {};
 };
 
 const api = {
@@ -99,6 +99,7 @@ const api = {
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        ...csrfHeaders(),
         ...getAuthHeaders()
       },
       body: JSON.stringify(data)
@@ -116,6 +117,7 @@ const api = {
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        ...csrfHeaders(),
         ...getAuthHeaders()
       },
       body: JSON.stringify(data)
@@ -130,6 +132,7 @@ const api = {
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        ...csrfHeaders(),
         ...getAuthHeaders()
       },
       body: JSON.stringify({ reason })

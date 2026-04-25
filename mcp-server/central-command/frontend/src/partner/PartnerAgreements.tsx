@@ -123,11 +123,12 @@ export const PartnerAgreements: React.FC = () => {
       const sha = await sha256Hex(text);
       const res = await fetch('/api/partners/agreements/sign', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
           agreement_type: atype,
           version: state.current_versions[atype],

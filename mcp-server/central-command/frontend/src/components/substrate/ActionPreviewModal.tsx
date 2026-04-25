@@ -28,14 +28,16 @@ export default function ActionPreviewModal(p: Props) {
     setSubmitting(true);
     setError(null);
     try {
+      const actionHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `${p.actionKey}-${Date.now()}-${initials}`,
+        ...csrfHeaders(),
+      };
       const r = await fetch("/api/admin/substrate/action", {
         method: "POST",
         credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": `${p.actionKey}-${Date.now()}-${initials}`,
-          ...csrfHeaders(),
-        },
+        // headers contain X-CSRF-Token via csrfHeaders()
+        headers: actionHeaders,
         body: JSON.stringify({
           action_key: p.actionKey,
           target_ref: p.targetRef,

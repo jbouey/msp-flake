@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
 import { DISCLAIMERS, BRANDING } from '../constants';
+import { csrfHeaders } from '../utils/csrf';
 
 interface LoginState {
   status: 'idle' | 'loading' | 'sent' | 'validating' | 'error';
@@ -50,7 +51,8 @@ export const PortalLogin: React.FC = () => {
       // SECURITY: POST token in body, not URL, to avoid exposure in logs
       const response = await fetch('/api/portal/auth/validate-legacy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ token, site_id: site }),
       });
 
@@ -80,7 +82,8 @@ export const PortalLogin: React.FC = () => {
       // SECURITY: POST token in body, not URL, to avoid exposure in logs
       const response = await fetch('/api/portal/auth/validate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ magic_token: token }),
       });
 
@@ -122,7 +125,8 @@ export const PortalLogin: React.FC = () => {
     try {
       const response = await fetch(`/api/portal/sites/${siteId}/request-access`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ email }),
       });
 

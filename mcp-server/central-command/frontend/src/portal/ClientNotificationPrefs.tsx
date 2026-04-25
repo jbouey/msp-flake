@@ -7,6 +7,7 @@
  */
 
 import React, { useCallback, useState } from 'react';
+import { csrfHeaders } from '../utils/csrf';
 
 interface Prefs {
   email_digest: boolean;
@@ -49,8 +50,8 @@ export const ClientNotificationPrefs: React.FC<Props> = ({ siteId, token, initia
       const qs = token ? `?token=${encodeURIComponent(token)}` : '';
       const res = await fetch(`/api/portal/site/${siteId}/notification-prefs${qs}`, {
         method: 'PUT',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify(next),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

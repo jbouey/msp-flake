@@ -10,6 +10,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
+import { csrfHeaders } from '../utils/csrf';
 
 interface ClassInfo {
   class_id: string;
@@ -209,8 +210,8 @@ const GrantConsentModal: React.FC<{
       const qs = token ? `?token=${encodeURIComponent(token)}` : '';
       const res = await fetch(`/api/portal/site/${siteId}/consent/grant${qs}`, {
         method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({
           class_id: klass.class_id,
           consented_by_email: email,
@@ -291,8 +292,8 @@ const RevokeConsentModal: React.FC<{
       const qs = token ? `?token=${encodeURIComponent(token)}` : '';
       const res = await fetch(`/api/portal/site/${siteId}/consent/${consent.consent_id}/revoke${qs}`, {
         method: 'PUT',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ reason, revoked_by_email: email }),
       });
       if (!res.ok) {

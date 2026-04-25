@@ -125,11 +125,12 @@ export const PartnerInvites: React.FC<{ onGoToAgreements?: () => void }> = ({
     try {
       const res = await fetch('/api/partners/invites/create', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({
           plan,
           clinic_email: clinicEmail.trim() || null,
@@ -170,11 +171,12 @@ export const PartnerInvites: React.FC<{ onGoToAgreements?: () => void }> = ({
     try {
       const res = await fetch(`/api/partners/invites/${revokeTarget.invite_id}/revoke`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        credentials: apiKey ? undefined : 'include',
         body: JSON.stringify({ reason: revokeReason.trim() }),
       });
       if (!res.ok) {

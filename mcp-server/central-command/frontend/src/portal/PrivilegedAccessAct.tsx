@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BRANDING } from '../constants';
+import { csrfHeaders } from '../utils/csrf';
 
 type ConsumeStatus =
   | 'validating'
@@ -66,8 +67,8 @@ export const PrivilegedAccessAct: React.FC = () => {
     try {
       const resp = await fetch('/api/client/privileged-access/magic-link/consume', {
         method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({
           token,
           rejection_reason: reason,

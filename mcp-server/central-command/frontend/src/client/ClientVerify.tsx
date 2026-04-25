@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useClient } from './ClientContext';
+import { csrfHeaders } from '../utils/csrf';
 
 export const ClientVerify: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -27,7 +28,7 @@ export const ClientVerify: React.FC = () => {
       // POST token in body (not URL) for security
       const response = await fetch('/api/client/auth/validate-magic-link', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ token: tokenValue }),
         credentials: 'include',
       });

@@ -260,13 +260,16 @@ export const NotificationSettings: React.FC = () => {
     setSaveMessage(null);
     try {
       const apiKey = localStorage.getItem('partner_api_key');
+      const saveHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        ...csrfHeaders(),
+      };
       const response = await fetch('/api/partners/me/notifications/settings', {
         method: 'PUT',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(apiKey ? { 'X-API-Key': apiKey } : csrfHeaders()),
-        },
+        // headers contain X-CSRF-Token via csrfHeaders()
+        headers: saveHeaders,
         body: JSON.stringify(settings),
       });
       if (response.ok) {
@@ -286,10 +289,15 @@ export const NotificationSettings: React.FC = () => {
     setTestResults((prev) => ({ ...prev, [channel]: { channel, status: 'pending' } }));
     try {
       const apiKey = localStorage.getItem('partner_api_key');
+      const testHeaders: Record<string, string> = {
+        ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        ...csrfHeaders(),
+      };
       const response = await fetch(`/api/partners/me/notifications/settings/test?channel=${channel}`, {
         method: 'POST',
         credentials: 'include',
-        headers: apiKey ? { 'X-API-Key': apiKey } : csrfHeaders(),
+        // headers contain X-CSRF-Token via csrfHeaders()
+        headers: testHeaders,
       });
       const result = await response.json();
       setTestResults((prev) => ({

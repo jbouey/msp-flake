@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useIdleTimeout } from '../hooks/useIdleTimeout';
 import { IdleTimeoutWarning } from '../components/shared/IdleTimeoutWarning';
+import { csrfHeaders } from '../utils/csrf';
 
 interface Partner {
   id: string;
@@ -137,6 +138,7 @@ export const PartnerProvider: React.FC<{ children: ReactNode }> = ({ children })
       await fetch('/api/partner-auth/logout', {
         method: 'POST',
         credentials: 'include',
+        headers: { ...csrfHeaders() },
       });
     } catch {
       // Logout request failed — clear local state anyway

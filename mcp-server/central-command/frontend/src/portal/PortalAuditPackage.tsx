@@ -15,6 +15,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { csrfHeaders } from '../utils/csrf';
 
 interface AuditPackageRow {
   package_id: string;
@@ -145,7 +146,7 @@ export const PortalAuditPackage: React.FC<Props> = ({ siteId: siteIdProp }) => {
       const r = await fetch('/api/client/audit-package/generate', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({
           site_id: siteId,
           period_start: periodStart,
@@ -174,7 +175,7 @@ export const PortalAuditPackage: React.FC<Props> = ({ siteId: siteIdProp }) => {
       await fetch(`/api/client/audit-package/${pkg.package_id}/send`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
         body: JSON.stringify({ auditor_email: auditorEmail }),
       });
       setAuditorEmail('');
