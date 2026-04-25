@@ -1,0 +1,98 @@
+# Weekly audit-cadence reminder. Mondays 09:00 UTC opens (or refreshes)
+# a GitHub issue listing the 5 .agent/audits/ prompts that an operator
+# should run in a Claude Code session. Closes the policy-vs-mechanism
+# gap surfaced by the 2026-04-25 PM round-table:
+#
+#   "Run weekly during stable periods" was a policy, not a forcing
+#   function — no cron, no GitHub Action wired in.
+#
+# This workflow is the forcing function. The human/agent reads the
+# issue, dispatches the 5 audit prompts in parallel via the Agent tool,
+# and closes the issue with findings as the closing comment.
+#
+# SAFE: no untrusted github.event input is interpolated into shell or
+# script bodies. Inputs come only from checked-out repo files and the
+# schedule/workflow_dispatch triggers (no user-supplied strings).
+name: Audit cadence
+
+on:
+  schedule:
+    # Mondays 09:00 UTC (Friday-incident memory still fresh).
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  open-or-refresh-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build issue body from .agent/audits/
+        id: body
+        env:
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          {
+            echo 'body<<AUDIT_EOF'
+            echo '## Weekly consistency audit — run via `.agent/audits/`'
+            echo
+            echo 'Cadence trigger fired. Open a Claude Code session and dispatch all 5 prompts in parallel:'
+            echo
+            for f in .agent/audits/*.prompt.md; do
+              [ -f "$f" ] || continue
+              name=$(basename "$f" .prompt.md)
+              # REPO_SLUG comes from github.repository (a fixed identifier
+              # set by GitHub, not user input). Safe to interpolate.
+              echo "- [\`$name\`](https://github.com/${REPO_SLUG}/blob/main/$f)"
+            done
+            echo
+            echo 'Polarity rule: do NOT auto-delete duplicates without verifying which side is live.'
+            echo 'See `.agent/audits/README.md` for dispatch pseudocode + cadence guidance.'
+            echo
+            echo 'Close this issue with the findings summary as the closing comment.'
+            echo 'A new issue will be opened next Monday automatically.'
+            echo 'AUDIT_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or refresh "Audit cadence" issue
+        uses: actions/github-script@v7
+        env:
+          ISSUE_BODY: ${{ steps.body.outputs.body }}
+        with:
+          script: |
+            const title = 'Audit cadence — weekly consistency scan';
+            const body = process.env.ISSUE_BODY;
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'audit-cadence',
+              per_page: 5,
+            });
+
+            const match = existing.find(i => i.title === title);
+            if (match) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body: `Weekly trigger fired again. The audit is still open from a previous week — run the prompts and close this issue with findings.\n\n_Last refreshed: ${new Date().toISOString()}_`,
+              });
+              core.info(`Refreshed existing issue #${match.number}`);
+              return;
+            }
+
+            const { data: created } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['audit-cadence', 'meta'],
+            });
+            core.info(`Opened issue #${created.number}`);
