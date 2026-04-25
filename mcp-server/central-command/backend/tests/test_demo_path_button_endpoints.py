@@ -1,0 +1,154 @@
+"""Source-level regression test for the demo-path button → backend
+endpoint contract.
+
+The 2026-04-25 audit found OperatorAckPanel + SensorStatus 500'ing
+because the buttons targeted endpoints whose shapes had drifted (CSRF
+headers missing, routes moved). The CSRF linter
+(test_frontend_mutation_csrf.py) catches the header-shape class. This
+test catches the orthogonal "endpoint disappeared" / "endpoint
+renamed" class — the URL the button POSTs to MUST exist server-side.
+
+It's source-level (no FastAPI instantiation needed): grep the .tsx
+files for fetch URLs the buttons issue, then grep the backend Python
+for matching route decorators. Cheap, fast, no DB.
+
+Adding a new demo-path button: append to ENDPOINT_CONTRACTS below.
+The test will fail if either side disappears.
+"""
+from __future__ import annotations
+
+import pathlib
+import re
+from typing import List, Tuple
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
+FRONTEND_SRC = REPO_ROOT / "mcp-server" / "central-command" / "frontend" / "src"
+BACKEND_DIR = REPO_ROOT / "mcp-server" / "central-command" / "backend"
+
+
+# (frontend_file, fetch_url_substring, http_method, backend_route_pattern)
+# `backend_route_pattern` is a regex that must match somewhere in any
+# backend `*.py` file — typically a FastAPI decorator like
+# `@router.post("/x/y")` or `@app.post("/x/y")`. Use a substring that
+# uniquely identifies the route, since path parameters vary.
+ENDPOINT_CONTRACTS: List[Tuple[str, str, str, str]] = [
+    # OperatorAckPanel — Session 206 round-table R5
+    (
+        "components/command-center/OperatorAckPanel.tsx",
+        "/api/dashboard/flywheel-spine/acknowledge",
+        "POST",
+        r"""[@\.]\w*\.post\(\s*["']/?flywheel-spine/acknowledge""",
+    ),
+    # SensorStatus — Windows sensor deploy / remove
+    (
+        "components/sensors/SensorStatus.tsx",
+        "/api/sensors/sites/",
+        "POST",
+        r"""[@\.]\w*\.post\(\s*["']/?(?:api/)?sensors/sites/[^"']*hosts/[^"']*deploy""",
+    ),
+    (
+        "components/sensors/SensorStatus.tsx",
+        "/api/sensors/sites/",
+        "DELETE",
+        r"""[@\.]\w*\.delete\(\s*["']/?(?:api/)?sensors/sites/[^"']*hosts/""",
+    ),
+]
+
+
+def _backend_py_files() -> List[pathlib.Path]:
+    out: List[pathlib.Path] = []
+    for p in BACKEND_DIR.rglob("*.py"):
+        if any(skip in p.parts for skip in (
+            "tests", "archived", "venv", "__pycache__", "node_modules",
+        )):
+            continue
+        out.append(p)
+    return out
+
+
+def _backend_concat() -> str:
+    """One big string of every backend .py — enables a single regex
+    sweep instead of N file-opens."""
+    chunks = []
+    for p in _backend_py_files():
+        try:
+            chunks.append(p.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+    return "\n\n".join(chunks)
+
+
+def test_operator_ack_button_endpoint_exists():
+    """OperatorAckPanel.tsx POSTs to /api/dashboard/flywheel-spine/acknowledge.
+    Backend must register that route — otherwise the button silently 404s."""
+    src = (FRONTEND_SRC / "components/command-center/OperatorAckPanel.tsx").read_text()
+    assert "/api/dashboard/flywheel-spine/acknowledge" in src, (
+        "OperatorAckPanel.tsx no longer fetches the acknowledge endpoint. "
+        "If you renamed the URL, update both the frontend AND this test."
+    )
+    backend = _backend_concat()
+    assert re.search(
+        r"""[@\.]\w*\.post\(\s*["']/?flywheel-spine/acknowledge""",
+        backend,
+    ), (
+        "Backend has no @router.post('/flywheel-spine/acknowledge') route. "
+        "OperatorAckPanel will 404. Either restore the route or update "
+        "the frontend URL."
+    )
+
+
+def test_sensor_status_deploy_endpoint_exists():
+    """SensorStatus.tsx POSTs to /api/sensors/sites/{id}/hosts/{host}/deploy.
+    Both string fragments must appear in the .tsx, and a matching POST
+    route must exist in the backend."""
+    src = (FRONTEND_SRC / "components/sensors/SensorStatus.tsx").read_text()
+    assert "/api/sensors/sites/" in src and "/hosts/" in src and "/deploy" in src, (
+        "SensorStatus.tsx no longer references the sensor-deploy endpoint."
+    )
+    backend = _backend_concat()
+    # Backend decorators live in sensors.py with `prefix="/sensors"` set
+    # at mount time, so the literal in the source is "/sites/.../deploy"
+    # (router-relative). Match either router-relative or absolute form.
+    assert re.search(
+        r"""[@\.]\w*\.post\(\s*["'](?:/api/sensors|/sensors)?/sites/[^"']*hosts/[^"']*deploy""",
+        backend,
+    ), "Backend has no /sensors/.../hosts/.../deploy POST route."
+
+
+def test_sensor_status_remove_endpoint_exists():
+    """SensorStatus.tsx DELETEs /api/sensors/sites/{id}/hosts/{host}."""
+    src = (FRONTEND_SRC / "components/sensors/SensorStatus.tsx").read_text()
+    assert "/api/sensors/sites/" in src and "/hosts/" in src, (
+        "SensorStatus.tsx no longer references the sensor-remove endpoint."
+    )
+    assert "method: 'DELETE'" in src, (
+        "SensorStatus.tsx no longer issues a DELETE on sensors."
+    )
+    backend = _backend_concat()
+    assert re.search(
+        r"""[@\.]\w*\.delete\(\s*["'](?:/api/sensors|/sensors)?/sites/[^"']*hosts/""",
+        backend,
+    ), "Backend has no /sensors/.../hosts/... DELETE route."
+
+
+def test_demo_path_buttons_have_csrf_header_or_helper():
+    """Belt-and-suspenders to test_frontend_mutation_csrf.py: assert the
+    two buttons that triggered the 2026-04-25 push specifically retain
+    credentials:'include' + a CSRF reference. If someone hand-rewrites
+    them later without using fetchApi, this test fails fast."""
+    for rel in (
+        "components/command-center/OperatorAckPanel.tsx",
+        "components/sensors/SensorStatus.tsx",
+    ):
+        src = (FRONTEND_SRC / rel).read_text()
+        assert "credentials: 'include'" in src or "credentials:'include'" in src, (
+            f"{rel} dropped credentials:'include' from its mutation fetch."
+        )
+        has_csrf = (
+            "X-CSRF-Token" in src
+            or "csrfHeaders(" in src
+            or "getCsrfTokenOrEmpty(" in src
+        )
+        assert has_csrf, (
+            f"{rel} dropped its CSRF-token reference from the mutation fetch."
+        )
