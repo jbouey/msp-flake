@@ -4206,30 +4206,58 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 )
 
         # === STEP 3.6: Register/update agent signing key ===
+        # Per-appliance signing keys (Session 196): write to
+        # site_appliances.agent_public_key scoped by (site_id, mac),
+        # NOT to sites.agent_public_key. Multi-appliance sites would
+        # otherwise alternate-overwrite a single site-level row on
+        # every checkin while the per-MAC row stays stale, breaking
+        # sigauth (which reads from site_appliances). The 2026-04-25
+        # signature_verification_failures invariant on north-valley-
+        # branch-2 fired exactly this way: two daemons at one site
+        # ROTATED the dead sites.agent_public_key 100+ times/hour
+        # while their site_appliances rows held a single shared key
+        # that didn't match either daemon's private half.
         if checkin.agent_public_key and len(checkin.agent_public_key) == 64:
             try:
                 async with conn.transaction():
                     existing_key = await conn.fetchval(
-                        "SELECT agent_public_key FROM sites WHERE site_id = $1",
-                        checkin.site_id
+                        """
+                        SELECT agent_public_key FROM site_appliances
+                         WHERE site_id = $1 AND mac_address = $2
+                           AND deleted_at IS NULL
+                        """,
+                        checkin.site_id, mac_normalized,
                     )
                     if existing_key != checkin.agent_public_key:
                         await conn.execute(
-                            "UPDATE sites SET agent_public_key = $1 WHERE site_id = $2",
-                            checkin.agent_public_key, checkin.site_id
+                            """
+                            UPDATE site_appliances
+                               SET agent_public_key = $1
+                             WHERE site_id = $2 AND mac_address = $3
+                               AND deleted_at IS NULL
+                            """,
+                            checkin.agent_public_key,
+                            checkin.site_id,
+                            mac_normalized,
                         )
                         if existing_key:
                             logger.warning(
                                 f"Agent signing key ROTATED for site={checkin.site_id} "
+                                f"mac={mac_normalized} "
                                 f"old={existing_key[:12]}... new={checkin.agent_public_key[:12]}..."
                             )
                         else:
                             logger.info(
                                 f"Agent signing key registered for site={checkin.site_id} "
+                                f"mac={mac_normalized} "
                                 f"key={checkin.agent_public_key[:12]}..."
                             )
             except Exception as e:
-                logger.error(f"Failed to register agent public key: {e}")
+                logger.error(
+                    f"Failed to register agent public key for "
+                    f"site={checkin.site_id} mac={mac_normalized}: {e}",
+                    exc_info=True,
+                )
 
         # === STEP 3.6b: Update WireGuard VPN status ===
         if checkin.wg_connected and checkin.wg_ip:
