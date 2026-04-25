@@ -261,6 +261,17 @@ async def cmd_create(args: argparse.Namespace) -> None:
 
     conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
     try:
+        # Set admin context so this works regardless of the DB role.
+        # Default DATABASE_URL connects as `mcp` (superuser, exempt
+        # from RLS), but operators who run fleet_cli through a
+        # least-privilege role (`mcp_app`) need app.is_admin='true'
+        # for the fleet_orders RLS policy fleet_orders_admin_only and
+        # the compliance_bundles admin_bypass policy. Session-level
+        # SET is fine here: this is a direct asyncpg connection (no
+        # PgBouncer DISCARD ALL between transactions) and the
+        # connection is closed at the end of this function.
+        await conn.execute("SET app.is_admin = 'true'")
+
         # ── Phase 14: write the attestation bundle BEFORE the order ──
         # If the bundle write fails, the order is NOT created. Same flow
         # for enable_ and disable_ so revocation is auditable too.
@@ -419,6 +430,9 @@ async def cmd_list(args: argparse.Namespace) -> None:
 async def cmd_cancel(args: argparse.Namespace) -> None:
     conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
     try:
+        # Admin context for fleet_orders_admin_only RLS policy.
+        # See cmd_create for rationale.
+        await conn.execute("SET app.is_admin = 'true'")
         result = await conn.execute(
             "UPDATE fleet_orders SET status = 'cancelled' WHERE id = $1 AND status = 'active'",
             args.order_id,
