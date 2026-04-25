@@ -241,6 +241,15 @@ type CheckinRequest struct {
 	NixOSVersion        string           `json:"nixos_version"`
 	HasLocalCredentials bool             `json:"has_local_credentials"`
 	AgentPublicKey      string           `json:"agent_public_key,omitempty"`
+	// AgentIdentityPublicKey — the IDENTITY signing key the daemon
+	// uses for sigauth headers (signRequest below). Distinct from
+	// AgentPublicKey, which is the EVIDENCE-bundle signing key. Both
+	// keys are persisted server-side in their own columns. Pre-#179
+	// the daemon only uploaded the evidence key, sigauth fell back
+	// to that column, and verified against the wrong key —
+	// signature_verification_failures fired 100% on affected sites.
+	// Server tolerates the field being absent (older daemons).
+	AgentIdentityPublicKey string         `json:"agent_identity_public_key,omitempty"`
 	BootSource          string           `json:"boot_source,omitempty"`
 	// HeartbeatSignature — Ed25519 hex over SHA-256 of
 	//   {site_id}|{mac_address}|{checkin_timestamp_unix}|{agent_version}

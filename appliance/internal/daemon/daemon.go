@@ -40,7 +40,7 @@ import (
 // Default "dev" indicates an untagged development build.
 // 0.4.11: reprovision order handler (Session 210-B 2026-04-25 hardening #6).
 // 0.4.12: reprovision in dangerousOrderTypes (Session 210-B audit P1).
-var Version = "0.4.12"
+var Version = "0.4.13"
 
 // driftCooldown tracks cooldown state for a hostname+check_type pair.
 type driftCooldown struct {
@@ -886,6 +886,17 @@ func (d *Daemon) runCheckin(ctx context.Context) {
 		}
 	} else {
 		req = SystemInfo(d.config, Version)
+	}
+
+	// #179: also upload the IDENTITY pubkey (the one signRequest uses
+	// for sigauth headers — distinct from the EVIDENCE-bundle key
+	// uploaded above). Server persists in
+	// site_appliances.agent_identity_public_key (migration 251) so
+	// signature_auth.py::_resolve_pubkey can verify against the
+	// correct key. Independent of evidence-key presence — even
+	// daemons without an evidence submitter still sign their requests.
+	if d.identity != nil {
+		req.AgentIdentityPublicKey = d.identity.PublicKeyHex()
 	}
 
 	// Include connected Go agent data for sync to Central Command
