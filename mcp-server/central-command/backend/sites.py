@@ -3026,6 +3026,16 @@ class ApplianceCheckin(BaseModel):
     nixos_version: Optional[str] = None
     has_local_credentials: bool = False  # If True, appliance has fresh local creds
     agent_public_key: Optional[str] = None  # Ed25519 public key hex for evidence signing
+    # Daemon's IDENTITY public key (the one signRequest in phonehome.go
+    # signs sigauth headers with — distinct from the evidence-bundle key
+    # above). Persisted to site_appliances.agent_identity_public_key,
+    # consulted by signature_auth.py::_resolve_pubkey. Pre-#179 the
+    # daemon only uploaded the evidence key and sigauth's legacy
+    # fallback returned the wrong key — substrate
+    # signature_verification_failures fired 100% on north-valley-branch-2
+    # for that reason. Now the IDENTITY key flows through the checkin
+    # path explicitly. 64 hex chars (Ed25519 pubkey).
+    agent_identity_public_key: Optional[str] = None
     connected_agents: Optional[list[ConnectedAgentInfo]] = None  # Go agents on this appliance
     discovery_results: Optional[Dict[str, Any]] = None  # App protection profile discovery results
     encryption_public_key: str = ""  # X25519 public key hex for credential envelope encryption
@@ -4255,6 +4265,65 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             except Exception as e:
                 logger.error(
                     f"Failed to register agent public key for "
+                    f"site={checkin.site_id} mac={mac_normalized}: {e}",
+                    exc_info=True,
+                )
+
+        # === STEP 3.6c: Register/update agent IDENTITY signing key (#179) ===
+        # The daemon has TWO Ed25519 keypairs by design (key separation):
+        # the EVIDENCE key (above, used to sign evidence bundles) and
+        # the IDENTITY key (this block, used by phonehome.go::signRequest
+        # to sign sigauth headers). Until v0.4.13 the daemon only
+        # uploaded the evidence key; signature_auth.py's legacy fallback
+        # then verified sigauth against the wrong key and the substrate
+        # signature_verification_failures invariant fired 100% on
+        # affected sites. This block persists the identity key per
+        # (site_id, mac_address); signature_auth.py::_resolve_pubkey
+        # will read this column ahead of the legacy view fallback.
+        # Daemons running pre-v0.4.13 won't supply the field — we
+        # tolerate the absence gracefully (None → no-op).
+        if (
+            checkin.agent_identity_public_key
+            and len(checkin.agent_identity_public_key) == 64
+        ):
+            try:
+                async with conn.transaction():
+                    existing_id_key = await conn.fetchval(
+                        """
+                        SELECT agent_identity_public_key FROM site_appliances
+                         WHERE site_id = $1 AND mac_address = $2
+                           AND deleted_at IS NULL
+                        """,
+                        checkin.site_id, mac_normalized,
+                    )
+                    if existing_id_key != checkin.agent_identity_public_key:
+                        await conn.execute(
+                            """
+                            UPDATE site_appliances
+                               SET agent_identity_public_key = $1
+                             WHERE site_id = $2 AND mac_address = $3
+                               AND deleted_at IS NULL
+                            """,
+                            checkin.agent_identity_public_key,
+                            checkin.site_id,
+                            mac_normalized,
+                        )
+                        if existing_id_key:
+                            logger.warning(
+                                f"Agent IDENTITY key ROTATED for "
+                                f"site={checkin.site_id} mac={mac_normalized} "
+                                f"old={existing_id_key[:12]}... "
+                                f"new={checkin.agent_identity_public_key[:12]}..."
+                            )
+                        else:
+                            logger.info(
+                                f"Agent IDENTITY key registered for "
+                                f"site={checkin.site_id} mac={mac_normalized} "
+                                f"key={checkin.agent_identity_public_key[:12]}..."
+                            )
+            except Exception as e:
+                logger.error(
+                    f"Failed to register agent IDENTITY key for "
                     f"site={checkin.site_id} mac={mac_normalized}: {e}",
                     exc_info=True,
                 )

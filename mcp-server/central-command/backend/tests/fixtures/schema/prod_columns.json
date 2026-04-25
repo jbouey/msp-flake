@@ -4151,6 +4151,7 @@
     "stripe_customer_id"
   ],
   "site_appliances": [
+    "agent_identity_public_key",
     "agent_public_key",
     "agent_version",
     "appliance_id",
