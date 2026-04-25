@@ -245,7 +245,7 @@ async def _confirm_and_execute(table: str, where: str, key: str, reason: str, co
         # intent recorded.
         await conn.execute(
             """
-            INSERT INTO admin_audit_log (action, actor, target, details)
+            INSERT INTO admin_audit_log (action, username, target, details)
             VALUES ($1, $2, $3, $4)
             """,
             f"db_delete.{table}",
