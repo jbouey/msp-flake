@@ -2208,11 +2208,15 @@ async def relocate_appliance(
             evidence_bundle_id = None
 
         # Step 8: admin_audit_log (append-only via Migration 151).
+        # Schema uses `username` (not `actor`) — verified against
+        # \\d admin_audit_log; all sibling INSERTs in this codebase
+        # use the same column name. ip_address column exists for
+        # retrospective IP-source forensics.
         client_ip = request.client.host if request.client else None
         await conn.execute(
             """
             INSERT INTO admin_audit_log
-              (action, actor, target, details, ip_address)
+              (action, username, target, details, ip_address)
             VALUES ($1, $2, $3, $4, $5)
             """,
             "appliance.relocate",

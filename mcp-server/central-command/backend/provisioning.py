@@ -951,7 +951,7 @@ async def admin_restore_appliance(
         await conn.execute(
             """
             INSERT INTO admin_audit_log
-              (action, actor, target, details, ip_address)
+              (action, username, target, details, ip_address)
             VALUES ($1, $2, $3, $4, $5)
             """,
             "appliance.admin_restore",
