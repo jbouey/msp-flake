@@ -3551,6 +3551,14 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     # process env disables enforcement fleet-wide instantly without
     # touching the DB. Phase 5C operational lever.
     sig_result = None
+    # Connection-coherence note (task #168, Session 211 Phase 2 QA):
+    # this verify-path uses `admin_connection` while STEP 3.6c later
+    # writes `agent_identity_public_key` via the tenant `conn`. A prior
+    # checkin's STEP 3.6c commit MUST be visible here on the next
+    # checkin's verify; if it's not (replica lag, prepared-stmt cache
+    # issue), enforce-mode rejections leak through. The new substrate
+    # invariant `sigauth_enforce_mode_rejections` pages on any such
+    # leak so we capture root-cause context before normalizing.
     try:
         from .signature_auth import verify_appliance_signature
         body_bytes = await request.body()

@@ -321,6 +321,23 @@ async def verify_appliance_signature(
     # 4. Resolve expected pubkey.
     resolved = await _resolve_pubkey(conn, site_id, mac_address)
     if resolved is None:
+        # Forensic ERROR (Session 211 Phase 2 QA, task #168). Enforce-mode
+        # appliances should never hit this branch — when they do, the
+        # log shipper alerts so we capture the moment-in-time context
+        # (timestamp, headers present) for time-correlation against the
+        # next checkin's STEP 3.6c UPDATE. See substrate runbook
+        # sigauth_enforce_mode_rejections.md.
+        logger.error(
+            "sigauth_unknown_pubkey",
+            extra={
+                "site_id": site_id,
+                "mac_address": mac_address,
+                "ts_iso": ts_iso,
+                "nonce_hex": nonce_hex,
+                "sig_len": len(sig_b64) if sig_b64 else 0,
+                "headers_present": True,
+            },
+        )
         return SignatureVerifyResult(
             present=True, valid=False, reason="unknown_pubkey",
             detail=f"no identity row for site_id={site_id} mac={mac_address}",

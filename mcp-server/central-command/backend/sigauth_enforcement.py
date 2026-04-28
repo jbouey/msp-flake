@@ -164,7 +164,35 @@ async def demote(
 async def _auto_promotion_tick(conn) -> dict:
     """Single sweep — find observe-mode appliances with sustained
     valid signatures and promote them. Returns counters for
-    observability."""
+    observability.
+
+    Phase-3 entry gate (Session 211 Phase 2 QA, 2026-04-28): the
+    `sigauth_enforce_mode_rejections` substrate invariant must run 7d
+    clean on the existing fleet before any NEW appliance gets
+    auto-promoted. Implemented as a hard pre-check on the candidate
+    query: if any open violation of that invariant exists, the
+    promoter sits idle and logs a `auto_promotion_blocked` line so
+    the operator can see why. Manual `/promote` remains available for
+    out-of-band operator authority."""
+    # Phase-3 gate. Open violation of sigauth_enforce_mode_rejections
+    # → block all auto-promotions until it clears + 7d quiet window.
+    blocked = await conn.fetchrow(
+        """
+        SELECT COUNT(*) AS n
+          FROM substrate_violations
+         WHERE invariant_name = 'sigauth_enforce_mode_rejections'
+           AND (resolved_at IS NULL
+                OR resolved_at > NOW() - INTERVAL '7 days')
+        """
+    )
+    if blocked and blocked["n"] > 0:
+        logger.info(
+            "sigauth_auto_promotion blocked: %d sigauth_enforce_mode_rejections "
+            "violations open or resolved within 7d quiet window",
+            blocked["n"],
+        )
+        return {"candidates": 0, "promoted": 0, "blocked_by_phase3_gate": True}
+
     candidates = await conn.fetch(
         """
         WITH window_obs AS (

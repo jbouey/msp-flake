@@ -566,6 +566,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_sigauth_crypto_failures(c),
     ),
     Assertion(
+        name="sigauth_enforce_mode_rejections",
+        severity="sev2",
+        description="Tightened gate for enforce-mode appliances: ANY invalid sigauth observation in 6h fires this. The umbrella (1h/5-sample/5%) is structurally blind to low-rate jitter, but enforce mode by definition is a 0%-fail contract. One rejection means a key-state coherence smell that must be investigated before it becomes 100% (Session 211 Phase 2 QA, 2026-04-28).",
+        check=lambda c: _check_sigauth_enforce_mode_rejections(c),
+    ),
+    Assertion(
         name="claim_cert_expired_in_use",
         severity="sev1",
         description="Claims must only be accepted from CAs in their validity window; an expired/revoked CA being used means a code-path bypassed _validate_claim_cert (Week 4)",
@@ -848,6 +854,19 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "phonehome.go::signRequest canonical (must be byte-identical); "
             "(3) if both check out, suspect active forgery or stolen key — "
             "rotate the appliance identity via fleet_cli rekey + revoke.",
+    },
+    "sigauth_enforce_mode_rejections": {
+        "display_name": "Enforce-mode appliance had a sigauth rejection",
+        "recommended_action": "Enforce mode is a 0%-fail contract; ANY "
+            "rejection in 6h is a key-state coherence smell. Compare the "
+            "daemon's identity fingerprint on disk "
+            "(/var/lib/msp/agent.fingerprint AND /etc/osiriscare-identity.json — "
+            "both should match) against site_appliances.agent_identity_public_key "
+            "fingerprint server-side. If mismatch, daemon and server have drifted "
+            "(stuck restart, dual-fingerprint-path bug, or partial rekey). "
+            "Quick rollback: POST /api/admin/sigauth/demote/{appliance_id} "
+            "with reason ≥10 chars to flip back to observe while you "
+            "investigate. See substrate runbook for full diagnostic ladder.",
     },
     "claim_cert_expired_in_use": {
         "display_name": "Expired claim cert still being used",
@@ -1334,6 +1353,59 @@ async def _check_sigauth_crypto_failures(conn: asyncpg.Connection) -> List[Viola
                 "fail_rate_pct": round(r["crypto_failures"] * 100.0 / r["total"], 1),
                 "reasons": list(r["reasons"] or []),
                 "classification": "adversarial",
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_sigauth_enforce_mode_rejections(conn: asyncpg.Connection) -> List[Violation]:
+    """Enforce-mode appliances must have 0% sigauth fail rate. The
+    umbrella (`signature_verification_failures`) only fires at >=5
+    fails AND >=5% in 1h — structurally blind to low-rate jitter,
+    which is exactly what we saw post-Session-211 enforce flip:
+    4 unknown_pubkey rejections in 24h on north-valley-branch-2,
+    0.09% rate, substrate stayed silent.
+
+    This sibling invariant fires sev2 the moment ANY enforce-mode
+    appliance has >=1 invalid sigauth observation in a rolling 6h
+    window. Joins on (site_id, mac_address) so the violation is
+    appliance-scoped (one row per offending appliance). Filed task
+    #168 covers the underlying connection-coherence root-cause
+    investigation. (Session 211 Phase 2 QA, 2026-04-28)"""
+    rows = await conn.fetch(
+        """
+        SELECT sa.site_id,
+               sa.mac_address,
+               sa.appliance_id,
+               COUNT(*) FILTER (WHERE NOT o.valid)            AS failures,
+               COUNT(*)                                        AS total,
+               array_agg(DISTINCT o.reason)
+                 FILTER (WHERE NOT o.valid)                   AS reasons,
+               MAX(o.observed_at) FILTER (WHERE NOT o.valid)  AS last_failure
+          FROM site_appliances sa
+          JOIN sigauth_observations o
+            ON o.site_id = sa.site_id
+           AND UPPER(o.mac_address) = UPPER(sa.mac_address)
+         WHERE sa.deleted_at IS NULL
+           AND sa.signature_enforcement = 'enforce'
+           AND o.observed_at > NOW() - INTERVAL '6 hours'
+      GROUP BY sa.site_id, sa.mac_address, sa.appliance_id
+        HAVING COUNT(*) FILTER (WHERE NOT o.valid) >= 1
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": r["appliance_id"],
+                "mac_address": r["mac_address"],
+                "failures": r["failures"],
+                "total_samples": r["total"],
+                "fail_rate_pct": round(r["failures"] * 100.0 / r["total"], 3),
+                "reasons": list(r["reasons"] or []),
+                "last_failure_at": r["last_failure"].isoformat() if r["last_failure"] else None,
+                "remediation": "POST /api/admin/sigauth/demote/{appliance_id} for instant rollback to observe.",
             },
         )
         for r in rows
