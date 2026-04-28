@@ -13,7 +13,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .oui_lookup import get_manufacturer_hint
 from .credential_crypto import decrypt_credential
 from .auth import require_auth
@@ -142,7 +142,11 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
     logger.info("Device sync: site=%s devices=%d sample_ids=%s",
                 report.site_id, len(report.devices), device_ids_sample)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212 P3 #3 broader migration): this
+    # function issues 14 bare admin reads + writes inside one logical
+    # operation. PgBouncer transaction-pool routing risk applies —
+    # see tenant_middleware.admin_connection ROUTING-RISK CAVEAT.
+    async with admin_transaction(pool) as conn:
         # Look up appliance by site_id + host_id. Multi-appliance sites can
         # have multiple rows; we must target the reporting appliance exactly,
         # not a random site-mate (Session 206 audit — the site-wide lookup
