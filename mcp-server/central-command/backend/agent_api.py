@@ -1106,7 +1106,11 @@ async def report_incident(
                 {"iid": incident_id, "tier": resolution_tier, "rid": runbook_id}
             )
         except Exception as e:
-            logger.warning(f"Failed to record remediation step: {e}")
+            # Session 205 "no silent write failures" — DB writes log-and-raise
+            # (or log-with-exc_info). incident_remediation_steps is the audit-
+            # classified table that replaced incidents.remediation_history
+            # JSONB (Migration 137); silent loss breaks the chain.
+            logger.error(f"Failed to record remediation step: {e}", exc_info=True)
 
         logger.info("Created remediation order",
                     site_id=incident.site_id,
@@ -1784,7 +1788,8 @@ async def sync_pattern_stats(
         })
         await db.commit()
     except Exception as e:
-        logger.warning(f"Failed to record sync event for {request.appliance_id}: {e}")
+        # Session 205 "no silent write failures" — DB writes log-and-raise.
+        logger.error(f"Failed to record sync event for {request.appliance_id}: {e}", exc_info=True)
         await db.rollback()
 
     logger.info(f"Pattern sync from {request.appliance_id}: {accepted} new, {merged} merged")
@@ -2505,9 +2510,10 @@ async def upload_evidence_worm(
         await db.commit()
 
     except Exception as e:
-        logger.warning("Failed to store evidence reference in database",
-                      bundle_id=x_bundle_id,
-                      error=str(e))
+        # Session 205 "no silent write failures" — evidence_chain INSERT
+        # is the chain-of-custody artifact for HIPAA evidence bundles.
+        logger.error("Failed to store evidence reference in database",
+                     bundle_id=x_bundle_id, error=str(e), exc_info=True)
 
     return {
         "status": "uploaded",

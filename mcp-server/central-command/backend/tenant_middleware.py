@@ -144,6 +144,18 @@ async def admin_connection(pool: asyncpg.Pool):
         Session-pool mode would break the invariant — revisit if pooling
         mode ever changes.
 
+    *** ROUTING-RISK CAVEAT (Session 212 round-table) ***
+    PgBouncer transaction-pool mode can route the SET above and a
+    SUBSEQUENT autocommit fetch from this conn to DIFFERENT backends.
+    The fetch then runs without `app.is_admin='true'` (Migration 234's
+    role default is false) and RLS hides every row. Symptom: the call
+    returns "no rows" intermittently in production, near-impossible to
+    reproduce in dev. This is the bug class that motivated the sigauth
+    verify wrap (commit 303421cc) and the new `admin_transaction()`
+    helper below. Use `admin_connection` for SINGLE-statement reads
+    (where the SET and the read share one pgbouncer transaction);
+    use `admin_transaction` for any multi-statement work.
+
     Usage:
         async with admin_connection(pool) as conn:
             rows = await conn.fetch("SELECT * FROM incidents")  # all tenants

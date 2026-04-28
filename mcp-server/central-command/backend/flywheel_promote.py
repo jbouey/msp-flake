@@ -170,6 +170,10 @@ async def promote_candidate(
     # of an already-active rule).
     try:
         async with conn.transaction():
+            # Round-table P2 #7: cap lock-wait so a deadlock against
+            # the orchestrator's auto_disabled UPDATE doesn't block
+            # the operator's click for the full statement_timeout.
+            await conn.execute("SET LOCAL lock_timeout = '5s'")
             cur_state_row = await conn.fetchrow(
                 "SELECT lifecycle_state FROM promoted_rules "
                 "WHERE site_id=$1 AND rule_id=$2 FOR UPDATE",

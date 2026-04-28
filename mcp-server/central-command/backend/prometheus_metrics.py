@@ -105,7 +105,17 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
         )
 
     try:
-        async with admin_connection(pool) as conn:
+        # Use admin_transaction (Session 212 P0 #2 — round-table angle 1 F1):
+        # this function issues 48 bare admin reads in sequence. Under
+        # PgBouncer transaction-pool mode, a session-level SET app.is_admin
+        # via plain admin_connection can land on backend B1 while one of
+        # the subsequent reads lands on B2 (no admin context) → RLS hides
+        # rows → metric reports 0 silently. admin_transaction pins SET +
+        # all reads to a single backend via SET LOCAL inside an explicit
+        # transaction. Symbolic migration site for the helper rolled out
+        # in commit b62c91d2; broader migration tracked in P2.
+        from .tenant_middleware import admin_transaction
+        async with admin_transaction(pool) as conn:
             now = datetime.now(timezone.utc)
 
             # --- Appliance status (gauge) ---

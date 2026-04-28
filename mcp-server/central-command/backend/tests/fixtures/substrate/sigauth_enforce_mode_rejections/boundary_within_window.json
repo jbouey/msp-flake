@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "scenario": "Off-by-one boundary check — one fail recorded at exactly NOW() - 5h59m59s (just inside the 6h window). The SQL's `WHERE o.observed_at > NOW() - INTERVAL '6 hours'` must include it. Locks the inclusivity of the window edge.",
+    "captured": "2026-04-28 round-table P1 follow-up (synthetic)",
+    "anonymized": true
+  },
+  "fetchrow_response": [
+    {
+      "site_id": "anon-site-B",
+      "mac_address": "DD:EE:FF:00:00:01",
+      "appliance_id": "anon-site-B-DD:EE:FF:00:00:01",
+      "failures": 1,
+      "total": 359,
+      "reasons": ["unknown_pubkey"],
+      "last_failure": "2026-04-28T11:00:01.000000+00:00"
+    }
+  ],
+  "expected_violation_count": 1,
+  "expected_details": {
+    "site_id": "anon-site-B",
+    "appliance_id": "anon-site-B-DD:EE:FF:00:00:01",
+    "failures": 1,
+    "total_samples": 359
+  }
+}

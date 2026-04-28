@@ -1487,7 +1487,11 @@ async def record_fleet_order_completion(
             duration_ms,
         )
     except Exception as e:
-        logger.warning(f"Failed to record fleet order completion: {e}")
+        # Session 205 "no silent write failures" — fleet_order_completions
+        # feeds _check_rollout_pause_threshold's failure-rate calc; a
+        # swallowed completion-record failure can mask a stuck rollout.
+        # Round-table 2026-04-28 angle 4 P0 fix.
+        logger.error(f"Failed to record fleet order completion: {e}", exc_info=True)
 
 
 async def create_fleet_order_for_site(

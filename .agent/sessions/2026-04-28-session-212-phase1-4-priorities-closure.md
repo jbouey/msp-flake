@@ -220,10 +220,41 @@ Phase 4 pre-commit deliverables (per QA contract):
 ```
 d5b640cb feat(sigauth): enforce-mode rejection invariant + forensic logging (#168)
 0c81fef6 chore(p2): close Session 211 Phase 3 follow-ups (#182, #184, #185, #186)
+3e014a62 test(sigauth): forensic-log defense + session 212 deferral doc (#169)
+303421cc fix(sigauth): wrap verify path in transaction + SET LOCAL admin (#168/#169)
+b0c72c6c fix(flywheel): savepoint around advance() in safe_rollout_promoted_rule
+5ea914d2 fix(flywheel): advance lifecycle proposed→approved in promote_candidate
+efe413cf fix(flywheel): QA-recommended followups from b0c72c6c+5ea914d2 round-table
+7c3e6551 fix(frontend): tsc — spread empty branch in fetchOpts headers ternary
+11b38d7e test(flywheel): FakeConn.transaction() shim for savepoint compat
+3b31b48b feat(security): P0 batch — partner identity mismatch + audit dead-letter queue
+b62c91d2 feat(p1): 8 enterprise-grade hardening items from Session 212 round-table
+<this-commit> feat(p2): QA-recommended followups + 9 originally-planned P2 cleanup items
 ```
 
-Phase 4 commit (task-#168 deferral package) pending review of this
-session note.
+## Deploy cascade post-mortem (2026-04-28 ~17:01-17:24Z)
+
+A 1-char TS2322 in commit 0c81fef6 (`headers: apiKey ? {...} : {}` →
+TS narrowing rejected the empty-branch type) bricked SIX consecutive
+deploys for ~90 minutes. The 5 substantive in-flight fixes
+(303421cc sigauth verify wrap, b0c72c6c flywheel savepoint, 5ea914d2
+lifecycle init, efe413cf QA followups) ALL inherited the upstream
+tsc fail and never landed in prod until 11b38d7e. Caused a real
+user-visible 500 on the Approve button and ~90 min of customer
+visibility on broken state. Round-cause: CLAUDE.md "no incremental
+CI pushes" was documentation, not policy. Fix shipped in the P1
+batch (`.githooks/pre-push` adds `npx tsc --noEmit` when
+frontend/* changes; PRE_PUSH_FULL=1 also runs stem-matched
+backend pytests).
+
+## Phase scope expansion (post-Phase-4 work shipped)
+
+After the Phase 4 deferral package landed, the user requested a full
+4-angle QA round-table on the day's work and an "enterprise-grade by
+default" directive for production distribution prep. Result: 22
+enumerated findings (2 P0, 11 P1, 9 P2) shipped in commits 3b31b48b
++ b62c91d2 + this commit. Bar moved permanently to enterprise-grade
+in `~/.claude/.../memory/feedback_enterprise_grade_default.md`.
 
 ## Coach reflection
 

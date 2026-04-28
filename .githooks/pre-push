@@ -100,6 +100,45 @@ if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     cd "$REPO_ROOT"
 fi
 
+# Stem-matched targeted backend pytest (Session 212 round-table angle 4 P1).
+# Opt-in via PRE_PUSH_FULL=1 so dev pushes that lack asyncpg/pynacl
+# don't get blocked. When enabled, walks the changed-source filenames
+# and runs any test_*.py whose stem corresponds. Catches the
+# `test_flywheel_promote.py` vs `test_flywheel_promotion.py` silent-
+# skip class — pre-fix I'd run the latter, miss the former, ship.
+if [ "${PRE_PUSH_FULL:-0}" = "1" ] && [ "$BACKEND_CHANGED" -eq 1 ]; then
+    cd "$REPO_ROOT/mcp-server/central-command/backend"
+    STEMS=()
+    for f in $CHANGED; do
+        case "$f" in
+            mcp-server/central-command/backend/*.py)
+                base=$(basename "$f" .py)
+                # Match by exact stem first, then by prefix (covers
+                # both test_flywheel_promote_candidate.py and the legacy
+                # test_flywheel_promotion.py for changes to flywheel_promote.py).
+                for t in tests/test_${base}.py tests/test_${base}_*.py tests/test_*${base}*.py; do
+                    [ -f "$t" ] && STEMS+=("$t")
+                done
+                ;;
+        esac
+    done
+    if [ "${#STEMS[@]}" -gt 0 ]; then
+        # Dedup
+        STEMS=($(printf '%s\n' "${STEMS[@]}" | sort -u))
+        echo "[pre-push] PRE_PUSH_FULL=1 — stem-matched pytest (${#STEMS[@]} files)..."
+        if ! python3 -m pytest "${STEMS[@]}" -q --tb=line >/dev/null 2>&1; then
+            echo "[pre-push] ❌ stem-matched pytest failed — push blocked"
+            python3 -m pytest "${STEMS[@]}" -q --tb=short 2>&1 | tail -25
+            echo ""
+            echo "[pre-push] If failures are import-deps the dev box doesn't have,"
+            echo "[pre-push] unset PRE_PUSH_FULL or use --no-verify (emergency)."
+            exit 1
+        fi
+        echo "[pre-push] ✓ stem-matched pytest clean"
+    fi
+    cd "$REPO_ROOT"
+fi
+
 # Frontend TypeScript check (Session 212 round-table angle 2 P0).
 # 2026-04-28 deploy cascade: a single TS2322 in commit 0c81fef6
 # bricked SIX consecutive deploys for ~90 minutes because the bug

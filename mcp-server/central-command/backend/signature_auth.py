@@ -256,9 +256,12 @@ async def _record_nonce(conn, fingerprint: str, nonce_hex: str) -> None:
             key,
         )
     except Exception:
-        # Reads may eat exceptions; this write-failure is observable
-        # via the metric but shouldn't flip verification to invalid.
-        logger.warning("sigauth nonce record failed", exc_info=True)
+        # Session 205 "no silent write failures" — DB writes log-and-raise
+        # (or log-with-exc_info). The nonce-record failure doesn't flip
+        # verification to invalid (it's the next-replay defense, not the
+        # current-request defense), but a sustained failure here means
+        # nonce replay protection is degraded — log shipper alerts.
+        logger.error("sigauth nonce record failed", exc_info=True)
 
 
 async def verify_appliance_signature(
@@ -353,6 +356,7 @@ async def verify_appliance_signature(
                 "site_id": site_id,
                 "mac_address": mac_address,
                 "ts_iso": ts_iso,
+                # 8 hex = 32 bits — time-correlation only; NOT a unique key.
                 "nonce_hex": nonce_hex[:8] if nonce_hex else "",
                 "sig_len": len(sig_b64) if sig_b64 else 0,
                 "signature_enforcement_mode": sig_enforcement_mode,

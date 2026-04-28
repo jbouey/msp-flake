@@ -425,8 +425,10 @@ async def _record_pattern_l2_call(
                 site_id, incident_type, runbook_id, confidence, cost_usd,
             )
     except Exception as e:
-        logger.warning("L2 rate-limit record failed",
-                       site_id=site_id, incident_type=incident_type, error=str(e))
+        # Session 205 "no silent write failures" — DB writes log-and-raise.
+        logger.error("L2 rate-limit record failed",
+                     site_id=site_id, incident_type=incident_type, error=str(e),
+                     exc_info=True)
 
 
 async def _get_and_increment_daily_l2_calls() -> int:

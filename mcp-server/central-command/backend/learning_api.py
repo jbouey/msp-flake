@@ -1010,7 +1010,11 @@ async def bulk_approve_candidates(
                         })
                     )
                 except Exception as e:
-                    logger.warning(f"Promotion audit log write failed: {e}")
+                    # Session 205 "no silent write failures" — promotion_audit_log
+                    # is the WORM-style HIPAA §164.312(b) audit. Mirror the
+                    # dead-letter pattern from flywheel_promote (Migration 253)
+                    # if reliable recovery becomes a problem here too.
+                    logger.error(f"Promotion audit log write failed: {e}", exc_info=True)
 
                 # Single shared rollout entrypoint — see
                 # flywheel_promote.safe_rollout_promoted_rule. All 3

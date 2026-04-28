@@ -2281,18 +2281,29 @@ class VersionDriftResponse(BaseModel):
 
 _drift_cache: Dict[str, Any] = {"sha": "unknown", "checked_at": 0.0, "error": None}
 _DRIFT_CACHE_TTL_SECONDS = 60.0
+# Stale-cache trap protection (round-table 2026-04-28 angle 2 P1):
+# if GitHub stays unreachable for longer than this window, we forget
+# the cached SHA and return "unknown" so monitors don't see a stale
+# `behind_main=false` against an hours-old main_head_sha.
+_DRIFT_CACHE_MAX_AGE_SECONDS = 300.0
 
 
 async def _fetch_main_head_sha() -> tuple[str, Optional[str]]:
     """Fetch the GitHub `main` HEAD SHA. Cached 60s to avoid hitting
-    GitHub's API rate limit. Returns (sha, error_message_or_None).
-    Configured via GITHUB_REPO env (default: 'jbouey/msp-flake').
-    Auth optional via GITHUB_TOKEN (raises rate limit from 60/h to
-    5000/h)."""
+    GitHub's API rate limit; cache evicted after 5min of unreachability
+    so a transient GitHub outage doesn't pin a stale SHA permanently.
+    Returns (sha, error_message_or_None). Configured via GITHUB_REPO
+    env (default: 'jbouey/msp-flake'). Auth optional via GITHUB_TOKEN
+    (raises rate limit from 60/h to 5000/h)."""
     import time as _time
     now = _time.time()
-    if (now - _drift_cache["checked_at"]) < _DRIFT_CACHE_TTL_SECONDS and _drift_cache["sha"] != "unknown":
+    age = now - _drift_cache["checked_at"]
+    if age < _DRIFT_CACHE_TTL_SECONDS and _drift_cache["sha"] != "unknown":
         return _drift_cache["sha"], _drift_cache.get("error")
+    # Stale-cache eviction: if we've been failing for > MAX_AGE,
+    # forget the cached SHA so monitors see "unknown" + error.
+    if age > _DRIFT_CACHE_MAX_AGE_SECONDS and _drift_cache.get("error"):
+        _drift_cache["sha"] = "unknown"
 
     repo = os.environ.get("GITHUB_REPO", "jbouey/msp-flake")
     url = f"https://api.github.com/repos/{repo}/commits/main"

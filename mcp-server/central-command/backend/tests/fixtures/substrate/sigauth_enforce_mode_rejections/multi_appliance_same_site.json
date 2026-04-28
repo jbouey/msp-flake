@@ -1,0 +1,28 @@
+{
+  "_meta": {
+    "scenario": "Two enforce-mode appliances under the SAME site each have rejections in the 6h window. The invariant must produce ONE Violation per appliance — proves the per-appliance scope of the SQL's GROUP BY (sa.site_id, sa.mac_address, sa.appliance_id).",
+    "captured": "2026-04-28 round-table P1 follow-up (synthetic; modeled after the 3-appliance NVB2 site)",
+    "anonymized": true
+  },
+  "fetchrow_response": [
+    {
+      "site_id": "anon-site-A",
+      "mac_address": "AA:BB:CC:00:00:01",
+      "appliance_id": "anon-site-A-AA:BB:CC:00:00:01",
+      "failures": 2,
+      "total": 120,
+      "reasons": ["unknown_pubkey"],
+      "last_failure": "2026-04-28T15:30:00.000000+00:00"
+    },
+    {
+      "site_id": "anon-site-A",
+      "mac_address": "AA:BB:CC:00:00:02",
+      "appliance_id": "anon-site-A-AA:BB:CC:00:00:02",
+      "failures": 1,
+      "total": 60,
+      "reasons": ["invalid_signature"],
+      "last_failure": "2026-04-28T15:45:00.000000+00:00"
+    }
+  ],
+  "expected_violation_count": 2
+}

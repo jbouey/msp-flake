@@ -598,7 +598,8 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                 except Exception as e:
                     logger.debug(f"Credential IP check failed for {cred['id']}: {e}")
     except Exception as e:
-        logger.warning(f"Credential IP auto-update failed for {report.site_id}: {e}")
+        # Session 205 "no silent write failures" — auto-update is a DB UPDATE.
+        logger.error(f"Credential IP auto-update failed for {report.site_id}: {e}", exc_info=True)
 
     # Also check org-level credentials (inherited via client_org)
     try:
