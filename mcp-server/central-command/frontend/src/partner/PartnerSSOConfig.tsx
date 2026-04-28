@@ -34,19 +34,32 @@ export const PartnerSSOConfig: React.FC<PartnerSSOConfigProps> = ({ orgId, orgNa
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   const fetchOptions = useCallback((): RequestInit => {
-    return apiKey
-      ? { headers: { 'X-API-Key': apiKey } }
-      : { credentials: 'include' };
+    // #182 (Session 211 Phase 3): always 'include' so GETs send the
+    // session cookie, with X-API-Key additive when present. Pre-fix
+    // the apiKey branch dropped to the default 'same-origin' which
+    // silently skipped cookies — the additive form preserves
+    // defense-in-depth (cookie + apiKey both present when both exist).
+    return {
+      credentials: 'include',
+      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+    };
   }, [apiKey]);
 
   const fetchOptionsWithBody = useCallback((method: string, body: unknown): RequestInit => {
-    const headers: HeadersInit = apiKey
-      ? { 'Content-Type': 'application/json', 'X-API-Key': apiKey }
-      : { 'Content-Type': 'application/json', ...csrfHeaders() };
+    // #182 follow-on (Session 211 Phase 3): canonical additive form.
+    // Pre-fix the apiKey branch lost BOTH cookies AND CSRF — when a
+    // partner had an apiKey, all mutations bypassed session-cookie
+    // auth + CSRF entirely. Now: cookies + CSRF unconditional,
+    // X-API-Key additive when present.
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+      ...csrfHeaders(),
+      ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+    };
     return {
       method,
       headers,
-      credentials: apiKey ? undefined : 'include',
+      credentials: 'include',
       body: JSON.stringify(body),
     };
   }, [apiKey]);

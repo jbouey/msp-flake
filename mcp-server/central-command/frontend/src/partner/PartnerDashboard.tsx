@@ -99,13 +99,12 @@ export const PartnerDashboard: React.FC = () => {
     if (!isAuthenticated) return;
     setLoading(true);
 
-    // Use API key header if available, otherwise use cookie auth
-    const headers: HeadersInit = apiKey
-      ? { 'X-API-Key': apiKey }
-      : {};
-    const fetchOptions: RequestInit = apiKey
-      ? { headers }
-      : { credentials: 'include' };
+    // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
+    // additive. Pre-fix the apiKey branch silently dropped cookies.
+    const fetchOptions: RequestInit = {
+      credentials: 'include',
+      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+    };
 
     try {
       const [sitesRes, provisionsRes] = await Promise.all([

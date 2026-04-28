@@ -52,9 +52,13 @@ export const PartnerOnboarding: React.FC = () => {
   const [expandedSite, setExpandedSite] = useState<string | null>(null);
 
   const fetchOptions = useCallback((): RequestInit => {
-    return apiKey
-      ? { headers: { 'X-API-Key': apiKey } }
-      : { credentials: 'include' };
+    // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
+    // additive. Pre-fix the apiKey branch dropped to default
+    // 'same-origin' silently, masking session-cookie auth.
+    return {
+      credentials: 'include',
+      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+    };
   }, [apiKey]);
 
   const loadData = useCallback(async () => {
@@ -78,9 +82,16 @@ export const PartnerOnboarding: React.FC = () => {
   const triggerCheckin = async (siteId: string) => {
     setTriggeringCheckin(siteId);
     try {
-      const opts: RequestInit = apiKey
-        ? { method: 'POST', headers: { 'X-API-Key': apiKey } }
-        : { method: 'POST', credentials: 'include', headers: { ...csrfHeaders() } };
+      // #182 follow-on: canonical additive form. Pre-fix the apiKey
+      // branch lost both cookie AND CSRF on this mutation.
+      const opts: RequestInit = {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          ...csrfHeaders(),
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
+      };
 
       const res = await fetch(`/api/partners/me/sites/${siteId}/trigger-checkin`, opts);
       if (res.ok) {

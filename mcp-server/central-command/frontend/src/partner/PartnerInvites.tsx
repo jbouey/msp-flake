@@ -90,8 +90,13 @@ export const PartnerInvites: React.FC<{ onGoToAgreements?: () => void }> = ({
   const [revokeTarget, setRevokeTarget] = useState<InviteRow | null>(null);
   const [revokeReason, setRevokeReason] = useState('');
 
+  // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
+  // additive. Pre-fix the apiKey branch silently dropped cookies.
   const fetchOpts: RequestInit = useMemo(
-    () => (apiKey ? { headers: { 'X-API-Key': apiKey } } : { credentials: 'include' }),
+    () => ({
+      credentials: 'include',
+      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+    }),
     [apiKey],
   );
 

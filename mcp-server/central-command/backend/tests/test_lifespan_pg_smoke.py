@@ -39,8 +39,10 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 # Module-level constants — the production test path AND the self-tests
 # below both reference these. Without this consolidation the regexes
 # would drift between the two and self-tests would give false confidence
-# (round-table P1 #183).
-SESSION_205_CUTOFF = 156  # last pre-205 migration; 157 = check_type_registry
+# (round-table P1 #183). SESSION_205_CUTOFF lifted to shared
+# tests/_migration_constants.py (#186, Session 211 Phase 3) so
+# future gates that need the same number import rather than copy.
+from tests._migration_constants import SESSION_205_CUTOFF  # noqa: E402  pylint: disable=wrong-import-position
 BOOTSTRAP_GAP_RE = re.compile(
     r'relation "[^"]+" does not exist|'
     r'column "[^"]+" .* of relation "[^"]+" does not exist|'

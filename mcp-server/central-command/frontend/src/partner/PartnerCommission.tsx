@@ -38,7 +38,10 @@ export default function PartnerCommission() {
     setLoading(true);
     const headers: HeadersInit = apiKey ? { 'X-API-Key': apiKey } : {};
     fetch('/api/partners/me/commission', {
-      credentials: apiKey ? undefined : 'include',
+      // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
+      // additive. Pre-fix `apiKey ? undefined : 'include'` silently
+      // dropped to default 'same-origin' when an apiKey was present.
+      credentials: 'include',
       headers,
     })
       .then((r) => (r.ok ? r.json() : r.json().then((b) => Promise.reject(b))))

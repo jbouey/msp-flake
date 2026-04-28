@@ -69,22 +69,80 @@ METHOD_LITERAL_RE = re.compile(
 )
 
 
+# Regex-literal disambiguation: `/` starts a regex when preceded by
+# one of these "expression-context" tokens. Otherwise it's division.
+# Mirrors the JS lexer rule. (#184, Session 211 Phase 3 hardening)
+_REGEX_PRECEDED_BY = set(",;([{=!&|?:+-*<>%^~")
+
+
+def _skip_regex_literal(src: str, start: int) -> Optional[int]:
+    """Walk past a JS regex literal starting at `start` (position of `/`).
+    Returns the index just past the closing `/flags`, or None if EOF.
+    Honors `\\` escapes and `[...]` character classes (which legally
+    contain unescaped `/`).
+    """
+    n = len(src)
+    j = start + 1  # past opening /
+    in_class = False
+    while j < n:
+        cj = src[j]
+        if cj == "\\":
+            # Bounds-checked escape skip (#184): \\ at EOF would walk
+            # past end and silently bail. Now we explicitly bail.
+            if j + 1 >= n:
+                return None
+            j += 2
+            continue
+        if in_class:
+            if cj == "]":
+                in_class = False
+            j += 1
+            continue
+        if cj == "[":
+            in_class = True
+            j += 1
+            continue
+        if cj == "/":
+            # End of body. Skip flags `/gmi...`
+            j += 1
+            while j < n and src[j].isalpha():
+                j += 1
+            return j
+        if cj == "\n":
+            # Regex literals can't span newlines — this wasn't a regex
+            # after all, abandon and let the caller treat `/` as division.
+            return None
+        j += 1
+    return None
+
+
 def _balanced_options_blob(src: str, fetch_paren: int) -> Optional[Tuple[int, str]]:
     """Given the position right after `fetch(`, find the options object
     literal and return (open_brace_index, options_blob_inside_braces).
     Returns None if the call has only one arg (e.g. `fetch(url)`) or
     the parser walks off the end. Brace-balanced over TS strings.
+
+    Hardening (#184, Session 211 Phase 3):
+      - regex literals (`/abc/g`) skipped via `_skip_regex_literal` so
+        their internal `{`/`}` don't poison brace counting.
+      - `\\` at EOF inside a string explicitly bails instead of walking
+        past end.
     """
     n = len(src)
     i = fetch_paren
     paren_depth = 1
     seen_first_arg_end = False
     in_str: Optional[str] = None  # quote char if inside a string
+    prev_sig: str = "("  # last significant char for regex/division disambiguation
 
     while i < n and paren_depth > 0:
         ch = src[i]
         if in_str:
             if ch == "\\":
+                # #184 bounds check: \\ at EOF inside a string was
+                # silently walking past the end via `i += 2`.
+                if i + 1 >= n:
+                    return None
                 i += 2
                 continue
             if ch == in_str:
@@ -101,6 +159,9 @@ def _balanced_options_blob(src: str, fetch_paren: int) -> Optional[Tuple[int, st
                     sj = src[j]
                     if sub_in_str:
                         if sj == "\\":
+                            # #184 bounds check.
+                            if j + 1 >= n:
+                                return None
                             j += 2; continue
                         if sj == sub_in_str:
                             sub_in_str = None
@@ -133,6 +194,23 @@ def _balanced_options_blob(src: str, fetch_paren: int) -> Optional[Tuple[int, st
                 return None
             i = end + 2
             continue
+        if ch == "/" and prev_sig in _REGEX_PRECEDED_BY:
+            # Regex literal (#184) — `prev_sig` indicates expression
+            # context so this `/` opens `/regex/flags` rather than a
+            # division operator. Skip past the closing `/flags` so the
+            # regex's internal `{`/`}` don't perturb brace counting.
+            past = _skip_regex_literal(src, i)
+            if past is None:
+                # Not a regex (saw newline) → treat as a stray `/`.
+                i += 1
+                continue
+            i = past
+            prev_sig = "/"  # regex value behaves like a literal
+            continue
+        # Update prev_sig BEFORE handling structural chars so the regex
+        # disambiguation has the right context on the next iteration.
+        if not ch.isspace():
+            prev_sig = ch
         if ch == "(":
             paren_depth += 1
         elif ch == ")":
@@ -154,6 +232,9 @@ def _balanced_options_blob(src: str, fetch_paren: int) -> Optional[Tuple[int, st
                 cj = src[j]
                 if inner_str:
                     if cj == "\\":
+                        # #184 bounds check.
+                        if j + 1 >= n:
+                            return None
                         j += 2; continue
                     if cj == inner_str:
                         inner_str = None
@@ -167,6 +248,9 @@ def _balanced_options_blob(src: str, fetch_paren: int) -> Optional[Tuple[int, st
                             sk = src[k]
                             if s2:
                                 if sk == "\\":
+                                    # #184 bounds check.
+                                    if k + 1 >= n:
+                                        return None
                                     k += 2; continue
                                 if sk == s2:
                                     s2 = None
@@ -465,3 +549,78 @@ def test_parser_handles_call_expression_in_options():
         });
     """
     assert _v_for(src) == [], "Call expressions in options must not break parser"
+
+
+# ---------------------------------------------------------------------------
+# #184 hardening — regex literals and EOF escapes
+# ---------------------------------------------------------------------------
+
+
+def test_parser_handles_regex_literal_with_braces_in_first_arg():
+    """A regex literal containing `{` and `}` in the first arg must NOT
+    perturb brace counting. Pre-#184 the parser had no `/`-vs-`/regex/`
+    disambiguation; an inline regex like `/\\{[^}]*\\}/g` would have
+    been walked as raw chars + its braces would corrupt depth."""
+    src = r"""
+        await fetch(buildUrl(s.match(/\{[^}]*\}/g) ?? []), {
+            method: 'POST',
+            credentials: 'include',
+            headers: { ...csrfHeaders() },
+        });
+    """
+    assert _v_for(src) == [], (
+        "Regex literal `/\\{[^}]*\\}/g` in first arg must not break the "
+        "parser (#184 — regex disambiguation)"
+    )
+
+
+def test_parser_handles_regex_literal_in_options_value():
+    """A regex value inside the options blob (e.g. headers value) must
+    skip past its braces too. Less common in real code but the
+    disambiguation should be symmetric."""
+    src = r"""
+        await fetch('/api/x', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'X-Pattern': /\{abc\}/g, ...csrfHeaders() },
+        });
+    """
+    # We don't strictly require the parser to enter regex-skip in the
+    # INNER walker (that's a deeper rewrite), but the outer walker
+    # MUST find this options blob and the CSRF helper inside it.
+    assert _v_for(src) == [], (
+        "Outer walker must find options blob even when a regex literal "
+        "appears as a value within it"
+    )
+
+
+def test_parser_disambiguates_division_from_regex():
+    """`a/b` is division (prev_sig is alphanumeric, not in
+    _REGEX_PRECEDED_BY). Must NOT be skipped as a regex."""
+    src = """
+        const ratio = a/b;
+        await fetch('/api/x', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { ...csrfHeaders() },
+        });
+    """
+    assert _v_for(src) == [], (
+        "Division must not be misparsed as a regex literal — `a/b` "
+        "before the fetch should leave the parser in a clean state"
+    )
+
+
+def test_parser_bounds_checks_eof_in_string_escape():
+    """Pre-#184: `'foo\\\\` at EOF inside a string would do `i += 2`,
+    walking off the end without returning. Now bounds-checks and
+    explicitly returns None — caller treats as no-options-blob.
+    Synthetic; production frontend won't end with a dangling escape,
+    but the gate hardening is the deliverable."""
+    # Construct: fetch(' followed by an unterminated string ending in \
+    src = "await fetch('foo\\"  # `'foo\` at EOF
+    # Just must not raise — semantic result irrelevant.
+    out = _v_for(src)
+    assert isinstance(out, list), (
+        "Parser must not crash on EOF-in-escape — #184 bounds check"
+    )

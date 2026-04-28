@@ -157,7 +157,10 @@ export const PartnerDriftConfig: React.FC<PartnerDriftConfigProps> = ({ siteId, 
     return {
       method,
       headers,
-      credentials: apiKey ? undefined : 'include',
+      // #182 (Session 211 Phase 3): cookies are unconditional;
+      // X-API-Key is additive when present. Pre-fix the apiKey
+      // branch dropped to default 'same-origin' silently.
+      credentials: 'include',
       body: body ? JSON.stringify(body) : undefined,
     };
   }, [apiKey]);

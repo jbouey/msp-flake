@@ -76,9 +76,12 @@ export const PartnerBilling: React.FC = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchOptions: RequestInit = apiKey
-    ? { headers: { 'X-API-Key': apiKey } }
-    : { credentials: 'include' };
+  // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
+  // additive. Pre-fix the apiKey branch silently dropped cookies.
+  const fetchOptions: RequestInit = {
+    credentials: 'include',
+    headers: apiKey ? { 'X-API-Key': apiKey } : {},
+  };
 
   useEffect(() => {
     loadBillingData();

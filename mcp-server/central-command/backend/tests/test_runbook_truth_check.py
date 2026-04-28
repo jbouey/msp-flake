@@ -22,11 +22,10 @@ that runbooks/docstrings reference, add the pattern to REMOVED_PATTERNS.
 The test then fails until every prose mention is updated. Ratchets
 runbook truth-state in lockstep with code state.
 
-A `table.column` semantic check was prototyped and removed — `x.y`
-shape is too generic in operator runbooks (JSON paths, dot-notation
-config keys, Python attribute access). Catching that class properly
-needs a tighter detector that only flags refs inside SQL contexts.
-See #185.
+A `table.column` semantic check is implemented as `SQL_REMOVED_COLUMNS`
+below (#185, Session 211 Phase 3). Restricted to fenced code blocks
+that contain SQL keywords so generic `x.y` prose (JSON paths, Python
+attribute access, dot-notation config keys) doesn't false-positive.
 """
 from __future__ import annotations
 
@@ -68,6 +67,48 @@ REMOVED_PATTERNS: List[Tuple[str, str, str]] = [
         "phrase the warning without the literal token (e.g. \"the legacy evidence-bundle column\").",
     ),
 ]
+
+
+# SQL-context table.column references that have been removed. Each
+# entry is (table.column, scope_glob, why). The detector ONLY scans
+# fenced code blocks containing SQL keywords (SELECT, UPDATE, INSERT,
+# DELETE, FROM) — that scoping is what differentiates this from the
+# literal REMOVED_PATTERNS list above (which fires on prose anywhere).
+#
+# Use this gate when a column is dropped from prod but operator
+# runbooks still embed psql snippets that read from it. Substring
+# match `<table>.<column>` inside the SQL block.
+SQL_REMOVED_COLUMNS: List[Tuple[str, str, str]] = [
+    # Format example (no live entries yet; add as columns are dropped):
+    # (
+    #     "incidents.remediation_history",
+    #     "*.md",
+    #     "Migration 137 / Session 200 — replaced by relational table "
+    #     "incident_remediation_steps. Old JSONB column is no longer "
+    #     "written to. Update SQL examples to JOIN the new table.",
+    # ),
+]
+
+
+_SQL_KEYWORDS_RE = re.compile(
+    r"\b(SELECT|UPDATE|INSERT\s+INTO|DELETE\s+FROM|FROM\s+\w+|WHERE\s+\w+)\b",
+    re.IGNORECASE,
+)
+_FENCE_RE = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
+
+
+def _extract_sql_blocks(md: str) -> List[str]:
+    """Return the body of every fenced code block in md that either
+    declares ```sql or ```psql, OR contains SQL keywords. Captures the
+    inner body without the fence delimiters. Used to scope the
+    table.column drift check to SQL contexts only."""
+    out: List[str] = []
+    for m in _FENCE_RE.finditer(md):
+        lang = (m.group(1) or "").lower()
+        body = m.group(2)
+        if lang in ("sql", "psql") or _SQL_KEYWORDS_RE.search(body):
+            out.append(body)
+    return out
 
 
 # Source-code extensions worth validating as file paths. Anything else
@@ -188,6 +229,36 @@ def test_runbook_does_not_reference_removed_patterns():
 
 
 # ---------------------------------------------------------------------------
+# 3. SQL-context table.column drift (#185)
+# ---------------------------------------------------------------------------
+def test_runbook_sql_blocks_avoid_removed_columns():
+    """Fenced code blocks containing SQL keywords must not reference
+    columns/tables in SQL_REMOVED_COLUMNS. Differentiates from the
+    literal REMOVED_PATTERNS check by limiting scope to SQL contexts —
+    `x.y` is too generic in prose to ban globally. (#185, Session 211)
+    """
+    failures: List[str] = []
+    for rb in _runbooks():
+        body = rb.read_text(encoding="utf-8")
+        sql_blocks = _extract_sql_blocks(body)
+        if not sql_blocks:
+            continue
+        for ref, scope_glob, why in SQL_REMOVED_COLUMNS:
+            if not _matches_glob(rb.name, scope_glob):
+                continue
+            for block in sql_blocks:
+                if ref in block:
+                    failures.append(f"{rb.name}: SQL block references `{ref}`. {why}")
+                    break  # one hit per (runbook, ref) is enough
+    assert not failures, (
+        "Runbook SQL examples reference removed table.column refs. "
+        "Update the SQL or remove the entry from SQL_REMOVED_COLUMNS "
+        "if it's still valid.\n"
+        + "\n".join(f"  - {f}" for f in failures)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Self-tests — prove the gate actually catches the drift class we care
 # about. Without these, a regression to an over-permissive check (return
 # [] always) would silently let stale prose through.
@@ -218,3 +289,35 @@ def test_removed_pattern_check_self_test_catches_stale_prose(tmp_path):
     # Simulate the per-runbook scan
     matched = pattern in fake_body
     assert matched, "REMOVED_PATTERNS substring match must fire on stale prose"
+
+
+def test_sql_block_extractor_distinguishes_sql_vs_prose():
+    """#185: extractor must capture ```sql fences AND keyword-bearing
+    bare fences, but NOT fences that are pure shell/json/text."""
+    md = (
+        "Prose with `foo.bar` in backticks (must NOT count).\n\n"
+        "```sql\nSELECT id FROM old_table;\n```\n\n"
+        "```\nSELECT * FROM another;\n```\n\n"
+        "```bash\necho hello.world\n```\n\n"
+        "```json\n{\"a.b\": 1}\n```\n"
+    )
+    blocks = _extract_sql_blocks(md)
+    assert len(blocks) == 2, f"expected 2 SQL blocks, got {len(blocks)}: {blocks}"
+    assert any("old_table" in b for b in blocks)
+    assert any("another" in b for b in blocks)
+    assert not any("hello.world" in b for b in blocks)
+
+
+def test_sql_removed_column_self_test_fires_on_synthetic_drift():
+    """Prove the gate has teeth even when the live SQL_REMOVED_COLUMNS
+    list is empty — synthetic entry + synthetic SQL fence must match."""
+    fake_table_col = "synthetic_dropped.example_col"
+    md = (
+        "Run this query to inspect:\n\n"
+        f"```sql\nSELECT {fake_table_col} FROM synthetic_dropped;\n```\n"
+    )
+    blocks = _extract_sql_blocks(md)
+    assert blocks, "extractor must capture the synthetic SQL fence"
+    assert any(fake_table_col in b for b in blocks), (
+        "SQL_REMOVED_COLUMNS substring match must fire on stale SQL"
+    )
