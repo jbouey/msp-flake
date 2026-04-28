@@ -134,18 +134,21 @@ async def promote_candidate(
     """, rule_id, pattern_sig, site_id, partner_id,
         effective_yaml, json.dumps(effective_json), notes)
 
-    # Step 3.5: advance lifecycle proposed → approved.
-    # Migration 181 defaults `lifecycle_state='proposed'` on INSERT.
-    # The legal forward path is proposed → approved → rolling_out →
-    # active. Without this advance, Step 8's safe_rollout call to
-    # advance('rolling_out') would attempt the illegal transition
-    # 'proposed → rolling_out' and raise check_violation, poisoning
-    # the asyncpg transaction (Session 205 invariant). Wrapped in its
-    # own savepoint so a re-promotion of an already-active rule
-    # (advance from 'active' → 'approved' is illegal) doesn't poison
-    # the outer txn either — safe_rollout's idempotent retry handles
-    # the rolled-back-to-active case correctly via its own savepoint
-    # (added in commit b0c72c6c, 2026-04-28).
+    # Step 3.5: advance lifecycle to 'approved' for the manual-approval
+    # ledger event. New rows enter at lifecycle_state='proposed' (mig
+    # 181 default); transitioning to 'approved' before Step 8's rollout
+    # writes a clean audit narrative for operator-action approvals.
+    # Migration 236 already legalizes 'proposed → rolling_out' directly
+    # for the auto-promotion path, so this Step 3.5 is about audit
+    # cleanliness, not unblocking the rollout.
+    #
+    # Pre-check the current state to avoid logging ERROR on the
+    # legitimate re-approval-of-active path: 'active → approved' is
+    # NOT in the transition matrix and would raise check_violation.
+    # Self-loops ARE in the matrix for every state (mig 181 lines
+    # 184-189), so we issue active→active when re-approving active
+    # rules to write a fresh audit event without illegal-transition
+    # spam (round-table 2026-04-28 finding #2).
     try:
         from dashboard_api.flywheel_state import advance as _advance
     except ImportError:
@@ -153,38 +156,55 @@ async def promote_candidate(
             from .flywheel_state import advance as _advance
         except ImportError:
             from flywheel_state import advance as _advance
-    try:
-        async with conn.transaction():
-            await _advance(
-                conn,
-                rule_id=rule_id,
-                new_state="approved",
-                event_type="promotion_approved",
-                actor=f"{actor_type}:{actor}",
-                stage="promotion",
-                site_id=site_id,
-                proof={
-                    "pattern_signature": pattern_sig,
-                    "confidence": confidence,
-                    "total_occurrences": int(candidate.get("total_occurrences") or 0),
+
+    cur_state_row = await conn.fetchrow(
+        "SELECT lifecycle_state FROM promoted_rules WHERE site_id=$1 AND rule_id=$2",
+        site_id, rule_id,
+    )
+    cur_state = cur_state_row["lifecycle_state"] if cur_state_row else "proposed"
+    if cur_state in ("proposed", "shadow"):
+        target_advance_state = "approved"
+    elif cur_state == "approved":
+        target_advance_state = "approved"  # self-loop, idempotent
+    elif cur_state in ("active", "regime_warning", "auto_disabled", "graduated", "rolling_out"):
+        # Re-approval of an already-deployed rule — write the audit
+        # event via a self-loop, don't try to walk backward in the
+        # state machine.
+        target_advance_state = cur_state
+    else:
+        target_advance_state = None  # 'retired' or unknown — skip
+    if target_advance_state is not None:
+        try:
+            async with conn.transaction():
+                await _advance(
+                    conn,
+                    rule_id=rule_id,
+                    new_state=target_advance_state,
+                    event_type="promotion_approved",
+                    actor=f"{actor_type}:{actor}",
+                    stage="promotion",
+                    site_id=site_id,
+                    proof={
+                        "pattern_signature": pattern_sig,
+                        "confidence": confidence,
+                        "total_occurrences": int(candidate.get("total_occurrences") or 0),
+                        "prior_state": cur_state,
+                    },
+                    reason=f"{actor_type} approval via promote_candidate",
+                )
+        except Exception as e:
+            logger.error(
+                "promote_candidate_advance_to_approved_failed",
+                exc_info=True,
+                extra={
+                    "rule_id": rule_id,
+                    "site_id": site_id,
+                    "actor": actor,
+                    "prior_state": cur_state,
+                    "target_state": target_advance_state,
+                    "exception_class": type(e).__name__,
                 },
-                reason=f"{actor_type} approval via promote_candidate",
             )
-    except Exception as e:
-        # Illegal transition (e.g. re-approval of an active rule) is
-        # NOT fatal — the rollout below proceeds idempotently and the
-        # spine reflects the eventual state. Log loud per the "no
-        # silent write failures" rule.
-        logger.error(
-            "promote_candidate_advance_to_approved_failed",
-            exc_info=True,
-            extra={
-                "rule_id": rule_id,
-                "site_id": site_id,
-                "actor": actor,
-                "exception_class": type(e).__name__,
-            },
-        )
 
     # Step 4: runbooks library entry
     promoted_name = custom_name or f"Auto-Promoted: {incident_type}"
@@ -222,37 +242,47 @@ async def promote_candidate(
         WHERE id = $3
     """, custom_name, notes, candidate["id"])
 
-    # Step 7: append-only audit log (WORM-style)
+    # Step 7: append-only audit log (WORM-style). Wrapped in a
+    # savepoint per Session 205 asyncpg invariant: this INSERT can
+    # fail (partition_maintainer_loop missed creating next-month
+    # partition, CHECK violation, etc.) and is non-fatal — but
+    # without a savepoint a failure poisons the outer txn and the
+    # subsequent steps in promote_candidate raise
+    # InFailedSQLTransactionError (round-table 2026-04-28 finding #4).
     try:
-        await conn.execute("""
-            INSERT INTO promotion_audit_log (
-                event_type, rule_id, pattern_signature, check_type,
-                site_id, confidence_score, success_rate,
-                l2_resolutions, total_occurrences, source, actor, metadata
-            ) VALUES (
-                'approved', $1, $2, $3, $4, $5, $6, $7, $8,
-                $9, $10, $11
+        async with conn.transaction():
+            await conn.execute("""
+                INSERT INTO promotion_audit_log (
+                    event_type, rule_id, pattern_signature, check_type,
+                    site_id, confidence_score, success_rate,
+                    l2_resolutions, total_occurrences, source, actor, metadata
+                ) VALUES (
+                    'approved', $1, $2, $3, $4, $5, $6, $7, $8,
+                    $9, $10, $11
+                )
+            """,
+                rule_id,
+                pattern_sig,
+                check_type or incident_type,
+                site_id,
+                confidence,
+                confidence,
+                int(candidate.get("l2_resolutions") or 0),
+                int(candidate.get("total_occurrences") or 0),
+                actor_type,
+                actor,
+                json.dumps({
+                    "synced_rule_id": synced_rule_id,
+                    "custom_name": custom_name,
+                    "notes": notes,
+                }),
             )
-        """,
-            rule_id,
-            pattern_sig,
-            check_type or incident_type,
-            site_id,
-            confidence,
-            confidence,
-            int(candidate.get("l2_resolutions") or 0),
-            int(candidate.get("total_occurrences") or 0),
-            actor_type,
-            actor,
-            json.dumps({
-                "synced_rule_id": synced_rule_id,
-                "custom_name": custom_name,
-                "notes": notes,
-            }),
-        )
     except Exception as e:
         # Audit log failures must not block promotion — but log loudly
-        logger.error(f"promotion_audit_log write failed for {rule_id}: {e}")
+        logger.error(
+            f"promotion_audit_log write failed for {rule_id}: {e}",
+            exc_info=True,
+        )
 
     logger.info(
         f"Promoted candidate rule_id={rule_id} site={site_id} "
@@ -260,21 +290,31 @@ async def promote_candidate(
     )
 
     # Phase 7: upsert pattern embedding so this promotion contributes to
-    # the warm-start corpus for future novel incidents.
+    # the warm-start corpus for future novel incidents. Wrapped in
+    # savepoint per Session 205 asyncpg invariant — embedding INSERT
+    # failures (pgvector extension issue, dimension mismatch, etc.)
+    # are non-fatal but must not poison the outer txn before Step 8
+    # (round-table 2026-04-28 finding #4). Log level upgraded WARNING
+    # → ERROR per "no silent write failures" rule (DB writes must
+    # log-and-raise; reads may eat exceptions).
     try:
-        from .pattern_embeddings import upsert_pattern_embedding
-        await upsert_pattern_embedding(
-            conn,
-            pattern_key=pattern_sig or f"{incident_type}:{runbook_id}",
-            incident_type=incident_type,
-            check_type=check_type or incident_type,
-            runbook_id=runbook_id,
-            reasoning=(notes or custom_name or ""),
-            source_occurrences=int(candidate.get("total_occurrences") or 0),
-            source_sites=1,
-        )
+        async with conn.transaction():
+            from .pattern_embeddings import upsert_pattern_embedding
+            await upsert_pattern_embedding(
+                conn,
+                pattern_key=pattern_sig or f"{incident_type}:{runbook_id}",
+                incident_type=incident_type,
+                check_type=check_type or incident_type,
+                runbook_id=runbook_id,
+                reasoning=(notes or custom_name or ""),
+                source_occurrences=int(candidate.get("total_occurrences") or 0),
+                source_sites=1,
+            )
     except Exception as _e:
-        logger.warning(f"pattern embedding upsert failed for {rule_id}: {_e}")
+        logger.error(
+            f"pattern embedding upsert failed for {rule_id}: {_e}",
+            exc_info=True,
+        )
 
     # Step 8: emit fleet order so appliances actually receive the rule.
     # Centralized in safe_rollout_promoted_rule so all 3 promotion writers
