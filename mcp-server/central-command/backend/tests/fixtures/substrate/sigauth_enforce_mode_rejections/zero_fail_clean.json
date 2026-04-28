@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "scenario": "Enforce-mode appliance with all-valid sigauth observations in the 6h window — HAVING clause filters out the 0-fail row, no violation fires.",
+    "captured": "2026-04-28 round-table P1 (synthetic)",
+    "anonymized": true
+  },
+  "fetchrow_response": [],
+  "expected_violation_count": 0
+}

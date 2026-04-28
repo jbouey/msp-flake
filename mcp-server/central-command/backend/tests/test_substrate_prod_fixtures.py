@@ -49,6 +49,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 # entry whenever you add a new tests/fixtures/substrate/<NAME>/ directory.
 INVARIANTS_WITH_FIXTURES = {
     "l2_decisions_stalled": "_check_l2_decisions_stalled",
+    "sigauth_enforce_mode_rejections": "_check_sigauth_enforce_mode_rejections",
 }
 
 FIXTURE_ROOT = pathlib.Path(__file__).parent / "fixtures" / "substrate"
@@ -114,8 +115,22 @@ def test_substrate_invariant_against_fixture(
     # asyncpg fetchrow returns a Record-like object — but our assertion
     # code only does dict-style lookups (row["foo"]) which works on
     # plain dicts too. If a fixture uses datetime fields, decode here.
-    if "latest_decision_at" in row and isinstance(row["latest_decision_at"], str):
-        row["latest_decision_at"] = datetime.fromisoformat(row["latest_decision_at"])
+    # Datetime keys we know about; extend as new fixtures land.
+    _DATETIME_KEYS = ("latest_decision_at", "last_failure")
+
+    def _decode_dt(d):
+        if not isinstance(d, dict):
+            return d
+        for k in _DATETIME_KEYS:
+            v = d.get(k)
+            if isinstance(v, str):
+                d[k] = datetime.fromisoformat(v)
+        return d
+
+    if isinstance(row, dict):
+        row = _decode_dt(row)
+    elif isinstance(row, list):
+        row = [_decode_dt(r) for r in row]
 
     fn = _load_fn(invariant_name)
     conn = _FakeConn(row)

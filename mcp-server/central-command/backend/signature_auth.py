@@ -324,18 +324,38 @@ async def verify_appliance_signature(
         # Forensic ERROR (Session 211 Phase 2 QA, task #168). Enforce-mode
         # appliances should never hit this branch — when they do, the
         # log shipper alerts so we capture the moment-in-time context
-        # (timestamp, headers present) for time-correlation against the
-        # next checkin's STEP 3.6c UPDATE. See substrate runbook
-        # sigauth_enforce_mode_rejections.md.
+        # for time-correlation against STEP 3.6c UPDATE. See substrate
+        # runbook sigauth_enforce_mode_rejections.md.
+        #
+        # Session 212 round-table refinements:
+        #   - nonce_hex truncated to 8 chars (correlation surface for
+        #     log-shipper compromise; 8 hex = 32 bits, sufficient for
+        #     time-correlation, insufficient to reconstruct a replay)
+        #   - headers_present dropped (always True at this branch — useless
+        #     constant)
+        #   - signature_enforcement_mode added (high-signal triage: was
+        #     this appliance under enforce contract or in observe-only?)
+        sig_enforcement_mode = "unknown"
+        try:
+            row = await conn.fetchrow(
+                "SELECT signature_enforcement FROM site_appliances "
+                "WHERE site_id = $1 AND mac_address = $2 AND deleted_at IS NULL",
+                site_id, mac_address,
+            )
+            if row and row.get("signature_enforcement"):
+                sig_enforcement_mode = row["signature_enforcement"]
+        except Exception:
+            # Read-side, eat-but-continue per Session 205 reads/writes split.
+            pass
         logger.error(
             "sigauth_unknown_pubkey",
             extra={
                 "site_id": site_id,
                 "mac_address": mac_address,
                 "ts_iso": ts_iso,
-                "nonce_hex": nonce_hex,
+                "nonce_hex": nonce_hex[:8] if nonce_hex else "",
                 "sig_len": len(sig_b64) if sig_b64 else 0,
-                "headers_present": True,
+                "signature_enforcement_mode": sig_enforcement_mode,
             },
         )
         return SignatureVerifyResult(

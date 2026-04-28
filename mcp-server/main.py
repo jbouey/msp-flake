@@ -2269,6 +2269,96 @@ async def app_version():
     })
 
 
+class VersionDriftResponse(BaseModel):
+    """Shape of GET /api/version/drift. Surfaces silent deploy-cascade
+    failure mode (Session 212 round-table angle 2 P1)."""
+    runtime_sha: str
+    main_head_sha: str
+    behind_main: bool
+    last_check_at: str
+    error: Optional[str] = None
+
+
+_drift_cache: Dict[str, Any] = {"sha": "unknown", "checked_at": 0.0, "error": None}
+_DRIFT_CACHE_TTL_SECONDS = 60.0
+
+
+async def _fetch_main_head_sha() -> tuple[str, Optional[str]]:
+    """Fetch the GitHub `main` HEAD SHA. Cached 60s to avoid hitting
+    GitHub's API rate limit. Returns (sha, error_message_or_None).
+    Configured via GITHUB_REPO env (default: 'jbouey/msp-flake').
+    Auth optional via GITHUB_TOKEN (raises rate limit from 60/h to
+    5000/h)."""
+    import time as _time
+    now = _time.time()
+    if (now - _drift_cache["checked_at"]) < _DRIFT_CACHE_TTL_SECONDS and _drift_cache["sha"] != "unknown":
+        return _drift_cache["sha"], _drift_cache.get("error")
+
+    repo = os.environ.get("GITHUB_REPO", "jbouey/msp-flake")
+    url = f"https://api.github.com/repos/{repo}/commits/main"
+    headers = {"Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            err = f"GitHub API returned {resp.status_code}"
+            _drift_cache.update(checked_at=now, error=err)
+            return _drift_cache["sha"], err
+        sha = resp.json().get("sha", "unknown")
+        _drift_cache.update(sha=sha, checked_at=now, error=None)
+        return sha, None
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        _drift_cache.update(checked_at=now, error=err)
+        return _drift_cache["sha"], err
+
+
+@app.get("/api/version/drift", operation_id="app_version_drift_get",
+         response_model=VersionDriftResponse)
+async def app_version_drift():
+    """Public deploy-drift endpoint (Session 212 round-table P1).
+
+    Surfaces the gap between the running process's SHA and the
+    current main HEAD. Operators can spot a silent-cascade failure
+    (CI broken, fixes piling up but never deploying) within the
+    60s cache window instead of finding out when a feature mysteriously
+    doesn't work.
+
+    Cached 60s to respect GitHub's 60/h unauthenticated rate limit.
+    Set GITHUB_TOKEN to lift to 5000/h.
+
+    Returns:
+      runtime_sha: SHA the process is running
+      main_head_sha: SHA of jbouey/msp-flake refs/heads/main
+      behind_main: True iff runtime != main HEAD AND main HEAD known
+      last_check_at: ISO8601 of last GitHub fetch
+      error: populated when GitHub fetch failed (still returns 200 so
+        monitors don't conflate transient GitHub outage with deploy
+        cascade — read error + behind_main together).
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    runtime = _read_runtime_git_sha()
+    main_head, err = await _fetch_main_head_sha()
+    checked_at = _dt.fromtimestamp(_drift_cache["checked_at"], tz=_tz.utc).isoformat() if _drift_cache["checked_at"] else _dt.now(_tz.utc).isoformat()
+    behind = (
+        runtime != "unknown"
+        and main_head not in ("unknown", "")
+        and runtime != main_head
+    )
+    return JSONResponse(content={
+        "runtime_sha": runtime,
+        "main_head_sha": main_head,
+        "behind_main": behind,
+        "last_check_at": checked_at,
+        "error": err,
+    })
+
+
 @app.get("/api/admin/health")
 async def admin_health(user: dict = Depends(require_auth)):
     """Detailed health check — Redis, MinIO, DB, background tasks (admin only)."""

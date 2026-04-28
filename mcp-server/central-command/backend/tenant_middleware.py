@@ -166,6 +166,46 @@ async def admin_connection(pool: asyncpg.Pool):
                 logger.warning("admin_connection RESET failed — connection will be recycled")
 
 
+@asynccontextmanager
+async def admin_transaction(pool: asyncpg.Pool):
+    """Transactional admin context — pins a single PgBouncer backend.
+
+    Round-table 2026-04-28 angle 1 F1 P1: every multi-statement read
+    via `admin_connection` carries the same routing risk as the
+    sigauth verify path that motivated commit 303421cc. PgBouncer in
+    transaction-pool mode can route the outer SET and a subsequent
+    autocommit fetch to DIFFERENT backends; the fetch then runs
+    without `app.is_admin='true'` (Migration 234's role default is
+    false) and RLS hides every row. Symptom: the call returns
+    "no rows" intermittently in production, near-impossible to
+    reproduce in dev. The verify-path 303421cc fix used the pattern
+    explicitly inline; this helper centralizes it.
+
+    Use this — NOT `admin_connection` — when you need to issue 2+
+    queries against admin context within one logical operation. The
+    `SET LOCAL` is txn-scoped and pins to the backend pgbouncer
+    assigns to this transaction. Failures inside roll back per the
+    Session 205 asyncpg savepoint invariant; if you need partial
+    tolerance, nest `async with conn.transaction():` savepoints.
+
+    Single-statement reads (e.g. one `await conn.fetch(...)` and
+    nothing else) can stay on `admin_connection` — pgbouncer's
+    transaction is the same as the SET's transaction in that case.
+    Two+ statements = use `admin_transaction`.
+
+    Usage:
+        async with admin_transaction(pool) as conn:
+            rows = await conn.fetch("SELECT * FROM incidents")
+            counts = await conn.fetch(
+                "SELECT site_id, COUNT(*) FROM events GROUP BY 1"
+            )
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL app.is_admin TO 'true'")
+            yield conn
+
+
 def _validated_org_id(org_id: str) -> str:
     """Validate org_id (UUID) is safe for SET LOCAL interpolation."""
     org_str = str(org_id)

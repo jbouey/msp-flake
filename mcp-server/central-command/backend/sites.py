@@ -3595,7 +3595,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                                 sig_result.pubkey_fingerprint or None,
                             )
                     except Exception:  # noqa: BLE001
-                        logger.warning("sigauth_observations insert failed", exc_info=True)
+                        # Session 205 "no silent write failures" rule:
+                        # DB writes log-and-raise (or log-and-savepoint).
+                        # logger.warning is BANNED on write failures.
+                        logger.error("sigauth_observations insert failed", exc_info=True)
 
                 # Week 5: per-appliance enforcement check. Look up the
                 # row's signature_enforcement value. Default 'observe'

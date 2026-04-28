@@ -157,54 +157,81 @@ async def promote_candidate(
         except ImportError:
             from flywheel_state import advance as _advance
 
-    cur_state_row = await conn.fetchrow(
-        "SELECT lifecycle_state FROM promoted_rules WHERE site_id=$1 AND rule_id=$2",
-        site_id, rule_id,
-    )
-    cur_state = cur_state_row["lifecycle_state"] if cur_state_row else "proposed"
-    if cur_state in ("proposed", "shadow"):
-        target_advance_state = "approved"
-    elif cur_state == "approved":
-        target_advance_state = "approved"  # self-loop, idempotent
-    elif cur_state in ("active", "regime_warning", "auto_disabled", "graduated", "rolling_out"):
-        # Re-approval of an already-deployed rule — write the audit
-        # event via a self-loop, don't try to walk backward in the
-        # state machine.
-        target_advance_state = cur_state
-    else:
-        target_advance_state = None  # 'retired' or unknown — skip
-    if target_advance_state is not None:
-        try:
-            async with conn.transaction():
-                await _advance(
-                    conn,
-                    rule_id=rule_id,
-                    new_state=target_advance_state,
-                    event_type="promotion_approved",
-                    actor=f"{actor_type}:{actor}",
-                    stage="promotion",
-                    site_id=site_id,
-                    proof={
-                        "pattern_signature": pattern_sig,
-                        "confidence": confidence,
-                        "total_occurrences": int(candidate.get("total_occurrences") or 0),
-                        "prior_state": cur_state,
-                    },
-                    reason=f"{actor_type} approval via promote_candidate",
-                )
-        except Exception as e:
-            logger.error(
-                "promote_candidate_advance_to_approved_failed",
-                exc_info=True,
-                extra={
-                    "rule_id": rule_id,
-                    "site_id": site_id,
-                    "actor": actor,
-                    "prior_state": cur_state,
-                    "target_state": target_advance_state,
-                    "exception_class": type(e).__name__,
-                },
+    # TOCTOU fix (round-table 2026-04-28 angle 1 F2 P1): the read of
+    # lifecycle_state and the advance() write must be in ONE
+    # transaction with `FOR UPDATE` row-lock so two operators clicking
+    # Approve simultaneously can't both read 'proposed', both call
+    # advance(proposed→approved), and end up writing two
+    # `promotion_approved` ledger events with conflicting prior_state
+    # claims. The outer txn pins both onto one PgBouncer backend, the
+    # FOR UPDATE serializes the two clicks at the row level. Inner
+    # savepoint contains illegal-transition raises so they don't
+    # poison the outer txn (still safe under concurrent re-approval
+    # of an already-active rule).
+    try:
+        async with conn.transaction():
+            cur_state_row = await conn.fetchrow(
+                "SELECT lifecycle_state FROM promoted_rules "
+                "WHERE site_id=$1 AND rule_id=$2 FOR UPDATE",
+                site_id, rule_id,
             )
+            cur_state = cur_state_row["lifecycle_state"] if cur_state_row else "proposed"
+            if cur_state in ("proposed", "shadow"):
+                target_advance_state = "approved"
+            elif cur_state == "approved":
+                target_advance_state = "approved"  # self-loop, idempotent
+            elif cur_state in ("active", "regime_warning", "auto_disabled", "graduated", "rolling_out"):
+                # Re-approval of an already-deployed rule — write the
+                # audit event via a self-loop, don't try to walk
+                # backward in the state machine.
+                target_advance_state = cur_state
+            else:
+                target_advance_state = None  # 'retired' or unknown — skip
+            if target_advance_state is not None:
+                try:
+                    async with conn.transaction():  # nested savepoint
+                        await _advance(
+                            conn,
+                            rule_id=rule_id,
+                            new_state=target_advance_state,
+                            event_type="promotion_approved",
+                            actor=f"{actor_type}:{actor}",
+                            stage="promotion",
+                            site_id=site_id,
+                            proof={
+                                "pattern_signature": pattern_sig,
+                                "confidence": confidence,
+                                "total_occurrences": int(candidate.get("total_occurrences") or 0),
+                                "prior_state": cur_state,
+                            },
+                            reason=f"{actor_type} approval via promote_candidate",
+                        )
+                except Exception as e:
+                    logger.error(
+                        "promote_candidate_advance_to_approved_failed",
+                        exc_info=True,
+                        extra={
+                            "rule_id": rule_id,
+                            "site_id": site_id,
+                            "actor": actor,
+                            "prior_state": cur_state,
+                            "target_state": target_advance_state,
+                            "exception_class": type(e).__name__,
+                        },
+                    )
+    except Exception as e:
+        # Outer txn (FOR UPDATE wrapper) failure — log and continue.
+        # Step 8 still issues the fleet_order; the lifecycle state
+        # divergence is caught by the flywheel_ledger_stalled invariant.
+        logger.error(
+            "promote_candidate_lifecycle_lock_failed",
+            exc_info=True,
+            extra={
+                "rule_id": rule_id,
+                "site_id": site_id,
+                "exception_class": type(e).__name__,
+            },
+        )
 
     # Step 4: runbooks library entry
     promoted_name = custom_name or f"Auto-Promoted: {incident_type}"

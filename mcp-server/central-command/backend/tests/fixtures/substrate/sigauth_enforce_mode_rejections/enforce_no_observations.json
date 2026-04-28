@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "scenario": "Edge case the HAVING clause depends on: appliance is in signature_enforcement='enforce' but had ZERO sigauth observations in the 6h window (e.g. just-flipped appliance that hasn't checked in yet, or daemon paused). The JOIN returns 0 rows; HAVING never evaluates; no false positive.",
+    "captured": "2026-04-28 round-table P1 (synthetic)",
+    "anonymized": true
+  },
+  "fetchrow_response": [],
+  "expected_violation_count": 0
+}

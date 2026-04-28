@@ -26,8 +26,10 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 CHANGED=$(git diff --name-only "@{u}..HEAD" 2>/dev/null || git diff --name-only "HEAD~5..HEAD")
 BACKEND_CHANGED=0
 ISO_CHANGED=0
+FRONTEND_CHANGED=0
 for f in $CHANGED; do
     case "$f" in
+        mcp-server/central-command/frontend/*) FRONTEND_CHANGED=1 ;;
         mcp-server/*) BACKEND_CHANGED=1 ;;
         iso/*)        ISO_CHANGED=1 ;;
     esac
@@ -95,5 +97,27 @@ if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
         exit 1
     fi
     echo "[pre-push] ✓ backend pytest clean"
+    cd "$REPO_ROOT"
+fi
+
+# Frontend TypeScript check (Session 212 round-table angle 2 P0).
+# 2026-04-28 deploy cascade: a single TS2322 in commit 0c81fef6
+# bricked SIX consecutive deploys for ~90 minutes because the bug
+# carried forward across each subsequent push. The CLAUDE.md rule
+# "run tsc+eslint+pytest locally BEFORE push" was documentation, not
+# policy — this hook makes it policy.
+if [ "$FRONTEND_CHANGED" -eq 1 ]; then
+    echo "[pre-push] frontend tsc --noEmit ..."
+    cd "$REPO_ROOT/mcp-server/central-command/frontend"
+    if ! npx tsc --noEmit > /tmp/tsc-prepush.log 2>&1; then
+        echo "[pre-push] ❌ tsc failed — push blocked"
+        echo ""
+        tail -30 /tmp/tsc-prepush.log
+        echo ""
+        echo "[pre-push] Fix the type error, then re-push."
+        echo "[pre-push] Bypass (emergency only): git push --no-verify"
+        exit 1
+    fi
+    echo "[pre-push] ✓ frontend tsc clean"
     cd "$REPO_ROOT"
 fi

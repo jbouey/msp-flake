@@ -1,0 +1,29 @@
+{
+  "_meta": {
+    "scenario": "Enforce-mode appliance with exactly 1 invalid sigauth observation in the 6h window — HAVING >= 1 fires; one violation per appliance with failure_class+last_failure populated.",
+    "captured": "2026-04-28 round-table P1 (synthetic; modeled after the actual north-valley-branch-2 / 7C:D3 jitter that motivated the invariant)",
+    "anonymized": true
+  },
+  "fetchrow_response": [
+    {
+      "site_id": "anon-site-A",
+      "mac_address": "AA:BB:CC:DD:EE:FF",
+      "appliance_id": "anon-site-A-AA:BB:CC:DD:EE:FF",
+      "failures": 1,
+      "total": 60,
+      "reasons": ["unknown_pubkey"],
+      "last_failure": "2026-04-28T11:06:57.955953+00:00"
+    }
+  ],
+  "expected_violation_count": 1,
+  "expected_details": {
+    "site_id": "anon-site-A",
+    "appliance_id": "anon-site-A-AA:BB:CC:DD:EE:FF",
+    "mac_address": "AA:BB:CC:DD:EE:FF",
+    "failures": 1,
+    "total_samples": 60,
+    "fail_rate_pct": 1.667,
+    "reasons": ["unknown_pubkey"],
+    "last_failure_at": "2026-04-28T11:06:57.955953+00:00"
+  }
+}

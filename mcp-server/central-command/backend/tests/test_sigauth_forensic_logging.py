@@ -116,20 +116,43 @@ async def test_unknown_pubkey_logs_forensic_error(caplog):
     )
     record = forensic[-1]
 
-    # The four extra keys named in the QA contract. Each must be
-    # present and have the right semantic value — a refactor that
-    # renames a key (e.g. ts_iso → timestamp) breaks the log-shipper
-    # alert + the cross-system join, so we pin them by exact name.
-    for required_key in ("site_id", "mac_address", "ts_iso", "nonce_hex", "sig_len", "headers_present"):
+    # Required extras pinned by exact name. A refactor that renames
+    # one (e.g. ts_iso → timestamp) breaks the log-shipper alert + the
+    # cross-system join, so we lock the contract here. Updated 2026-04-28
+    # round-table: nonce_hex truncated to 8 hex chars (correlation
+    # surface, not replay-reconstruction); headers_present dropped
+    # (useless constant — always True at this branch);
+    # signature_enforcement_mode added (high-signal triage).
+    for required_key in ("site_id", "mac_address", "ts_iso", "nonce_hex", "sig_len", "signature_enforcement_mode"):
         assert hasattr(record, required_key), (
             f"forensic log record missing required extra key {required_key!r}. "
             f"Available extras: {sorted(set(record.__dict__) - {'msg', 'args', 'levelname', 'levelno', 'pathname', 'filename', 'module', 'exc_info', 'exc_text', 'stack_info', 'lineno', 'funcName', 'created', 'msecs', 'relativeCreated', 'thread', 'threadName', 'processName', 'process', 'name', 'message'})}"
         )
+    # The dropped key MUST stay dropped — refactor regression guard.
+    assert not hasattr(record, "headers_present"), (
+        "headers_present was dropped per Session 212 round-table "
+        "(always True at this branch — useless constant). "
+        "If you re-added it, instead add a key whose value carries "
+        "real signal."
+    )
 
     # Semantic checks — values must match what was sent.
     assert record.site_id == "north-valley-branch-2"
     assert record.mac_address == "7C:D3:0A:7C:55:18"
     assert record.ts_iso == ts_iso
-    assert record.nonce_hex == nonce
+    # Nonce truncated to 8 hex chars for correlation only.
+    assert record.nonce_hex == nonce[:8], (
+        f"nonce must be TRUNCATED to 8 chars to limit log-shipper "
+        f"correlation surface. Got {record.nonce_hex!r}, expected {nonce[:8]!r}."
+    )
+    assert len(record.nonce_hex) == 8
     assert record.sig_len == len(sig_b64)
-    assert record.headers_present is True
+    # signature_enforcement_mode comes from a fetchrow against the
+    # fake conn that returns None for everything — so the lookup
+    # falls through to the "unknown" default. Pinning that default
+    # ensures the key is always populated even when the row lookup
+    # itself fails.
+    assert record.signature_enforcement_mode in ("unknown", "observe", "enforce"), (
+        f"signature_enforcement_mode must be one of "
+        f"('unknown','observe','enforce'). Got {record.signature_enforcement_mode!r}."
+    )
