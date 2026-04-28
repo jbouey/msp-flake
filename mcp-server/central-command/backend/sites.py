@@ -3551,51 +3551,64 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     # process env disables enforcement fleet-wide instantly without
     # touching the DB. Phase 5C operational lever.
     sig_result = None
-    # Connection-coherence note (task #168, Session 211 Phase 2 QA):
-    # this verify-path uses `admin_connection` while STEP 3.6c later
-    # writes `agent_identity_public_key` via the tenant `conn`. A prior
-    # checkin's STEP 3.6c commit MUST be visible here on the next
-    # checkin's verify; if it's not (replica lag, prepared-stmt cache
-    # issue), enforce-mode rejections leak through. The new substrate
-    # invariant `sigauth_enforce_mode_rejections` pages on any such
-    # leak so we capture root-cause context before normalizing.
+    # Task #168/#169 fix (Session 212, 2026-04-28). Wrap the verify
+    # path's queries in an EXPLICIT TRANSACTION + re-issue
+    # `SET LOCAL app.is_admin TO 'true'` inside it. PgBouncer in
+    # transaction-pooling mode assigns ONE backend per transaction,
+    # so SET LOCAL pins the admin context to that backend for every
+    # subsequent query in the same txn.
+    #
+    # Pre-fix mechanism: `admin_connection` issues a session-level
+    # `SET app.is_admin TO 'true'`, but each subsequent autocommit
+    # query is its own implicit transaction — PgBouncer can route
+    # SET and SELECT to different backends. When that happens, the
+    # SELECT runs without admin context and Migration 234's
+    # is_admin-default-false RLS hides the row → `_resolve_pubkey`
+    # returns None → checkin gets `unknown_pubkey` 401. Observed
+    # 3-4 events / 72h on north-valley-branch-2 (#168). The
+    # sigauth_observations INSERT keeps its own savepoint so a
+    # constraint failure doesn't poison the outer txn (asyncpg
+    # savepoint invariant from Session 205).
     try:
         from .signature_auth import verify_appliance_signature
         body_bytes = await request.body()
         async with admin_connection(pool) as _sigauth_conn:
-            sig_result = await verify_appliance_signature(
-                request, _sigauth_conn,
-                site_id=checkin.site_id,
-                mac_address=mac_normalized,
-                body_bytes=body_bytes,
-            )
-            if sig_result.present:
-                try:
-                    await _sigauth_conn.execute(
-                        """
-                        INSERT INTO sigauth_observations
-                              (site_id, mac_address, valid, reason, fingerprint)
-                        VALUES ($1, $2, $3, $4, $5)
-                        """,
-                        checkin.site_id, mac_normalized,
-                        sig_result.valid, sig_result.reason or "",
-                        sig_result.pubkey_fingerprint or None,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.warning("sigauth_observations insert failed", exc_info=True)
+            async with _sigauth_conn.transaction():
+                await _sigauth_conn.execute("SET LOCAL app.is_admin TO 'true'")
+                sig_result = await verify_appliance_signature(
+                    request, _sigauth_conn,
+                    site_id=checkin.site_id,
+                    mac_address=mac_normalized,
+                    body_bytes=body_bytes,
+                )
+                if sig_result.present:
+                    try:
+                        async with _sigauth_conn.transaction():
+                            await _sigauth_conn.execute(
+                                """
+                                INSERT INTO sigauth_observations
+                                      (site_id, mac_address, valid, reason, fingerprint)
+                                VALUES ($1, $2, $3, $4, $5)
+                                """,
+                                checkin.site_id, mac_normalized,
+                                sig_result.valid, sig_result.reason or "",
+                                sig_result.pubkey_fingerprint or None,
+                            )
+                    except Exception:  # noqa: BLE001
+                        logger.warning("sigauth_observations insert failed", exc_info=True)
 
-            # Week 5: per-appliance enforcement check. Look up the
-            # row's signature_enforcement value. Default 'observe'
-            # if the appliance row doesn't exist yet (first checkin).
-            enforce_row = await _sigauth_conn.fetchrow(
-                """
-                SELECT signature_enforcement
-                  FROM site_appliances
-                 WHERE site_id = $1 AND mac_address = $2 AND deleted_at IS NULL
-                """,
-                checkin.site_id, mac_normalized,
-            )
-            sig_mode = (enforce_row["signature_enforcement"] if enforce_row else "observe")
+                # Week 5: per-appliance enforcement check. Look up the
+                # row's signature_enforcement value. Default 'observe'
+                # if the appliance row doesn't exist yet (first checkin).
+                enforce_row = await _sigauth_conn.fetchrow(
+                    """
+                    SELECT signature_enforcement
+                      FROM site_appliances
+                     WHERE site_id = $1 AND mac_address = $2 AND deleted_at IS NULL
+                    """,
+                    checkin.site_id, mac_normalized,
+                )
+                sig_mode = (enforce_row["signature_enforcement"] if enforce_row else "observe")
 
         if sig_result.present:
             logger.info(
