@@ -446,20 +446,35 @@ async def safe_rollout_promoted_rule(
                 except ImportError:
                     from flywheel_state import advance
             try:
-                await advance(
-                    conn,
-                    rule_id=rule_id,
-                    new_state="rolling_out",
-                    event_type="rollout_issued",
-                    actor=f"system:{caller}",
-                    stage="rollout",
-                    site_id=site_id,
-                    proof={
-                        "orders_created": int(n),
-                        "runbook_id": runbook_id,
-                    },
-                    reason=f"{caller} issued {n} sync_promoted_rule order(s)",
-                )
+                # Session 205 asyncpg savepoint invariant: this advance()
+                # call can raise (illegal lifecycle transition,
+                # CHECK violation, missing promoted_rules row) and the
+                # outer try/except catches it non-fatally. WITHOUT a
+                # savepoint the asyncpg transaction is left in aborted
+                # state and the next conn.execute upstream (e.g.
+                # routes.py promote_pattern's UPDATE
+                # aggregated_pattern_stats) raises
+                # InFailedSQLTransactionError → user sees 500 →
+                # dashboard "Approve" button is blocked. Surfaced
+                # 2026-04-28 on candidate 253985
+                # (ransomware_indicator:RB-WIN-STG-002) at North Valley
+                # Dental. Wrap in conn.transaction() so the savepoint
+                # rolls back on failure without poisoning the outer txn.
+                async with conn.transaction():
+                    await advance(
+                        conn,
+                        rule_id=rule_id,
+                        new_state="rolling_out",
+                        event_type="rollout_issued",
+                        actor=f"system:{caller}",
+                        stage="rollout",
+                        site_id=site_id,
+                        proof={
+                            "orders_created": int(n),
+                            "runbook_id": runbook_id,
+                        },
+                        reason=f"{caller} issued {n} sync_promoted_rule order(s)",
+                    )
             except Exception as e:
                 # Illegal transitions (e.g. rule already graduated) are
                 # NOT fatal — the fleet_order is issued regardless, and
