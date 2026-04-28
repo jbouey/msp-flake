@@ -15,6 +15,19 @@ import types
 import pytest
 
 
+class _FakeTxn:
+    """No-op asyncpg transaction shim — returns an async context manager
+    that simply yields. Real asyncpg transactions BEGIN/COMMIT (savepoints
+    when nested); for these unit tests the wrap is structural-only and
+    the fake conn just needs to honor the context manager protocol so
+    the wrapped INSERT actually executes."""
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False  # never swallow exceptions
+
+
 class FakeConn:
     """Minimal asyncpg connection mock. Records all execute/fetchrow calls."""
 
@@ -28,6 +41,13 @@ class FakeConn:
     async def fetchrow(self, query: str, *args):
         self.executed.append((query, args))
         return None
+
+    def transaction(self):
+        """Real asyncpg.Connection.transaction() returns a Transaction
+        context manager. Our mock returns a no-op so promote_candidate's
+        savepoints (added 2026-04-28 per Session 205 invariant) don't
+        AttributeError on conn.transaction()."""
+        return _FakeTxn()
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
