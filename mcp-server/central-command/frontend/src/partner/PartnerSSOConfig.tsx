@@ -41,7 +41,7 @@ export const PartnerSSOConfig: React.FC<PartnerSSOConfigProps> = ({ orgId, orgNa
     // defense-in-depth (cookie + apiKey both present when both exist).
     return {
       credentials: 'include',
-      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+      headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
     };
   }, [apiKey]);
 

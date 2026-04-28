@@ -95,7 +95,7 @@ export const PartnerInvites: React.FC<{ onGoToAgreements?: () => void }> = ({
   const fetchOpts: RequestInit = useMemo(
     () => ({
       credentials: 'include',
-      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+      headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
     }),
     [apiKey],
   );

@@ -103,7 +103,7 @@ export const PartnerDashboard: React.FC = () => {
     // additive. Pre-fix the apiKey branch silently dropped cookies.
     const fetchOptions: RequestInit = {
       credentials: 'include',
-      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+      headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
     };
 
     try {

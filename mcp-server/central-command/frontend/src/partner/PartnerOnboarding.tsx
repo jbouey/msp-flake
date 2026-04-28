@@ -57,7 +57,7 @@ export const PartnerOnboarding: React.FC = () => {
     // 'same-origin' silently, masking session-cookie auth.
     return {
       credentials: 'include',
-      headers: apiKey ? { 'X-API-Key': apiKey } : {},
+      headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
     };
   }, [apiKey]);
 
