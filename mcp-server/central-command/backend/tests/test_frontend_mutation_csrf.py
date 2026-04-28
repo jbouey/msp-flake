@@ -336,6 +336,10 @@ def _violations() -> List[str]:
                 "X-CSRF-Token" in options_blob
                 or "csrfHeaders(" in options_blob
                 or "getCsrfTokenOrEmpty(" in options_blob
+                # buildAuthedHeaders (Session 212 P3 codemod target) is
+                # the canonical wrapper that always emits CSRF when the
+                # cookie is present. utils/csrf.ts contract.
+                or "buildAuthedHeaders(" in options_blob
             )
             if has_csrf:
                 continue
@@ -423,6 +427,7 @@ def _v_for(src: str) -> List[str]:
             "X-CSRF-Token" in options_blob
             or "csrfHeaders(" in options_blob
             or "getCsrfTokenOrEmpty(" in options_blob
+            or "buildAuthedHeaders(" in options_blob
         ):
             continue
         out.append(options_blob)

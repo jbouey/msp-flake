@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePartner } from './PartnerContext';
 import { STATUS_LABELS } from '../constants';
-import { csrfHeaders } from '../utils/csrf';
+import { buildAuthedHeaders } from '../utils/csrf';
 
 interface OnboardingSite {
   site_id: string;
@@ -51,15 +51,10 @@ export const PartnerOnboarding: React.FC = () => {
   const [triggeringCheckin, setTriggeringCheckin] = useState<string | null>(null);
   const [expandedSite, setExpandedSite] = useState<string | null>(null);
 
-  const fetchOptions = useCallback((): RequestInit => {
-    // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
-    // additive. Pre-fix the apiKey branch dropped to default
-    // 'same-origin' silently, masking session-cookie auth.
-    return {
-      credentials: 'include',
-      headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
-    };
-  }, [apiKey]);
+  const fetchOptions = useCallback((): RequestInit => ({
+    credentials: 'include',
+    headers: buildAuthedHeaders({ apiKey }),
+  }), [apiKey]);
 
   const loadData = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -82,15 +77,10 @@ export const PartnerOnboarding: React.FC = () => {
   const triggerCheckin = async (siteId: string) => {
     setTriggeringCheckin(siteId);
     try {
-      // #182 follow-on: canonical additive form. Pre-fix the apiKey
-      // branch lost both cookie AND CSRF on this mutation.
       const opts: RequestInit = {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey }),
       };
 
       const res = await fetch(`/api/partners/me/sites/${siteId}/trigger-checkin`, opts);

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePartner } from './PartnerContext';
 import { InfoTip } from '../components/shared';
+import { buildAuthedHeaders } from '../utils/csrf';
 
 interface DriftCheckConfig {
   check_type: string;
@@ -129,11 +130,6 @@ const CHECK_TYPE_TIPS: Record<string, string> = {
   macos_cert_expiry: 'Monitors SSL certificate expiration dates. Expired certs cause outages.',
 };
 
-function getCsrfToken(): string | null {
-  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
 export const PartnerDriftConfig: React.FC<PartnerDriftConfigProps> = ({ siteId, siteName, onBack }) => {
   const { apiKey } = usePartner();
 
@@ -144,26 +140,12 @@ export const PartnerDriftConfig: React.FC<PartnerDriftConfigProps> = ({ siteId, 
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
-  const buildFetchOptions = useCallback((method: string = 'GET', body?: unknown): RequestInit => {
-    const headers: Record<string, string> = {};
-    if (apiKey) {
-      headers['X-API-Key'] = apiKey;
-    }
-    if (body) {
-      headers['Content-Type'] = 'application/json';
-      const csrfToken = getCsrfToken();
-      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-    }
-    return {
-      method,
-      headers,
-      // #182 (Session 211 Phase 3): cookies are unconditional;
-      // X-API-Key is additive when present. Pre-fix the apiKey
-      // branch dropped to default 'same-origin' silently.
-      credentials: 'include',
-      body: body ? JSON.stringify(body) : undefined,
-    };
-  }, [apiKey]);
+  const buildFetchOptions = useCallback((method: string = 'GET', body?: unknown): RequestInit => ({
+    method,
+    credentials: 'include',
+    headers: buildAuthedHeaders({ apiKey, json: body !== undefined }),
+    body: body ? JSON.stringify(body) : undefined,
+  }), [apiKey]);
 
   const loadConfig = useCallback(async () => {
     setLoading(true);

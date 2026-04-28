@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePartner } from './PartnerContext';
 import { SSO_LABELS } from '../constants';
-import { csrfHeaders } from '../utils/csrf';
+import { buildAuthedHeaders } from '../utils/csrf';
 
 interface SSOConfig {
   issuer_url: string;
@@ -33,36 +33,17 @@ export const PartnerSSOConfig: React.FC<PartnerSSOConfigProps> = ({ orgId, orgNa
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  const fetchOptions = useCallback((): RequestInit => {
-    // #182 (Session 211 Phase 3): always 'include' so GETs send the
-    // session cookie, with X-API-Key additive when present. Pre-fix
-    // the apiKey branch dropped to the default 'same-origin' which
-    // silently skipped cookies — the additive form preserves
-    // defense-in-depth (cookie + apiKey both present when both exist).
-    return {
-      credentials: 'include',
-      headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
-    };
-  }, [apiKey]);
+  const fetchOptions = useCallback((): RequestInit => ({
+    credentials: 'include',
+    headers: buildAuthedHeaders({ apiKey }),
+  }), [apiKey]);
 
-  const fetchOptionsWithBody = useCallback((method: string, body: unknown): RequestInit => {
-    // #182 follow-on (Session 211 Phase 3): canonical additive form.
-    // Pre-fix the apiKey branch lost BOTH cookies AND CSRF — when a
-    // partner had an apiKey, all mutations bypassed session-cookie
-    // auth + CSRF entirely. Now: cookies + CSRF unconditional,
-    // X-API-Key additive when present.
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...csrfHeaders(),
-      ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-    };
-    return {
-      method,
-      headers,
-      credentials: 'include',
-      body: JSON.stringify(body),
-    };
-  }, [apiKey]);
+  const fetchOptionsWithBody = useCallback((method: string, body: unknown): RequestInit => ({
+    method,
+    credentials: 'include',
+    headers: buildAuthedHeaders({ apiKey, json: true }),
+    body: JSON.stringify(body),
+  }), [apiKey]);
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -156,9 +137,11 @@ export const PartnerSSOConfig: React.FC<PartnerSSOConfigProps> = ({ orgId, orgNa
     setMessage(null);
 
     try {
-      const opts: RequestInit = apiKey
-        ? { method: 'DELETE', headers: { 'X-API-Key': apiKey } }
-        : { method: 'DELETE', credentials: 'include', headers: { ...csrfHeaders() } };
+      const opts: RequestInit = {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: buildAuthedHeaders({ apiKey }),
+      };
 
       const res = await fetch(`/api/partners/me/orgs/${orgId}/sso`, opts);
       if (res.ok) {

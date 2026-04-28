@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { usePartner } from './PartnerContext';
+import { buildAuthedHeaders } from '../utils/csrf';
 
 interface CommissionData {
   active_clinic_count: number;
@@ -36,13 +37,9 @@ export default function PartnerCommission() {
     if (!isAuthenticated) return;
     let cancelled = false;
     setLoading(true);
-    const headers: HeadersInit = apiKey ? { 'X-API-Key': apiKey } : {};
     fetch('/api/partners/me/commission', {
-      // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
-      // additive. Pre-fix `apiKey ? undefined : 'include'` silently
-      // dropped to default 'same-origin' when an apiKey was present.
       credentials: 'include',
-      headers,
+      headers: buildAuthedHeaders({ apiKey }),
     })
       .then((r) => (r.ok ? r.json() : r.json().then((b) => Promise.reject(b))))
       .then((d) => {

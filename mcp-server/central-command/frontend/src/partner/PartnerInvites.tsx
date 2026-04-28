@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePartner } from './PartnerContext';
-import { csrfHeaders } from '../utils/csrf';
+import { buildAuthedHeaders } from '../utils/csrf';
 
 /**
  * PartnerInvites — mint / list / revoke clinic signup invites.
@@ -90,12 +90,10 @@ export const PartnerInvites: React.FC<{ onGoToAgreements?: () => void }> = ({
   const [revokeTarget, setRevokeTarget] = useState<InviteRow | null>(null);
   const [revokeReason, setRevokeReason] = useState('');
 
-  // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
-  // additive. Pre-fix the apiKey branch silently dropped cookies.
   const fetchOpts: RequestInit = useMemo(
     () => ({
       credentials: 'include',
-      headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+      headers: buildAuthedHeaders({ apiKey }),
     }),
     [apiKey],
   );
@@ -131,11 +129,7 @@ export const PartnerInvites: React.FC<{ onGoToAgreements?: () => void }> = ({
       const res = await fetch('/api/partners/invites/create', {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey, json: true }),
         body: JSON.stringify({
           plan,
           clinic_email: clinicEmail.trim() || null,
@@ -177,11 +171,7 @@ export const PartnerInvites: React.FC<{ onGoToAgreements?: () => void }> = ({
       const res = await fetch(`/api/partners/invites/${revokeTarget.invite_id}/revoke`, {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey, json: true }),
         body: JSON.stringify({ reason: revokeReason.trim() }),
       });
       if (!res.ok) {

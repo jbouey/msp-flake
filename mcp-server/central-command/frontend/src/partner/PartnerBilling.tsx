@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { usePartner } from './PartnerContext';
-import { csrfHeaders } from '../utils/csrf';
+import { buildAuthedHeaders } from '../utils/csrf';
 
 interface ApplianceTier {
   name: string;
@@ -76,11 +76,9 @@ export const PartnerBilling: React.FC = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
-  // additive. Pre-fix the apiKey branch silently dropped cookies.
   const fetchOptions: RequestInit = {
     credentials: 'include',
-    headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+    headers: buildAuthedHeaders({ apiKey }),
   };
 
   useEffect(() => {
@@ -120,18 +118,10 @@ export const PartnerBilling: React.FC = () => {
   const handleSubscribe = async (priceId: string) => {
     setActionLoading(true);
     try {
-      // Always include cookies + CSRF; X-API-Key is additive (only
-      // for pure-API integrations). The previous pattern dropped both
-      // when apiKey was present, silently breaking the browser path
-      // if apiKey loaded as a stale truthy value.
       const response = await fetch('/api/billing/checkout', {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey, json: true }),
         body: JSON.stringify({ price_id: priceId }),
       });
 
@@ -156,10 +146,7 @@ export const PartnerBilling: React.FC = () => {
       const response = await fetch('/api/billing/portal', {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey }),
       });
 
       if (response.ok) {
@@ -187,10 +174,7 @@ export const PartnerBilling: React.FC = () => {
       const response = await fetch('/api/billing/subscription/cancel', {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey }),
       });
 
       if (response.ok) {
@@ -212,10 +196,7 @@ export const PartnerBilling: React.FC = () => {
       const response = await fetch('/api/billing/subscription/reactivate', {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey }),
       });
 
       if (response.ok) {

@@ -6,7 +6,7 @@ import { PartnerBilling } from './PartnerBilling';
 import PartnerCommission from './PartnerCommission';
 import { PartnerAgreements } from './PartnerAgreements';
 import { PartnerInvites } from './PartnerInvites';
-import { csrfHeaders } from '../utils/csrf';
+import { buildAuthedHeaders } from '../utils/csrf';
 import { PartnerComplianceSettings } from './PartnerComplianceSettings';
 import { PartnerExceptionManagement } from './PartnerExceptionManagement';
 import { PartnerLearning } from './PartnerLearning';
@@ -99,11 +99,9 @@ export const PartnerDashboard: React.FC = () => {
     if (!isAuthenticated) return;
     setLoading(true);
 
-    // #182 (Session 211 Phase 3): cookies unconditional + X-API-Key
-    // additive. Pre-fix the apiKey branch silently dropped cookies.
     const fetchOptions: RequestInit = {
       credentials: 'include',
-      headers: { ...(apiKey ? { 'X-API-Key': apiKey } : {}) },
+      headers: buildAuthedHeaders({ apiKey }),
     };
 
     try {
@@ -136,11 +134,7 @@ export const PartnerDashboard: React.FC = () => {
       const response = await fetch('/api/partners/me/provisions', {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey, json: true }),
         body: JSON.stringify({
           target_client_name: newClientName.trim(),
           expires_days: 30,
@@ -185,11 +179,7 @@ export const PartnerDashboard: React.FC = () => {
       const response = await fetch('/api/partners/me/provisions/bulk', {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey, json: true }),
         body: JSON.stringify({ entries, expires_days: 30 }),
       });
       if (!response.ok) {
@@ -215,10 +205,7 @@ export const PartnerDashboard: React.FC = () => {
       await fetch(`/api/partners/me/provisions/${id}`, {
         method: 'DELETE',
         credentials: 'include',
-        headers: {
-          ...csrfHeaders(),
-          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-        },
+        headers: buildAuthedHeaders({ apiKey }),
       });
       setRevokeConfirmId(null);
       loadData();
@@ -1023,9 +1010,8 @@ const PartnerInventory: React.FC<{ apiKey: string | null }> = ({ apiKey }) => {
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (apiKey) headers['X-API-Key'] = apiKey;
-    fetch('/api/partners/me/orgs', { credentials: 'same-origin', headers })
+    const headers = buildAuthedHeaders({ apiKey, json: true });
+    fetch('/api/partners/me/orgs', { credentials: 'include', headers })
       .then(r => r.json())
       .then(d => {
         const list = d.organizations || [];
@@ -1038,14 +1024,13 @@ const PartnerInventory: React.FC<{ apiKey: string | null }> = ({ apiKey }) => {
   React.useEffect(() => {
     if (!selectedOrg) return;
     setLoading(true);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (apiKey) headers['X-API-Key'] = apiKey;
+    const headers = buildAuthedHeaders({ apiKey, json: true });
     const base = `/api/partners/me/orgs/${selectedOrg}`;
     Promise.all([
-      fetch(`${base}/devices`, { credentials: 'same-origin', headers }).then(r => r.json()).catch(() => null),
-      fetch(`${base}/workstations`, { credentials: 'same-origin', headers }).then(r => r.json()).catch(() => null),
-      fetch(`${base}/agents`, { credentials: 'same-origin', headers }).then(r => r.json()).catch(() => null),
-      fetch(`${base}/evidence-witnesses`, { credentials: 'same-origin', headers }).then(r => r.json()).catch(() => null),
+      fetch(`${base}/devices`, { credentials: 'include', headers }).then(r => r.json()).catch(() => null),
+      fetch(`${base}/workstations`, { credentials: 'include', headers }).then(r => r.json()).catch(() => null),
+      fetch(`${base}/agents`, { credentials: 'include', headers }).then(r => r.json()).catch(() => null),
+      fetch(`${base}/evidence-witnesses`, { credentials: 'include', headers }).then(r => r.json()).catch(() => null),
     ]).then(([devices, workstations, agents, witnesses]) => {
       setData({ devices, workstations, agents, witnesses });
       setLoading(false);
