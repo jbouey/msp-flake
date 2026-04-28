@@ -50,6 +50,28 @@ class FakeConn:
         return _FakeTxn()
 
 
+class RaisingFakeConn(FakeConn):
+    """Variant that RAISES on the first execute matching `raise_on`
+    substring, then behaves normally on subsequent calls. Used to
+    pin the savepoint-behavior contract (round-table angle 4 P1):
+    INSERT failure inside a savepoint MUST NOT poison the outer
+    transaction — subsequent steps must still execute."""
+
+    def __init__(self, raise_on: str):
+        super().__init__()
+        self._raise_on = raise_on
+        self._raised = False
+        self.raise_count = 0
+
+    async def execute(self, query: str, *args):
+        if not self._raised and self._raise_on in query:
+            self._raised = True
+            self.raise_count += 1
+            self.executed.append((query, args, "RAISED"))
+            raise RuntimeError(f"synthetic failure on '{self._raise_on}'")
+        return await super().execute(query, *args)
+
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flywheel_promote import promote_candidate, _slugify, _build_minimal_yaml
 
@@ -258,3 +280,111 @@ class TestPromoteCandidate:
                 assert parsed.get("check_type") == "firewall"
                 return
         pytest.fail("l1_rules INSERT not found")
+
+
+# ---------------------------------------------------------------------------
+# Savepoint-behavior contract (round-table 2026-04-28 angle 4 P1)
+# ---------------------------------------------------------------------------
+#
+# The savepoints added in efe413cf around `promotion_audit_log` INSERT
+# and `upsert_pattern_embedding` are decorative under test if the test
+# only verifies the wrap doesn't AttributeError (11b38d7e). The
+# enterprise-grade contract is: an INSERT failure INSIDE the savepoint
+# must be CONTAINED — subsequent steps in promote_candidate must still
+# execute. The Session 205 asyncpg savepoint invariant exists for this.
+# RaisingFakeConn pins the contract.
+
+
+class TestSavepointBehavior:
+    @pytest.mark.asyncio
+    async def test_audit_log_failure_does_not_block_promotion(self, monkeypatch):
+        """promotion_audit_log INSERT raises → outer txn continues →
+        Step 8 (safe_rollout) still runs. Pre-fix, this would have
+        raised InFailedSQLTransactionError on the next execute.
+
+        The dead-letter recovery write attempts a relative import
+        `from .fleet import get_pool` which fails in this test's
+        flat-module context — that's expected. The dead-letter raise
+        itself is caught + logged; what we're pinning here is that
+        the OUTER promote_candidate flow continues regardless."""
+        called = {"safe_rollout": False}
+
+        async def _fake_safe_rollout(*args, **kwargs):
+            called["safe_rollout"] = True
+            return 1
+
+        monkeypatch.setattr(
+            "flywheel_promote.safe_rollout_promoted_rule",
+            _fake_safe_rollout,
+        )
+
+        conn = RaisingFakeConn(raise_on="INSERT INTO promotion_audit_log")
+        result = await promote_candidate(
+            conn=conn,
+            candidate={
+                "id": "c1", "site_id": "s1",
+                "pattern_signature": "test:rb1",
+                "success_rate": 0.9,
+            },
+            actor="x", actor_type="admin",
+        )
+        # The savepoint contained the failure. Step 8 still ran.
+        assert called["safe_rollout"], (
+            "Step 8 (safe_rollout) MUST execute even when audit_log "
+            "INSERT inside the savepoint raises. Pre-fix, the outer "
+            "txn was poisoned and the next conn.execute would raise "
+            "InFailedSQLTransactionError."
+        )
+        assert conn.raise_count == 1, "the synthetic failure should have fired exactly once"
+        assert result["rule_id"], "promote_candidate must still return a result"
+
+    @pytest.mark.asyncio
+    async def test_embedding_failure_does_not_block_rollout(self, monkeypatch):
+        """pattern_embedding upsert raises → outer txn continues →
+        Step 8 still runs. Same Session 205 invariant on a different
+        savepoint."""
+        called = {"safe_rollout": False}
+
+        async def _fake_safe_rollout(*args, **kwargs):
+            called["safe_rollout"] = True
+            return 1
+
+        monkeypatch.setattr(
+            "flywheel_promote.safe_rollout_promoted_rule",
+            _fake_safe_rollout,
+        )
+
+        # Force pattern_embeddings.upsert_pattern_embedding to raise.
+        async def _raise(*args, **kwargs):
+            raise RuntimeError("synthetic embedding failure")
+
+        # Patch the import inside the function (it does a relative
+        # import inside the savepoint).
+        import sys as _sys
+        import types as _types
+        fake_mod = _types.ModuleType("pattern_embeddings")
+        fake_mod.upsert_pattern_embedding = _raise
+        _sys.modules["pattern_embeddings"] = fake_mod
+        # Also patch the dashboard_api package path if relative import
+        # tries that namespace.
+        try:
+            import dashboard_api  # noqa: F401
+            _sys.modules["dashboard_api.pattern_embeddings"] = fake_mod
+        except ImportError:
+            pass
+
+        conn = FakeConn()  # No INSERTs raise; only the embedding raises
+        result = await promote_candidate(
+            conn=conn,
+            candidate={
+                "id": "c1", "site_id": "s1",
+                "pattern_signature": "test:rb1",
+                "success_rate": 0.9,
+            },
+            actor="x", actor_type="admin",
+        )
+        assert called["safe_rollout"], (
+            "Step 8 (safe_rollout) MUST execute even when embedding "
+            "savepoint raises. Outer txn must not be poisoned."
+        )
+        assert result["rule_id"]

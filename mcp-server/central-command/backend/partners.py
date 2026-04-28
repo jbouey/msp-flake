@@ -221,6 +221,7 @@ async def get_partner_from_api_key(api_key: str):
 
 
 async def require_partner(
+    request: Request = None,
     x_api_key: str = Header(None),
     osiris_partner_session: Optional[str] = Cookie(None)
 ):
@@ -229,62 +230,119 @@ async def require_partner(
     Supports two auth methods:
     1. API Key via X-API-Key header
     2. OAuth session via osiris_partner_session cookie
+
+    Mismatch detection (P0 hardening, 2026-04-28 round-table finding):
+    when BOTH credentials are present, they MUST resolve to the same
+    partner.id. If they don't, log ERROR and 401 — never silently let
+    one win. The 2026-04-28 CSRF rewrite (commits 0c81fef6 + efe413cf)
+    started sending both unconditionally on every partner mutation,
+    which made a leaked X-API-Key able to silently override whoever's
+    session was in the browser. Detection makes that explicit.
     """
     pool = await get_pool()
 
-    # Try API key first
+    # Step 1: resolve API key (if present).
+    api_key_partner = None
     if x_api_key:
-        partner = await get_partner_from_api_key(x_api_key)
-        if partner:
-            result = dict(partner)
-            # Derive role from the API key creator if tracked, otherwise default to admin.
-            # API keys created via the dashboard have created_by_user_id (Migration 152).
-            # Legacy keys without a creator default to admin for backwards compatibility.
-            api_key_role = "admin"
-            try:
-                async with admin_connection(pool) as conn:
-                    import hashlib as _hl
-                    key_hash = _hl.sha256(x_api_key.encode()).hexdigest()
-                    creator = await conn.fetchval("""
-                        SELECT pu.role FROM api_keys ak
-                        JOIN partner_users pu ON pu.id = ak.created_by_user_id
-                        WHERE ak.key_hash = $1 AND ak.active = true
-                    """, key_hash)
-                    if creator:
-                        api_key_role = creator
-            except Exception:
-                pass  # Fall back to admin on any error
-            result["user_role"] = api_key_role
-            return result
-        raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+        api_key_partner = await get_partner_from_api_key(x_api_key)
+        if not api_key_partner:
+            raise HTTPException(status_code=401, detail="Invalid or inactive API key")
 
-    # Try session cookie
+    # Step 2: resolve session cookie (if present). Wrapped in
+    # try/except so a transient session-DB outage doesn't 500 a
+    # request that an api-key path could otherwise have authed
+    # cleanly (round-table angle 3 P1 — race robustness).
+    session_partner = None
     if osiris_partner_session:
-        session_hash = hash_session_token(osiris_partner_session)
+        try:
+            session_hash = hash_session_token(osiris_partner_session)
+            async with admin_connection(pool) as conn:
+                session_row = await conn.fetchrow("""
+                    SELECT ps.partner_id, p.id, p.name, p.slug, p.status,
+                           pu.role AS user_role, pu.id AS partner_user_id
+                    FROM partner_sessions ps
+                    JOIN partners p ON p.id = ps.partner_id
+                    LEFT JOIN partner_users pu ON pu.id = ps.partner_user_id
+                    WHERE ps.session_token_hash = $1
+                      AND ps.expires_at > NOW()
+                      AND p.status = 'active'
+                      AND (p.pending_approval IS NULL OR p.pending_approval = false)
+                """, session_hash)
+                if session_row:
+                    session_partner = session_row
+        except Exception:
+            # Degraded session backend → fall through to api-key path.
+            # Logged at WARNING (read-side, eat-but-record) per
+            # Session 205 "reads may eat exceptions; writes log-and-raise".
+            logger.warning("session_lookup_failed", exc_info=True)
 
-        async with admin_connection(pool) as conn:
-            session = await conn.fetchrow("""
-                SELECT ps.partner_id, p.id, p.name, p.slug, p.status,
-                       pu.role AS user_role, pu.id AS partner_user_id
-                FROM partner_sessions ps
-                JOIN partners p ON p.id = ps.partner_id
-                LEFT JOIN partner_users pu ON pu.id = ps.partner_user_id
-                WHERE ps.session_token_hash = $1
-                  AND ps.expires_at > NOW()
-                  AND p.status = 'active'
-                  AND (p.pending_approval IS NULL OR p.pending_approval = false)
-            """, session_hash)
+    # Step 3: mismatch detection — both present, different partners.
+    if api_key_partner and session_partner:
+        api_pid = str(api_key_partner['id'])
+        sess_pid = str(session_partner['id'])
+        if api_pid != sess_pid:
+            # Capture source IP for forensics — mismatch is security-
+            # relevant per round-table P1.
+            client_ip = None
+            try:
+                if request is not None and request.client is not None:
+                    client_ip = request.client.host
+            except Exception:
+                client_ip = None
+            logger.error(
+                "auth_token_partner_mismatch",
+                extra={
+                    "api_key_partner_id": api_pid,
+                    "session_partner_id": sess_pid,
+                    "api_key_partner_slug": api_key_partner.get('slug'),
+                    "session_partner_slug": session_partner.get('slug'),
+                    "client_ip": client_ip,
+                },
+            )
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    "Token mismatch: X-API-Key and session cookie resolve to "
+                    "different partners. Re-authenticate with one credential."
+                ),
+            )
 
-            if session:
-                result = {
-                    'id': session['id'],
-                    'name': session['name'],
-                    'slug': session['slug'],
-                    'status': session['status'],
-                }
-                result["user_role"] = session.get("user_role") or "admin"  # NULL = legacy session = admin
-                result["partner_user_id"] = str(session["partner_user_id"]) if session.get("partner_user_id") else None
-                return result
+    # Step 4: API key takes precedence when present (preserves existing
+    # behavior; mismatch would have already 401'd above).
+    if api_key_partner:
+        result = dict(api_key_partner)
+        # Derive role from the API key creator if tracked, otherwise default to admin.
+        # API keys created via the dashboard have created_by_user_id (Migration 152).
+        # Legacy keys without a creator default to admin for backwards compatibility.
+        api_key_role = "admin"
+        try:
+            async with admin_connection(pool) as conn:
+                import hashlib as _hl
+                key_hash = _hl.sha256(x_api_key.encode()).hexdigest()
+                creator = await conn.fetchval("""
+                    SELECT pu.role FROM api_keys ak
+                    JOIN partner_users pu ON pu.id = ak.created_by_user_id
+                    WHERE ak.key_hash = $1 AND ak.active = true
+                """, key_hash)
+                if creator:
+                    api_key_role = creator
+        except Exception:
+            pass  # Fall back to admin on any error
+        result["user_role"] = api_key_role
+        return result
+
+    # Step 5: session-only path. Reuses the row resolved in Step 2 — no
+    # duplicate query.
+    if session_partner:
+        result = {
+            'id': session_partner['id'],
+            'name': session_partner['name'],
+            'slug': session_partner['slug'],
+            'status': session_partner['status'],
+        }
+        result["user_role"] = session_partner.get("user_role") or "admin"  # NULL = legacy session = admin
+        result["partner_user_id"] = str(session_partner["partner_user_id"]) if session_partner.get("partner_user_id") else None
+        return result
 
     raise HTTPException(status_code=401, detail="Authentication required")
 

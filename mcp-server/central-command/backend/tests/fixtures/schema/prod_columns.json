@@ -3830,6 +3830,28 @@
     "success_rate",
     "total_occurrences"
   ],
+  "promotion_audit_log_recovery": [
+    "actor",
+    "check_type",
+    "confidence_score",
+    "event_type",
+    "failure_class",
+    "failure_reason",
+    "id",
+    "l2_resolutions",
+    "metadata",
+    "pattern_signature",
+    "queued_at",
+    "recovered",
+    "recovered_at",
+    "recovered_by",
+    "recovery_audit_log_id",
+    "rule_id",
+    "site_id",
+    "source",
+    "success_rate",
+    "total_occurrences"
+  ],
   "promotion_thresholds": [
     "auto_tune_enabled",
     "created_at",

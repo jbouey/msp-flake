@@ -243,12 +243,16 @@ async def promote_candidate(
     """, custom_name, notes, candidate["id"])
 
     # Step 7: append-only audit log (WORM-style). Wrapped in a
-    # savepoint per Session 205 asyncpg invariant: this INSERT can
-    # fail (partition_maintainer_loop missed creating next-month
-    # partition, CHECK violation, etc.) and is non-fatal — but
-    # without a savepoint a failure poisons the outer txn and the
-    # subsequent steps in promote_candidate raise
-    # InFailedSQLTransactionError (round-table 2026-04-28 finding #4).
+    # savepoint per Session 205 asyncpg invariant. Failures route to
+    # the promotion_audit_log_recovery dead-letter queue (Migration
+    # 253) on a SEPARATE connection — must not ride the outer poisoned
+    # txn. HIPAA §164.312(b) chain-of-custody durability per
+    # Session 212 round-table P0 finding.
+    audit_log_metadata = {
+        "synced_rule_id": synced_rule_id,
+        "custom_name": custom_name,
+        "notes": notes,
+    }
     try:
         async with conn.transaction():
             await conn.execute("""
@@ -271,18 +275,71 @@ async def promote_candidate(
                 int(candidate.get("total_occurrences") or 0),
                 actor_type,
                 actor,
-                json.dumps({
-                    "synced_rule_id": synced_rule_id,
-                    "custom_name": custom_name,
-                    "notes": notes,
-                }),
+                json.dumps(audit_log_metadata),
             )
     except Exception as e:
-        # Audit log failures must not block promotion — but log loudly
         logger.error(
             f"promotion_audit_log write failed for {rule_id}: {e}",
             exc_info=True,
         )
+        # Dead-letter the row to promotion_audit_log_recovery on a
+        # FRESH connection so the outer txn's poison doesn't carry.
+        # If the recovery write ALSO fails, we log loud and accept
+        # the loss — that's the worst case, but the substrate
+        # invariant on the recovery table will at least surface
+        # divergence the next time it runs.
+        try:
+            from .fleet import get_pool as _get_pool
+            from .tenant_middleware import admin_connection as _admin_connection
+            _pool = await _get_pool()
+            async with _admin_connection(_pool) as _recovery_conn:
+                async with _recovery_conn.transaction():
+                    await _recovery_conn.execute("SET LOCAL app.is_admin TO 'true'")
+                    await _recovery_conn.execute("""
+                        INSERT INTO promotion_audit_log_recovery (
+                            event_type, rule_id, pattern_signature, check_type,
+                            site_id, confidence_score, success_rate,
+                            l2_resolutions, total_occurrences, source, actor, metadata,
+                            failure_reason, failure_class
+                        ) VALUES (
+                            'approved', $1, $2, $3, $4, $5, $6, $7, $8,
+                            $9, $10, $11, $12, $13
+                        )
+                    """,
+                        rule_id,
+                        pattern_sig,
+                        check_type or incident_type,
+                        site_id,
+                        confidence,
+                        confidence,
+                        int(candidate.get("l2_resolutions") or 0),
+                        int(candidate.get("total_occurrences") or 0),
+                        actor_type,
+                        actor,
+                        json.dumps(audit_log_metadata),
+                        str(e)[:500],
+                        type(e).__name__,
+                    )
+            logger.error(
+                "promotion_audit_log_dead_lettered",
+                extra={
+                    "rule_id": rule_id,
+                    "site_id": site_id,
+                    "actor": actor,
+                    "failure_class": type(e).__name__,
+                },
+            )
+        except Exception as recovery_e:
+            logger.error(
+                "promotion_audit_log_recovery_write_failed",
+                exc_info=True,
+                extra={
+                    "rule_id": rule_id,
+                    "site_id": site_id,
+                    "primary_failure_class": type(e).__name__,
+                    "recovery_failure_class": type(recovery_e).__name__,
+                },
+            )
 
     logger.info(
         f"Promoted candidate rule_id={rule_id} site={site_id} "

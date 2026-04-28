@@ -572,6 +572,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_sigauth_enforce_mode_rejections(c),
     ),
     Assertion(
+        name="promotion_audit_log_recovery_pending",
+        severity="sev1",
+        description="HIPAA §164.312(b) chain-of-custody durability gate. promotion_audit_log_recovery is the dead-letter queue for promotion_audit_log INSERTs that failed inside flywheel_promote.promote_candidate's Step 7 savepoint (Migration 253, Session 212 round-table P0). Any unrecovered row means an L1 rule promotion happened without its audit row landing in the WORM-style audit log — the chain of custody is broken until an operator runs the recovery script. Sev1 because the loss is HIPAA-relevant and grows monotonically until handled.",
+        check=lambda c: _check_promotion_audit_log_recovery_pending(c),
+    ),
+    Assertion(
         name="claim_cert_expired_in_use",
         severity="sev1",
         description="Claims must only be accepted from CAs in their validity window; an expired/revoked CA being used means a code-path bypassed _validate_claim_cert (Week 4)",
@@ -854,6 +860,15 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "phonehome.go::signRequest canonical (must be byte-identical); "
             "(3) if both check out, suspect active forgery or stolen key — "
             "rotate the appliance identity via fleet_cli rekey + revoke.",
+    },
+    "promotion_audit_log_recovery_pending": {
+        "display_name": "Promotion audit log dead-letter queue has unrecovered rows",
+        "recommended_action": "HIPAA §164.312(b) chain-of-custody is at risk. Each unrecovered row is "
+            "an L1 rule promotion whose audit row did NOT land in promotion_audit_log. "
+            "Run scripts/recover_promotion_audit_log.py to retry the INSERT (idempotent — "
+            "safe to re-run). If the underlying failure persists (e.g. partition missing), "
+            "fix the root cause first. Do NOT mark recovered=true manually without successfully "
+            "INSERTing the audit row first — that creates a phantom recovery and breaks the chain.",
     },
     "sigauth_enforce_mode_rejections": {
         "display_name": "Enforce-mode appliance had a sigauth rejection",
@@ -1356,6 +1371,41 @@ async def _check_sigauth_crypto_failures(conn: asyncpg.Connection) -> List[Viola
             },
         )
         for r in rows
+    ]
+
+
+async def _check_promotion_audit_log_recovery_pending(conn: asyncpg.Connection) -> List[Violation]:
+    """HIPAA §164.312(b) chain-of-custody durability check (Migration 253,
+    Session 212 round-table P0). Fires sev1 when promotion_audit_log_recovery
+    has any row with recovered=false: an L1 rule promotion happened but
+    its audit row never made it to promotion_audit_log."""
+    rows = await conn.fetch(
+        """
+        SELECT COUNT(*)                          AS total_pending,
+               MIN(queued_at)                    AS oldest_queued_at,
+               MAX(queued_at)                    AS newest_queued_at,
+               array_agg(DISTINCT failure_class) AS failure_classes,
+               array_agg(DISTINCT site_id)
+                  FILTER (WHERE site_id IS NOT NULL) AS affected_sites
+          FROM promotion_audit_log_recovery
+         WHERE recovered = FALSE
+        """
+    )
+    if not rows or not rows[0]["total_pending"]:
+        return []
+    r = rows[0]
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "total_pending": int(r["total_pending"]),
+                "oldest_queued_at": r["oldest_queued_at"].isoformat() if r["oldest_queued_at"] else None,
+                "newest_queued_at": r["newest_queued_at"].isoformat() if r["newest_queued_at"] else None,
+                "failure_classes": list(r["failure_classes"] or []),
+                "affected_sites": list(r["affected_sites"] or []),
+                "remediation": "Run scripts/recover_promotion_audit_log.py — idempotent retry for each unrecovered row.",
+            },
+        )
     ]
 
 
