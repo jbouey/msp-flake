@@ -134,6 +134,58 @@ async def promote_candidate(
     """, rule_id, pattern_sig, site_id, partner_id,
         effective_yaml, json.dumps(effective_json), notes)
 
+    # Step 3.5: advance lifecycle proposed → approved.
+    # Migration 181 defaults `lifecycle_state='proposed'` on INSERT.
+    # The legal forward path is proposed → approved → rolling_out →
+    # active. Without this advance, Step 8's safe_rollout call to
+    # advance('rolling_out') would attempt the illegal transition
+    # 'proposed → rolling_out' and raise check_violation, poisoning
+    # the asyncpg transaction (Session 205 invariant). Wrapped in its
+    # own savepoint so a re-promotion of an already-active rule
+    # (advance from 'active' → 'approved' is illegal) doesn't poison
+    # the outer txn either — safe_rollout's idempotent retry handles
+    # the rolled-back-to-active case correctly via its own savepoint
+    # (added in commit b0c72c6c, 2026-04-28).
+    try:
+        from dashboard_api.flywheel_state import advance as _advance
+    except ImportError:
+        try:
+            from .flywheel_state import advance as _advance
+        except ImportError:
+            from flywheel_state import advance as _advance
+    try:
+        async with conn.transaction():
+            await _advance(
+                conn,
+                rule_id=rule_id,
+                new_state="approved",
+                event_type="promotion_approved",
+                actor=f"{actor_type}:{actor}",
+                stage="promotion",
+                site_id=site_id,
+                proof={
+                    "pattern_signature": pattern_sig,
+                    "confidence": confidence,
+                    "total_occurrences": int(candidate.get("total_occurrences") or 0),
+                },
+                reason=f"{actor_type} approval via promote_candidate",
+            )
+    except Exception as e:
+        # Illegal transition (e.g. re-approval of an active rule) is
+        # NOT fatal — the rollout below proceeds idempotently and the
+        # spine reflects the eventual state. Log loud per the "no
+        # silent write failures" rule.
+        logger.error(
+            "promote_candidate_advance_to_approved_failed",
+            exc_info=True,
+            extra={
+                "rule_id": rule_id,
+                "site_id": site_id,
+                "actor": actor,
+                "exception_class": type(e).__name__,
+            },
+        )
+
     # Step 4: runbooks library entry
     promoted_name = custom_name or f"Auto-Promoted: {incident_type}"
     promoted_desc = (
