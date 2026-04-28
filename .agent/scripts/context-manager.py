@@ -111,6 +111,31 @@ def status():
             else:
                 print(f"  - {task}")
 
+    # Scheduled followups (v2 — added Session 212 P3 closeout). Each
+    # entry: {"due": "YYYY-MM-DDTHH:MMZ", "what": str, "doc": str, "owner": str}.
+    # Surfaced on `context-manager.py status` so a session pickup
+    # actually sees the deferred work. Items past due date are
+    # highlighted; cleared by editing this list, NOT by silent decay.
+    followups = progress.get("scheduled_followups", [])
+    if followups:
+        from datetime import datetime as _dt, timezone as _tz
+        now = _dt.now(_tz.utc)
+        print("\nSCHEDULED FOLLOWUPS:")
+        for f in followups:
+            due_str = f.get("due", "")
+            try:
+                due = _dt.fromisoformat(due_str.replace("Z", "+00:00"))
+                overdue = now > due
+                marker = "⚠️ OVERDUE" if overdue else "📅"
+            except (ValueError, TypeError):
+                marker = "📅"
+                overdue = False
+            print(f"  {marker} due {due_str}: {f.get('what', '?')}")
+            if f.get("doc"):
+                print(f"     doc: {f['doc']}")
+            if f.get("owner"):
+                print(f"     owner: {f['owner']}")
+
     # Recent milestones (v2 field)
     for ms in progress.get("recent_milestones", []):
         print(f"\nMILESTONE {ms.get('when', '?')}: {ms.get('what', '?')}")

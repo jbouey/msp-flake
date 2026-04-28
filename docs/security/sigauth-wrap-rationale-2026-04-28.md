@@ -105,8 +105,14 @@ preserved and a follow-up fix will be needed.
 
 - [x] Substrate invariant `sigauth_enforce_mode_rejections` open
   on north-valley-branch-2 at deploy time
-- [ ] Invariant clears within 6h of `303421cc` deploy
-- [ ] Invariant stays clear for 7d continuous
+- [x] Invariant clears within 6h of `303421cc` deploy — **cleared
+  2026-04-28 17:11:33Z**, ~3h post-deploy (well within window)
+- [ ] Invariant stays clear for 7d continuous — **window closes
+  2026-05-05 17:11:33Z**; tracked in
+  `.agent/claude-progress.json` scheduled_followups; if substrate
+  re-fires before then OR the rolling-24h SQL in
+  `sigauth-wrap-validation-2026-04-28.md` shows ANY fail across
+  any appliance, the routing hypothesis is empirically refuted
 
 If the second or third bullet fails, the routing hypothesis is
 wrong and this fix is a stopgap whose mechanism is unrelated to
@@ -114,13 +120,16 @@ the actual bug. A new round-table will be triggered.
 
 ## Related artifacts
 
-- `commit:303421cc`
+- `commit:303421cc` — the speculative fix
 - `commit:b62c91d2` — `admin_transaction()` helper centralizing
   the same pattern for future multi-statement admin paths
+- `commit:6fbffcd1` — first-cycle validation evidence
+- Validation companion: `docs/security/sigauth-wrap-validation-2026-04-28.md`
 - Substrate runbook: `substrate_runbooks/sigauth_enforce_mode_rejections.md`
 - Forensic-log defense test: `tests/test_sigauth_forensic_logging.py`
 - Session note: `.agent/sessions/2026-04-28-session-212-phase1-4-priorities-closure.md`
 - Task tracker: `#169 sigauth unknown_pubkey jitter RCA pending forensic event`
+- Closure scheduling: `.agent/claude-progress.json` `scheduled_followups[0]`
 
 ## Sign-off
 

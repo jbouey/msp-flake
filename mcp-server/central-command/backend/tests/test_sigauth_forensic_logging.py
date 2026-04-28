@@ -156,3 +156,74 @@ async def test_unknown_pubkey_logs_forensic_error(caplog):
         f"signature_enforcement_mode must be one of "
         f"('unknown','observe','enforce'). Got {record.signature_enforcement_mode!r}."
     )
+
+
+@pytest.mark.asyncio
+async def test_forensic_log_pins_enforce_mode_when_lookup_succeeds(caplog):
+    """Round-table 2026-04-28 P2 follow-up: an operator triaging a
+    sigauth_unknown_pubkey rejection MUST be able to discriminate
+    whether the rejection happened on an enforce-mode appliance
+    (where 0% rejection is the contract — these are the events that
+    refute the wrap-fix hypothesis if they fire post-2026-04-28) vs.
+    an observe-mode appliance (rejection is informational, not a
+    contract violation).
+
+    This test pins the value when the conn lookup returns a real
+    `signature_enforcement` value. If a future refactor breaks the
+    lookup (e.g. column rename, query change) and the extra silently
+    falls back to 'unknown', the discriminator is gone and the
+    runbook ladder collapses to "read the log line by hand."
+    """
+    # Fake conn that returns a row with signature_enforcement='enforce'
+    # — simulates the production path on a flipped appliance.
+    class _FakeConnEnforce:
+        async def fetchrow(self, query, *args):
+            # First fetchrow is _resolve_pubkey lookup → return None
+            # to drive the unknown_pubkey branch. Subsequent fetchrow
+            # is the signature_enforcement lookup.
+            if "agent_identity_public_key" in query or "v_current_appliance_identity" in query:
+                return None
+            if "signature_enforcement" in query:
+                return {"signature_enforcement": "enforce"}
+            return None
+
+        async def execute(self, query, *args):
+            return ""
+
+    ts_iso = _ts_now()
+    nonce = "cd" * 16
+    sig_b64 = "Y" * 86
+    req = _fake_request(
+        "POST", "/api/appliances/checkin",
+        {
+            "X-Appliance-Signature": sig_b64,
+            "X-Appliance-Timestamp": ts_iso,
+            "X-Appliance-Nonce": nonce,
+        },
+    )
+
+    with caplog.at_level(logging.ERROR, logger="signature_auth"):
+        result = await signature_auth.verify_appliance_signature(
+            req, conn=_FakeConnEnforce(),
+            site_id="north-valley-branch-2",
+            mac_address="7C:D3:0A:7C:55:18",
+            body_bytes=b"{}",
+        )
+
+    assert result.reason == "unknown_pubkey"
+    forensic = [
+        r for r in caplog.records
+        if r.name == "signature_auth"
+        and r.levelno == logging.ERROR
+        and "sigauth_unknown_pubkey" in r.getMessage()
+    ]
+    assert forensic, "forensic log must fire"
+    record = forensic[-1]
+    assert record.signature_enforcement_mode == "enforce", (
+        f"When the signature_enforcement lookup succeeds, the forensic "
+        f"extra MUST carry the actual mode — not 'unknown'. Got "
+        f"{record.signature_enforcement_mode!r}. This is the discriminator "
+        f"that distinguishes enforce-mode rejections (substrate-firing, "
+        f"contract-violating) from observe-mode rejections (informational). "
+        f"Without it, the operator runbook collapses to read-the-log-by-hand."
+    )

@@ -69,6 +69,40 @@ working fix without confirmed root cause.** The compliance doc
 `sigauth-wrap-rationale-2026-04-28.md` records the override that
 authorized shipping despite this.
 
+## Detection-window asymmetry (round-table P1, 2026-04-28)
+
+The substrate `sigauth_enforce_mode_rejections` invariant fires on
+`COUNT(*) FILTER (WHERE NOT valid) >= 1` over a rolling 6h window.
+Pre-fix incident rate was 4 fails per 24h (~1 per 6h window — at
+the detection floor). If the wrap-fix moved the rate to 1 per
+24-72h instead of eliminating it entirely, the substrate's 6h
+window catches roughly 25% of weeks and misses the rest.
+
+**Tighter sub-substrate query for the 7d acceptance window** —
+run daily on prod against `sigauth_observations`:
+
+```sql
+SELECT date_trunc('day', observed_at) AS day,
+       mac_address,
+       COUNT(*) FILTER (WHERE NOT valid) AS fails,
+       COUNT(*) AS total
+  FROM sigauth_observations
+ WHERE observed_at > '2026-04-28T17:11:00Z'
+   AND observed_at < '2026-05-05T17:11:00Z'
+ GROUP BY 1, 2
+HAVING COUNT(*) FILTER (WHERE NOT valid) > 0
+ ORDER BY 1, 2;
+```
+
+Empty result set across the 7d window = empirical clean. ANY row
+in this output that the substrate didn't fire on = a near-miss
+that contradicts the routing-fix hypothesis at the same severity
+as a substrate fire — pivot to MVCC / `deleted_at` / autovacuum
+investigation per the rationale doc.
+
+This SQL is the durable check the substrate's rolling-6h floor
+cannot see by itself.
+
 ## 7-day acceptance window
 
 | Date (UTC) | Action |

@@ -76,7 +76,19 @@
     }
   ],
   "active_tasks": [],
+  "scheduled_followups": [
+    {
+      "due": "2026-05-05T17:11:00Z",
+      "what": "task #169 sigauth wrap empirical-clean window closes — review substrate sigauth_enforce_mode_rejections; if clean for 7d, close task. If re-fired, pivot to MVCC / deleted_at / autovacuum hypothesis per validation doc",
+      "doc": "docs/security/sigauth-wrap-validation-2026-04-28.md",
+      "owner": "session pickup engineer (any)"
+    }
+  ],
   "recent_milestones": [
+    {
+      "when": "2026-04-28",
+      "what": "Session 212: 16 commits closing 22 round-table findings + 3 P3 follow-ups + task #169 closure mechanism. P0 partner-identity-mismatch + audit-DLQ; P1 lifecycle TOCTOU + admin_transaction helper + drift endpoint + tsc pre-push gate + filename-uniqueness gate; P2 stale-cache + nonce truncation + lock_timeout + buildAuthedHeaders codemod (7 partner files); 7d acceptance window for sigauth-wrap fix in progress (closes 2026-05-05 17:11Z)"
+    },
     {
       "when": "2026-04-18",
       "what": "Session 209: Prom+AM on Vault host \u2014 VPS scrape-token bearer on /metrics, /api/admin/alertmanager-webhook \u2192 SMTP bridge, 24 new tests, deploy/vault-prometheus/ artifacts (WG-only bind, hardened systemd units, idempotent install.sh)"
