@@ -229,8 +229,15 @@ efe413cf fix(flywheel): QA-recommended followups from b0c72c6c+5ea914d2 round-ta
 11b38d7e test(flywheel): FakeConn.transaction() shim for savepoint compat
 3b31b48b feat(security): P0 batch — partner identity mismatch + audit dead-letter queue
 b62c91d2 feat(p1): 8 enterprise-grade hardening items from Session 212 round-table
-<this-commit> feat(p2): QA-recommended followups + 9 originally-planned P2 cleanup items
+f89802be feat(p2): QA-recommended P0/P1/P2 followups + originally-planned P2 batch
+9778bb61 test(p3): regression gate against test-filename collision class
+39977ce4 chore(p3): codemod 7 partner files to buildAuthedHeaders helper
+92f2f73b chore(p3): migrate device_sync to admin_transaction (next-highest bare-read site)
+6fbffcd1 docs(p3): sigauth wrap validation evidence — first-cycle empirical record
+e4dcaefc docs(p3): close-out QA followups on task #169 closure mechanism
 ```
+
+**Total: 17 commits.**
 
 ## Deploy cascade post-mortem (2026-04-28 ~17:01-17:24Z)
 
