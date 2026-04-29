@@ -1899,9 +1899,16 @@ class RelocateApplianceRequest(BaseModel):
     config.yaml hand-edit). This endpoint makes it a first-class
     administrative action with audit + scoping + key minting in one
     atomic transaction.
+
+    Session 213 F1-followup round-table P1-SWE-2: target_site_id is
+    constrained to the standard substrate site_id format (lowercase
+    alphanumeric + hyphens + underscores) so it's safe to interpolate
+    into operator-facing messages, audit details, and SQL via bound
+    parameters. Quotes/semicolons/whitespace are rejected at the model
+    layer.
     """
-    target_site_id: str
-    reason: str  # Audit context, ≥ 20 chars
+    target_site_id: str = Field(..., pattern=r"^[a-z0-9_\-]+$", min_length=1, max_length=128)
+    reason: str  # Audit context, ≥ 20 chars (validated in handler)
 
 
 @router.post("/{site_id}/appliances/{appliance_id}/relocate")
@@ -2244,6 +2251,41 @@ async def relocate_appliance(
         relocation_id, "fleet_order" if version_ok else "ssh_snippet",
     )
 
+    # Session 213 F1-followup: surface whether the source site is now
+    # logically empty so the operator can decide if a canonical mapping
+    # is appropriate. We do NOT auto-INSERT into site_canonical_mapping
+    # here — a partner moving an appliance between two of THEIR live
+    # sites doesn't imply A canonicalizes to B. The operator runs
+    # `rename_site(p_from=A, p_to=B, ...)` explicitly when an entire
+    # site has been retired in favor of another.
+    #
+    # Round-table P0-SWE-1: this is an ADVISORY signal. A failure on
+    # this count query MUST NOT roll back the relocate (whose primary
+    # work is already committed by this point). Wrap in try/except;
+    # gracefully omit the field if the query fails. Operator who sees
+    # the field missing once will not be confused — the relocate
+    # response carries `relocation_id` for tracking either way.
+    source_remaining: Optional[int] = None
+    try:
+        source_remaining = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM site_appliances
+             WHERE site_id = $1
+               AND deleted_at IS NULL
+               AND status NOT IN ('relocating', 'relocated', 'decommissioned')
+            """,
+            site_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — advisory field, must not abort
+        logger.warning(
+            "relocate_source_remaining_query_failed",
+            extra={
+                "site_id": site_id,
+                "appliance_id": appliance_id,
+                "exception_class": type(exc).__name__,
+            },
+        )
+
     # Build the response. Daemon-supported path returns order receipt;
     # legacy path returns ssh_snippet for manual completion.
     response: Dict[str, Any] = {
@@ -2255,6 +2297,22 @@ async def relocate_appliance(
         "evidence_bundle_id": evidence_bundle_id,
         "agent_version": source["agent_version"],
     }
+    if source_remaining is not None:
+        # F1-followup signal: 0 = source site is empty post-relocate.
+        # Operator may want to call rename_site() to alias source→target
+        # if the source site is being retired. We surface the count;
+        # we do not act on it (would need explicit operator opt-in).
+        response["source_site_remaining_appliance_count"] = int(source_remaining)
+        if int(source_remaining) == 0:
+            response["canonical_alias_recommended"] = (
+                f"Source site '{site_id}' is empty after this relocate. If "
+                f"the site is being retired in favor of '{req.target_site_id}', "
+                f"call rename_site('{site_id}', '{req.target_site_id}', "
+                f"'<your-email>', '<reason ≥20 chars>') to alias future "
+                f"telemetry. If the source site is keeping operational "
+                f"identity (e.g. new appliances will be onboarded under it), "
+                f"no action needed."
+            )
 
     if version_ok:
         response["fleet_order_id"] = fleet_order_id

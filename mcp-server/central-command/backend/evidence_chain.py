@@ -3936,6 +3936,50 @@ FAIL before signing off the audit.**
   proof via a Merkle root. `verify.sh` walks the leaf path and matches
   it against the stored root before counting the bundle as verified.
 
+## Site rename / appliance relocation — what about the site_id?
+
+Compliance bundles **bind to their issuing site_id forever** via the
+Ed25519 signature and OpenTimestamps proof. If an appliance is later
+relocated, or a site is renamed, the bundles in this kit retain their
+*original* site_id — that is the auditable fact.
+
+Operational telemetry (incidents, healing events, pattern statistics)
+may aggregate under a *canonical* site_id when the substrate has
+recorded a rename or relocation event in `site_canonical_mapping`.
+The auditor kit and this evidence chain are NOT affected by that
+aggregation: the cryptographic record always points to the issuing
+site_id at the time the bundle was signed.
+
+**Reconciling site_id aliases (in-kit, no live API needed):**
+
+`chain.json["site_canonical_aliases"]` lists every alias the substrate
+has recorded for this site_id, in either direction:
+
+```json
+"site_canonical_aliases": [
+  {
+    "from_site_id": "old-site-id-123",
+    "to_site_id": "<this-site-id>",
+    "actor": "operator@example.com",
+    "reason": "Site renamed after appliance relocation",
+    "related_migration": "255",
+    "effective_at": "2026-04-29T10:22:34Z",
+    "direction": "inbound"
+  }
+]
+```
+
+If you see operational telemetry under a different site_id than the
+bundles in this kit, check `site_canonical_aliases` first. Each entry
+identifies the human operator who authorized the alias and the reason.
+If a rename was performed via the substrate's `appliance_relocation`
+flow, you'll ALSO see a corresponding compliance bundle in
+`bundles.jsonl` for that event (cryptographically signed, in-chain).
+Aliases without a matching `appliance_relocation` bundle were inserted
+via direct admin action (e.g. backfill of historical relocations);
+the audit trail for those is in the substrate's `admin_audit_log`,
+not in the cryptographic chain.
+
 ## Verifying the verifier
 
 `verify.sh` is open source and is the same script used by every
@@ -4347,6 +4391,21 @@ async def download_auditor_kit(
     if not bundle_rows:
         raise HTTPException(404, "No evidence bundles in range")
 
+    # 3.5. Site canonical aliases — Session 213 F1-followup P0-COMPLIANCE-1.
+    # An auditor downloading this kit may see operational telemetry
+    # aggregated under a different site_id than the bundles. Surface the
+    # mapping rows here so the auditor can reconcile in-kit without
+    # needing the live API. Compliance bundles themselves bind to
+    # their issuing site_id forever (Ed25519 + OTS); this list shows
+    # the operational aliases that the substrate has recorded.
+    canonical_alias_rows = (await db.execute(text("""
+        SELECT from_site_id, to_site_id, actor, reason,
+               related_migration, effective_at
+          FROM site_canonical_mapping
+         WHERE from_site_id = :sid OR to_site_id = :sid
+         ORDER BY effective_at
+    """), {"sid": site_id})).fetchall()
+
     # 4. Compute chain.json — site metadata + summary
     signed_count = sum(1 for r in bundle_rows if r.agent_signature)
     anchored_count = sum(1 for r in bundle_rows if r.ots_status == "anchored")
@@ -4412,6 +4471,26 @@ async def download_auditor_kit(
                 "last_checkin": pk["last_checkin"],
             }
             for pk in pubkeys
+        ],
+        # F1-followup P0-COMPLIANCE-1 (Session 213): surface operational
+        # site_id aliases so an auditor seeing telemetry under a
+        # different site_id can reconcile without the live API. The
+        # bundles in this kit retain their ORIGINAL site_id forever
+        # (Ed25519 + OTS bind to the issuing identity); the aliases
+        # below are operational-aggregation only.
+        "site_canonical_aliases": [
+            {
+                "from_site_id": r.from_site_id,
+                "to_site_id": r.to_site_id,
+                "actor": r.actor,
+                "reason": r.reason,
+                "related_migration": r.related_migration,
+                "effective_at": r.effective_at.isoformat() if r.effective_at else None,
+                "direction": (
+                    "outbound" if r.from_site_id == site_id else "inbound"
+                ),
+            }
+            for r in canonical_alias_rows
         ],
         "disclosures": [
             {

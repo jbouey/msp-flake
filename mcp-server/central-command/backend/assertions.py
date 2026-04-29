@@ -584,6 +584,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_flywheel_orphan_telemetry(c),
     ),
     Assertion(
+        name="rename_site_immutable_list_drift",
+        severity="sev2",
+        description="Detects site_id-bearing tables protected by a DELETE-blocking trigger that are NOT in _rename_site_immutable_tables(). Such a table is operationally append-only (UPDATE/DELETE blocked is the standard audit-class signal) yet rename_site() would happily rewrite its site_id — a chain-of-custody violation waiting to happen. Fires sev2 to flag the immutable-list drift before the next rename. Session 213 F4-followup (mig 257 round-table). Resolution: add the table to _rename_site_immutable_tables() in a follow-on migration, OR confirm the table is genuinely operational and the DELETE-block is unintended.",
+        check=lambda c: _check_rename_site_immutable_list_drift(c),
+    ),
+    Assertion(
         name="promotion_audit_log_recovery_pending",
         severity="sev1",
         description="HIPAA §164.312(b) chain-of-custody durability gate. promotion_audit_log_recovery is the dead-letter queue for promotion_audit_log INSERTs that failed inside flywheel_promote.promote_candidate's Step 7 savepoint (Migration 253, Session 212 round-table P0). Any unrecovered row means an L1 rule promotion happened without its audit row landing in the WORM-style audit log — the chain of custody is broken until an operator runs the recovery script. Sev1 because the loss is HIPAA-relevant and grows monotonically until handled.",
@@ -906,6 +912,20 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "scripts/db_delete_safety_check.py before the next deploy. Until cleared, "
             "the dashboard's promotion candidates may include phantom entries; do NOT "
             "approve any candidate whose site_id appears in this violation's details.",
+    },
+    "rename_site_immutable_list_drift": {
+        "display_name": "Site-id table has DELETE-block trigger but isn't in immutable list",
+        "recommended_action": "A site_id-bearing table is protected by a DELETE-blocking "
+            "trigger (the standard audit-class / append-only signal) but is NOT in "
+            "_rename_site_immutable_tables(). If rename_site() runs against a site_id "
+            "currently in use, the function will rewrite this table's site_id "
+            "transparently — a chain-of-custody violation if the table's append-only "
+            "posture exists for HIPAA / cryptographic-binding reasons. Resolution: "
+            "(a) ADD the table to _rename_site_immutable_tables() in a follow-on "
+            "migration if it should be immutable (most likely), OR (b) DROP the "
+            "DELETE-block trigger if the table is genuinely operational. Use the "
+            "violation details to identify which side. Round-table review recommended "
+            "before either path.",
     },
     "sigauth_enforce_mode_rejections": {
         "display_name": "Enforce-mode appliance had a sigauth rejection",
@@ -1494,6 +1514,81 @@ async def _check_flywheel_orphan_telemetry(conn: asyncpg.Connection) -> List[Vio
             },
         )
         for r in rows
+    ]
+
+
+async def _check_rename_site_immutable_list_drift(conn: asyncpg.Connection) -> List[Violation]:
+    """F4-followup substrate invariant (Session 213).
+
+    Find tables that:
+      (a) have a `site_id` column
+      (b) are protected by a DELETE-blocking trigger (the standard
+          audit-class / append-only signal — RAISE EXCEPTION inside a
+          BEFORE DELETE trigger)
+      (c) are NOT in `_rename_site_immutable_tables()`
+
+    A table that matches (a)+(b)+(c) is operationally append-only yet
+    `rename_site()` would happily rewrite its site_id — a chain-of-
+    custody violation if the append-only posture exists for HIPAA or
+    cryptographic-binding reasons.
+
+    The check uses pg_trigger and pg_proc to find DELETE-blocking
+    triggers by inspecting the trigger function source for
+    `RAISE EXCEPTION` patterns. False positives are possible (a
+    trigger that conditionally raises on DELETE only in some cases)
+    but the runbook covers operator review.
+    """
+    rows = await conn.fetch(
+        """
+        WITH delete_blocked AS (
+            SELECT DISTINCT c.relname AS table_name
+              FROM pg_trigger trg
+              JOIN pg_class c ON c.oid = trg.tgrelid
+              JOIN pg_proc p ON p.oid = trg.tgfoid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = 'public'
+               AND c.relkind = 'r'
+               AND NOT trg.tgisinternal
+               -- DELETE bit in tgtype: 1 << 3 = 8
+               AND (trg.tgtype & 8) = 8
+               AND p.prosrc ILIKE '%RAISE EXCEPTION%'
+        ),
+        site_id_tables AS (
+            SELECT DISTINCT table_name
+              FROM information_schema.columns
+             WHERE column_name = 'site_id'
+               AND table_schema = 'public'
+        ),
+        immutable AS (
+            SELECT table_name FROM _rename_site_immutable_tables()
+        )
+        SELECT db.table_name
+          FROM delete_blocked db
+          JOIN site_id_tables sit ON sit.table_name = db.table_name
+         WHERE db.table_name NOT IN (SELECT table_name FROM immutable)
+         ORDER BY db.table_name
+        """
+    )
+    if not rows:
+        return []
+    drift_tables = [r["table_name"] for r in rows]
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "drift_tables": drift_tables,
+                "remediation": (
+                    "Each listed table has a DELETE-blocking trigger (operationally "
+                    "append-only) AND a site_id column AND is NOT in "
+                    "_rename_site_immutable_tables(). rename_site() would rewrite "
+                    "their site_id — a chain-of-custody risk. Either add the table to "
+                    "_rename_site_immutable_tables() in a follow-on migration "
+                    "(most likely if the DELETE-block is intentional for HIPAA / "
+                    "cryptographic reasons), OR drop the DELETE-block trigger if the "
+                    "table is genuinely operational. Round-table review before either."
+                ),
+            },
+        )
     ]
 
 

@@ -7,6 +7,11 @@ export interface RelocateResult {
   ssh_snippet?: string;
   next_step: string;
   agent_version: string | null;
+  // Session 213 F1-followup signal: source-site appliance count after
+  // the relocate. 0 = source is empty; UX may surface
+  // canonical_alias_recommended as a hint to the operator.
+  source_site_remaining_appliance_count?: number;
+  canonical_alias_recommended?: string;
 }
 
 export interface MoveApplianceModalProps {
