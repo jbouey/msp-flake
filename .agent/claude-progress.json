@@ -79,8 +79,8 @@
   "scheduled_followups": [
     {
       "due": "2026-05-05T17:11:00Z",
-      "what": "task #169 sigauth wrap empirical-clean window closes — review substrate sigauth_enforce_mode_rejections; if clean for 7d, close task. If re-fired, pivot to MVCC / deleted_at / autovacuum hypothesis per validation doc",
-      "doc": "docs/security/sigauth-wrap-validation-2026-04-28.md",
+      "what": "task #169 closed early on user override 2026-04-28 22:51Z; substrate watch through window-end. Re-fire of sigauth_enforce_mode_rejections OR sigauth_post_fix_window_canary auto-reopens task and triggers pivot to MVCC / deleted_at / autovacuum hypothesis (NEW round-table required BEFORE any fix). After 2026-05-05 if both invariants stayed silent, REMOVE sigauth_post_fix_window_canary from ALL_ASSERTIONS.",
+      "doc": "docs/security/sigauth-wrap-validation-2026-04-28.md (User-override early closure section)",
       "owner": "session pickup engineer (any)"
     }
   ],

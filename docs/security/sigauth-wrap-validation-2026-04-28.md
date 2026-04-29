@@ -162,3 +162,66 @@ jitter.
 Engineer of record: Session 212 implementer
 User authorization: 2026-04-28 (verbal, "finish that last open")
 Closure mechanism: 7d empirical clean window starting 2026-04-28 17:11Z
+
+---
+
+## User-override early closure (2026-04-28 22:51Z)
+
+The 7d acceptance window above was **explicitly waived** by user
+direction ("finish up that 169 QA round table enterprise approved")
+at 2026-04-28 22:51Z, ~5h40m into the post-deploy window.
+
+**State at early-close:**
+- 1,014 sigauth observations across all 3 appliances since
+  2026-04-28 17:11Z; 0 fails
+- 0 forensic `sigauth_unknown_pubkey` captures
+- Substrate `sigauth_enforce_mode_rejections` resolved + has not
+  re-fired
+- Pre-fix expected rate (Poisson) = 0.94 fails in this window;
+  observed 0; p(0|μ=0.94) ≈ 39% null-luck
+
+**Round-table verdict on early closure:** Option C (HYBRID) —
+APPROVE closure NOW with all 5 compensating controls listed
+below. Independent QA verdict was Option B (HOLD until 2026-05-05);
+override accepted on user authority per CLAUDE.md primacy rule.
+
+**Compensating controls in place at closure (all 5 mandatory per
+QA verdict):**
+
+1. **This override section** — durably records the early-close
+   decision, the QA dissent, and the empirical state at
+   close-time. A 2027 auditor reading this doc sees both the
+   override and the dissent without ambiguity.
+
+2. **`scheduled_followups[0]` retained** in
+   `.agent/claude-progress.json` through 2026-05-05 17:11Z. The
+   `what` field amended to record the early-close + the auto-
+   reopen criterion. `context-manager.py status` continues to
+   surface the deadline on every session pickup.
+
+3. **`sigauth_post_fix_window_canary` substrate invariant**
+   (sev1, added in this commit). Tighter detection floor than
+   the rolling-6h `sigauth_enforce_mode_rejections` — fires on
+   ANY invalid sigauth observation across the 7d post-deploy
+   window. Auto-disables after 2026-05-05 17:11Z. Runbook at
+   `substrate_runbooks/sigauth_post_fix_window_canary.md`. This
+   is the durable equivalent of the daily SQL canary the QA
+   recommended, integrated with the substrate paging stack.
+
+4. **Forensic `logger.error` defense** unchanged — the
+   `signature_enforcement_mode` extra discriminates enforce-mode
+   rejections (contract-violating) from observe-mode rejections
+   (informational) so the runbook ladder doesn't collapse to
+   read-by-hand. Pinned by
+   `tests/test_sigauth_forensic_logging.py`.
+
+5. **Memory entry** `feedback_enterprise_grade_default.md`
+   updated to record the override + the compensating controls
+   so the discipline survives the next "finish that last open"
+   moment.
+
+**Reopen criterion:** if `sigauth_post_fix_window_canary` fires
+at any point through 2026-05-05 17:11Z, OR if
+`sigauth_enforce_mode_rejections` re-fires, task #169 auto-
+reopens and the pivot decision (MVCC / `deleted_at` / autovacuum)
+requires a new round-table BEFORE any new fix.

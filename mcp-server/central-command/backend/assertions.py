@@ -572,6 +572,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_sigauth_enforce_mode_rejections(c),
     ),
     Assertion(
+        name="sigauth_post_fix_window_canary",
+        severity="sev1",
+        description="Tighter detection floor for the 2026-04-28 sigauth wrap-fix (commit 303421cc) acceptance window. Closes the detection-window-asymmetry gap that the rolling-6h sigauth_enforce_mode_rejections cannot see: fires sev1 on ANY invalid sigauth observation across any appliance from 2026-04-28 17:11Z (deploy + clear) through 2026-05-05 17:11Z (7d window close). Auto-disables after the window — the SQL filter on observed_at evaluates to no rows after that date and the invariant goes silent. Round-table 2026-04-28 P1 close-out for task #169 user-override early-close.",
+        check=lambda c: _check_sigauth_post_fix_window_canary(c),
+    ),
+    Assertion(
         name="promotion_audit_log_recovery_pending",
         severity="sev1",
         description="HIPAA §164.312(b) chain-of-custody durability gate. promotion_audit_log_recovery is the dead-letter queue for promotion_audit_log INSERTs that failed inside flywheel_promote.promote_candidate's Step 7 savepoint (Migration 253, Session 212 round-table P0). Any unrecovered row means an L1 rule promotion happened without its audit row landing in the WORM-style audit log — the chain of custody is broken until an operator runs the recovery script. Sev1 because the loss is HIPAA-relevant and grows monotonically until handled.",
@@ -869,6 +875,18 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "safe to re-run). If the underlying failure persists (e.g. partition missing), "
             "fix the root cause first. Do NOT mark recovered=true manually without successfully "
             "INSERTing the audit row first — that creates a phantom recovery and breaks the chain.",
+    },
+    "sigauth_post_fix_window_canary": {
+        "display_name": "Sigauth wrap-fix post-deploy canary tripped",
+        "recommended_action": "The wrap-in-transaction speculative fix shipped in commit "
+            "303421cc (2026-04-28) was accepted on a 7d empirical-clean acceptance "
+            "window with EXPLICIT pivot criterion. ANY fail across the post-deploy "
+            "window means the routing hypothesis is empirically refuted — pivot to "
+            "MVCC / deleted_at flicker / autovacuum investigation per "
+            "docs/security/sigauth-wrap-validation-2026-04-28.md. Reopen task #169, "
+            "trigger a new round-table BEFORE any fix. The forensic "
+            "logger.error('sigauth_unknown_pubkey', ...) carries the diagnostic "
+            "context — query mcp-server logs for that token at the rejection time.",
     },
     "sigauth_enforce_mode_rejections": {
         "display_name": "Enforce-mode appliance had a sigauth rejection",
@@ -1406,6 +1424,55 @@ async def _check_promotion_audit_log_recovery_pending(conn: asyncpg.Connection) 
                 "remediation": "Run scripts/recover_promotion_audit_log.py — idempotent retry for each unrecovered row.",
             },
         )
+    ]
+
+
+async def _check_sigauth_post_fix_window_canary(conn: asyncpg.Connection) -> List[Violation]:
+    """Time-bounded canary for the 2026-04-28 sigauth wrap-fix
+    acceptance window. Closes the rolling-6h detection floor gap by
+    firing sev1 on ANY invalid sigauth observation across any
+    appliance during the 7d post-deploy window
+    (2026-04-28 17:11Z → 2026-05-05 17:11Z UTC).
+
+    Auto-disables after the window: the date filter evaluates to zero
+    rows once observed_at moves past the upper bound + the invariant
+    goes silent. Designed to be removed in the next session after
+    2026-05-05 if the substrate stays clean.
+
+    Round-table 2026-04-28 P1 close-out — preserves the empirical
+    bar the validation doc set even when the formal task #169 is
+    closed early on user override."""
+    rows = await conn.fetch(
+        """
+        SELECT site_id, mac_address,
+               COUNT(*) FILTER (WHERE NOT valid) AS failures,
+               array_agg(DISTINCT reason) FILTER (WHERE NOT valid) AS reasons,
+               MAX(observed_at) FILTER (WHERE NOT valid) AS last_failure
+          FROM sigauth_observations
+         WHERE observed_at >= '2026-04-28 17:11:00+00'::timestamptz
+           AND observed_at <  '2026-05-05 17:11:00+00'::timestamptz
+      GROUP BY site_id, mac_address
+        HAVING COUNT(*) FILTER (WHERE NOT valid) >= 1
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "mac_address": r["mac_address"],
+                "failures_in_window": r["failures"],
+                "reasons": list(r["reasons"] or []),
+                "last_failure_at": r["last_failure"].isoformat() if r["last_failure"] else None,
+                "window_end": "2026-05-05T17:11:00Z",
+                "remediation": (
+                    "ANY fail in the post-fix window refutes the routing hypothesis. "
+                    "Reopen task #169, pivot to MVCC / deleted_at / autovacuum, "
+                    "trigger new round-table BEFORE any fix. See "
+                    "docs/security/sigauth-wrap-validation-2026-04-28.md."
+                ),
+            },
+        )
+        for r in rows
     ]
 
 
