@@ -3529,6 +3529,15 @@ async def assertions_loop():
                 len(ALL_ASSERTIONS))
 
     while True:
+        # Heartbeat (Session 213 P3 — round-table flagged the substrate
+        # engine itself as missing instrumentation. If THIS loop hangs,
+        # nothing detects substrate violations — it's the meta-loop).
+        try:
+            from .bg_heartbeat import record_heartbeat
+            record_heartbeat("substrate_assertions")
+        except Exception:
+            pass
+
         try:
             pool = await get_pool()
             async with admin_connection(pool) as conn:

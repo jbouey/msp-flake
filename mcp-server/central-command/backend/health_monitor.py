@@ -33,6 +33,15 @@ async def health_monitor_loop():
     logger.info("Health monitor started")
 
     while True:
+        # Heartbeat (Session 213 P3 — round-table flagged this loop as
+        # missing instrumentation; the stalled-task detector keys off
+        # heartbeat freshness, so a silent hang here was undetectable).
+        try:
+            from .bg_heartbeat import record_heartbeat
+            record_heartbeat("health_monitor")
+        except Exception:
+            pass
+
         try:
             await _check_appliance_health()
         except asyncio.CancelledError:
