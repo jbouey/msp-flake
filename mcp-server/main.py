@@ -805,8 +805,29 @@ async def _flywheel_promotion_loop():
                 # Step 1: Populate aggregated_pattern_stats from execution_telemetry
                 # The Go daemon reports telemetry but doesn't call /api/agent/sync/pattern-stats,
                 # so we bridge the gap server-side by aggregating directly.
+                #
+                # F1 (Session 213, migration 256): the SELECT is wrapped in a CTE so
+                # canonical_site_id() runs ONCE per row instead of twice (once in
+                # SELECT, once in GROUP BY). On a 1000-site fleet this matters —
+                # 50K rows/day × 30 days = 1.5M function calls per 30-min loop
+                # without the CTE. STABLE volatility lets the planner cache, but
+                # only as a planner *opportunity*, not a guarantee. CTE pins it.
                 try:
                     await db.execute(text("""
+                        WITH telemetry_canonical AS (
+                            SELECT
+                                canonical_site_id(et.site_id) AS site_id,
+                                et.incident_type,
+                                et.runbook_id,
+                                et.resolution_level,
+                                et.success,
+                                et.duration_seconds,
+                                et.created_at
+                            FROM execution_telemetry et
+                            WHERE et.resolution_level IN ('L1', 'L2')
+                              AND et.incident_type IS NOT NULL
+                              AND et.runbook_id IS NOT NULL
+                        )
                         INSERT INTO aggregated_pattern_stats (
                             site_id, pattern_signature, total_occurrences,
                             l1_resolutions, l2_resolutions, l3_resolutions,
@@ -816,30 +837,27 @@ async def _flywheel_promotion_loop():
                             first_seen, last_seen, last_synced_at
                         )
                         SELECT
-                            et.site_id,
-                            et.incident_type || ':' || et.runbook_id as pattern_signature,
+                            tc.site_id,
+                            tc.incident_type || ':' || tc.runbook_id as pattern_signature,
                             COUNT(*) as total_occurrences,
-                            SUM(CASE WHEN et.resolution_level = 'L1' THEN 1 ELSE 0 END),
-                            SUM(CASE WHEN et.resolution_level = 'L2' THEN 1 ELSE 0 END),
-                            SUM(CASE WHEN et.resolution_level = 'L3' THEN 1 ELSE 0 END),
-                            SUM(CASE WHEN et.success THEN 1 ELSE 0 END),
-                            COALESCE(SUM(et.duration_seconds * 1000), 0),
+                            SUM(CASE WHEN tc.resolution_level = 'L1' THEN 1 ELSE 0 END),
+                            SUM(CASE WHEN tc.resolution_level = 'L2' THEN 1 ELSE 0 END),
+                            SUM(CASE WHEN tc.resolution_level = 'L3' THEN 1 ELSE 0 END),
+                            SUM(CASE WHEN tc.success THEN 1 ELSE 0 END),
+                            COALESCE(SUM(tc.duration_seconds * 1000), 0),
                             CASE WHEN COUNT(*) > 0
-                                THEN SUM(CASE WHEN et.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*)
+                                THEN SUM(CASE WHEN tc.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*)
                                 ELSE 0 END,
                             CASE WHEN COUNT(*) > 0
-                                THEN COALESCE(SUM(et.duration_seconds * 1000), 0) / COUNT(*)
+                                THEN COALESCE(SUM(tc.duration_seconds * 1000), 0) / COUNT(*)
                                 ELSE 0 END,
-                            MAX(et.runbook_id),
+                            MAX(tc.runbook_id),
                             false,
-                            MIN(et.created_at),
-                            MAX(et.created_at),
+                            MIN(tc.created_at),
+                            MAX(tc.created_at),
                             NOW()
-                        FROM execution_telemetry et
-                        WHERE et.resolution_level IN ('L1', 'L2')
-                          AND et.incident_type IS NOT NULL
-                          AND et.runbook_id IS NOT NULL
-                        GROUP BY et.site_id, et.incident_type, et.runbook_id
+                        FROM telemetry_canonical tc
+                        GROUP BY tc.site_id, tc.incident_type, tc.runbook_id
                         HAVING COUNT(*) >= 3
                         ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
                             total_occurrences = EXCLUDED.total_occurrences,
@@ -900,38 +918,57 @@ async def _flywheel_promotion_loop():
                             distinct_sites, distinct_orgs, total_occurrences,
                             success_count, success_rate, first_seen, last_seen
                         )
+                        -- F1 P0 (Session 213, migration 256): JOIN to `sites`
+                        -- via canonical_site_id so renamed/relocated sites
+                        -- aggregate under the canonical row. Pre-fix, the
+                        -- raw `et.site_id = s.site_id` JOIN silently EXCLUDED
+                        -- orphan telemetry, undercounting `distinct_sites` and
+                        -- `distinct_orgs` — which suppressed platform auto-
+                        -- promotion (threshold = 5 distinct orgs). Wrapping
+                        -- in a CTE keeps canonical_site_id() to one call per
+                        -- row (planner caching is a STABLE opportunity, not
+                        -- a guarantee).
+                        WITH telemetry_canonical AS (
+                            SELECT
+                                canonical_site_id(et.site_id) AS site_id,
+                                et.incident_type,
+                                et.runbook_id,
+                                et.success,
+                                et.created_at
+                            FROM execution_telemetry et
+                            WHERE et.resolution_level = 'L2'
+                              AND et.incident_type IS NOT NULL
+                              AND et.runbook_id IS NOT NULL
+                              -- Exclude synthetic L2-* planner IDs (Jan 2026 legacy
+                              -- execution_telemetry rows). The current L2 planner
+                              -- canonicalizes before emitting but old rows persist.
+                              -- Session 210-B (2026-04-24): this filter was ALREADY
+                              -- in background_tasks.py:1189 but THIS duplicate loop
+                              -- here in main.py — which is the one actually
+                              -- scheduled by the task supervisor — was missing it.
+                              -- Migration 237 + substrate invariant
+                              -- synthetic_l2_pps_rows kept firing because this
+                              -- loop re-inserted the L2-* rows every 30 min. Dup
+                              -- loop is queued for removal (#143 follow-up); this
+                              -- filter stops the bleeding in the meantime.
+                              AND et.runbook_id NOT LIKE 'L2-%'
+                        )
                         SELECT
-                            et.incident_type || ':' || et.runbook_id,
-                            et.incident_type,
-                            et.runbook_id,
-                            COUNT(DISTINCT et.site_id),
+                            tc.incident_type || ':' || tc.runbook_id,
+                            tc.incident_type,
+                            tc.runbook_id,
+                            COUNT(DISTINCT tc.site_id),
                             COUNT(DISTINCT s.client_org_id),
                             COUNT(*),
-                            SUM(CASE WHEN et.success THEN 1 ELSE 0 END),
+                            SUM(CASE WHEN tc.success THEN 1 ELSE 0 END),
                             CASE WHEN COUNT(*) > 0
-                                THEN SUM(CASE WHEN et.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*)
+                                THEN SUM(CASE WHEN tc.success THEN 1 ELSE 0 END)::FLOAT / COUNT(*)
                                 ELSE 0 END,
-                            MIN(et.created_at),
-                            MAX(et.created_at)
-                        FROM execution_telemetry et
-                        JOIN sites s ON s.site_id = et.site_id
-                        WHERE et.resolution_level = 'L2'
-                          AND et.incident_type IS NOT NULL
-                          AND et.runbook_id IS NOT NULL
-                          -- Exclude synthetic L2-* planner IDs (Jan 2026 legacy
-                          -- execution_telemetry rows). The current L2 planner
-                          -- canonicalizes before emitting but old rows persist.
-                          -- Session 210-B (2026-04-24): this filter was ALREADY
-                          -- in background_tasks.py:1189 but THIS duplicate loop
-                          -- here in main.py — which is the one actually
-                          -- scheduled by the task supervisor — was missing it.
-                          -- Migration 237 + substrate invariant
-                          -- synthetic_l2_pps_rows kept firing because this
-                          -- loop re-inserted the L2-* rows every 30 min. Dup
-                          -- loop is queued for removal (#143 follow-up); this
-                          -- filter stops the bleeding in the meantime.
-                          AND et.runbook_id NOT LIKE 'L2-%'
-                        GROUP BY et.incident_type, et.runbook_id
+                            MIN(tc.created_at),
+                            MAX(tc.created_at)
+                        FROM telemetry_canonical tc
+                        JOIN sites s ON s.site_id = tc.site_id
+                        GROUP BY tc.incident_type, tc.runbook_id
                         HAVING COUNT(*) >= 10
                         ON CONFLICT (pattern_key) DO UPDATE SET
                             distinct_sites = EXCLUDED.distinct_sites,
