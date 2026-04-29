@@ -1796,7 +1796,7 @@ async def claim_appliance_to_site(
 
     result = await execute_with_retry(db,text("""
         UPDATE appliance_provisioning
-        SET site_id = :site_id, provisioned_at = NOW(),
+        SET site_id = :site_id, provisioned_at = NOW(),  -- noqa: rename-site-gate — initial claim of a discovered appliance, MAC-scoped, not a site rename
             notes = COALESCE(notes, '') || ' | Claimed via dashboard'
         WHERE UPPER(mac_address) = :mac
         RETURNING id, mac_address, site_id
@@ -1868,7 +1868,7 @@ async def transfer_appliance(
     # 1. Update appliance_provisioning
     prov_result = await execute_with_retry(db,text("""
         UPDATE appliance_provisioning
-        SET site_id = :to_site_id,
+        SET site_id = :to_site_id,  -- noqa: rename-site-gate — per-appliance MAC-scoped transfer endpoint, not site rename
             notes = COALESCE(notes, '') || :transfer_note
         WHERE UPPER(mac_address) = :mac AND site_id = :from_site_id
         RETURNING id, mac_address
@@ -1886,7 +1886,7 @@ async def transfer_appliance(
     # M1: the legacy `appliances` table was dropped; site_appliances is canonical.
     await execute_with_retry(db,text("""
         UPDATE site_appliances
-        SET site_id = :to_site_id
+        SET site_id = :to_site_id  -- noqa: rename-site-gate — per-appliance MAC-scoped transfer endpoint companion to appliance_provisioning UPDATE above
         WHERE UPPER(mac_address) = :mac
           AND site_id = :from_site_id
           AND deleted_at IS NULL
@@ -7140,7 +7140,7 @@ async def claim_unclaimed_appliance(
     # column is deprecated and being dropped.
     await execute_with_retry(db, text("""
         UPDATE appliance_provisioning
-        SET site_id = :sid,
+        SET site_id = :sid,  -- noqa: rename-site-gate — claim-v2 endpoint binds a discovered appliance to a site, MAC-scoped, not a site rename
             notes = COALESCE(notes, '') || ' | Claimed by ' || :user || ' at ' || NOW()::text
         WHERE UPPER(mac_address) = :mac
     """), {"sid": body.site_id, "mac": mac, "user": user.get("username", "admin")})

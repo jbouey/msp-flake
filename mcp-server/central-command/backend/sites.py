@@ -2398,7 +2398,7 @@ async def move_appliance(
         # Update the site_id. Per-row filter (appliance_id is PK) satisfies
         # migration 192 row-guard without needing app.allow_multi_row.
         await conn.execute(
-            "UPDATE site_appliances SET site_id = $1 WHERE appliance_id = $2",
+            "UPDATE site_appliances SET site_id = $1 WHERE appliance_id = $2",  # noqa: rename-site-gate — per-appliance MAC-scoped move via /relocate endpoint, not site rename
             body.target_site_id, appliance_id,
         )
 
@@ -2411,7 +2411,7 @@ async def move_appliance(
         if mac_row and mac_row["mac_address"]:
             await conn.execute(
                 """UPDATE appliance_provisioning
-                   SET site_id = $1,
+                   SET site_id = $1,  -- noqa: rename-site-gate — per-appliance MAC-scoped relocate companion to site_appliances UPDATE above
                        notes = COALESCE(notes, '') || $3
                    WHERE UPPER(mac_address) = UPPER($2) AND site_id = $4""",
                 body.target_site_id, mac_row["mac_address"],

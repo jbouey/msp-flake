@@ -36,6 +36,11 @@ EXEMPT_PATHS = {
     # Runbook for flywheel_orphan_telemetry — references compliance_bundles
     # in escalation guidance.
     "mcp-server/central-command/backend/substrate_runbooks/flywheel_orphan_telemetry.md",
+    # Migration 257 — rename_site() function. Comments document the
+    # immutable-list rationale (compliance_bundles bound by Ed25519/OTS).
+    # The function intentionally SKIPS compliance_bundles; the co-mention
+    # is documentation, not a misuse.
+    "mcp-server/central-command/backend/migrations/257_rename_site_function.sql",
 }
 
 EXTENSIONS = {".py", ".sql", ".md", ".ts", ".tsx", ".go"}
