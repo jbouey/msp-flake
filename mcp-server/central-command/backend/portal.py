@@ -1159,20 +1159,30 @@ async def get_portal_home(
         pass
 
     # ─── Partner attribution (Session 206, migration 183) ────────
+    # Schema corrections (Session 213 round-table P1, 2026-04-29):
+    #   * `client_organizations` → `client_orgs`
+    #   * `sites.org_id` → `sites.client_org_id`
+    #   * partners has no `org_id` / `deactivated_at` / `full_name` /
+    #     `email` — link is `sites.partner_id`; columns are `name`,
+    #     `contact_email`, `status`.
+    # Pre-fix this whole block silently raised UndefinedTableError
+    # inside `try: except: pass` and the partner panel rendered
+    # blank for every client portal session since Session 206. The
+    # silent-swallow ALSO violated Session 205's "no silent write
+    # failures" rule (technically read-side, but the eat-everything
+    # mask hid a real schema regression for 7+ sessions).
     partner = {"name": None, "email": None, "last_reviewed_at": None}
     try:
         prow = await execute_with_retry(db, text("""
             SELECT s.last_partner_reviewed_at,
                    s.last_partner_reviewed_by,
                    o.name AS org_name,
-                   (SELECT email FROM partners
-                    WHERE org_id = s.org_id AND deactivated_at IS NULL
-                    ORDER BY created_at ASC LIMIT 1) AS primary_partner_email,
-                   (SELECT full_name FROM partners
-                    WHERE org_id = s.org_id AND deactivated_at IS NULL
-                    ORDER BY created_at ASC LIMIT 1) AS primary_partner_name
+                   p.name AS primary_partner_name,
+                   p.contact_email AS primary_partner_email
             FROM sites s
-            LEFT JOIN client_organizations o ON o.id = s.org_id
+            LEFT JOIN client_orgs o ON o.id = s.client_org_id
+            LEFT JOIN partners p ON p.id = s.partner_id
+                                AND p.status = 'active'
             WHERE s.site_id = :sid
         """), {"sid": site_id})
         pr = prow.mappings().first()
@@ -1187,8 +1197,15 @@ async def get_portal_home(
                 partner["last_reviewed_at"] = (
                     pr["last_partner_reviewed_at"].isoformat()
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        # Read-side — eat the exception so the portal page still
+        # renders, but log loud so a regression here doesn't go
+        # silent for sessions again.
+        logger.error(
+            "portal_partner_attribution_query_failed",
+            exc_info=True,
+            extra={"site_id": site_id, "exception_class": type(e).__name__},
+        )
 
     # ─── 30-day coverage timeline ────────────────────────────────
     # For each of last 30 days, was the site "fully covered" (no gap

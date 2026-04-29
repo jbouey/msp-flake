@@ -2301,9 +2301,13 @@ class MeshTopologyRequest(BaseModel):
 
 
 @router.put("/{site_id}/mesh-topology")
-async def set_mesh_topology(site_id: str, req: MeshTopologyRequest, user: dict = Depends(require_auth)):
+async def set_mesh_topology(site_id: str, req: MeshTopologyRequest, user: dict = Depends(require_operator)):
     """Set mesh topology mode. 'independent' suppresses mesh alerts for sites
-    with consumer-grade routers where cross-subnet routing is impossible."""
+    with consumer-grade routers where cross-subnet routing is impossible.
+
+    Auth: require_operator (Session 213 round-table P1) — was require_auth,
+    promoted because this mutates fleet-shaping policy. Mirrors the auth
+    posture of sister mutations on the same router."""
     if req.mesh_topology not in ('auto', 'independent'):
         raise HTTPException(status_code=400, detail="mesh_topology must be 'auto' or 'independent'")
 
@@ -2335,9 +2339,13 @@ class NetworkModeRequest(BaseModel):
 
 
 @router.put("/{site_id}/network-mode")
-async def set_network_mode(site_id: str, req: NetworkModeRequest, user: dict = Depends(require_auth)):
+async def set_network_mode(site_id: str, req: NetworkModeRequest, user: dict = Depends(require_operator)):
     """Set network stability mode. Onboarding gate — no site should operate
-    without an explicit network decision."""
+    without an explicit network decision.
+
+    Auth: require_operator (Session 213 round-table P1) — was require_auth,
+    promoted because this is the onboarding-gate decision recorded in
+    the audit trail."""
     if req.network_mode not in ('static_lease', 'dynamic_mdns', 'pending'):
         raise HTTPException(status_code=400, detail="network_mode must be 'static_lease' or 'dynamic_mdns'")
 

@@ -18,7 +18,7 @@ import secrets
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -836,22 +836,20 @@ async def admin_restore_appliance(
       4. Deactivates any prior active keys for this (site, appliance)
       5. Writes an audit-log entry with the operator's reason
 
-    Auth: admin Bearer token. The endpoint is mounted on the public
-    API surface but require_admin gates it. We use FastAPI's regular
-    `Depends(require_admin)` rather than the appliance bearer because
-    the calling actor is an operator, not the appliance itself.
+    Auth: admin Bearer token via `_resolve_admin(request)` (Session 213
+    round-table P0 — we keep manual dispatch because auth.py +
+    provisioning.py have a known-circular-import history; the lazy-
+    import inside `_resolve_admin` keeps the resolution path clear and
+    auditable. Functionally identical to `Depends(require_admin)`).
 
     Rate limited via the same _rekey_cooldowns map as /rekey.
 
     Returns the same shape as /rekey so the recovery script can be
     a drop-in replacement.
     """
-    # Lazy-import to avoid circular import (auth.py uses provisioning
-    # types in unrelated paths).
-    from .auth import require_admin
-    from fastapi import Depends as _Depends  # noqa: F401 — for symmetry
-    # Manually dispatch require_admin since FastAPI Depends can't be
-    # added retroactively to a function-scoped router.
+    # Manual admin dispatch — see docstring rationale. Raises 401/403
+    # via _resolve_admin → require_auth → require_admin chain. Unit-
+    # tested via test_provisioning_state_change.py.
     user = await _resolve_admin(request)
 
     if not req.reason or len(req.reason.strip()) < 20:

@@ -1,6 +1,30 @@
 """
 Agent/Appliance-facing API endpoints.
 
+***  DEAD-ROUTER WARNING (Session 213 round-table P1)  ***
+
+The `agent_api_router` defined below is INTENTIONALLY NOT registered
+via `app.include_router()` in main.py. The routes you see decorated
+below are 700+ lines of `@router.post/get` shadows — they have ZERO
+effect at runtime. The live versions of every handler here are
+defined directly on `app` in `mcp-server/main.py`.
+
+Only TWO things in this module are actually used by the running app:
+  - `agent_l2_plan` — wired via `app.post("/api/agent/l2/plan")(...)` at main.py:4526
+  - `load_monitoring_only_from_registry` — called from the lifespan startup
+
+When editing a route handler under `@router.post("/X")` in this file,
+you are NOT changing the `/X` route. Find the live handler in main.py
+instead.
+
+Filed as P3: remove the decorators or delete the file (roughly 700-line
+mechanical diff). Until that lands, this header is the polarity-rule
+warning the audit recommended. CLAUDE.md ratifies this file's
+non-registration status.
+
+----
+
+
 Extracted from main.py — all endpoints that compliance appliances
 and Go daemons call to report incidents, submit evidence, sync rules,
 report telemetry, and check in.

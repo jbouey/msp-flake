@@ -2,6 +2,18 @@
 Infrastructure endpoints extracted from main.py.
 
 Server stats, runbook listing, backup status, and snapshot management.
+
+***  ENTIRE FILE DEAD (Session 213 round-table P1)  ***
+
+This module's `@router.get/post/put/delete` decorators are NOT
+registered with the FastAPI app. The handlers below
+(`/api/backup/status`, `/api/snapshot/status`, `/api/snapshot/list`)
+have LIVE counterparts in `mcp-server/main.py`. Those are what the
+running app serves; the definitions here are 100% dead.
+
+Filed as P3: delete this file. Confirmed via repo-wide
+`grep "from infra_api"` returning zero hits. The grep is the polarity
+rule — no caller relies on this module.
 """
 
 import json
