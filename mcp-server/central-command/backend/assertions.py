@@ -1538,26 +1538,43 @@ async def _check_rename_site_immutable_list_drift(conn: asyncpg.Connection) -> L
     trigger that conditionally raises on DELETE only in some cases)
     but the runbook covers operator review.
     """
+    # Skip partition children — postgres routes DELETE through the
+    # parent (which is what's actually trigger-protected). A partition
+    # child shows the same trigger as its parent in pg_trigger but
+    # rename_site() only operates on parent tables (the auto-discovery
+    # in mig 257 also skips partition children via NOT EXISTS pg_inherits).
+    # Drift detection must mirror that boundary.
     rows = await conn.fetch(
         """
-        WITH delete_blocked AS (
+        WITH partition_children AS (
+            SELECT c.oid AS oid, c.relname AS table_name
+              FROM pg_inherits i
+              JOIN pg_class c ON c.oid = i.inhrelid
+        ),
+        delete_blocked AS (
             SELECT DISTINCT c.relname AS table_name
               FROM pg_trigger trg
               JOIN pg_class c ON c.oid = trg.tgrelid
               JOIN pg_proc p ON p.oid = trg.tgfoid
               JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = 'public'
-               AND c.relkind = 'r'
+               AND c.relkind IN ('r', 'p')  -- regular + partitioned parent
                AND NOT trg.tgisinternal
                -- DELETE bit in tgtype: 1 << 3 = 8
                AND (trg.tgtype & 8) = 8
                AND p.prosrc ILIKE '%RAISE EXCEPTION%'
+               -- Skip partition children
+               AND NOT EXISTS (
+                   SELECT 1 FROM partition_children pc WHERE pc.oid = c.oid
+               )
         ),
         site_id_tables AS (
             SELECT DISTINCT table_name
               FROM information_schema.columns
              WHERE column_name = 'site_id'
                AND table_schema = 'public'
+               -- Skip date-suffixed backup snapshots (mig 257 pattern)
+               AND table_name !~ '_backup_[0-9]{6,8}$'
         ),
         immutable AS (
             SELECT table_name FROM _rename_site_immutable_tables()

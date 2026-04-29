@@ -31,13 +31,23 @@ def test_relocate_endpoint_registered_in_sites_router():
 def test_relocate_request_model_has_required_fields():
     """RelocateApplianceRequest must carry target_site_id and reason
     (audit context). Adding fields silently is fine; removing either
-    is a contract break."""
+    is a contract break.
+
+    Window-size note (Session 213): the docstring grew with the
+    F1-followup round-table P1-SWE-2 commentary about Pydantic regex
+    enforcement. Use the next-class-marker as the upper bound rather
+    than a fixed character window so future docstring growth doesn't
+    break this guard."""
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     assert "class RelocateApplianceRequest(BaseModel):" in src
-    # Both fields must be declared between the class line and the next
-    # blank-line block.
     cls_idx = src.find("class RelocateApplianceRequest(BaseModel):")
-    after_cls = src[cls_idx : cls_idx + 600]
+    # Find the END of this class — search forward to the next top-level
+    # `class ` or `def ` or `@router`. Whichever comes first.
+    next_idx = min(
+        (src.find(marker, cls_idx + 1) for marker in ("\n@router", "\nclass ", "\nasync def ", "\ndef ")),
+        key=lambda i: i if i > 0 else 10**9,
+    )
+    after_cls = src[cls_idx:next_idx]
     assert "target_site_id: str" in after_cls
     assert "reason: str" in after_cls
 
