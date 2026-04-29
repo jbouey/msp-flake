@@ -6227,9 +6227,11 @@ async def export_site_data(
                     d[k] = v.isoformat()
             incidents.append(d)
 
-        # Evidence bundles (last 500)
+        # Evidence bundles (last 500). Schema uses `check_type`, NOT
+        # `bundle_type` — round-table 2026-04-29 P0 SQL audit found this
+        # 500-on-first-call bug; fixed before customer install.
         evidence_rows = await conn.fetch("""
-            SELECT id, site_id, bundle_type, checks, checked_at, created_at
+            SELECT id, site_id, check_type, checks, checked_at, created_at
             FROM compliance_bundles
             WHERE site_id = $1
             ORDER BY created_at DESC
@@ -6306,10 +6308,12 @@ async def export_site_data(
                     d[k] = v.isoformat()
             credentials.append(d)
 
-        # Go agents
+        # Go agents. Schema uses `agent_version` and `last_heartbeat`,
+        # NOT `version`/`last_checkin` — round-table 2026-04-29 P0 SQL
+        # audit found this 500-on-first-call bug.
         go_agent_rows = await conn.fetch("""
             SELECT id, site_id, agent_id, hostname, capability_tier,
-                   status, version, last_checkin, created_at
+                   status, agent_version, last_heartbeat, created_at
             FROM go_agents
             WHERE site_id = $1
             ORDER BY hostname

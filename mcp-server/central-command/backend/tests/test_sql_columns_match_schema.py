@@ -116,6 +116,17 @@ UPDATE_RE = re.compile(
     r"(?:\bWHERE\b|\bRETURNING\b|\"\"\"|'''|\n\s*[\"')]|\)\s*$)",
     re.IGNORECASE | re.DOTALL,
 )
+# SELECT <col1, col2, ...> FROM <table> ...
+# Single-table SELECT only — JOINs explicitly skipped because column
+# binding is ambiguous (`SELECT a.x, b.y FROM a JOIN b ...`). The
+# audit observed 57 naive hits → only 2 real after JOIN filtering;
+# this regex matches single-table SELECTs and skips multi-table joins
+# by stopping at the first JOIN/AS-alias/comma-separated FROM list.
+SELECT_RE = re.compile(
+    r"SELECT\s+(?!.*\bJOIN\b)(.*?)\s+FROM\s+([a-zA-Z_][\w]*)\s*"
+    r"(?:WHERE|ORDER\s+BY|LIMIT|GROUP\s+BY|HAVING|FOR\s+UPDATE|\"\"\"|'''|\)|\n\s*['\"]|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _backend_py_files() -> List[pathlib.Path]:
@@ -144,6 +155,46 @@ def _scan_inserts(src: str) -> List[Tuple[str, Set[str], int]]:
         cols = {c for c in cols if re.match(r"^[a-z_][\w]*$", c)}
         lineno = src[: match.start()].count("\n") + 1
         out.append((tbl, cols, lineno))
+    return out
+
+
+def _scan_selects(src: str) -> List[Tuple[str, Set[str], int]]:
+    """Yield (table, columns_referenced, approx_lineno) per single-table
+    SELECT. JOINs filtered out by the regex (column binding ambiguous);
+    `SELECT *` skipped (nothing to validate); aggregate-only SELECTs
+    (COUNT, MAX, etc. without a column ref) skipped.
+    """
+    out = []
+    cleaned = _strip_sql_comments(src)
+    for match in SELECT_RE.finditer(cleaned):
+        col_blob = match.group(1)
+        tbl = match.group(2).lower()
+        # Skip SELECT *
+        if "*" in col_blob:
+            continue
+        # Skip aggregate-only (no bare-identifier column references)
+        if not re.search(r"[a-zA-Z_]\w*", col_blob):
+            continue
+        # Extract bare column identifiers — strip aggregates, casts,
+        # arithmetic, string concat, function calls.
+        cols: Set[str] = set()
+        for part in col_blob.split(","):
+            part = part.strip()
+            # Skip if the part contains a function call or aggregate
+            if "(" in part:
+                continue
+            # Skip if part has a CAST / arithmetic / non-trivial expr
+            if any(op in part for op in ("::", "+", "-", "/", "*", "||", " AS ", " as ")):
+                continue
+            # Bare identifier check
+            m = re.match(r"^([a-zA-Z_][\w]*)\s*$", part)
+            if m:
+                cols.add(m.group(1).lower())
+        # Drop SQL keywords that might match the regex spuriously
+        cols -= {"distinct", "all"}
+        if cols:
+            lineno = src[: match.start()].count("\n") + 1
+            out.append((tbl, cols, lineno))
     return out
 
 
@@ -198,6 +249,24 @@ def test_schema_fixture_loaded(schema):
 # in lockstep).
 INSERT_BASELINE_MAX = 0
 UPDATE_BASELINE_MAX = 0
+# SELECT linter (Session 213 round-table P0 — promoted from P2). Both
+# of the 2026-04-29 P0 SQL bugs that 500'd /sites/{id}/export
+# (compliance_bundles.bundle_type, go_agents.version, go_agents.last_checkin)
+# would have been caught at PR time by extending the linter to SELECT
+# column references.
+#
+# Baseline locked at 12 (the current parse-noise floor). Of the 12,
+# most are false positives from regex alias-prefix handling
+# (`s.site_id` parsed as bare `site_id` against the wrong table) and
+# JOIN-detection edge cases — the regex's negative-lookahead JOIN
+# filter doesn't constrain to current-statement scope. Three are
+# genuinely fixture-stale (compliance_bundles got `appliance_id` +
+# `outcome` columns; fixture refresh deferred to next session).
+#
+# Filed as P3: convert to sqlparse-based AST scan + reduce baseline
+# to 0. The regex ratchet still catches the failure class — adding
+# a NEW SELECT bug fails CI immediately because count > 12.
+SELECT_BASELINE_MAX = 12
 
 
 def test_every_python_insert_references_real_columns(schema):
@@ -269,9 +338,46 @@ def test_every_python_update_references_real_columns(schema):
     )
 
 
+def test_every_python_select_references_real_columns(schema):
+    """Same check on the SELECT side. Tighter regex skips JOINs (column
+    binding ambiguous), SELECT *, aggregate-only selects, and parts
+    with function calls / casts / arithmetic.
+
+    Caught the 2026-04-29 P0s: compliance_bundles.bundle_type (real:
+    check_type) and go_agents.version + go_agents.last_checkin (real:
+    agent_version + last_heartbeat). Both 500'd /sites/{id}/export.
+
+    Ratchet: same NEW-violation-fails-CI semantics as INSERT/UPDATE.
+    """
+    failures: List[str] = []
+    for py_path in _backend_py_files():
+        try:
+            src = py_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel = py_path.relative_to(REPO_ROOT)
+        for tbl, cols, lineno in _scan_selects(src):
+            if tbl in SCHEMA_TRUST_GAPS:
+                continue
+            if tbl not in schema:
+                continue
+            unknown = cols - schema[tbl]
+            if unknown:
+                failures.append(
+                    f"{rel}:{lineno}: SELECT FROM {tbl} references "
+                    f"unknown column(s) {sorted(unknown)}"
+                )
+    assert len(failures) <= SELECT_BASELINE_MAX, (
+        f"{len(failures)} SELECT schema mismatches > baseline {SELECT_BASELINE_MAX}. "
+        "A new bug joined the list. Either fix it (and lower SELECT_BASELINE_MAX) "
+        "or justify the addition.\n"
+        + "\n".join(f"  - {f}" for f in failures)
+    )
+
+
 def _count_violations(schema):
-    """Helper: count INSERT + UPDATE schema mismatches (no assert)."""
-    ins, upd = 0, 0
+    """Helper: count INSERT + UPDATE + SELECT schema mismatches (no assert)."""
+    ins, upd, sel = 0, 0, 0
     for py_path in _backend_py_files():
         try:
             src = py_path.read_text(encoding="utf-8")
@@ -287,7 +393,12 @@ def _count_violations(schema):
                 continue
             if cols - schema[tbl]:
                 upd += 1
-    return ins, upd
+        for tbl, cols, _ in _scan_selects(src):
+            if tbl in SCHEMA_TRUST_GAPS or tbl not in schema:
+                continue
+            if cols - schema[tbl]:
+                sel += 1
+    return ins, upd, sel
 
 
 def test_baseline_doesnt_regress_silently(schema):
@@ -299,7 +410,7 @@ def test_baseline_doesnt_regress_silently(schema):
 
     Mirrors the pattern in test_frontend_mutation_csrf.py.
     """
-    ins, upd = _count_violations(schema)
+    ins, upd, sel = _count_violations(schema)
     assert ins == INSERT_BASELINE_MAX, (
         f"INSERT violations={ins} but INSERT_BASELINE_MAX={INSERT_BASELINE_MAX}. "
         "Adjust INSERT_BASELINE_MAX in this file to match the actual count."
@@ -307,4 +418,8 @@ def test_baseline_doesnt_regress_silently(schema):
     assert upd == UPDATE_BASELINE_MAX, (
         f"UPDATE violations={upd} but UPDATE_BASELINE_MAX={UPDATE_BASELINE_MAX}. "
         "Adjust UPDATE_BASELINE_MAX in this file to match the actual count."
+    )
+    assert sel == SELECT_BASELINE_MAX, (
+        f"SELECT violations={sel} but SELECT_BASELINE_MAX={SELECT_BASELINE_MAX}. "
+        "Adjust SELECT_BASELINE_MAX in this file to match the actual count."
     )
