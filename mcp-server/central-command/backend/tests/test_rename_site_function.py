@@ -139,7 +139,10 @@ async def test_rename_site_skips_immutable_tables():
         ))
         immutable = {r[0] for r in result}
 
-    # Cryptographic + audit-class + parent identity (F4 round-table)
+    # Cryptographic + audit-class + parent identity (F4 round-table) +
+    # mig 259 drift-close additions (F4-followup invariant surfaced 7
+    # tables with site_id + DELETE-blocking trigger that weren't in
+    # the immutable list — all 7 confirmed intentionally append-only).
     required_immutable = {
         # F4 round-table P0-2: parent identity row
         'sites',
@@ -160,6 +163,14 @@ async def test_rename_site_skips_immutable_tables():
         'sigauth_observations',
         'promoted_rule_events',
         'reconcile_events',
+        # Mig 259: F4-followup drift-close (Session 213)
+        'appliance_heartbeats',
+        'consent_request_tokens',
+        'integration_audit_log',
+        'liveness_claims',
+        'promotion_audit_log_recovery',
+        'provisioning_claim_events',
+        'watchdog_events',
         # Self-referential
         'site_canonical_mapping',
     }
