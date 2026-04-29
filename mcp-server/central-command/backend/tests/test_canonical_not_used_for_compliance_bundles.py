@@ -41,6 +41,9 @@ EXEMPT_PATHS = {
     # The function intentionally SKIPS compliance_bundles; the co-mention
     # is documentation, not a misuse.
     "mcp-server/central-command/backend/migrations/257_rename_site_function.sql",
+    # Migration 259 — extends _rename_site_immutable_tables() with 7
+    # drift-close additions. Same documentation reason as mig 257.
+    "mcp-server/central-command/backend/migrations/259_immutable_list_drift_close.sql",
 }
 
 EXTENSIONS = {".py", ".sql", ".md", ".ts", ".tsx", ".go"}
