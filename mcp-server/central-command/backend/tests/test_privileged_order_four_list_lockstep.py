@@ -65,7 +65,11 @@ GO_ONLY: Set[str] = {
     # by fleet_cli, but they DO require the agent to verify a server
     # signature. Daemon-internal mechanics that the Python fleet_cli
     # path doesn't gate.
-    "configure_workstation_agent",
+    #
+    # `configure_workstation_agent` REMOVED 2026-04-29 (Session 213
+    # P3): the entry was in dangerousOrderTypes with no matching
+    # handler — dead-list entry. Removed from the Go map in commit
+    # 63f4c66e + this test's allowlist in the same lockstep.
     "update_agent",
     "healing",
     "diagnostic",
