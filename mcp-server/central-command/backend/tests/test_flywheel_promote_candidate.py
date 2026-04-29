@@ -42,6 +42,14 @@ class FakeConn:
         self.executed.append((query, args))
         return None
 
+    async def fetchval(self, query: str, *args):
+        """Phantom-site precondition (F2 round-table 2026-04-28): the
+        precondition queries `SELECT 1 FROM site_appliances ...`. Return
+        a truthy value so promote_candidate's mocked path proceeds —
+        the FakeConn fixture represents a healthy site."""
+        self.executed.append((query, args))
+        return 1
+
     def transaction(self):
         """Real asyncpg.Connection.transaction() returns a Transaction
         context manager. Our mock returns a no-op so promote_candidate's

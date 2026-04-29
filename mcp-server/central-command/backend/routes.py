@@ -1187,46 +1187,68 @@ async def promote_pattern(
     # Use an asyncpg connection since flywheel_promote expects asyncpg.
     from .fleet import get_pool
     from .tenant_middleware import admin_connection
-    from .flywheel_promote import promote_candidate
+    from .flywheel_promote import promote_candidate, PhantomSiteRolloutError
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
-        async with conn.transaction():
-            # Upsert candidate from aggregated_pattern_stats
-            candidate_row = await conn.fetchrow("""
-                INSERT INTO learning_promotion_candidates (
-                    site_id, pattern_signature, approval_status
-                ) VALUES ($1, $2, 'pending')
-                ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
-                    approval_status = learning_promotion_candidates.approval_status
-                RETURNING id, site_id, pattern_signature
-            """, aps_row.site_id, aps_row.pattern_signature)
+    try:
+        async with admin_connection(pool) as conn:
+            async with conn.transaction():
+                # Upsert candidate from aggregated_pattern_stats
+                candidate_row = await conn.fetchrow("""
+                    INSERT INTO learning_promotion_candidates (
+                        site_id, pattern_signature, approval_status
+                    ) VALUES ($1, $2, 'pending')
+                    ON CONFLICT (site_id, pattern_signature) DO UPDATE SET
+                        approval_status = learning_promotion_candidates.approval_status
+                    RETURNING id, site_id, pattern_signature
+                """, aps_row.site_id, aps_row.pattern_signature)
 
-            # Fetch full candidate with metrics from aggregated_pattern_stats
-            full = await conn.fetchrow("""
-                SELECT lpc.id, lpc.site_id, lpc.pattern_signature,
-                       aps.success_rate, aps.total_occurrences, aps.l2_resolutions,
-                       aps.recommended_action
-                FROM learning_promotion_candidates lpc
-                JOIN aggregated_pattern_stats aps
-                    ON aps.site_id = lpc.site_id
-                    AND aps.pattern_signature = lpc.pattern_signature
-                WHERE lpc.id = $1
-            """, candidate_row["id"])
+                # Fetch full candidate with metrics from aggregated_pattern_stats
+                full = await conn.fetchrow("""
+                    SELECT lpc.id, lpc.site_id, lpc.pattern_signature,
+                           aps.success_rate, aps.total_occurrences, aps.l2_resolutions,
+                           aps.recommended_action
+                    FROM learning_promotion_candidates lpc
+                    JOIN aggregated_pattern_stats aps
+                        ON aps.site_id = lpc.site_id
+                        AND aps.pattern_signature = lpc.pattern_signature
+                    WHERE lpc.id = $1
+                """, candidate_row["id"])
 
-            result = await promote_candidate(
-                conn=conn,
-                candidate=dict(full) if full else dict(candidate_row),
-                actor=user.get("username", "admin"),
-                actor_type="admin",
-            )
+                result = await promote_candidate(
+                    conn=conn,
+                    candidate=dict(full) if full else dict(candidate_row),
+                    actor=user.get("username", "admin"),
+                    actor_type="admin",
+                )
 
-            # Mark as no longer eligible in aggregated_pattern_stats
-            await conn.execute("""
-                UPDATE aggregated_pattern_stats
-                SET promotion_eligible = false
-                WHERE id = $1
-            """, int(pattern_id))
+                # Mark as no longer eligible in aggregated_pattern_stats
+                await conn.execute("""
+                    UPDATE aggregated_pattern_stats
+                    SET promotion_eligible = false
+                    WHERE id = $1
+                """, int(pattern_id))
+    except PhantomSiteRolloutError as e:
+        # Session 213 round-table F2 P0 — refuse to promote into a
+        # site_id with no live appliances. Translate to 409 with a
+        # structured body that points the operator at the relocate
+        # audit log.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "phantom_site_rollout",
+                "message": str(e),
+                "remediation": (
+                    "This candidate's site_id has no live appliances. "
+                    "Likely cause: a prior relocate/decommission left "
+                    "telemetry under the dead site_id. Check "
+                    "admin_audit_log for action='site.operational_history.orphan_relocation' "
+                    "or 'site.aggregated_pattern_stats.orphan_relocation' "
+                    "to see if a cleanup is pending."
+                ),
+                "site_id": aps_row.site_id,
+            },
+        )
 
     return {"status": "promoted", "pattern_id": pattern_id, **result}
 

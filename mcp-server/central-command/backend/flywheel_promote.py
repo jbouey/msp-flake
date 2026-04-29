@@ -33,6 +33,16 @@ import asyncpg
 logger = logging.getLogger(__name__)
 
 
+class PhantomSiteRolloutError(Exception):
+    """Raised by safe_rollout_promoted_rule when scope='site' but the
+    site_id has no live site_appliances rows. Callers (routes.py,
+    learning_api.py, client_portal.py) should catch and translate to
+    HTTP 409 with a structured body pointing at the relocate audit
+    log. Session 213 round-table F2 P0 (2026-04-29).
+    """
+    pass
+
+
 async def promote_candidate(
     conn: asyncpg.Connection,
     candidate: Dict[str, Any],
@@ -597,9 +607,57 @@ async def safe_rollout_promoted_rule(
     ledger event (callers pass a sentinel like '__FLEET__' or the
     first site's id).
 
-    Returns the number of orders created (0 on failure)."""
+    Returns the number of orders created (0 on failure).
+
+    Phantom-site precondition (Session 213 round-table F2 P0,
+    2026-04-29): when `scope='site'`, verify that AT LEAST ONE active
+    site_appliances row exists for the given site_id BEFORE issuing
+    fleet_orders. Pre-fix, a promotion to a site_id with zero live
+    appliances would silently succeed at the API/state level — the
+    fleet_order was inserted but no daemon would ever receive it
+    because no appliance is registered there. This was the silent
+    half of the candidate-253985 issue: the orphan site
+    `physical-appliance-pilot-1aea78` had no live appliances post-
+    relocate, but the dashboard kept showing eligible candidates
+    against it. Approve → fleet_order issued → void rollout.
+
+    Raises `PhantomSiteRolloutError` (caller translates to HTTP 409)
+    when the precondition fails. `scope='fleet'` skips this check
+    by design — fleet-wide rollouts iterate over the live
+    site_appliances list inside `issue_sync_promoted_rule_orders`
+    and naturally handle empty fleets.
+    """
     if scope not in ("site", "fleet"):
         raise ValueError(f"scope must be 'site' or 'fleet', got {scope!r}")
+    if scope == "site":
+        live = await conn.fetchval(
+            "SELECT 1 FROM site_appliances "
+            "WHERE site_id = $1 AND deleted_at IS NULL LIMIT 1",
+            site_id,
+        )
+        if not live:
+            logger.error(
+                "safe_rollout_phantom_site_rejected",
+                extra={
+                    "rule_id": rule_id,
+                    "site_id": site_id,
+                    "caller": caller,
+                    "remediation": (
+                        "site_id has zero live site_appliances rows — "
+                        "rollout would issue a fleet_order to a dead site. "
+                        "Likely cause: the candidate references a relocated "
+                        "or decommissioned site_id that the cleanup cascade "
+                        "missed (e.g. execution_telemetry holding pre-"
+                        "relocate history). Reconcile via "
+                        "scripts/db_delete_safety_check.py + the relocate "
+                        "audit log; do NOT promote until the site_id is live."
+                    ),
+                },
+            )
+            raise PhantomSiteRolloutError(
+                f"site_id={site_id!r} has no live appliances; "
+                f"refusing to issue phantom fleet_order for rule={rule_id}"
+            )
     try:
         n = await issue_sync_promoted_rule_orders(
             conn,

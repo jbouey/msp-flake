@@ -578,6 +578,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_sigauth_post_fix_window_canary(c),
     ),
     Assertion(
+        name="flywheel_orphan_telemetry",
+        severity="sev1",
+        description="Detects execution_telemetry rows under site_ids that have no matching live site_appliances row — the upstream source class that defeated migrations 252 + 254 on 2026-04-29. The flywheel aggregator (main.py _flywheel_promotion_loop) GROUPs BY site_id and would silently re-create orphan aggregated_pattern_stats rows from such telemetry, leading to phantom-eligible candidates promoting into dead sites. Fires sev1 on any site_id with >10 orphan telemetry rows in the last 24h. Round-table 2026-04-29 P0 (F3).",
+        check=lambda c: _check_flywheel_orphan_telemetry(c),
+    ),
+    Assertion(
         name="promotion_audit_log_recovery_pending",
         severity="sev1",
         description="HIPAA §164.312(b) chain-of-custody durability gate. promotion_audit_log_recovery is the dead-letter queue for promotion_audit_log INSERTs that failed inside flywheel_promote.promote_candidate's Step 7 savepoint (Migration 253, Session 212 round-table P0). Any unrecovered row means an L1 rule promotion happened without its audit row landing in the WORM-style audit log — the chain of custody is broken until an operator runs the recovery script. Sev1 because the loss is HIPAA-relevant and grows monotonically until handled.",
@@ -887,6 +893,19 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "trigger a new round-table BEFORE any fix. The forensic "
             "logger.error('sigauth_unknown_pubkey', ...) carries the diagnostic "
             "context — query mcp-server logs for that token at the rejection time.",
+    },
+    "flywheel_orphan_telemetry": {
+        "display_name": "Flywheel telemetry under a dead site_id",
+        "recommended_action": "execution_telemetry has rows whose site_id has NO matching "
+            "live site_appliances row. The flywheel aggregator will use those rows to "
+            "manufacture phantom aggregated_pattern_stats entries which can then promote "
+            "into a dead site (the candidate-253985 failure mode from 2026-04-29). "
+            "Likely cause: a relocate/decommission cleanup that didn't cascade to "
+            "execution_telemetry. Run the orphan_relocation migration pattern (252+254+255 "
+            "as templates), confirm the live site_id is correct, and verify with "
+            "scripts/db_delete_safety_check.py before the next deploy. Until cleared, "
+            "the dashboard's promotion candidates may include phantom entries; do NOT "
+            "approve any candidate whose site_id appears in this violation's details.",
     },
     "sigauth_enforce_mode_rejections": {
         "display_name": "Enforce-mode appliance had a sigauth rejection",
@@ -1424,6 +1443,57 @@ async def _check_promotion_audit_log_recovery_pending(conn: asyncpg.Connection) 
                 "remediation": "Run scripts/recover_promotion_audit_log.py — idempotent retry for each unrecovered row.",
             },
         )
+    ]
+
+
+async def _check_flywheel_orphan_telemetry(conn: asyncpg.Connection) -> List[Violation]:
+    """Detect execution_telemetry rows under dead site_ids — the
+    upstream class of bug that defeated migrations 252 + 254 on
+    2026-04-29 by causing the flywheel aggregator to recreate orphan
+    aggregated_pattern_stats rows. Round-table F3 P0 (2026-04-29).
+
+    Fires sev1 per dead-site_id with >10 telemetry rows in the last
+    24h. The 24h window + >10 floor avoids noise from ephemeral
+    relocate windows where a brief overlap is expected; sustained
+    orphan telemetry is the failure signal.
+
+    Future architectural fix (F1 next session): replace this detector
+    with a canonicalized aggregation view that joins through
+    site_appliances, eliminating the orphan-recreation class
+    structurally."""
+    rows = await conn.fetch(
+        """
+        SELECT et.site_id,
+               COUNT(*) AS orphan_rows_24h,
+               MIN(et.created_at) AS oldest,
+               MAX(et.created_at) AS newest
+          FROM execution_telemetry et
+         WHERE et.created_at > NOW() - INTERVAL '24 hours'
+           AND et.site_id NOT IN (
+               SELECT DISTINCT site_id FROM site_appliances
+                WHERE deleted_at IS NULL
+           )
+      GROUP BY et.site_id
+        HAVING COUNT(*) > 10
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "orphan_rows_24h": int(r["orphan_rows_24h"]),
+                "oldest": r["oldest"].isoformat() if r["oldest"] else None,
+                "newest": r["newest"].isoformat() if r["newest"] else None,
+                "remediation": (
+                    "site_id has no matching live site_appliances row. "
+                    "Run the orphan_relocation cascade (migrations 252/254/255 as "
+                    "templates) to migrate execution_telemetry + incidents + "
+                    "l2_decisions to the canonical site_id BEFORE the next flywheel "
+                    "tick (every 30 min) regenerates aggregated_pattern_stats."
+                ),
+            },
+        )
+        for r in rows
     ]
 
 
