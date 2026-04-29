@@ -265,8 +265,13 @@ UPDATE_BASELINE_MAX = 0
 #
 # Filed as P3: convert to sqlparse-based AST scan + reduce baseline
 # to 0. The regex ratchet still catches the failure class — adding
-# a NEW SELECT bug fails CI immediately because count > 12.
-SELECT_BASELINE_MAX = 12
+# a NEW SELECT bug fails CI immediately because count > baseline.
+#
+# 2026-04-29 (Session 213 P3): fixture refreshed from prod (added
+# `appliance_id` + `outcome` to compliance_bundles + 25 partitions).
+# That dropped one false positive (appliance_relocation_api.py:86),
+# baseline 12 → 11.
+SELECT_BASELINE_MAX = 11
 
 
 def test_every_python_insert_references_real_columns(schema):

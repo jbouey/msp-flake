@@ -525,19 +525,25 @@ func orderIDFromContext(ctx context.Context) string {
 // dangerousOrderTypes are order types that must NEVER execute without signature verification.
 // These can modify binaries, execute commands, or alter security configuration.
 var dangerousOrderTypes = map[string]bool{
-	"update_daemon":               true,
-	"nixos_rebuild":               true,
-	"healing":                     true,
-	"diagnostic":                  true,
-	"sync_promoted_rule":          true,
-	"configure_workstation_agent": true,
-	"update_agent":                true,
-	"enable_emergency_access":     true,
-	"disable_emergency_access":    true,
+	"update_daemon":            true,
+	"nixos_rebuild":            true,
+	"healing":                  true,
+	"diagnostic":               true,
+	"sync_promoted_rule":       true,
+	"update_agent":             true,
+	"enable_emergency_access":  true,
+	"disable_emergency_access": true,
 	// reprovision rewrites the daemon's identity (site_id + api_key)
 	// — at least as dangerous as update_daemon. v0.4.12 (Session 210-B
 	// 2026-04-25) adds it to the deny-without-pubkey list.
 	"reprovision": true,
+	// `configure_workstation_agent` REMOVED in Session 213 (2026-04-29
+	// round-table P3): no matching handler ever existed in this
+	// processor, so the post-checkin dispatch would fall through to
+	// "unknown order type" regardless of the deny-list state. Either
+	// re-add when a handler is implemented OR keep the list honest.
+	// `TestDangerousHandlersRegistered` (below) enforces the
+	// every-entry-has-a-handler invariant going forward.
 }
 
 func (p *Processor) verifySignature(order *Order) error {

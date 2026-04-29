@@ -197,3 +197,36 @@ func TestReprovisionConfigYAMLRoundTrip(t *testing.T) {
 		t.Errorf("expected site_id=new-site after round-trip, got %v", cfg2["site_id"])
 	}
 }
+
+
+// TestDangerousHandlersRegistered locks in the invariant that every
+// entry in `dangerousOrderTypes` has a matching handler registered in
+// NewProcessor(). Round-table 2026-04-29 P3.
+//
+// Pre-fix this commit removed `configure_workstation_agent` from the
+// dangerousOrderTypes map because no `handleConfigureWorkstationAgent`
+// existed — the deny-list entry was dead. This test prevents the
+// inverse class: adding a new dangerous-order-type to the map without
+// the matching handler. Symptom would be: pre-checkin path correctly
+// rejects the order, but post-checkin dispatch falls through to
+// "unknown order type" because the handler is missing — operator
+// confusion, no audit narrative.
+//
+// To add a new dangerous order type:
+//   1. Implement `func (p *Processor) handleX(...)` in this package
+//   2. Register it in NewProcessor's `handlers["X"] = p.handleX`
+//   3. Add `"X": true` to dangerousOrderTypes
+// This test fails CI if step 2 is missed.
+func TestDangerousHandlersRegistered(t *testing.T) {
+	p := NewProcessor(t.TempDir(), nil)
+	for orderType := range dangerousOrderTypes {
+		t.Run(orderType, func(t *testing.T) {
+			if _, ok := p.handlers[orderType]; !ok {
+				t.Fatalf("dangerousOrderTypes[%q]=true but no handler registered "+
+					"in NewProcessor(). Either remove from dangerousOrderTypes "+
+					"or add the handler. Round-table 2026-04-29 P3 invariant.",
+					orderType)
+			}
+		})
+	}
+}
