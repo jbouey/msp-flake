@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
-  "session": 211,
-  "updated": "2026-04-25T19:44:40.480126Z",
+  "session": 212,
+  "updated": "2026-04-28T22:55:00.000000Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty.",
   "versions": {
     "agent": "0.4.6",
@@ -87,7 +87,7 @@
   "recent_milestones": [
     {
       "when": "2026-04-28",
-      "what": "Session 212: 16 commits closing 22 round-table findings + 3 P3 follow-ups + task #169 closure mechanism. P0 partner-identity-mismatch + audit-DLQ; P1 lifecycle TOCTOU + admin_transaction helper + drift endpoint + tsc pre-push gate + filename-uniqueness gate; P2 stale-cache + nonce truncation + lock_timeout + buildAuthedHeaders codemod (7 partner files); 7d acceptance window for sigauth-wrap fix in progress (closes 2026-05-05 17:11Z)"
+      "what": "Session 212: 19 commits closing 22 round-table findings + 3 P3 follow-ups + task #169 enterprise-approved early closure (Option C HYBRID with all 5 compensating controls). New helpers: admin_transaction (tenant_middleware), buildAuthedHeaders (utils/csrf). New endpoint: /api/version/drift. New invariants: sigauth_enforce_mode_rejections (sev2), promotion_audit_log_recovery_pending (sev1), sigauth_post_fix_window_canary (sev1, window-bounded — REMOVE after 2026-05-05). New migrations: 252 (orphan backfill), 253 (audit DLQ). New CI gates: tsc pre-push, filename-uniqueness, no-silent-write-warnings, PRE_PUSH_FULL stem-match. Substrate invariant count 42 → 45."
     },
     {
       "when": "2026-04-18",
