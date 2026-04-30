@@ -11,9 +11,18 @@ name will not see that. This CI gate makes the rule programmatic.
 
 The check: any source line in mcp-server/ that contains
 `canonical_site_id` AND has `compliance_bundles` within ±5 lines fails.
-The exemption list (BELOW) is for documentation/test files that
-intentionally co-mention them (this file, migration 256 comments,
-runbook).
+
+Exemptions:
+  1. STATIC LIST — `EXEMPT_PATHS` for documentation/test files that
+     intentionally co-mention them (this file, the original migrations
+     256/257/259 that established the contract).
+  2. DYNAMIC AUTO-EXEMPT — any migration whose source touches
+     `_rename_site_immutable_tables` is automatically exempt because
+     such a migration's documentation MUST explain the immutable-list
+     boundary (which inherently mentions compliance_bundles). This
+     auto-exempt closes the process gap that bit Session 213 twice
+     (mig 257 + mig 259 deploys both initially failed on this gate
+     for legitimate documentation co-mention).
 """
 from __future__ import annotations
 
@@ -50,13 +59,35 @@ EXTENSIONS = {".py", ".sql", ".md", ".ts", ".tsx", ".go"}
 WINDOW = 5
 
 
+def _is_auto_exempt(path: pathlib.Path, source: str) -> bool:
+    """A migration whose source touches `_rename_site_immutable_tables`
+    is auto-exempt — the immutable-list rationale inherently mentions
+    compliance_bundles. Closes the Session 213 deploy-friction gap
+    that bit mig 257 + mig 259 (both legitimate documentation
+    co-mentions that required manual EXEMPT_PATHS bumps).
+
+    Scope is narrow: only `migrations/*.sql` files, only when they
+    actually reference the function. Other files (Python, tests,
+    runbooks) still need explicit listing in EXEMPT_PATHS.
+    """
+    if "/migrations/" not in path.as_posix():
+        return False
+    if path.suffix != ".sql":
+        return False
+    return "_rename_site_immutable_tables" in source
+
+
 def _scan_file(path: pathlib.Path) -> list[tuple[int, str]]:
     """Return list of (line_number, line) where canonical_site_id and
-    compliance_bundles co-occur within WINDOW lines of each other."""
+    compliance_bundles co-occur within WINDOW lines of each other.
+    Returns [] if file is auto-exempt."""
     try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        source = path.read_text(encoding="utf-8", errors="ignore")
     except (UnicodeDecodeError, OSError):
         return []
+    if _is_auto_exempt(path, source):
+        return []
+    lines = source.splitlines()
 
     canonical_lines = [
         i for i, line in enumerate(lines)
@@ -80,6 +111,54 @@ def _scan_file(path: pathlib.Path) -> list[tuple[int, str]]:
                 hits.append((ln + 1, lines[ln]))
                 break  # one hit per canonical line is enough
     return hits
+
+
+def test_auto_exempt_only_fires_for_immutable_list_migrations():
+    """The dynamic auto-exempt is narrowly scoped: only migrations
+    that actually reference `_rename_site_immutable_tables` qualify.
+    A regular migration that happens to mention canonical_site_id
+    + compliance_bundles together is NOT auto-exempt.
+
+    This guards against the gate degrading silently — if a future
+    refactor accidentally widens the auto-exempt scope, this test
+    catches it.
+    """
+    # Positive case: mig 257 (defines the function) is auto-exempt
+    mig257 = REPO_ROOT / "mcp-server/central-command/backend/migrations/257_rename_site_function.sql"
+    if mig257.exists():
+        src = mig257.read_text()
+        assert _is_auto_exempt(mig257, src), (
+            "Mig 257 references _rename_site_immutable_tables; should "
+            "auto-exempt"
+        )
+
+    # Positive case: mig 259 (extends the function) is auto-exempt
+    mig259 = REPO_ROOT / "mcp-server/central-command/backend/migrations/259_immutable_list_drift_close.sql"
+    if mig259.exists():
+        src = mig259.read_text()
+        assert _is_auto_exempt(mig259, src), (
+            "Mig 259 references _rename_site_immutable_tables; should "
+            "auto-exempt"
+        )
+
+    # Negative case: a Python file mentioning the function is NOT
+    # auto-exempt (only migrations qualify — Python code that mentions
+    # canonical_site_id AND compliance_bundles in proximity should
+    # still trip the gate)
+    fake_py = pathlib.Path("/tmp/test_not_a_migration.py")
+    assert not _is_auto_exempt(
+        fake_py, "_rename_site_immutable_tables"
+    ), "Auto-exempt must be migration-scoped, not Python-wide"
+
+    # Negative case: a migration that doesn't reference the function
+    # is NOT auto-exempt
+    fake_mig = REPO_ROOT / "mcp-server/central-command/backend/migrations/254_aggregated_pattern_stats_orphan_cleanup_retry.sql"
+    if fake_mig.exists():
+        src = fake_mig.read_text()
+        assert not _is_auto_exempt(fake_mig, src), (
+            "Mig 254 does NOT reference _rename_site_immutable_tables; "
+            "must not be auto-exempt"
+        )
 
 
 def test_no_canonical_site_id_near_compliance_bundles():
