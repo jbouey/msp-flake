@@ -166,3 +166,30 @@ cross-org WRITE, no rollout, no fleet_order issuance).
 - [ ] Draft `cross_org_federation_leak` substrate invariant
 - [ ] Draft auditor-kit federation-event surface
 - [ ] Then and only then: write the enforcement commit
+
+---
+
+## Cron schedule (filed 2026-04-30, session-only — re-establish from this card if session ends)
+
+**Health check** — 2026-05-07 09:37 local (1 week)
+> Verify daily snapshot loop is producing rows. Run:
+>
+>     ssh root@178.156.162.116 "docker exec mcp-postgres psql -U mcp -d mcp -c \"SELECT snapshot_date, tier_name, COUNT(*) FROM flywheel_federation_candidate_daily GROUP BY snapshot_date, tier_name ORDER BY snapshot_date DESC LIMIT 10;\""
+>
+> Expected: 7 days of rows. Empty = loop crashed; check `docker logs mcp-server | grep flywheel_federation_snapshot`.
+
+**Call-to-action** — 2026-05-21 10:23 local (3 weeks)
+> Calibration window closed. Convene the dedicated F6 phase 2
+> enforcement round-table per the pre-conditions list above.
+>
+> Verify 21 days of clean data:
+>
+>     ssh root@178.156.162.116 "docker exec mcp-postgres psql -U mcp -d mcp -c \"SELECT snapshot_date, tier_name, AVG(candidate_count)::INT, MIN(candidate_count), MAX(candidate_count) FROM flywheel_federation_candidate_daily WHERE snapshot_date > NOW() - INTERVAL '21 days' GROUP BY snapshot_date, tier_name ORDER BY snapshot_date DESC LIMIT 50;\""
+
+If a fresh Claude session is reading this card, run:
+```
+CronCreate cron="37 9 7 5 *" recurring=false durable=true prompt=<health-check>
+CronCreate cron="23 10 21 5 *" recurring=false durable=true prompt=<call-to-action>
+```
+(Past dates auto-delete; if today is past 2026-05-07 / 2026-05-21,
+just run the verification commands above directly.)
