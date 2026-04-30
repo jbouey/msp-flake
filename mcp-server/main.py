@@ -883,17 +883,103 @@ async def _flywheel_promotion_loop():
 
                 # Step 2: Update promotion_eligible on aggregated_pattern_stats
                 # Only L2 patterns are eligible — L1 patterns are already deterministic rules
+                #
+                # F6 MVP slice (Session 214, mig 261): when
+                # FLYWHEEL_FEDERATION_ENABLED env var is "true", read
+                # thresholds from `flywheel_eligibility_tiers` instead
+                # of the hardcoded values. Default OFF — production
+                # behavior unchanged until calibration + round-table.
+                #
+                # The federated read path is intentionally minimal in
+                # this MVP: it consults the `local` tier (tier_level=0)
+                # only. Tier 1 (org-aggregated) and Tier 2 (platform)
+                # require their own queries with cross-org isolation
+                # logic; those land in F6 phase 2 with explicit HIPAA
+                # round-table.
+                # Lenient parser — matches assertions.py::L2_ENABLED
+                # convention (sibling subsystem). Strict parsers in
+                # this codebase (stripe_connect.py etc.) reject "1"/
+                # "yes"/"on"; for an operator-toggleable feature flag
+                # whose nearest neighbor is L2_ENABLED, lenient
+                # principle-of-least-surprise wins. Round-table
+                # 2026-04-30 P1 catch.
+                federation_enabled = os.environ.get(
+                    "FLYWHEEL_FEDERATION_ENABLED", "false"
+                ).lower() in ("true", "1", "yes", "on")
                 try:
+                    if federation_enabled:
+                        # Read calibrated thresholds for the local tier.
+                        # If the tier is enabled AND calibrated, use
+                        # those values; otherwise fall back to the
+                        # hardcoded defaults (defensive — feature flag
+                        # ON without a calibrated tier is a config
+                        # error but should not break the loop).
+                        tier_row = await db.execute(text("""
+                            SELECT min_total_occurrences,
+                                   min_success_rate,
+                                   min_l2_resolutions,
+                                   max_age_days,
+                                   enabled,
+                                   calibrated_at
+                              FROM flywheel_eligibility_tiers
+                             WHERE tier_name = 'local'
+                        """))
+                        tier = tier_row.fetchone()
+                        if (
+                            tier is not None
+                            and tier.enabled
+                            and tier.calibrated_at is not None
+                        ):
+                            min_occ = tier.min_total_occurrences
+                            min_rate = tier.min_success_rate
+                            min_l2 = tier.min_l2_resolutions
+                            max_age = tier.max_age_days
+                        else:
+                            # Tier exists but not calibrated/enabled —
+                            # use hardcoded defaults. Log at WARNING
+                            # so the log shipper picks it up — flag-on
+                            # without a calibrated tier is operator-
+                            # actionable misconfiguration. Round-table
+                            # 2026-04-30 P2.
+                            #
+                            # TODO (F6 phase 2): replace with Prom
+                            # counter osiris_flywheel_federation_misconfigured_total
+                            # {reason="tier_inactive|tier_missing|tier_uncalibrated"}
+                            # so /admin/substrate-health surfaces it
+                            # alongside other invariants.
+                            logger.warning(
+                                "flywheel_federation_flag_on_but_local_tier_inactive",
+                                extra={
+                                    "tier_present": tier is not None,
+                                    "tier_enabled": (
+                                        bool(tier.enabled) if tier else None
+                                    ),
+                                    "tier_calibrated": (
+                                        tier.calibrated_at is not None if tier else None
+                                    ),
+                                },
+                            )
+                            min_occ, min_rate, min_l2, max_age = 5, 0.90, 3, 7
+                    else:
+                        # Federation disabled — hardcoded defaults
+                        # preserve current production behavior.
+                        min_occ, min_rate, min_l2, max_age = 5, 0.90, 3, 7
+
                     eligible_result = await db.execute(text("""
                         UPDATE aggregated_pattern_stats
                         SET promotion_eligible = true
-                        WHERE total_occurrences >= 5
-                          AND success_rate >= 0.90
-                          AND l2_resolutions >= 3
-                          AND last_seen > NOW() - INTERVAL '7 days'
+                        WHERE total_occurrences >= :min_occ
+                          AND success_rate >= :min_rate
+                          AND l2_resolutions >= :min_l2
+                          AND last_seen > NOW() - (:max_age || ' days')::INTERVAL
                           AND promotion_eligible = false
                         RETURNING pattern_signature
-                    """))
+                    """), {
+                        "min_occ": min_occ,
+                        "min_rate": min_rate,
+                        "min_l2": min_l2,
+                        "max_age": max_age,
+                    })
                     newly_eligible = eligible_result.fetchall()
                     await db.commit()
 
