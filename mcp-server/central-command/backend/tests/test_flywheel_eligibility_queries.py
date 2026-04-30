@@ -235,6 +235,34 @@ def test_thresholds_view_pydantic_model_exists():
     assert "tier_platform_thresholds: Optional[TierThresholdsView]" in src
 
 
+def test_no_string_concat_interval_pattern():
+    """P0 regression guard (2026-04-30): the pattern
+    `(:max_age || ' days')::INTERVAL` BROKE PRODUCTION for ~7 hours.
+    asyncpg binds int parameters as int, the `||` text operator can't
+    accept int → TypeError every flywheel cycle, zero fleet_orders
+    issued. The fix is `make_interval(days => :max_age)` which
+    accepts int directly.
+
+    This test bans the broken pattern in both files."""
+    import re
+    pattern = re.compile(r"\|\|\s*'\s*days\s*'\s*\)\s*::\s*INTERVAL", re.IGNORECASE)
+    for path_str in [
+        "mcp-server/main.py",
+        "mcp-server/central-command/backend/flywheel_eligibility_queries.py",
+    ]:
+        path = REPO_ROOT / path_str
+        if not path.exists():
+            continue
+        src = path.read_text()
+        match = pattern.search(src)
+        assert not match, (
+            f"{path_str}: forbidden pattern `(:param || ' days')::INTERVAL` found. "
+            f"asyncpg binds int as int, can't auto-cast for `||` text op. "
+            f"Use `make_interval(days => :param)` instead. P0 regression "
+            f"from F6 MVP slice 2026-04-30."
+        )
+
+
 def test_uses_shared_parse_bool_env():
     """Round-table P2-7: env-flag parsing MUST go through
     shared.parse_bool_env so the F7 diagnostic and main.py

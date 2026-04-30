@@ -975,7 +975,7 @@ async def _flywheel_promotion_loop():
                         WHERE total_occurrences >= :min_occ
                           AND success_rate >= :min_rate
                           AND l2_resolutions >= :min_l2
-                          AND last_seen > NOW() - (:max_age || ' days')::INTERVAL
+                          AND last_seen > NOW() - make_interval(days => :max_age)
                           AND promotion_eligible = false
                         RETURNING pattern_signature
                     """), {

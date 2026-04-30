@@ -119,7 +119,7 @@ async def count_tier_local_eligible(
            AND total_occurrences >= $2
            AND success_rate >= $3
            AND l2_resolutions >= $4
-           AND last_seen > NOW() - ($5 || ' days')::INTERVAL
+           AND last_seen > NOW() - make_interval(days => $5)
         """,
         site_id,
         thresholds.min_total_occurrences,
@@ -168,7 +168,7 @@ async def count_tier_org_eligible(
                    aps.l2_resolutions, aps.last_seen
               FROM aggregated_pattern_stats aps
               JOIN site_scope ss ON ss.site_id = aps.site_id
-             WHERE aps.last_seen > NOW() - ($5 || ' days')::INTERVAL
+             WHERE aps.last_seen > NOW() - make_interval(days => $5)
         ),
         org_aggregated AS (
             -- Sum raw counts and recompute the rate downstream;
@@ -229,7 +229,7 @@ async def count_tier_platform_eligible(
           FROM platform_pattern_stats
          WHERE total_occurrences >= $1
            AND success_rate >= $2
-           AND last_seen > NOW() - ($3 || ' days')::INTERVAL
+           AND last_seen > NOW() - make_interval(days => $3)
            AND distinct_orgs >= $4
            AND distinct_sites >= $5
         """,
