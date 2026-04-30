@@ -164,8 +164,107 @@ cross-org WRITE, no rollout, no fleet_order issuance).
 - [ ] Draft cross-org WRITE-path property test
 - [ ] Draft `federation_disclosure` event_type lockstep entries
 - [ ] Draft `cross_org_federation_leak` substrate invariant
+      **— P0 SQL JOIN BUG IDENTIFIED 2026-04-30, round-table BLOCKED a
+      naive implementation; see `Cross-org leak invariant — design
+      notes` section below**
 - [ ] Draft auditor-kit federation-event surface
 - [ ] Then and only then: write the enforcement commit
+
+---
+
+## Cross-org leak invariant — design notes (filed 2026-04-30 after BLOCK round-table)
+
+A naive `cross_org_federation_leak` invariant was attempted in
+Session 214 and **BLOCKED** by round-table because of a Cartesian-
+product JOIN class. Design notes for the dedicated session:
+
+### The naive (broken) JOIN
+
+```sql
+JOIN promoted_rules pr ON pr.rule_id = fo.parameters->>'rule_id'
+```
+
+`promoted_rules.rule_id` is **NOT unique**. The natural key is
+`(site_id, rule_id)` per CLAUDE.md Session 210-B Migration 247. Prod
+already has 10+ rule_ids with rows in 2+ sites (e.g.
+`L1-AUTO-FIREWALL-STATUS`, `L1-AUTO-AUDIT-LOGGING`,
+`L1-AUTO-DEFENDER-CLOUD-PROTECTION`).
+
+When a fleet_order targets a site in Org A, the JOIN matches **all**
+promoted_rules rows sharing that rule_id — including rows in Org B.
+The cross-org check then fires falsely on the Org-B match. **Today
+this is masked because all sites are in one org. The moment a second
+tenant onboards, sev1 fires constantly with "STOP / call counsel"
+runbook on every shared-rule fleet_order — wolf-crying-wolf failure
+mode for a privacy detector.**
+
+### The correct JOIN
+
+`promoted_rules.id` is the UUID PK and IS unique. Have
+`safe_rollout_promoted_rule` stamp `parameters->>'promoted_rule_id'`
+(the UUID, not the rule_id string) into the fleet_order, and join
+the assertion on that:
+
+```sql
+JOIN promoted_rules pr
+  ON pr.id::text = fo.parameters->>'promoted_rule_id'
+```
+
+### Pre-conditions for the correct invariant
+
+1. **Audit `safe_rollout_promoted_rule` and the 3 callers** (`promote_candidate`,
+   `learning_api.bulk_promote`, `client_portal.approve`) to confirm
+   the order parameters include `promoted_rule_id` (UUID). Add it if
+   missing. Daemon-side compat: this is additive, daemons consume
+   `rule_id` (the string) — no breakage.
+2. **Add a prod-snapshot fixture** at
+   `tests/fixtures/substrate/cross_org_federation_leak/two_orgs_shared_rule_id.json`
+   that captures the EXACT scenario the naive JOIN would mis-fire on:
+   two orgs, one shared rule_id, an order targeting Org A. Expected
+   violation count: 0. CI ratchet.
+3. **Make the invariant manual-resolve-only.** If the operator follows
+   the runbook (cancel offending fleet_order via UPDATE), the
+   invariant query no longer matches → engine auto-resolves the
+   violation 60s later → substrate panel shows "all clear" without
+   counsel review. That's the wrong default for a privacy-class
+   trip-wire. Either:
+   - Add a `manual_resolve_only=True` flag on the Assertion to
+     suppress the engine's auto-resolve UPDATE, OR
+   - Edit the runbook so cancellation comes AFTER counsel sign-off,
+     not before (1-line workaround).
+4. **Drop SQL fragments from `Violation.details["remediation"]`.** The
+   naive version had string-concatenated `WHERE id = '<x>'` — UUID
+   so injection-safe in practice but a future maintainer might reuse
+   the pattern. Link to runbook by name; canonical command lives there.
+5. **Verify `fleet_orders.notes` column exists** before merging the
+   runbook (the runbook UPDATE references it). If not, switch to
+   `parameters = parameters || '{...}'::jsonb` or another existing
+   column.
+6. **`LIMIT 50`** in the detector query → bump to `LIMIT 500` and
+   add a sibling sev1 invariant that fires when count >= 500 (which
+   is itself a signal — that many cross-org orders means catastrophic
+   bug, not edge case).
+7. **Sibling defense-in-depth invariants:**
+   - `cross_org_federation_leak_orphan_origin` (sev2): LEFT JOIN
+     sites on origin and fire if origin site_id resolves to NULL
+     (catches false-negatives where the origin site was hard-deleted)
+   - `cross_org_federation_leak_soft_deleted_target` (sev2): same
+     for soft-deleted target appliances
+
+### Reviewer's exact severity framing (kept for next-session reference)
+
+> "Today this is masked because all sites in prod belong to one
+> client_org. As soon as a second tenant onboards, every cross-tenant
+> sync_promoted_rule order containing a rule_id that exists in both
+> orgs' promoted_rules tables will fire sev1. Given the L1 ruleset is
+> largely shared (firewall-status, audit-logging, defender-exclusions
+> are platform rules every site gets), the false-positive rate on a
+> 2-tenant fleet would approach 100% of all orders."
+
+> "This is exactly the wolf-crying-wolf failure mode the trip-wire
+> is supposed to PREVENT. A sev1 with a 'STOP / call counsel' runbook
+> firing constantly within 24h of multi-tenant launch is operationally
+> toxic."
 
 ---
 
