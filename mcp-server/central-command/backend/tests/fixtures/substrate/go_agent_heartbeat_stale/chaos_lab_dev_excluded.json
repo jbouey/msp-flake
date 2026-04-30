@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "scenario": "Chaos-lab agents tagged agent_version='dev' MUST NOT pollute the production fleet dashboard. The SQL filter (agent_version IS NULL OR agent_version != 'dev') excludes them at fetch time, so the fixture's fetch result is empty even when chaos-lab agents are silent. Demonstrates the doctrine that real customer agents are never tagged 'dev'.",
+    "captured": "2026-04-30 round-table fleet-edge liveness slice (synthetic; modeled after the 4 chaos-lab agents observed at status='connected' 7+ days post-iMac-poweroff).",
+    "anonymized": true
+  },
+  "fetchrow_response": [],
+  "expected_violation_count": 0
+}

@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "scenario": "An appliance with status='relocating' MUST NOT fire appliance_offline_extended even if last_checkin is past the 24h threshold — the operator-initiated relocate flow legitimately takes the appliance offline. The SQL filter (status NOT IN ('decommissioned','relocating','relocated')) excludes them. Same logic for 'relocated' and 'decommissioned'. Empty fetch result → 0 violations.",
+    "captured": "2026-04-30 round-table fleet-edge liveness slice (synthetic; modeled after the 2026-04-25 same-day relocate of physical-appliance-pilot-1aea78 → north-valley-branch-2 where the source row legitimately went silent during the move).",
+    "anonymized": true
+  },
+  "fetchrow_response": [],
+  "expected_violation_count": 0
+}

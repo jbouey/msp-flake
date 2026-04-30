@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "scenario": "One appliance has not checked in for 25h — past the 24h sev2 escalation threshold. status='online' (the row hasn't been flipped yet — see runbook P2 hint about mark_stale_appliances_loop). Invariant fires once; remediation copy points operator at the 'phone the customer' tier.",
+    "captured": "2026-04-30 round-table fleet-edge liveness slice (synthetic; modeled after the 1h sibling pattern offline_appliance_over_1h, escalated past the workday threshold).",
+    "anonymized": true
+  },
+  "fetchrow_response": [
+    {
+      "site_id": "anon-site-A",
+      "appliance_id": "anon-site-A-appliance-1",
+      "hostname": "appliance-A1",
+      "agent_version": "0.4.13",
+      "last_checkin": "2026-04-29T05:00:00+00:00",
+      "hours_offline": 25.0
+    }
+  ],
+  "expected_violation_count": 1,
+  "expected_details": {
+    "site_id": "anon-site-A",
+    "appliance_id": "anon-site-A-appliance-1",
+    "hostname": "appliance-A1",
+    "agent_version": "0.4.13",
+    "hours_offline": 25.0
+  }
+}

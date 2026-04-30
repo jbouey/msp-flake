@@ -50,6 +50,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 INVARIANTS_WITH_FIXTURES = {
     "l2_decisions_stalled": "_check_l2_decisions_stalled",
     "sigauth_enforce_mode_rejections": "_check_sigauth_enforce_mode_rejections",
+    # Session 214 fleet-edge liveness slice (round-table 2026-04-30)
+    "go_agent_heartbeat_stale": "_check_go_agent_heartbeat_stale",
+    "appliance_offline_extended": "_check_appliance_offline_extended",
 }
 
 FIXTURE_ROOT = pathlib.Path(__file__).parent / "fixtures" / "substrate"
@@ -116,7 +119,12 @@ def test_substrate_invariant_against_fixture(
     # code only does dict-style lookups (row["foo"]) which works on
     # plain dicts too. If a fixture uses datetime fields, decode here.
     # Datetime keys we know about; extend as new fixtures land.
-    _DATETIME_KEYS = ("latest_decision_at", "last_failure")
+    _DATETIME_KEYS = (
+        "latest_decision_at",
+        "last_failure",
+        "last_heartbeat",
+        "last_checkin",
+    )
 
     def _decode_dt(d):
         if not isinstance(d, dict):
@@ -173,3 +181,37 @@ def test_fixture_directory_structure_is_valid():
             raise AssertionError(f"Fixture {path}: invalid JSON — {e}")
         for required in ("fetchrow_response", "expected_violation_count"):
             assert required in f, f"Fixture {path} missing required key: {required}"
+
+
+# Round-table 2026-04-30 compensating control #3 — fleet-edge liveness
+# invariants (Session 214) MUST auto-resolve when the underlying signal
+# recovers. Both predicates use conn.fetch(...) with WHERE clauses that
+# narrow to bad rows; once those rows recover, the fetch result is
+# empty and the predicate must return zero violations. The substrate
+# health loop relies on this predicate flip to clear open violation
+# rows. A check that always returned a synthetic violation would silently
+# pin rows open forever ("fires-but-never-clears" regression class).
+#
+# Scoped to fetch-based predicates added in Session 214; legacy
+# fetchrow-based predicates (l2_decisions_stalled) have their own clean
+# fixtures already covering the recovery path.
+@pytest.mark.parametrize(
+    "invariant_name",
+    [
+        "go_agent_heartbeat_stale",
+        "appliance_offline_extended",
+    ],
+)
+def test_fetch_based_invariant_auto_resolves_when_signal_recovers(
+    invariant_name: str,
+):
+    fn = _load_fn(invariant_name)
+    conn = _FakeConn([])
+    violations = asyncio.new_event_loop().run_until_complete(fn(conn))
+    assert violations == [], (
+        f"Invariant {invariant_name} returned {len(violations)} "
+        f"violation(s) on an empty fetch result. The substrate health "
+        f"loop relies on the predicate flipping to empty when the "
+        f"underlying signal recovers — otherwise open violation rows "
+        f"never auto-resolve."
+    )

@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "scenario": "One production workstation Go agent has been silent for 6.5h — past the sev2 threshold. agent_version='1.2.4' (real prod build, not dev). Invariant fires once with hours_silent populated; operator decides escalation per BAA.",
+    "captured": "2026-04-30 round-table fleet-edge liveness slice (synthetic; modeled after the doctrine-violation-class observed where status='connected' persisted on agents dark for 7+ days pre-mig-263).",
+    "anonymized": true
+  },
+  "fetchrow_response": [
+    {
+      "agent_id": "anon-agent-A",
+      "site_id": "anon-site-A",
+      "hostname": "WORKSTATION-01",
+      "agent_version": "1.2.4",
+      "status": "stale",
+      "last_heartbeat": "2026-04-30T03:30:00",
+      "hours_silent": 6.5
+    }
+  ],
+  "expected_violation_count": 1,
+  "expected_details": {
+    "site_id": "anon-site-A",
+    "agent_id": "anon-agent-A",
+    "hostname": "WORKSTATION-01",
+    "agent_version": "1.2.4",
+    "status": "stale",
+    "hours_silent": 6.5
+  }
+}
