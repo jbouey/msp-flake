@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import logging
 import socket
 from dataclasses import dataclass
@@ -590,6 +591,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_rename_site_immutable_list_drift(c),
     ),
     Assertion(
+        name="flywheel_federation_misconfigured",
+        severity="sev3",
+        description="Detects the FLYWHEEL_FEDERATION_ENABLED env flag being ON in production while no tier in flywheel_eligibility_tiers has both enabled=TRUE AND calibrated_at IS NOT NULL. In this state the federation read path falls back to hardcoded defaults (defensive — no behavior change) and emits a logger.warning per loop tick, but the operator-visibility gap is sev3. Resolution: either flip the env var off (true intent: federation OFF) or run the calibration migration that flips a tier to enabled+calibrated (true intent: federation ON). Round-table 2026-04-30 fast-follow from F6 MVP slice review. Session 214.",
+        check=lambda c: _check_flywheel_federation_misconfigured(c),
+    ),
+    Assertion(
         name="promotion_audit_log_recovery_pending",
         severity="sev1",
         description="HIPAA §164.312(b) chain-of-custody durability gate. promotion_audit_log_recovery is the dead-letter queue for promotion_audit_log INSERTs that failed inside flywheel_promote.promote_candidate's Step 7 savepoint (Migration 253, Session 212 round-table P0). Any unrecovered row means an L1 rule promotion happened without its audit row landing in the WORM-style audit log — the chain of custody is broken until an operator runs the recovery script. Sev1 because the loss is HIPAA-relevant and grows monotonically until handled.",
@@ -926,6 +933,19 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "DELETE-block trigger if the table is genuinely operational. Use the "
             "violation details to identify which side. Round-table review recommended "
             "before either path.",
+    },
+    "flywheel_federation_misconfigured": {
+        "display_name": "Federation flag is ON but no tier is enabled+calibrated",
+        "recommended_action": "FLYWHEEL_FEDERATION_ENABLED is set to a truthy value in "
+            "the mcp-server environment, but no row in flywheel_eligibility_tiers has "
+            "both enabled=TRUE AND calibrated_at IS NOT NULL. The flywheel read path "
+            "is silently falling back to hardcoded defaults (5, 0.90, 3, 7) and "
+            "logging a warning each loop tick. Resolution: (a) flip the env var off "
+            "(if true intent is federation OFF — production is unchanged either way), "
+            "OR (b) run the calibration migration that flips a tier to enabled=TRUE "
+            "with a calibrated_at timestamp (true intent: federation ON with that "
+            "tier's thresholds). The two-switch design is intentional defense-in-depth: "
+            "both env AND tier must align before federation activates.",
     },
     "sigauth_enforce_mode_rejections": {
         "display_name": "Enforce-mode appliance had a sigauth rejection",
@@ -1637,6 +1657,69 @@ async def _check_rename_site_immutable_list_drift(conn: asyncpg.Connection) -> L
                     "(most likely if the DELETE-block is intentional for HIPAA / "
                     "cryptographic reasons), OR drop the DELETE-block trigger if the "
                     "table is genuinely operational. Round-table review before either."
+                ),
+            },
+        )
+    ]
+
+
+async def _check_flywheel_federation_misconfigured(conn: asyncpg.Connection) -> List[Violation]:
+    """F6 fast-follow substrate invariant (Session 214).
+
+    Fires sev3 when the FLYWHEEL_FEDERATION_ENABLED env flag is
+    truthy AND no tier in flywheel_eligibility_tiers has both
+    enabled=TRUE AND calibrated_at IS NOT NULL. In this state the
+    federation read path falls back to hardcoded defaults and emits
+    logger.warning per loop tick — defensive behavior, but the
+    misconfiguration deserves operator-visible signal on the
+    substrate-health dashboard.
+
+    Lenient env parser matches main.py + sibling subsystem
+    (assertions.py::L2_ENABLED).
+    """
+    flag_raw = os.environ.get("FLYWHEEL_FEDERATION_ENABLED", "false").lower()
+    if flag_raw not in ("true", "1", "yes", "on"):
+        return []
+    # Flag is truthy. Check whether any tier is genuinely active.
+    row = await conn.fetchrow(
+        """
+        SELECT COUNT(*) AS active_count
+          FROM flywheel_eligibility_tiers
+         WHERE enabled = TRUE
+           AND calibrated_at IS NOT NULL
+        """
+    )
+    active_count = int(row["active_count"]) if row else 0
+    if active_count > 0:
+        return []
+    # Misconfigured — surface the specific state for the runbook.
+    tier_state_rows = await conn.fetch(
+        """
+        SELECT tier_name, enabled, calibrated_at IS NOT NULL AS is_calibrated
+          FROM flywheel_eligibility_tiers
+         ORDER BY tier_level
+        """
+    )
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "env_flag": flag_raw,
+                "active_tier_count": active_count,
+                "tier_state": [
+                    {
+                        "tier_name": r["tier_name"],
+                        "enabled": bool(r["enabled"]),
+                        "calibrated": bool(r["is_calibrated"]),
+                    }
+                    for r in tier_state_rows
+                ],
+                "remediation": (
+                    "FLYWHEEL_FEDERATION_ENABLED is set in the mcp-server env "
+                    "but no tier has enabled=TRUE AND calibrated_at IS NOT NULL. "
+                    "The flywheel read path is silently using hardcoded defaults. "
+                    "Either unset the env var (true intent: OFF) or run the "
+                    "calibration migration to flip a tier to enabled+calibrated."
                 ),
             },
         )
