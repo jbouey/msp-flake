@@ -29,6 +29,7 @@ operator passing the OLD orphan site_id gets the new diagnostic).
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -37,11 +38,13 @@ from pydantic import BaseModel
 try:
     from auth import require_admin
     from tenant_middleware import admin_transaction
-    from shared import check_rate_limit
+    from shared import check_rate_limit, parse_bool_env
+    from flywheel_eligibility_queries import compute_tier_resolution
 except ImportError:
     from .auth import require_admin
     from .tenant_middleware import admin_transaction
-    from .shared import check_rate_limit
+    from .shared import check_rate_limit, parse_bool_env
+    from .flywheel_eligibility_queries import compute_tier_resolution
 
 # `fleet` has its own relative imports and only loads cleanly under the
 # packaged runtime (production). Tests don't exercise the DB path
@@ -125,6 +128,28 @@ class Recommendation(BaseModel):
     action_hint: Optional[str] = None  # operator's runbook ("call rename_site(...)")
 
 
+class TierResolution(BaseModel):
+    """F6 phase 2 read-only tier-eligibility breakdown. Counts are
+    diagnostic; no enforcement, no rollout. `*_active` reports whether
+    each tier is currently making decisions (env-on AND
+    tier.enabled AND calibrated). All three counts use the
+    `would_be_eligible` framing for consistency — local is also
+    speculative until enabled+calibrated. Round-table 2026-04-30."""
+    local_would_be_eligible: Optional[int] = None
+    org_would_be_eligible: Optional[int] = None
+    platform_would_be_eligible: Optional[int] = None
+    tier_local_active: bool = False
+    tier_org_active: bool = False
+    tier_platform_active: bool = False
+    tier_local_calibrated: bool = False
+    tier_org_calibrated: bool = False
+    tier_platform_calibrated: bool = False
+    client_org_id: Optional[str] = None
+    # Dict keyed by tier name — frontend can render the org-specific
+    # note next to the org count badge (round-table P2-5).
+    notes: Dict[str, str] = {}
+
+
 class FlywheelDiagnostic(BaseModel):
     site_id_input: str
     canonical_site_id: str
@@ -135,6 +160,7 @@ class FlywheelDiagnostic(BaseModel):
     pending_fleet_orders: PendingFleetOrders
     substrate_signals: List[SubstrateSignal]
     recent_admin_events: List[RecentAdminEvent]
+    tier_resolution: TierResolution
     recommendations: List[Recommendation]
     notes: Dict[str, str]
 
@@ -593,6 +619,25 @@ async def get_flywheel_diagnostic(
             for r in signal_rows
         ]
 
+        # 8. F6 phase 2 tier_resolution — read-only eligibility
+        # breakdown across local/org/platform tiers. Diagnostic only;
+        # no enforcement. The compute helper handles the cross-org
+        # boundary by taking client_org_id as a scoped parameter
+        # (NEVER aggregates without an explicit org filter).
+        client_org_id_row = await conn.fetchval(
+            "SELECT client_org_id FROM sites WHERE site_id = $1",
+            canonical_site_id,
+        )
+        federation_env_enabled = parse_bool_env("FLYWHEEL_FEDERATION_ENABLED")
+        tier_resolution_data = await compute_tier_resolution(
+            conn,
+            site_id=canonical_site_id,
+            client_org_id=client_org_id_row,
+            federation_env_enabled=federation_env_enabled,
+        )
+
+    tier_resolution = TierResolution(**tier_resolution_data)
+
     recommendations = _build_recommendations(
         canonical_aliasing,
         operational_health,
@@ -629,6 +674,7 @@ async def get_flywheel_diagnostic(
         pending_fleet_orders=pending_fleet_orders,
         substrate_signals=signals,
         recent_admin_events=recent_admin_events,
+        tier_resolution=tier_resolution,
         recommendations=recommendations,
         notes=notes,
     )

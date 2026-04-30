@@ -179,6 +179,21 @@ async def execute_with_retry(db, query, params=None, max_retries=2):
 # Session Token Management (shared across admin, partner, client portals)
 # ============================================================================
 
+def parse_bool_env(var_name: str, default: bool = False) -> bool:
+    """Parse an env var as bool with the lenient convention used by
+    sibling subsystems (assertions.py::L2_ENABLED, chaos_lab.py).
+    Accepts: true / 1 / yes / on (case-insensitive).
+
+    Round-table 2026-04-30 P2-7 — single source of truth for env-flag
+    parsing prevents the F7 diagnostic and main.py enforcement from
+    disagreeing on what 'TRUE' (capital T) means. Drift between them
+    would be a credibility event for the operator surface.
+    """
+    import os as _os
+    raw = _os.environ.get(var_name, "true" if default else "false").lower()
+    return raw in ("true", "1", "yes", "on")
+
+
 def generate_session_token() -> str:
     """Generate a cryptographically secure session token."""
     return secrets.token_urlsafe(32)
