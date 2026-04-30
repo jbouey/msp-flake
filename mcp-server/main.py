@@ -1350,6 +1350,116 @@ async def _flywheel_promotion_loop():
         await asyncio.sleep(1800)  # 30 minutes
 
 
+async def _go_agent_status_decay_loop():
+    """Server-side state machine for go_agents.status (Session 214
+    round-table doctrine fix, 2026-04-30).
+
+    Decays go_agents.status based on heartbeat age:
+      connected     — last_heartbeat <  5 min
+      stale         — last_heartbeat <  30 min
+      disconnected  — last_heartbeat <  24 h
+      dead          — last_heartbeat >= 24 h
+
+    Each transition writes a go_agent_status_events row (append-only,
+    mig 263). Idempotent per tick — rows whose status already matches
+    the desired state are NOT touched (prevents spurious UPDATEs +
+    transition-event noise).
+
+    Runs every 60 seconds. Mirrors mark_stale_appliances_loop's
+    proven pattern from background_tasks.py.
+
+    Doctrine-fix: closes the gap empirically observed 2026-04-30
+    where 4 chaos-lab go_agents showed status='connected' 7+ days
+    after their host was powered off. The dashboard now reflects
+    physical reality.
+    """
+    from dashboard_api.fleet import get_pool as _get_pool
+
+    await asyncio.sleep(120)  # Let startup settle
+    while True:
+        try:
+            pool = await _get_pool()
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    # Compute desired_status per row, UPDATE only if
+                    # different, RETURNING the transitions for audit.
+                    rows = await conn.fetch("""
+                        WITH desired AS (
+                            SELECT agent_id,
+                                   site_id,
+                                   status AS old_status,
+                                   last_heartbeat,
+                                   CASE
+                                     WHEN last_heartbeat IS NULL THEN 'pending'
+                                     WHEN last_heartbeat > NOW()::timestamp - make_interval(mins => 5)
+                                          THEN 'connected'
+                                     WHEN last_heartbeat > NOW()::timestamp - make_interval(mins => 30)
+                                          THEN 'stale'
+                                     WHEN last_heartbeat > NOW()::timestamp - make_interval(hours => 24)
+                                          THEN 'disconnected'
+                                     ELSE 'dead'
+                                   END AS new_status
+                              FROM go_agents
+                        )
+                        UPDATE go_agents ga
+                           SET status = d.new_status,
+                               last_status_transition_at = NOW(),
+                               updated_at = NOW()
+                          FROM desired d
+                         WHERE ga.agent_id = d.agent_id
+                           AND ga.status IS DISTINCT FROM d.new_status
+                        RETURNING ga.agent_id, ga.site_id, d.old_status,
+                                  d.new_status, d.last_heartbeat
+                    """)
+
+                    if rows:
+                        # Append one event row per transition.
+                        # Round-table P1 (2026-04-30): go_agents.last_heartbeat
+                        # is `TIMESTAMP` (no tz) per mig 019, written by the
+                        # gRPC handler in UTC by convention. asyncpg returns
+                        # a naive datetime. Use .replace(tzinfo=UTC) — NOT
+                        # .astimezone(UTC), which on naive datetimes
+                        # reinterprets as system-local time (would silently
+                        # corrupt TIMESTAMPTZ writes if container TZ drifted).
+                        # MVCC race note: the CTE+UPDATE share a snapshot
+                        # so a concurrent gRPC heartbeat write is correctly
+                        # last-writer-wins; both paths are correct.
+                        await conn.executemany("""
+                            INSERT INTO go_agent_status_events
+                                (agent_id, site_id, from_status, to_status,
+                                 last_heartbeat_at, reason)
+                            VALUES ($1, $2, $3, $4, $5, 'heartbeat_age_decay')
+                        """, [
+                            (r["agent_id"], r["site_id"], r["old_status"],
+                             r["new_status"],
+                             r["last_heartbeat"].replace(tzinfo=timezone.utc)
+                                if r["last_heartbeat"] else None)
+                            for r in rows
+                        ])
+
+            for r in rows:
+                logger.info(
+                    "go_agent_status_transition",
+                    extra={
+                        "agent_id": r["agent_id"],
+                        "site_id": r["site_id"],
+                        "from_status": r["old_status"],
+                        "to_status": r["new_status"],
+                        "last_heartbeat": (
+                            r["last_heartbeat"].isoformat()
+                            if r["last_heartbeat"] else None
+                        ),
+                    },
+                )
+        except Exception as e:
+            logger.error(
+                "go_agent_status_decay_loop_failed",
+                exc_info=True,
+                extra={"exception_class": type(e).__name__},
+            )
+        await asyncio.sleep(60)  # 1-minute cadence
+
+
 async def _flywheel_federation_snapshot_loop():
     """F6 phase 2 foundation slice (Session 214 round-table consensus
     SHIP_FOUNDATION_SLICE).
@@ -2050,6 +2160,7 @@ async def lifespan(app: FastAPI):
         ("data_hygiene_gc", data_hygiene_gc_loop),
         ("relocation_finalize", relocation_finalize_loop),
         ("flywheel_federation_snapshot", _flywheel_federation_snapshot_loop),  # F6 foundation
+        ("go_agent_status_decay", _go_agent_status_decay_loop),  # Session 214 fleet-edge liveness
     ]
 
     for name, fn in task_defs:

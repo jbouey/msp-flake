@@ -591,6 +591,18 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_rename_site_immutable_list_drift(c),
     ),
     Assertion(
+        name="go_agent_heartbeat_stale",
+        severity="sev2",
+        description="Detects workstation Go agents whose last_heartbeat is older than 6 hours, EXCLUDING agents tagged agent_version='dev' (chaos-lab targets). Doctrine fix from Session 214 round-table 2026-04-30: empirically observed 4 chaos-lab agents showing status='connected' 7+ days after their host (iMac) was powered off. The state machine in main.py::_go_agent_status_decay_loop now flips status accordingly, but the invariant is the alarm tripwire — sev2 means 'operator action expected within the workday' (workstation has been silent for at least 6h, which is longer than legitimate after-hours / commute / lunch windows). The dashboard partner contact should follow up; substrate's job ends at the alarm.",
+        check=lambda c: _check_go_agent_heartbeat_stale(c),
+    ),
+    Assertion(
+        name="appliance_offline_extended",
+        severity="sev2",
+        description="Sibling to existing offline_appliance_over_1h (sev2, fires at 1h). This sev2 fires at 24h+. Different runbook implication: the 1h sibling means 'wait one cycle, probably transient'; this means 'phone the customer.' Appliances offline >24h are a customer-experience event, not a substrate-internal blip. Round-table 2026-04-30: shipping the longer-threshold sibling explicitly so operators have escalation graduation. Unlike go_agent_heartbeat_stale, this does NOT exclude dev-tagged appliances (there's no equivalent of agent_version='dev' on appliances).",
+        check=lambda c: _check_appliance_offline_extended(c),
+    ),
+    Assertion(
         name="flywheel_federation_misconfigured",
         severity="sev3",
         description="Detects the FLYWHEEL_FEDERATION_ENABLED env flag being ON in production while no tier in flywheel_eligibility_tiers has both enabled=TRUE AND calibrated_at IS NOT NULL. In this state the federation read path falls back to hardcoded defaults (defensive — no behavior change) and emits a logger.warning per loop tick, but the operator-visibility gap is sev3. Resolution: either flip the env var off (true intent: federation OFF) or run the calibration migration that flips a tier to enabled+calibrated (true intent: federation ON). Round-table 2026-04-30 fast-follow from F6 MVP slice review. Session 214.",
@@ -933,6 +945,38 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "DELETE-block trigger if the table is genuinely operational. Use the "
             "violation details to identify which side. Round-table review recommended "
             "before either path.",
+    },
+    "go_agent_heartbeat_stale": {
+        "display_name": "Workstation agent silent > 6 hours",
+        "recommended_action": "A workstation Go agent has not sent a "
+            "heartbeat in 6+ hours. The state machine has already flipped "
+            "the row's status to 'stale' / 'disconnected' / 'dead' depending "
+            "on age. Operator action: (1) check whether the customer's "
+            "workstation is genuinely offline (powered off, network issue, "
+            "OS update reboot), (2) verify the Windows service "
+            "'osiriscare-agent' is set to StartupType=Automatic on the host, "
+            "(3) if persistent across multiple workstations from same site, "
+            "investigate site-level network egress to api.osiriscare.net. "
+            "Substrate's job ends at the alarm; partner contact (MSP) "
+            "decides whether to notify the customer per their BAA. NEVER "
+            "directly notify the clinic from substrate — that's BA territory. "
+            "Excludes agent_version='dev' rows (chaos-lab targets are "
+            "deliberately bouncy and shouldn't pollute the production-fleet "
+            "dashboard).",
+    },
+    "appliance_offline_extended": {
+        "display_name": "Appliance offline > 24 hours — phone the customer",
+        "recommended_action": "An appliance has not checked in for 24+ hours. "
+            "This is the escalation tier above offline_appliance_over_1h "
+            "(sev2 fires at 1h). Where the 1-hour invariant means 'wait one "
+            "cycle, probably transient,' this means 'something is genuinely "
+            "wrong at the customer site.' Operator action: (1) check the "
+            "customer's network status with the partner contact, (2) verify "
+            "the appliance is powered and on a working LAN, (3) if multiple "
+            "appliances from same site are over the 24h threshold, "
+            "investigate site WAN. Note: this invariant does NOT auto-page "
+            "the customer — the partner (MSP) holds the BAA and decides "
+            "outreach. Substrate exposes the signal; the operator acts.",
     },
     "flywheel_federation_misconfigured": {
         "display_name": "Federation flag is ON but no tier is enabled+calibrated",
@@ -1660,6 +1704,99 @@ async def _check_rename_site_immutable_list_drift(conn: asyncpg.Connection) -> L
                 ),
             },
         )
+    ]
+
+
+async def _check_go_agent_heartbeat_stale(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev2 — workstation agents silent > 6 hours, excluding chaos-
+    lab-tagged dev builds. Round-table 2026-04-30 fleet-edge liveness."""
+    rows = await conn.fetch(
+        """
+        SELECT agent_id,
+               site_id,
+               hostname,
+               agent_version,
+               status,
+               last_heartbeat,
+               EXTRACT(EPOCH FROM (NOW()::timestamp - last_heartbeat)) / 3600.0
+                   AS hours_silent
+          FROM go_agents
+         WHERE last_heartbeat IS NOT NULL
+           AND last_heartbeat < NOW()::timestamp - make_interval(hours => 6)
+           AND (agent_version IS NULL OR agent_version != 'dev')
+         ORDER BY last_heartbeat ASC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "agent_id": r["agent_id"],
+                "hostname": r["hostname"],
+                "agent_version": r["agent_version"],
+                "status": r["status"],
+                "last_heartbeat": (
+                    r["last_heartbeat"].isoformat() if r["last_heartbeat"] else None
+                ),
+                "hours_silent": round(float(r["hours_silent"]), 2),
+                "remediation": (
+                    "Agent has been silent for "
+                    f"{round(float(r['hours_silent']), 1)}h. State machine "
+                    "should already show status != 'connected'. Operator "
+                    "checks: (a) workstation power state (b) "
+                    "osiriscare-agent service Windows-side StartupType "
+                    "(c) site-level network egress."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_appliance_offline_extended(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev2 — appliance offline > 24h. Sibling to existing
+    offline_appliance_over_1h sev2 (fires at 1h). This one's runbook
+    implication is 'phone the customer'. Round-table 2026-04-30."""
+    rows = await conn.fetch(
+        """
+        SELECT site_id,
+               appliance_id::text AS appliance_id,
+               hostname,
+               agent_version,
+               last_checkin,
+               EXTRACT(EPOCH FROM (NOW() - last_checkin)) / 3600.0
+                   AS hours_offline
+          FROM site_appliances
+         WHERE deleted_at IS NULL
+           AND status NOT IN ('decommissioned', 'relocating', 'relocated')
+           AND last_checkin IS NOT NULL
+           AND last_checkin < NOW() - make_interval(hours => 24)
+         ORDER BY last_checkin ASC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": r["appliance_id"],
+                "hostname": r["hostname"],
+                "agent_version": r["agent_version"],
+                "last_checkin": (
+                    r["last_checkin"].isoformat() if r["last_checkin"] else None
+                ),
+                "hours_offline": round(float(r["hours_offline"]), 2),
+                "remediation": (
+                    "Appliance offline for "
+                    f"{round(float(r['hours_offline']), 1)}h — past the "
+                    "24h escalation threshold. Partner contact should "
+                    "phone the customer to confirm site status. Substrate "
+                    "exposes the signal; operator decides outreach per BAA."
+                ),
+            },
+        )
+        for r in rows
     ]
 
 
