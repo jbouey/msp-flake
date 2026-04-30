@@ -1538,35 +1538,69 @@ async def _check_rename_site_immutable_list_drift(conn: asyncpg.Connection) -> L
     trigger that conditionally raises on DELETE only in some cases)
     but the runbook covers operator review.
     """
-    # Skip partition children — postgres routes DELETE through the
-    # parent (which is what's actually trigger-protected). A partition
-    # child shows the same trigger as its parent in pg_trigger but
-    # rename_site() only operates on parent tables (the auto-discovery
-    # in mig 257 also skips partition children via NOT EXISTS pg_inherits).
-    # Drift detection must mirror that boundary.
+    # Two-pass detection (Session 214 P3 close on partition-aware
+    # trigger detection):
+    #
+    # Round-table 2026-04-30 corrected the original narrative. The
+    # motivating case is mig 191 (appliance_heartbeats partition), NOT
+    # mig 121 (which is unrelated network_mode). Mig 191 attaches
+    # `BEFORE DELETE FOR EACH ROW` to the partitioned PARENT — in
+    # PG >= 13 this stores ONE non-internal pg_trigger row with
+    # tgrelid = parent_oid and parent.relkind = 'p'. Children inherit
+    # via auto-propagated rows with tgisinternal = true (which we
+    # filter out anyway).
+    #
+    # Pass 1 catches THIS case via `c.relkind IN ('r', 'p')` — the
+    # previous single-pass query only had `'r'` and missed
+    # partitioned parents entirely. That alone closes the
+    # appliance_heartbeats gap.
+    #
+    # Pass 2 catches a separate (legacy/manual) case: someone
+    # manually attached a non-internal trigger to a specific child
+    # partition without one on the parent. We surface the PARENT
+    # name (via pg_inherits.inhparent) because rename_site() operates
+    # on parent and the immutable list lives at the parent level.
     rows = await conn.fetch(
         """
         WITH partition_children AS (
-            SELECT c.oid AS oid, c.relname AS table_name
+            SELECT i.inhrelid AS child_oid, i.inhparent AS parent_oid
               FROM pg_inherits i
-              JOIN pg_class c ON c.oid = i.inhrelid
         ),
-        delete_blocked AS (
-            SELECT DISTINCT c.relname AS table_name
+        trigger_carriers AS (
+            -- Pass 1: trigger directly on the table
+            SELECT DISTINCT c.relname AS table_name, c.oid AS table_oid
               FROM pg_trigger trg
               JOIN pg_class c ON c.oid = trg.tgrelid
               JOIN pg_proc p ON p.oid = trg.tgfoid
               JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = 'public'
-               AND c.relkind IN ('r', 'p')  -- regular + partitioned parent
+               AND c.relkind IN ('r', 'p')
                AND NOT trg.tgisinternal
                -- DELETE bit in tgtype: 1 << 3 = 8
                AND (trg.tgtype & 8) = 8
                AND p.prosrc ILIKE '%RAISE EXCEPTION%'
-               -- Skip partition children
+               -- Exclude partition CHILDREN — we'll project them up to
+               -- their parent in Pass 2. A child in this CTE would
+               -- surface the child name (e.g. appliance_heartbeats_y202604),
+               -- not the parent (appliance_heartbeats).
                AND NOT EXISTS (
-                   SELECT 1 FROM partition_children pc WHERE pc.oid = c.oid
+                   SELECT 1 FROM partition_children pc
+                    WHERE pc.child_oid = c.oid
                )
+            UNION
+            -- Pass 2: trigger on a partition child → surface the parent
+            SELECT DISTINCT parent.relname AS table_name, parent.oid AS table_oid
+              FROM pg_trigger trg
+              JOIN pg_class c ON c.oid = trg.tgrelid
+              JOIN pg_proc p ON p.oid = trg.tgfoid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              JOIN partition_children pc ON pc.child_oid = c.oid
+              JOIN pg_class parent ON parent.oid = pc.parent_oid
+             WHERE n.nspname = 'public'
+               AND c.relkind = 'r'
+               AND NOT trg.tgisinternal
+               AND (trg.tgtype & 8) = 8
+               AND p.prosrc ILIKE '%RAISE EXCEPTION%'
         ),
         site_id_tables AS (
             SELECT DISTINCT table_name
@@ -1579,11 +1613,11 @@ async def _check_rename_site_immutable_list_drift(conn: asyncpg.Connection) -> L
         immutable AS (
             SELECT table_name FROM _rename_site_immutable_tables()
         )
-        SELECT db.table_name
-          FROM delete_blocked db
-          JOIN site_id_tables sit ON sit.table_name = db.table_name
-         WHERE db.table_name NOT IN (SELECT table_name FROM immutable)
-         ORDER BY db.table_name
+        SELECT DISTINCT tc.table_name
+          FROM trigger_carriers tc
+          JOIN site_id_tables sit ON sit.table_name = tc.table_name
+         WHERE tc.table_name NOT IN (SELECT table_name FROM immutable)
+         ORDER BY tc.table_name
         """
     )
     if not rows:

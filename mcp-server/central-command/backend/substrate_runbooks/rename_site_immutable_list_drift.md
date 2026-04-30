@@ -83,28 +83,59 @@ were almost always added for a reason.
 
   Expected: one row (post-fix).
 
-- Re-run the substrate query (the same SQL the invariant uses):
+- Re-run the substrate query (the same SQL the invariant uses).
+  **NOTE**: this is the two-pass form (Session 214 P3 close).
+  Pass 1 catches triggers on the table itself (regular tables +
+  partitioned parents); Pass 2 catches triggers on partition CHILDREN
+  and surfaces the PARENT name. For partitioned tables, the trigger
+  may be attached to the parent (`relkind='p'`, the mig 191
+  appliance_heartbeats pattern) OR — in legacy patterns — to specific
+  monthly children. The drift detection surfaces the parent name in
+  both cases; investigate at the parent level.
 
   ```sql
-  WITH delete_blocked AS (
-      SELECT DISTINCT c.relname AS table_name
+  WITH partition_children AS (
+      SELECT i.inhrelid AS child_oid, i.inhparent AS parent_oid
+        FROM pg_inherits i
+  ),
+  trigger_carriers AS (
+      -- Pass 1: trigger directly on the table
+      SELECT DISTINCT c.relname AS table_name, c.oid AS table_oid
         FROM pg_trigger trg
         JOIN pg_class c ON c.oid = trg.tgrelid
         JOIN pg_proc p ON p.oid = trg.tgfoid
         JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND c.relkind IN ('r', 'p')
+         AND NOT trg.tgisinternal
+         AND (trg.tgtype & 8) = 8
+         AND p.prosrc ILIKE '%RAISE EXCEPTION%'
+         AND NOT EXISTS (
+             SELECT 1 FROM partition_children pc
+              WHERE pc.child_oid = c.oid
+         )
+      UNION
+      -- Pass 2: trigger on a partition child → surface the parent
+      SELECT DISTINCT parent.relname AS table_name, parent.oid AS table_oid
+        FROM pg_trigger trg
+        JOIN pg_class c ON c.oid = trg.tgrelid
+        JOIN pg_proc p ON p.oid = trg.tgfoid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN partition_children pc ON pc.child_oid = c.oid
+        JOIN pg_class parent ON parent.oid = pc.parent_oid
        WHERE n.nspname = 'public'
          AND c.relkind = 'r'
          AND NOT trg.tgisinternal
          AND (trg.tgtype & 8) = 8
          AND p.prosrc ILIKE '%RAISE EXCEPTION%'
   )
-  SELECT db.table_name
-    FROM delete_blocked db
+  SELECT DISTINCT tc.table_name
+    FROM trigger_carriers tc
     JOIN information_schema.columns sit
-      ON sit.table_name = db.table_name
+      ON sit.table_name = tc.table_name
      AND sit.column_name = 'site_id'
      AND sit.table_schema = 'public'
-   WHERE db.table_name NOT IN (
+   WHERE tc.table_name NOT IN (
          SELECT table_name FROM _rename_site_immutable_tables()
    );
   ```
