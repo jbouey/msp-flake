@@ -78,6 +78,10 @@ from dashboard_api.discovery import router as discovery_router
 from dashboard_api.runbook_config import router as runbook_config_router
 from dashboard_api.substrate_action_api import router as substrate_action_router
 from dashboard_api.flywheel_diagnostic import router as flywheel_diagnostic_router
+from dashboard_api.flywheel_federation_admin import (
+    router as flywheel_federation_admin_router,
+    take_federation_snapshot,
+)
 from dashboard_api.users import router as users_router
 from dashboard_api.integrations.api import router as integrations_router, public_router as integrations_public_router
 from dashboard_api.frameworks import router as frameworks_router
@@ -1346,6 +1350,46 @@ async def _flywheel_promotion_loop():
         await asyncio.sleep(1800)  # 30 minutes
 
 
+async def _flywheel_federation_snapshot_loop():
+    """F6 phase 2 foundation slice (Session 214 round-table consensus
+    SHIP_FOUNDATION_SLICE).
+
+    Daily snapshot of federation candidate counts per (tier, org).
+    Writes to flywheel_federation_candidate_daily — operator-
+    visibility surface for calibration analysis. NO enforcement,
+    NO rollout, NO PHI, NO cross-org WRITE to aggregated_pattern_stats.
+
+    Runs once/day. 30-min startup delay so migrations settle. Errors
+    log at ERROR (CLAUDE.md "no silent write failures") and the loop
+    continues to the next day's tick.
+    """
+    from dashboard_api.fleet import get_pool as _get_pool
+    from dashboard_api.tenant_middleware import admin_transaction as _admin_tx
+
+    await asyncio.sleep(1800)  # 30-min startup delay
+    while True:
+        try:
+            pool = await _get_pool()
+            async with _admin_tx(pool) as conn:
+                written = await take_federation_snapshot(conn)
+            logger.info(
+                "flywheel_federation_snapshot_complete",
+                extra={
+                    "rows_org": written.get("org", 0),
+                    "rows_platform": written.get("platform", 0),
+                    "skipped_uncalibrated": written.get("skipped_uncalibrated", 0),
+                },
+            )
+        except Exception as e:
+            logger.error(
+                "flywheel_federation_snapshot_failed",
+                exc_info=True,
+                extra={"exception_class": type(e).__name__},
+            )
+        # Daily cadence — sleep 24h until next snapshot
+        await asyncio.sleep(86400)
+
+
 # ============================================================================
 # Lifespan Events
 # ============================================================================
@@ -2005,6 +2049,7 @@ async def lifespan(app: FastAPI):
         ("client_telemetry_retention", client_telemetry_retention_loop),
         ("data_hygiene_gc", data_hygiene_gc_loop),
         ("relocation_finalize", relocation_finalize_loop),
+        ("flywheel_federation_snapshot", _flywheel_federation_snapshot_loop),  # F6 foundation
     ]
 
     for name, fn in task_defs:
@@ -2163,6 +2208,7 @@ app.include_router(discovery_router)
 app.include_router(runbook_config_router)
 app.include_router(substrate_action_router)  # POST /api/admin/substrate/action (Task 6)
 app.include_router(flywheel_diagnostic_router)  # GET /api/admin/sites/{id}/flywheel-diagnostic (Session 213 F7)
+app.include_router(flywheel_federation_admin_router)  # GET /api/admin/flywheel/federation-candidates (Session 214 F6 foundation)
 app.include_router(users_router)
 app.include_router(integrations_router)
 app.include_router(integrations_public_router)  # OAuth callback (no auth)
