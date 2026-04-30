@@ -324,6 +324,12 @@ async def compute_tier_resolution(
     # Round-table P2-6: consistent "would_be" naming. Tier 0 is also
     # speculative until enabled+calibrated. The *_active booleans
     # disambiguate hypothetical vs live.
+    #
+    # Round-table P3 (Session 214 follow-up): expose the actual
+    # threshold values used per tier so an operator can see WHY a
+    # count came out the way it did without cross-referencing the
+    # migration. Values reflect what's currently in
+    # flywheel_eligibility_tiers (seed + any calibration applied).
     return {
         "local_would_be_eligible": local_count,
         "org_would_be_eligible": org_count,
@@ -334,6 +340,27 @@ async def compute_tier_resolution(
         "tier_local_calibrated": bool(local_t and local_t.calibrated),
         "tier_org_calibrated": bool(org_t and org_t.calibrated),
         "tier_platform_calibrated": bool(platform_t and platform_t.calibrated),
+        "tier_local_thresholds": _thresholds_to_dict(local_t),
+        "tier_org_thresholds": _thresholds_to_dict(org_t),
+        "tier_platform_thresholds": _thresholds_to_dict(platform_t),
         "client_org_id": client_org_id,
         "notes": notes,
+    }
+
+
+def _thresholds_to_dict(t: Optional[TierThresholds]) -> Optional[Dict[str, Any]]:
+    """Round-table P3: project a TierThresholds bundle to a JSON-
+    serializable dict for the F7 endpoint. Returns None when the
+    tier row doesn't exist (signals to the operator that the tier
+    isn't even seeded). Distinguishes that from a tier whose
+    distinct_* are NULL (calibration-pending)."""
+    if t is None:
+        return None
+    return {
+        "min_total_occurrences": t.min_total_occurrences,
+        "min_success_rate": t.min_success_rate,
+        "min_l2_resolutions": t.min_l2_resolutions,
+        "max_age_days": t.max_age_days,
+        "min_distinct_orgs": t.min_distinct_orgs,
+        "min_distinct_sites": t.min_distinct_sites,
     }

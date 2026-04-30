@@ -128,13 +128,31 @@ class Recommendation(BaseModel):
     action_hint: Optional[str] = None  # operator's runbook ("call rename_site(...)")
 
 
+class TierThresholdsView(BaseModel):
+    """The threshold values currently configured for one tier. NULL
+    distinct fields indicate calibration-pending. Round-table P3
+    exposure for operator transparency — see WHY a count came out
+    the way it did without cross-referencing the migration."""
+    min_total_occurrences: int
+    min_success_rate: float
+    min_l2_resolutions: int
+    max_age_days: int
+    min_distinct_orgs: Optional[int] = None
+    min_distinct_sites: Optional[int] = None
+
+
 class TierResolution(BaseModel):
     """F6 phase 2 read-only tier-eligibility breakdown. Counts are
     diagnostic; no enforcement, no rollout. `*_active` reports whether
     each tier is currently making decisions (env-on AND
     tier.enabled AND calibrated). All three counts use the
     `would_be_eligible` framing for consistency — local is also
-    speculative until enabled+calibrated. Round-table 2026-04-30."""
+    speculative until enabled+calibrated. Round-table 2026-04-30.
+
+    `*_thresholds` (round-table P3) exposes the actual threshold
+    bundle used to compute the count — operator transparency. NULL
+    when the tier row doesn't exist; populated even when calibration
+    is pending (so an operator can see seed values vs calibrated)."""
     local_would_be_eligible: Optional[int] = None
     org_would_be_eligible: Optional[int] = None
     platform_would_be_eligible: Optional[int] = None
@@ -144,6 +162,9 @@ class TierResolution(BaseModel):
     tier_local_calibrated: bool = False
     tier_org_calibrated: bool = False
     tier_platform_calibrated: bool = False
+    tier_local_thresholds: Optional[TierThresholdsView] = None
+    tier_org_thresholds: Optional[TierThresholdsView] = None
+    tier_platform_thresholds: Optional[TierThresholdsView] = None
     client_org_id: Optional[str] = None
     # Dict keyed by tier name — frontend can render the org-specific
     # note next to the org count badge (round-table P2-5).

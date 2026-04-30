@@ -134,6 +134,107 @@ def test_compute_tier_resolution_returns_dict_shape():
         assert k in src, f"compute_tier_resolution missing key {k}"
 
 
+def test_compute_tier_resolution_includes_thresholds():
+    """Round-table P3 (Session 214 follow-up): tier_*_thresholds
+    must be in the response so operators can see the actual values
+    used per tier without reading migrations."""
+    src = QUERIES_PY.read_text()
+    threshold_keys = [
+        '"tier_local_thresholds"',
+        '"tier_org_thresholds"',
+        '"tier_platform_thresholds"',
+    ]
+    for k in threshold_keys:
+        assert k in src, f"compute_tier_resolution missing {k}"
+    # The helper that projects TierThresholds → dict must exist
+    assert "_thresholds_to_dict" in src, (
+        "missing _thresholds_to_dict helper for projecting threshold "
+        "bundles to JSON-serializable dicts"
+    )
+
+
+def test_thresholds_to_dict_projects_all_threshold_fields():
+    """Type-drift guard (round-table P1-recommend): every non-state
+    field of `TierThresholds` (i.e. excluding tier_name, tier_level,
+    enabled, calibrated) must be projected by `_thresholds_to_dict`.
+
+    If a future migration adds a new threshold dimension to the
+    dataclass and forgets to update the projection helper, this test
+    fails immediately — same class of three-list-lockstep failure
+    that bit sigauth identity-key, flywheel event_type, and runbook
+    attestation."""
+    from dataclasses import fields
+    import sys
+    backend_dir = REPO_ROOT / "mcp-server" / "central-command" / "backend"
+    sys.path.insert(0, str(backend_dir))
+    from flywheel_eligibility_queries import TierThresholds, _thresholds_to_dict
+
+    state_fields = {"tier_name", "tier_level", "enabled", "calibrated"}
+    threshold_fields = {f.name for f in fields(TierThresholds)} - state_fields
+
+    sample = TierThresholds(
+        tier_name="x",
+        tier_level=0,
+        min_total_occurrences=1,
+        min_success_rate=0.9,
+        min_l2_resolutions=1,
+        max_age_days=30,
+        min_distinct_orgs=None,
+        min_distinct_sites=None,
+        enabled=False,
+        calibrated=False,
+    )
+    projected = set(_thresholds_to_dict(sample).keys())
+    missing = threshold_fields - projected
+    assert not missing, (
+        f"_thresholds_to_dict drift: TierThresholds has these threshold "
+        f"fields that are NOT projected to the response dict: {missing}. "
+        f"Update _thresholds_to_dict to include them, OR add them to "
+        f"the state_fields exclusion if they're not threshold dimensions."
+    )
+
+
+def test_pydantic_view_matches_threshold_fields():
+    """Same drift class for the API model: TierThresholdsView must
+    list every threshold field that `_thresholds_to_dict` projects.
+    Otherwise Pydantic silently drops keys when validating the dict
+    into the model."""
+    from dataclasses import fields
+    import sys
+    backend_dir = REPO_ROOT / "mcp-server" / "central-command" / "backend"
+    sys.path.insert(0, str(backend_dir))
+    from flywheel_eligibility_queries import TierThresholds
+    from flywheel_diagnostic import TierThresholdsView
+
+    state_fields = {"tier_name", "tier_level", "enabled", "calibrated"}
+    threshold_fields = {f.name for f in fields(TierThresholds)} - state_fields
+    pydantic_fields = set(TierThresholdsView.model_fields.keys())
+    missing = threshold_fields - pydantic_fields
+    assert not missing, (
+        f"TierThresholdsView Pydantic model is missing fields: "
+        f"{missing}. Add them to the model so the API exposes them."
+    )
+
+
+def test_thresholds_view_pydantic_model_exists():
+    """The F7 endpoint must define a TierThresholdsView Pydantic
+    model so the OpenAPI schema typed-codegens cleanly for the
+    frontend."""
+    src = (
+        REPO_ROOT
+        / "mcp-server" / "central-command" / "backend"
+        / "flywheel_diagnostic.py"
+    ).read_text()
+    assert "class TierThresholdsView(BaseModel):" in src, (
+        "F7 endpoint must define TierThresholdsView so the threshold "
+        "bundle codegens as a typed object, not Dict[str, Any]"
+    )
+    # And the TierResolution model must reference it
+    assert "tier_local_thresholds: Optional[TierThresholdsView]" in src
+    assert "tier_org_thresholds: Optional[TierThresholdsView]" in src
+    assert "tier_platform_thresholds: Optional[TierThresholdsView]" in src
+
+
 def test_uses_shared_parse_bool_env():
     """Round-table P2-7: env-flag parsing MUST go through
     shared.parse_bool_env so the F7 diagnostic and main.py
