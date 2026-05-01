@@ -23,8 +23,35 @@
 
 BEGIN;
 
+-- Drop the dependent view first — `v_canonical_incidents` (mig 258
+-- canonical-aliasing read view) projects resolution_tier directly,
+-- so ALTER COLUMN TYPE fails until the view is dropped + recreated.
+DROP VIEW IF EXISTS v_canonical_incidents CASCADE;
+
 ALTER TABLE incidents
     ALTER COLUMN resolution_tier TYPE VARCHAR(32);
+
+-- Recreate v_canonical_incidents with the same columns + INSTEAD
+-- NOTHING rules (mig 258 read-only enforcement).
+CREATE VIEW v_canonical_incidents
+    WITH (security_barrier = true) AS
+SELECT
+    id, appliance_id, incident_type, severity, check_type, details,
+    pre_state, resolution_tier, order_id, status, hipaa_controls,
+    reported_at, resolved_at, created_at, site_id, remediation_attempts,
+    remediation_history, remediation_exhausted, context_hash,
+    reopen_count, dedup_key,
+    canonical_site_id(site_id::text) AS canonical_site_id
+  FROM incidents i;
+
+CREATE RULE v_canonical_incidents_no_insert AS
+    ON INSERT TO v_canonical_incidents DO INSTEAD NOTHING;
+CREATE RULE v_canonical_incidents_no_update AS
+    ON UPDATE TO v_canonical_incidents DO INSTEAD NOTHING;
+CREATE RULE v_canonical_incidents_no_delete AS
+    ON DELETE TO v_canonical_incidents DO INSTEAD NOTHING;
+
+REVOKE INSERT, UPDATE, DELETE ON v_canonical_incidents FROM PUBLIC;
 
 -- Audit-log
 INSERT INTO admin_audit_log (username, action, target, details, created_at)
