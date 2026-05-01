@@ -90,6 +90,15 @@
       "doc": "CLAUDE.md Session 214 entry on bg_heartbeat calibration; commit e820ca85",
       "owner": "session pickup engineer (any)",
       "action_prompt": "Spawn a research fork: walk EXPECTED_INTERVAL_S in mcp-server/central-command/backend/bg_heartbeat.py + task_defs in mcp-server/main.py; for each entry, find the corresponding loop function and grep its inter-iteration asyncio.sleep(N); flag any drift > 50%. Also list loops in task_defs without EXPECTED_INTERVAL_S coverage. Recommend an AST-grep CI gate. Report under 600 words. Research-only \u2014 no code changes from the fork."
+    },
+    {
+      "due": "2026-05-04T13:43:00Z",
+      "task": "Weekly scheduled_followups digest (re-schedule + run)",
+      "why": "CronCreate scheduled cron e6242204 for Monday 8:43 AM local but the durable flag appears non-functional in this runtime build (response said Session-only despite durable=true). Without the cross-session pattern this entry, the digest stops the moment my session ends. Future-Claude on first invocation should: (1) run the digest fork itself, (2) re-schedule the cron with CronCreate(\"43 8 * * 1\", recurring=true, durable=true), (3) bump THIS scheduled_followups entry to next Monday to keep the self-healing chain alive.",
+      "doc": "CLAUDE.md Session 214 entry on bg_heartbeat calibration (sibling pattern); CronCreate id e6242204 (in-session) \u2014 may have died",
+      "owner": "session pickup engineer (any) \u2014 recurring",
+      "recurring_weekly": true,
+      "action_prompt": "Spawn a research fork: read .agent/claude-progress.json::scheduled_followups, bucket entries by days_until_due (OVERDUE / DUE_THIS_WEEK / UPCOMING / LATER), cross-check any named substrate invariants against prod via SSH. Emit a markdown digest under 800 words. AFTER digest: re-schedule the weekly cron via CronCreate AND bump this scheduled_followups entry due-date to next Monday. Self-healing chain."
     }
   ],
   "recent_milestones": [
