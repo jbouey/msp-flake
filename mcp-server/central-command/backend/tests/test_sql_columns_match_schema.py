@@ -209,7 +209,11 @@ def _scan_updates(src: str) -> List[Tuple[str, Set[str], int]]:
         # at WHERE / RETURNING / triple-quote, so `set_blob` is just
         # the SET clause.
         cols = set()
-        for col_match in re.finditer(r"([a-zA-Z_][\w]*)\s*=", set_blob):
+        # Negative lookahead `(?!>)` excludes Postgres `=>` named-arg
+        # syntax (e.g. `make_interval(hours => $1)`), which is NOT a
+        # column reference and would false-positive every named-arg
+        # use. Locked in by Block 3 round-table 2026-05-01.
+        for col_match in re.finditer(r"([a-zA-Z_][\w]*)\s*=(?!>)", set_blob):
             cols.add(col_match.group(1).lower())
         lineno = src[: match.start()].count("\n") + 1
         out.append((tbl, cols, lineno))
