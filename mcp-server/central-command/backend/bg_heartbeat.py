@@ -102,6 +102,9 @@ EXPECTED_INTERVAL_S: Dict[str, int] = {
     "exemplar_miner": 86400,
     "phantom_detector": 300,
     "heartbeat_rollup": 60,
+    "substrate_assertions": 60,
+    "go_agent_status_decay": 60,  # Session 214 fleet-edge liveness
+    "mark_stale_appliances": 60,  # CLAUDE.md APPLIANCE_STALE_THRESHOLD
 }
 
 

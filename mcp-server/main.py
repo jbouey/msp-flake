@@ -1697,6 +1697,17 @@ async def lifespan(app: FastAPI):
         while not _bg_shutdown.is_set():
             try:
                 logger.info(f"bg_task_started", task=name)
+                # Register a startup heartbeat so every supervised loop
+                # appears in bg_heartbeat. Without this, loops that
+                # never call record_heartbeat themselves are invisible
+                # to bg_loop_silent invariant — a stuck await on a
+                # never-instrumented loop wouldn't fire. Round-table
+                # 2026-05-01 Block 2 P0 closure.
+                try:
+                    from dashboard_api.bg_heartbeat import record_heartbeat
+                    record_heartbeat(name)
+                except Exception:
+                    pass
                 await coro_fn(*args)
                 logger.info(f"bg_task_completed", task=name)
                 break  # Clean exit

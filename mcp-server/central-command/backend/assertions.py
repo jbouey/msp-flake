@@ -430,6 +430,107 @@ async def _check_phantom_detector_healthy(conn: asyncpg.Connection) -> List[Viol
     return []
 
 
+async def _check_substrate_assertions_meta_silent(conn: asyncpg.Connection) -> List[Violation]:
+    """The substrate engine's META watcher (Session 214 Block 2 round-table).
+
+    `assertions_loop` writes a heartbeat every 60s tick. If the loop
+    itself hangs in a stuck await (deadlock, asyncpg connection-acquire
+    wait, hung HTTP), the heartbeat stops but the supervisor cannot
+    detect a stuck await as an exception — the task hangs forever
+    silently. The dashboard then shows "all-clear" forever because
+    no fresh tick = no new violations, but ALSO no resolution.
+
+    Sev1 because: if substrate is silent, EVERY downstream signal the
+    substrate would have surfaced is silent. This is the meta-failure
+    that hides every other failure. Threshold 180s = 3x the 60s
+    expected cadence, matching the phantom_detector pattern.
+    """
+    try:
+        from .bg_heartbeat import get_heartbeat
+    except ImportError:
+        try:
+            from dashboard_api.bg_heartbeat import get_heartbeat  # pragma: no cover
+        except ImportError:
+            from bg_heartbeat import get_heartbeat  # type: ignore
+    hb = get_heartbeat("substrate_assertions")
+    if hb is None:
+        # Process just started — give the loop a cycle to register.
+        return []
+    if hb["age_s"] > 180:
+        return [
+            Violation(
+                site_id=None,
+                details={
+                    "loop": "substrate_assertions",
+                    "age_s": hb["age_s"],
+                    "iterations": hb["iterations"],
+                    "errors": hb["errors"],
+                    "interpretation": (
+                        "substrate_assertions loop has not heartbeat in "
+                        "> 3 min (3x cadence). The dashboard 'all-clear' "
+                        "state is meaningless until this resolves — the "
+                        "watcher itself is silent. Check mcp-server logs "
+                        "for asyncpg pool exhaustion, deadlock, or stuck "
+                        "await. Restart the container if no obvious cause."
+                    ),
+                },
+            )
+        ]
+    return []
+
+
+async def _check_bg_loop_silent(conn: asyncpg.Connection) -> List[Violation]:
+    """Generic background-loop staleness check (Session 214 Block 2).
+
+    Walks every loop in the bg_heartbeat registry and emits one Violation
+    per loop whose `age_s > 3 * EXPECTED_INTERVAL_S[name]`. Loops not
+    in EXPECTED_INTERVAL_S return 'unknown' — those are skipped to avoid
+    noise; backfilling EXPECTED_INTERVAL_S is the operator's path to
+    full coverage.
+
+    Sev2 because: a stuck loop typically degrades a single feature
+    (flywheel promotions, partition maintenance, alert digests) rather
+    than masking the entire substrate. The substrate-meta sev1 covers
+    the catastrophic case.
+    """
+    try:
+        from .bg_heartbeat import get_all_heartbeats, assess_staleness
+    except ImportError:
+        try:
+            from dashboard_api.bg_heartbeat import (  # pragma: no cover
+                get_all_heartbeats, assess_staleness,
+            )
+        except ImportError:
+            from bg_heartbeat import get_all_heartbeats, assess_staleness  # type: ignore
+
+    out: List[Violation] = []
+    # substrate_assertions has its own dedicated sev1 invariant — don't
+    # double-fire from the generic sev2 catch-all.
+    EXCLUDED = {"substrate_assertions", "phantom_detector"}
+    heartbeats = get_all_heartbeats()
+    for name, entry in heartbeats.items():
+        if name in EXCLUDED:
+            continue
+        if assess_staleness(entry) != "stale":
+            continue
+        out.append(Violation(
+            site_id=None,
+            details={
+                "loop": name,
+                "age_s": entry["age_s"],
+                "iterations": entry["iterations"],
+                "errors": entry["errors"],
+                "interpretation": (
+                    f"Loop '{name}' has not heartbeat in {entry['age_s']:.0f}s "
+                    f"— more than 3x its expected cadence. Stuck await, "
+                    f"deadlock, or upstream dependency outage. Check "
+                    f"mcp-server logs filtered for `{name}`."
+                ),
+            },
+        ))
+    return out
+
+
 async def _check_heartbeat_write_divergence(conn: asyncpg.Connection) -> List[Violation]:
     """site_appliances.last_checkin is maintained by the UPSERT in the
     checkin handler. appliance_heartbeats is maintained by a SEPARATE
@@ -791,6 +892,18 @@ ALL_ASSERTIONS: List[Assertion] = [
         severity="sev3",
         description="platform_pattern_stats should never contain rows with L2-prefixed runbook_id (they are synthetic planner-internal IDs, excluded from aggregation by background_tasks.py:1189 `NOT LIKE 'L2-%'`). 2026-04-18 migration 237 DELETEd 2 such rows; Session 210 found them back with January timestamps despite no identified INSERT path. Rows were re-deleted. This invariant catches the next reappearance loud instead of silent.",
         check=lambda c: _check_synthetic_l2_pps_rows(c),
+    ),
+    Assertion(
+        name="substrate_assertions_meta_silent",
+        severity="sev1",
+        description="The substrate engine's own assertions_loop has not heartbeat in 3+ min (3x the 60s cadence). The dashboard's 'all-clear' state is meaningless while this fires — the watcher itself is silent. Catches the meta-failure class (stuck await / deadlock / asyncpg pool exhaustion) that hides every downstream invariant. Round-table 2026-05-01 Block 2 P0 closure.",
+        check=lambda c: _check_substrate_assertions_meta_silent(c),
+    ),
+    Assertion(
+        name="bg_loop_silent",
+        severity="sev2",
+        description="A registered background loop (with known expected cadence in bg_heartbeat.EXPECTED_INTERVAL_S) has not heartbeat in 3x its cadence. One violation row per stuck loop. Closes the silent-stuck-loop class — `_supervised` auto-restarts on EXCEPTIONS but a stuck await is not an exception, so a hung loop logs nothing. Round-table 2026-05-01 Block 2 P0 closure.",
+        check=lambda c: _check_bg_loop_silent(c),
     ),
 ]
 
@@ -1210,6 +1323,30 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "deploy accidentally dropped it; roll back or hotfix. "
             "Auto-resolves when events stop arriving for that (endpoint, field) "
             "pair in a 5-minute window.",
+    },
+    "substrate_assertions_meta_silent": {
+        "display_name": "Substrate watcher itself is silent (meta)",
+        "recommended_action": "The substrate engine's own assertions_loop "
+            "has not heartbeat in 3+ min — the dashboard's 'all-clear' state "
+            "is MEANINGLESS until this resolves, because the watcher is the "
+            "thing that produces violations. (1) Check mcp-server logs for "
+            "'substrate_assertions' tick lines stopping abruptly. (2) Check "
+            "for asyncpg pool exhaustion (`SELECT count(*) FROM pg_stat_activity "
+            "WHERE datname='mcp'`). (3) Check for stuck await on a HTTP fetch "
+            "(rare — substrate assertions are DB-only). (4) `docker compose "
+            "restart mcp-server` if no obvious cause; container restart "
+            "force-restarts the supervisor + the loop.",
+    },
+    "bg_loop_silent": {
+        "display_name": "Background loop stuck (no heartbeat for 3x cadence)",
+        "recommended_action": "A registered background loop has stopped "
+            "writing heartbeats. _supervised auto-restarts on EXCEPTIONS but "
+            "stuck awaits are not exceptions — the task hangs forever. "
+            "details.loop names the offender; check mcp-server logs filtered "
+            "for that loop's name. Common causes: asyncpg pool exhaustion, "
+            "deadlock against another loop, hung HTTP fetch (LLM, OTS calendar, "
+            "GitHub API). `docker compose restart mcp-server` is the blunt "
+            "fix; root-cause via the log filter first.",
     },
     "synthetic_l2_pps_rows": {
         "display_name": "Synthetic L2-* runbook_id rows in platform_pattern_stats",
