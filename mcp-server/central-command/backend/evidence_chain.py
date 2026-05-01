@@ -1274,6 +1274,90 @@ async def submit_evidence(
             initial_ots_status,
         )
 
+        # ───── fail→pass real-time auto-resolve (Block-3 audit P0.2) ─────
+        #
+        # When a bundle's per-host check transitions to status='pass', any
+        # currently-open incident matching (site_id, check_type, hostname)
+        # should auto-resolve. Pre-fix, monitoring-only incidents stayed
+        # open for 7 days waiting for the stale sweep — even when the
+        # underlying chaos-lab VM came back online after 4 hours.
+        #
+        # Idempotent: UPDATE WHERE status='open' is a no-op if already
+        # resolved. Single-statement (no N+1). Atomic with the bundle
+        # INSERT — both commit together at end of tenant_connection. If
+        # this UPDATE fails, the bundle INSERT also rolls back — that's
+        # the safer failure mode (avoid bundle-without-recovery state).
+        try:
+            passing_pairs = [
+                {"check_type": c.get("check"), "hostname": c.get("hostname")}
+                for c in (bundle.checks or [])
+                if c.get("status") == "pass"
+                and c.get("check")
+                and c.get("hostname")
+            ]
+            if passing_pairs:
+                resolved_rows = await conn.fetch(
+                    """
+                    WITH passing AS (
+                        SELECT (e->>'check_type') AS check_type,
+                               (e->>'hostname') AS hostname
+                          FROM jsonb_array_elements($2::jsonb) AS e
+                    ),
+                    matched AS (
+                        SELECT i.id
+                          FROM incidents i
+                          JOIN passing p
+                            ON i.incident_type = p.check_type
+                           AND i.details->>'hostname' = p.hostname
+                         WHERE i.site_id = $1
+                           AND i.status = 'open'
+                    )
+                    UPDATE incidents
+                       SET status = 'resolved',
+                           resolved_at = NOW(),
+                           resolution_tier = 'auto_recovered'
+                      FROM matched
+                     WHERE incidents.id = matched.id
+                    RETURNING incidents.id, incidents.incident_type,
+                              incidents.details->>'hostname' AS hostname
+                    """,
+                    site_id,
+                    json.dumps(passing_pairs),
+                )
+                if resolved_rows:
+                    logger.info(
+                        "evidence_auto_recovered_incidents",
+                        extra={
+                            "site_id": site_id,
+                            "bundle_id": bundle.bundle_id,
+                            "count": len(resolved_rows),
+                            "incidents": [
+                                {
+                                    "id": str(r["id"]),
+                                    "type": r["incident_type"],
+                                    "host": r["hostname"],
+                                }
+                                for r in resolved_rows
+                            ],
+                        },
+                    )
+        except Exception as e:
+            # Per CLAUDE.md "no silent write failures": auto-resolve
+            # failures must surface at ERROR. The UPDATE shares the
+            # bundle-INSERT txn; raising here aborts the whole submit
+            # which is correct — bundle-without-recovery is worse than
+            # bundle-rejected-with-retry.
+            logger.error(
+                "evidence_auto_recover_failed",
+                exc_info=True,
+                extra={
+                    "site_id": site_id,
+                    "bundle_id": bundle.bundle_id,
+                    "exception_class": type(e).__name__,
+                },
+            )
+            raise
+
     # Post-commit: the Merkle-batching path has ots_status='batching' already;
     # the legacy individual-OTS path still needs a background submit.
     ots_submitted = False
