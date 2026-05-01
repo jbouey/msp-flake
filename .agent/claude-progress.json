@@ -122,7 +122,15 @@
       "why": "Coach found mig 268 assigns BUNDLE-level cb.check_result to each control via DISTINCT ON. Bundle with 5 controls + 1 failing host scores ALL 5 as failing. Disposition voted IMMEDIATE but actual scope is multi-hour schema design (evidence_framework_mappings.check_status column + framework_mapper writer update + 117K mapping backfill). Escalated to SCHEDULED.",
       "doc": "CLAUDE.md score-granularity entry; mig 268",
       "owner": "engineering \u2014 multi-day",
-      "action_prompt": "Round-table on schema design: option A schema column add + writer update + backfill, option B JSONB unnest at query time, option C hybrid cache. Implement + update calculate_compliance_score."
+      "action_prompt": "Implementation gate: read design doc at .agent/plans/d1-per-control-granularity-design.md; apply the 3 final_deltas; ship mig 269 + writer change + function rewrite as one atomic commit; schedule backfill within 24h. The hardened design is round-table-approved; deviation requires a new round-table.",
+      "design_doc": ".agent/plans/d1-per-control-granularity-design.md",
+      "consistency_coach_review": "fork aa6f50ab17612b673 \u2014 APPROVE_WITH_CHANGES (7 applied)",
+      "round_table_review": "fork afe3ec8f1c4903756 \u2014 SCHEDULE_FOR_LATER + 3 final deltas",
+      "final_deltas": [
+        "Brian: add 'if not statuses: continue' guard before _agg() in writer",
+        "Diana: drop idx_efm_status_lookup from mig 269; EXPLAIN-driven decision post-deploy",
+        "Steve: schedule backfill within 24h post-deploy + add data_completeness API field (separate followup)"
+      ]
     },
     {
       "due": "2026-05-15T00:00:00Z",
