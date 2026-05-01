@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
   "session": 214,
-  "updated": "2026-04-30T07:15:27.261334Z",
+  "updated": "2026-05-01T04:05:21.667695Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty.",
   "versions": {
     "agent": "0.4.6",
@@ -82,6 +82,14 @@
       "what": "task #169 closed early on user override 2026-04-28 22:51Z; substrate watch through window-end. Re-fire of sigauth_enforce_mode_rejections OR sigauth_post_fix_window_canary auto-reopens task and triggers pivot to MVCC / deleted_at / autovacuum hypothesis (NEW round-table required BEFORE any fix). After 2026-05-05 if both invariants stayed silent, REMOVE sigauth_post_fix_window_canary from ALL_ASSERTIONS.",
       "doc": "docs/security/sigauth-wrap-validation-2026-04-28.md (User-override early closure section)",
       "owner": "session pickup engineer (any)"
+    },
+    {
+      "due": "2026-05-15T15:14:00Z",
+      "task": "EXPECTED_INTERVAL_S calibration sweep \u2014 Session 214 follow-up",
+      "why": "On 2026-05-01 bg_loop_silent (sev2) fired immediately on first deploy with loop=health_monitor, age_s=250. Investigation showed no real outage \u2014 the bug was a calibration drift: bg_heartbeat.EXPECTED_INTERVAL_S[\"health_monitor\"]=60 vs actual asyncio.sleep(300) in health_monitor.py:101. Fix landed e820ca85. The same drift class will bite again as new loops are added or sleep cadences change. This task spawns an audit fork to catch all such drifts + recommend an AST-grep CI gate.",
+      "doc": "CLAUDE.md Session 214 entry on bg_heartbeat calibration; commit e820ca85",
+      "owner": "session pickup engineer (any)",
+      "action_prompt": "Spawn a research fork: walk EXPECTED_INTERVAL_S in mcp-server/central-command/backend/bg_heartbeat.py + task_defs in mcp-server/main.py; for each entry, find the corresponding loop function and grep its inter-iteration asyncio.sleep(N); flag any drift > 50%. Also list loops in task_defs without EXPECTED_INTERVAL_S coverage. Recommend an AST-grep CI gate. Report under 600 words. Research-only \u2014 no code changes from the fork."
     }
   ],
   "recent_milestones": [
