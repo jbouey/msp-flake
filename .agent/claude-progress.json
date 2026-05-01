@@ -138,7 +138,10 @@
       "why": "Python lint cannot see SQL function bodies. mig 268 closed the only known violation. Zero current violations but a future regression would slip through.",
       "doc": "mig 268; tests/test_flywheel_eligibility_queries.py",
       "owner": "engineering \u2014 calm session ~30 min",
-      "action_prompt": "Add pg_proc.prosrc scan or parse CREATE FUNCTION blocks in migrations; assert no banned pattern. Sibling to Python-side lint."
+      "action_prompt": "Add pg_proc.prosrc scan or parse CREATE FUNCTION blocks in migrations; assert no banned pattern. Sibling to Python-side lint.",
+      "closed": "2026-05-01",
+      "closed_by": "commit a5bb68ad",
+      "closure_note": "Advanced from 2026-05-15 during BUG 3 closure same-session momentum. ~30 min bounded scope. 4 historical occurrences identified (mig 013/091/243 noqa-marked; mig 268 false-positive comment fixed by regex). Ratchet baseline=0 prevents new offenders."
     },
     {
       "due": "2026-05-22T00:00:00Z",
