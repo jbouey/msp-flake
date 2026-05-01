@@ -1315,7 +1315,7 @@ async def submit_evidence(
                     UPDATE incidents
                        SET status = 'resolved',
                            resolved_at = NOW(),
-                           resolution_tier = 'auto_recovered'
+                           resolution_tier = 'recovered'
                       FROM matched
                      WHERE incidents.id = matched.id
                     RETURNING incidents.id, incidents.incident_type,

@@ -107,6 +107,14 @@
       "doc": "CLAUDE.md persistence-runbook section + l2_decisions table",
       "owner": "engineering \u2014 multi-day task",
       "action_prompt": "Spawn fork to: (1) read _recurrence_velocity_loop in main.py and trace its emission logic, (2) check if recurrence rows are written to recurrence_patterns or similar table, (3) inspect what triggers escalation_reason=recurrence on l2_decisions, (4) confirm whether persistence runbook rules are gated on recurrence vs immediate dispatch. Report under 800 words. Research only."
+    },
+    {
+      "due": "2026-05-08T00:00:00Z",
+      "task": "P3 followup: extend incidents.resolution_tier VARCHAR(10) \u2192 VARCHAR(32) cleanly",
+      "why": "Round-table 2026-05-01 abandoned mig 266 ALTER COLUMN TYPE during prod outage because v_canonical_incidents (mig 258 view) AND partner_site_weekly_rollup (materialized view) both reference resolution_tier. Drop+recreate of the materialized view requires REFRESH which can take minutes on prod-sized data. Shipped mig 267 instead (shorten value: auto_recovered \u2192 recovered). Architectural cleanup remains: extending the column allows future tier names without 10-char constraint.",
+      "doc": "migrations/266 (abandoned), 267 (shipped), CLAUDE.md round-table 2026-05-01",
+      "owner": "engineering \u2014 calm session",
+      "action_prompt": "Spawn fork: write mig 268 with 3 BEGIN/COMMIT blocks: DROP v_canonical_incidents + DROP MATERIALIZED VIEW partner_site_weekly_rollup \u2192 ALTER COLUMN TYPE \u2192 recreate both views + REFRESH MATERIALIZED VIEW. Verify refresh time empirically. Once column is wider, ship mig 269 to RENAME value back to auto_recovered for forensic clarity."
     }
   ],
   "recent_milestones": [

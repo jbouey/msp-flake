@@ -29,21 +29,36 @@ MIGRATION = (
 )
 
 
-def test_migration_264_extends_resolution_tier_check():
-    """Migration 264 must extend incidents.resolution_tier CHECK to
-    include 'auto_recovered'. Pre-fix CHECK only allowed
-    L1/L2/L3/monitoring; the new hook would CHECK-violate without
-    this migration."""
-    assert MIGRATION.exists(), "Migration 264 missing"
-    src = MIGRATION.read_text()
-    assert "auto_recovered" in src, (
-        "Migration 264 must add 'auto_recovered' to resolution_tier CHECK"
+def test_migration_267_replaces_resolution_tier_check():
+    """Migration 267 must replace the resolution_tier CHECK to include
+    'recovered'. Mig 264 originally added 'auto_recovered' but the
+    column is VARCHAR(10) and that's 14 chars — every write raised
+    StringDataRightTruncationError. Round-table 2026-05-01 chose to
+    shorten the value rather than extend the column (mig 266 abandoned).
+    Forensic contract preserved: 'recovered' tier still distinguishes
+    from L1/L2/L3/monitoring."""
+    mig_267 = (
+        REPO_ROOT
+        / "mcp-server"
+        / "central-command"
+        / "backend"
+        / "migrations"
+        / "267_resolution_tier_recovered_short.sql"
+    )
+    assert mig_267.exists(), "Migration 267 missing"
+    src = mig_267.read_text()
+    assert "'recovered'" in src, (
+        "Migration 267 must include 'recovered' in the CHECK list"
+    )
+    # The old long-form value MUST NOT appear in the new CHECK list
+    # — the prod column can't hold it.
+    check_block_start = src.find("ADD CONSTRAINT incidents_resolution_tier_check")
+    check_block = src[check_block_start : check_block_start + 600]
+    assert "'auto_recovered'" not in check_block, (
+        "Migration 267 must NOT include 'auto_recovered' (14 chars > VARCHAR(10))"
     )
     assert "DROP CONSTRAINT IF EXISTS incidents_resolution_tier_check" in src, (
         "Migration must DROP the old CHECK before re-adding (idempotency)"
-    )
-    assert "ADD CONSTRAINT incidents_resolution_tier_check" in src, (
-        "Migration must ADD the expanded CHECK"
     )
 
 
@@ -70,8 +85,13 @@ def test_evidence_chain_has_auto_resolve_hook():
 
     # Hook must reference the right resolution_tier value
     hook_chunk = body[hook_idx : hook_idx + 5000]
-    assert "resolution_tier = 'auto_recovered'" in hook_chunk, (
-        "auto-resolve hook must set resolution_tier='auto_recovered'"
+    assert "resolution_tier = 'recovered'" in hook_chunk, (
+        "auto-resolve hook must set resolution_tier='recovered' "
+        "(shortened from 'auto_recovered' per mig 267 — VARCHAR(10) fit)"
+    )
+    # The old value must not regress
+    assert "resolution_tier = 'auto_recovered'" not in hook_chunk, (
+        "Banned value 'auto_recovered' (14ch > VARCHAR(10)) must not regress"
     )
     assert "status = 'resolved'" in hook_chunk, (
         "auto-resolve hook must set status='resolved'"
