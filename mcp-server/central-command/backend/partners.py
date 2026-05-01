@@ -3899,10 +3899,14 @@ async def set_partner_maintenance(
         request_method=request.method,
     )
 
-    logger.info("Partner maintenance window set",
-                site_id=site_id,
-                duration_hours=body.duration_hours,
-                partner_id=str(partner['id']))
+    logger.info(
+        "Partner maintenance window set",
+        extra={
+            "site_id": site_id,
+            "duration_hours": body.duration_hours,
+            "partner_id": str(partner['id']),
+        },
+    )
 
     return {"status": "ok", "site_id": site_id, "duration_hours": body.duration_hours}
 
@@ -3940,9 +3944,13 @@ async def cancel_partner_maintenance(
         request_method=request.method,
     )
 
-    logger.info("Partner maintenance window cancelled",
-                site_id=site_id,
-                partner_id=str(partner['id']))
+    logger.info(
+        "Partner maintenance window cancelled",
+        extra={
+            "site_id": site_id,
+            "partner_id": str(partner['id']),
+        },
+    )
 
     return {"status": "ok", "site_id": site_id, "maintenance_until": None}
 

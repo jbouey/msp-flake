@@ -6080,10 +6080,14 @@ async def set_maintenance(
             WHERE site_id = $4
         """, body.duration_hours, body.reason.strip(), user.get("username", "admin"), site_id)
 
-    logger.info("Maintenance window set",
-                site_id=site_id,
-                duration_hours=body.duration_hours,
-                set_by=user.get("username", "admin"))
+    logger.info(
+        "Maintenance window set",
+        extra={
+            "site_id": site_id,
+            "duration_hours": body.duration_hours,
+            "set_by": user.get("username", "admin"),
+        },
+    )
 
     return {"status": "ok", "site_id": site_id, "duration_hours": body.duration_hours}
 
@@ -6107,7 +6111,10 @@ async def cancel_maintenance(
             WHERE site_id = $1
         """, site_id)
 
-    logger.info("Maintenance window cancelled", site_id=site_id, cancelled_by=user.get("username", "admin"))
+    logger.info(
+        "Maintenance window cancelled",
+        extra={"site_id": site_id, "cancelled_by": user.get("username", "admin")},
+    )
 
     return {"status": "ok", "site_id": site_id, "maintenance_until": None}
 

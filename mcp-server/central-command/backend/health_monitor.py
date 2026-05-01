@@ -694,10 +694,18 @@ async def _resolve_stale_incidents():
             )
             RETURNING id, incident_type
         """)
+        # `logger` is a stdlib logging.Logger — kwargs raise TypeError.
+        # Use the structured `extra={}` form. Block-3 audit P0.1 fix
+        # (broken ≥7 days; outer try/except swallowed it; zombie + stale
+        # cleanup paths after the throw never ran).
         for row in stuck_result:
-            logger.info("Auto-resolved stuck-resolving incident (>3d)",
-                        incident_id=str(row["id"]),
-                        incident_type=row["incident_type"])
+            logger.info(
+                "Auto-resolved stuck-resolving incident (>3d)",
+                extra={
+                    "incident_id": str(row["id"]),
+                    "incident_type": row["incident_type"],
+                },
+            )
         if stuck_result:
             logger.info(f"Resolved {len(stuck_result)} stuck-resolving incidents (>3d)")
 
@@ -726,9 +734,13 @@ async def _resolve_stale_incidents():
             RETURNING id, incident_type
         """)
         for row in zombie_result:
-            logger.info("Auto-resolved zombie incident (superseded by newer resolved)",
-                        incident_id=str(row["id"]),
-                        incident_type=row["incident_type"])
+            logger.info(
+                "Auto-resolved zombie incident (superseded by newer resolved)",
+                extra={
+                    "incident_id": str(row["id"]),
+                    "incident_type": row["incident_type"],
+                },
+            )
         if zombie_result:
             logger.info(f"Resolved {len(zombie_result)} zombie incidents (superseded)")
 
@@ -750,9 +762,13 @@ async def _resolve_stale_incidents():
 
         if result:
             for row in result:
-                logger.info("Auto-resolved stale incident",
-                            incident_id=str(row["id"]),
-                            incident_type=row["incident_type"])
+                logger.info(
+                    "Auto-resolved stale incident",
+                    extra={
+                        "incident_id": str(row["id"]),
+                        "incident_type": row["incident_type"],
+                    },
+                )
             logger.info(f"Resolved {len(result)} stale incidents (>7d, no recent healing)")
 
         # Transfer device ownership when owning appliance can't see the device anymore.
@@ -773,10 +789,14 @@ async def _resolve_stale_incidents():
             """)
             if transferred:
                 for t in transferred:
-                    logger.info("Device ownership transferred",
-                                ip=t["ip_address"],
-                                from_site=t["from_site"],
-                                to_site=t["to_site"])
+                    logger.info(
+                        "Device ownership transferred",
+                        extra={
+                            "ip": t["ip_address"],
+                            "from_site": t["from_site"],
+                            "to_site": t["to_site"],
+                        },
+                    )
         except Exception as e:
             logger.debug(f"Device ownership transfer check: {e}")
 

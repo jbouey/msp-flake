@@ -1030,8 +1030,10 @@ async def receive_device_sync(report: DeviceSyncReport, auth_site_id: str = Depe
     if report.site_id and report.site_id != auth_site_id:
         logger.warning(
             "device_sync site_id mismatch",
-            auth_site_id=auth_site_id,
-            request_site_id=report.site_id,
+            extra={
+                "auth_site_id": auth_site_id,
+                "request_site_id": report.site_id,
+            },
         )
         raise HTTPException(status_code=403, detail="Site ID mismatch: token does not authorize this site")
     report.site_id = auth_site_id
