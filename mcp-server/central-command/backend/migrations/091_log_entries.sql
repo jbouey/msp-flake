@@ -26,7 +26,7 @@ DECLARE
     part_name TEXT;
 BEGIN
     FOR i IN 0..2 LOOP
-        start_date := date_trunc('month', CURRENT_DATE + (i || ' months')::interval)::date;
+        start_date := date_trunc('month', CURRENT_DATE + (i || ' months')::interval)::date;  -- noqa: sql-fn-interval-concat — `i` is a PL/pgSQL FOR-loop counter, not asyncpg-bound; safe.
         end_date := (start_date + interval '1 month')::date;
         part_name := 'log_entries_' || to_char(start_date, 'YYYY_MM');
 

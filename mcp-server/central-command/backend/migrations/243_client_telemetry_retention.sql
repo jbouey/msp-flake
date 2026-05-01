@@ -26,7 +26,7 @@ DECLARE
     deleted_count integer;
 BEGIN
     DELETE FROM client_telemetry_events
-     WHERE recorded_at < NOW() - (retention_days || ' days')::interval;
+     WHERE recorded_at < NOW() - (retention_days || ' days')::interval;  -- noqa: sql-fn-interval-concat — `retention_days` is a plpgsql function parameter (DEFAULT 30 integer); the body's || runs server-side, not via asyncpg bind. Pattern safe; mig already applied to prod (file matches prod state).
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;

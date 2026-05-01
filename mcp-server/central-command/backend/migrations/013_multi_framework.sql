@@ -200,7 +200,7 @@ BEGIN
         JOIN evidence_framework_mappings efm ON cb.bundle_id = efm.bundle_id
         WHERE cb.appliance_id = p_appliance_id
           AND efm.framework = p_framework
-          AND cb.created_at >= NOW() - (p_window_days || ' days')::INTERVAL
+          AND cb.created_at >= NOW() - (p_window_days || ' days')::INTERVAL  -- noqa: sql-fn-interval-concat — superseded by mig 268; pre-existing migration body, never re-runs.
         ORDER BY efm.control_id, cb.created_at DESC
     )
     SELECT
