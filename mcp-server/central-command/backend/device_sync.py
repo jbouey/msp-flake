@@ -225,307 +225,315 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
         # Process each device
         for device in report.devices:
             try:
-                # Check if device exists (by appliance + local device ID)
-                existing = await conn.fetchrow(
-                    """
-                    SELECT id FROM discovered_devices
-                    WHERE appliance_id = $1 AND local_device_id = $2
-                    """,
-                    appliance_db_id,
-                    device.device_id,
-                )
-                # Fallback: match by IP to avoid duplicates when device_id format changes
-                # (e.g., MAC-based → IP-based after bridge MAC filtering)
-                if not existing and device.ip_address:
+                # Per-device savepoint (CLAUDE.md asyncpg savepoint
+                # invariant): without this, ANY conn.execute failure
+                # inside the body poisons the outer admin_transaction
+                # txn. The bare except below catches the Python
+                # exception but PG state stays aborted; next device's
+                # first statement throws InFailedSQLTransactionError.
+                # Block 3 prod root cause 2026-05-01.
+                async with conn.transaction():
+                    # Check if device exists (by appliance + local device ID)
                     existing = await conn.fetchrow(
                         """
                         SELECT id FROM discovered_devices
-                        WHERE appliance_id = $1 AND ip_address = $2
-                        LIMIT 1
-                        """,
-                        appliance_db_id,
-                        device.ip_address,
-                    )
-                if existing:
-                    device_db_id = existing["id"]
-                    # Determine last_probe_at: set to NOW() if any probe field is present
-                    has_probe_data = any(
-                        v is not None for v in [
-                            device.probe_ssh, device.probe_winrm,
-                            device.probe_snmp, device.ad_joined,
-                        ]
-                    )
-                    # Update existing device (use id for stable match after device_id migration).
-                    # Prefer IP-format device_id over UUID — bridge MAC filtering
-                    # switches device_id from MAC/UUID to IP, never go backwards.
-                    await conn.execute(
-                        """
-                        UPDATE discovered_devices SET
-                            local_device_id = CASE
-                                WHEN $3 ~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' THEN $3
-                                WHEN local_device_id ~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' THEN local_device_id
-                                ELSE $3
-                            END,
-                            hostname = $4,
-                            ip_address = $5,
-                            mac_address = $6,
-                            device_type = $7,
-                            os_name = $8,
-                            os_version = $9,
-                            medical_device = $10,
-                            scan_policy = $11,
-                            manually_opted_in = $12,
-                            compliance_status = $13,
-                            open_ports = $14,
-                            discovery_source = $15,
-                            last_seen_at = GREATEST(last_seen_at, $16),
-                            last_scan_at = GREATEST(last_scan_at, $17),
-                            os_fingerprint = COALESCE($18, os_fingerprint),
-                            distro = COALESCE($19, distro),
-                            probe_ssh = COALESCE($20, probe_ssh),
-                            probe_winrm = COALESCE($21, probe_winrm),
-                            ad_joined = COALESCE($22, ad_joined),
-                            last_probe_at = CASE WHEN $23 THEN NOW() ELSE last_probe_at END,
-                            sync_updated_at = NOW()
-                        WHERE id = $1 AND appliance_id = $2
-                        """,
-                        device_db_id,
-                        appliance_db_id,
-                        device.device_id,
-                        device.hostname,
-                        device.ip_address,
-                        device.mac_address,
-                        device.device_type,
-                        device.os_name,
-                        device.os_version,
-                        device.medical_device,
-                        device.scan_policy,
-                        device.manually_opted_in,
-                        device.compliance_status,
-                        device.open_ports,
-                        device.discovery_source,
-                        device.last_seen_at,
-                        device.last_scan_at,
-                        device.os_fingerprint,
-                        device.distro,
-                        device.probe_ssh,
-                        device.probe_winrm,
-                        device.ad_joined,
-                        has_probe_data,
-                    )
-                    devices_updated += 1
-                else:
-                    # Insert new device
-                    has_probe_data = any(
-                        v is not None for v in [
-                            device.probe_ssh, device.probe_winrm,
-                            device.probe_snmp, device.ad_joined,
-                        ]
-                    )
-                    device_db_id = await conn.fetchval(
-                        """
-                        INSERT INTO discovered_devices (
-                            appliance_id, local_device_id, hostname, ip_address,
-                            mac_address, device_type, os_name, os_version,
-                            medical_device, scan_policy, manually_opted_in,
-                            compliance_status, open_ports, discovery_source,
-                            first_seen_at, last_seen_at, last_scan_at,
-                            os_fingerprint, distro, probe_ssh, probe_winrm, ad_joined,
-                            last_probe_at,
-                            sync_created_at, sync_updated_at
-                        ) VALUES (
-                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                            $12, $13, $14, $15, $16, $17,
-                            $18, $19, $20, $21, $22,
-                            CASE WHEN $23 THEN NOW() ELSE NULL END,
-                            NOW(), NOW()
-                        )
-                        RETURNING id
+                        WHERE appliance_id = $1 AND local_device_id = $2
                         """,
                         appliance_db_id,
                         device.device_id,
-                        device.hostname,
-                        device.ip_address,
-                        device.mac_address,
-                        device.device_type,
-                        device.os_name,
-                        device.os_version,
-                        device.medical_device,
-                        device.scan_policy,
-                        device.manually_opted_in,
-                        device.compliance_status,
-                        device.open_ports,
-                        device.discovery_source,
-                        device.first_seen_at,
-                        device.last_seen_at,
-                        device.last_scan_at,
-                        device.os_fingerprint,
-                        device.distro,
-                        device.probe_ssh,
-                        device.probe_winrm,
-                        device.ad_joined,
-                        has_probe_data,
                     )
-                    devices_created += 1
-
-                # Set scan ownership: first appliance to discover a device owns it.
-                # Only set if unowned — never steal from another appliance.
-                # CRITICAL: this UPDATE is inside the per-device for-loop on
-                # the OUTER admin_transaction. Without a savepoint wrapper,
-                # any DB error here (FK violation when appliance_db_id is a
-                # legacy_uuid that doesn't match owner_appliance_id's column
-                # type, missing column on a still-being-deployed schema, etc)
-                # poisons the outer txn — every subsequent device fails with
-                # InFailedSQLTransactionError. This was the active prod bug
-                # 2026-04-30 to 2026-05-01: /api/devices/sync 500ing 26x in
-                # 30 min on netscan-keyed (IP/MAC) device_ids. Savepoint
-                # isolation closes the class.
-                try:
-                    async with conn.transaction():
-                        await conn.execute("""
-                            UPDATE discovered_devices
-                            SET owner_appliance_id = $2, owned_since = NOW()
-                            WHERE id = $1 AND owner_appliance_id IS NULL
-                        """, device_db_id, appliance_db_id)
-                except Exception as e:
-                    logger.error(
-                        "device_sync_owner_update_failed",
-                        exc_info=True,
-                        extra={
-                            "exception_class": type(e).__name__,
-                            "device_db_id": str(device_db_id),
-                            "appliance_db_id": str(appliance_db_id),
-                            "site_id": report.site_id,
-                        },
-                    )
-
-                # Auto-classify device_status based on probe results.
-                # Only update if current status is 'discovered' or null
-                # (never overwrite managed states).
-                MANAGED_STATES = ('agent_active', 'deploying', 'pending_deploy', 'ignored')
-                current_status_row = await conn.fetchrow(
-                    "SELECT device_status FROM discovered_devices WHERE id = $1",
-                    device_db_id,
-                )
-                current_status = current_status_row["device_status"] if current_status_row else None
-                if current_status not in MANAGED_STATES:
-                    new_device_status: Optional[str] = None
-                    if device.ad_joined:
-                        # Check for active go_agent coverage (batched — no per-device query)
-                        agent_active = (
-                            (device.hostname and device.hostname.lower() in _agent_hosts)
-                            or (device.ip_address and device.ip_address in _agent_hosts)
+                    # Fallback: match by IP to avoid duplicates when device_id format changes
+                    # (e.g., MAC-based → IP-based after bridge MAC filtering)
+                    if not existing and device.ip_address:
+                        existing = await conn.fetchrow(
+                            """
+                            SELECT id FROM discovered_devices
+                            WHERE appliance_id = $1 AND ip_address = $2
+                            LIMIT 1
+                            """,
+                            appliance_db_id,
+                            device.ip_address,
                         )
-                        if not agent_active:
-                            new_device_status = "ad_managed"
-                    elif device.probe_ssh or device.probe_winrm:
-                        new_device_status = "take_over_available"
-
-                    if new_device_status is not None:
+                    if existing:
+                        device_db_id = existing["id"]
+                        # Determine last_probe_at: set to NOW() if any probe field is present
+                        has_probe_data = any(
+                            v is not None for v in [
+                                device.probe_ssh, device.probe_winrm,
+                                device.probe_snmp, device.ad_joined,
+                            ]
+                        )
+                        # Update existing device (use id for stable match after device_id migration).
+                        # Prefer IP-format device_id over UUID — bridge MAC filtering
+                        # switches device_id from MAC/UUID to IP, never go backwards.
                         await conn.execute(
                             """
-                            UPDATE discovered_devices
-                            SET device_status = $2, sync_updated_at = NOW()
-                            WHERE id = $1
+                            UPDATE discovered_devices SET
+                                local_device_id = CASE
+                                    WHEN $3 ~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' THEN $3
+                                    WHEN local_device_id ~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' THEN local_device_id
+                                    ELSE $3
+                                END,
+                                hostname = $4,
+                                ip_address = $5,
+                                mac_address = $6,
+                                device_type = $7,
+                                os_name = $8,
+                                os_version = $9,
+                                medical_device = $10,
+                                scan_policy = $11,
+                                manually_opted_in = $12,
+                                compliance_status = $13,
+                                open_ports = $14,
+                                discovery_source = $15,
+                                last_seen_at = GREATEST(last_seen_at, $16),
+                                last_scan_at = GREATEST(last_scan_at, $17),
+                                os_fingerprint = COALESCE($18, os_fingerprint),
+                                distro = COALESCE($19, distro),
+                                probe_ssh = COALESCE($20, probe_ssh),
+                                probe_winrm = COALESCE($21, probe_winrm),
+                                ad_joined = COALESCE($22, ad_joined),
+                                last_probe_at = CASE WHEN $23 THEN NOW() ELSE last_probe_at END,
+                                sync_updated_at = NOW()
+                            WHERE id = $1 AND appliance_id = $2
                             """,
                             device_db_id,
-                            new_device_status,
+                            appliance_db_id,
+                            device.device_id,
+                            device.hostname,
+                            device.ip_address,
+                            device.mac_address,
+                            device.device_type,
+                            device.os_name,
+                            device.os_version,
+                            device.medical_device,
+                            device.scan_policy,
+                            device.manually_opted_in,
+                            device.compliance_status,
+                            device.open_ports,
+                            device.discovery_source,
+                            device.last_seen_at,
+                            device.last_scan_at,
+                            device.os_fingerprint,
+                            device.distro,
+                            device.probe_ssh,
+                            device.probe_winrm,
+                            device.ad_joined,
+                            has_probe_data,
+                        )
+                        devices_updated += 1
+                    else:
+                        # Insert new device
+                        has_probe_data = any(
+                            v is not None for v in [
+                                device.probe_ssh, device.probe_winrm,
+                                device.probe_snmp, device.ad_joined,
+                            ]
+                        )
+                        device_db_id = await conn.fetchval(
+                            """
+                            INSERT INTO discovered_devices (
+                                appliance_id, local_device_id, hostname, ip_address,
+                                mac_address, device_type, os_name, os_version,
+                                medical_device, scan_policy, manually_opted_in,
+                                compliance_status, open_ports, discovery_source,
+                                first_seen_at, last_seen_at, last_scan_at,
+                                os_fingerprint, distro, probe_ssh, probe_winrm, ad_joined,
+                                last_probe_at,
+                                sync_created_at, sync_updated_at
+                            ) VALUES (
+                                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                                $12, $13, $14, $15, $16, $17,
+                                $18, $19, $20, $21, $22,
+                                CASE WHEN $23 THEN NOW() ELSE NULL END,
+                                NOW(), NOW()
+                            )
+                            RETURNING id
+                            """,
+                            appliance_db_id,
+                            device.device_id,
+                            device.hostname,
+                            device.ip_address,
+                            device.mac_address,
+                            device.device_type,
+                            device.os_name,
+                            device.os_version,
+                            device.medical_device,
+                            device.scan_policy,
+                            device.manually_opted_in,
+                            device.compliance_status,
+                            device.open_ports,
+                            device.discovery_source,
+                            device.first_seen_at,
+                            device.last_seen_at,
+                            device.last_scan_at,
+                            device.os_fingerprint,
+                            device.distro,
+                            device.probe_ssh,
+                            device.probe_winrm,
+                            device.ad_joined,
+                            has_probe_data,
+                        )
+                        devices_created += 1
+
+                    # Set scan ownership: first appliance to discover a device owns it.
+                    # Only set if unowned — never steal from another appliance.
+                    # CRITICAL: this UPDATE is inside the per-device for-loop on
+                    # the OUTER admin_transaction. Without a savepoint wrapper,
+                    # any DB error here (FK violation when appliance_db_id is a
+                    # legacy_uuid that doesn't match owner_appliance_id's column
+                    # type, missing column on a still-being-deployed schema, etc)
+                    # poisons the outer txn — every subsequent device fails with
+                    # InFailedSQLTransactionError. This was the active prod bug
+                    # 2026-04-30 to 2026-05-01: /api/devices/sync 500ing 26x in
+                    # 30 min on netscan-keyed (IP/MAC) device_ids. Savepoint
+                    # isolation closes the class.
+                    try:
+                        async with conn.transaction():
+                            await conn.execute("""
+                                UPDATE discovered_devices
+                                SET owner_appliance_id = $2, owned_since = NOW()
+                                WHERE id = $1 AND owner_appliance_id IS NULL
+                            """, device_db_id, appliance_db_id)
+                    except Exception as e:
+                        logger.error(
+                            "device_sync_owner_update_failed",
+                            exc_info=True,
+                            extra={
+                                "exception_class": type(e).__name__,
+                                "device_db_id": str(device_db_id),
+                                "appliance_db_id": str(appliance_db_id),
+                                "site_id": report.site_id,
+                            },
                         )
 
-                # Auto-classify device_type from probe data.
-                # Only classify if current type is 'unknown' or empty.
-                current_type = device.device_type or 'unknown'
-                if current_type == 'unknown':
-                    probe_ssh = device.probe_ssh or False
-                    probe_winrm = device.probe_winrm or False
-                    ad_joined = device.ad_joined or False
-                    os_fp = (device.os_fingerprint or '').lower()
-                    ports = device.open_ports or []
+                    # Auto-classify device_status based on probe results.
+                    # Only update if current status is 'discovered' or null
+                    # (never overwrite managed states).
+                    MANAGED_STATES = ('agent_active', 'deploying', 'pending_deploy', 'ignored')
+                    current_status_row = await conn.fetchrow(
+                        "SELECT device_status FROM discovered_devices WHERE id = $1",
+                        device_db_id,
+                    )
+                    current_status = current_status_row["device_status"] if current_status_row else None
+                    if current_status not in MANAGED_STATES:
+                        new_device_status: Optional[str] = None
+                        if device.ad_joined:
+                            # Check for active go_agent coverage (batched — no per-device query)
+                            agent_active = (
+                                (device.hostname and device.hostname.lower() in _agent_hosts)
+                                or (device.ip_address and device.ip_address in _agent_hosts)
+                            )
+                            if not agent_active:
+                                new_device_status = "ad_managed"
+                        elif device.probe_ssh or device.probe_winrm:
+                            new_device_status = "take_over_available"
 
-                    new_type = 'unknown'
-                    if ad_joined and probe_winrm:
-                        # AD-joined Windows machine — check for DC/server ports
-                        if 'server' in os_fp or any(p in ports for p in [53, 88, 389, 636, 3268]):
-                            new_type = 'server'
-                        else:
-                            new_type = 'workstation'
-                    elif probe_winrm:
-                        new_type = 'workstation'
-                    elif probe_ssh:
-                        if any(kw in os_fp for kw in ('linux', 'ubuntu', 'nixos', 'debian', 'centos', 'rhel')):
-                            if any(p in ports for p in [80, 443, 3306, 5432]):
+                        if new_device_status is not None:
+                            await conn.execute(
+                                """
+                                UPDATE discovered_devices
+                                SET device_status = $2, sync_updated_at = NOW()
+                                WHERE id = $1
+                                """,
+                                device_db_id,
+                                new_device_status,
+                            )
+
+                    # Auto-classify device_type from probe data.
+                    # Only classify if current type is 'unknown' or empty.
+                    current_type = device.device_type or 'unknown'
+                    if current_type == 'unknown':
+                        probe_ssh = device.probe_ssh or False
+                        probe_winrm = device.probe_winrm or False
+                        ad_joined = device.ad_joined or False
+                        os_fp = (device.os_fingerprint or '').lower()
+                        ports = device.open_ports or []
+
+                        new_type = 'unknown'
+                        if ad_joined and probe_winrm:
+                            # AD-joined Windows machine — check for DC/server ports
+                            if 'server' in os_fp or any(p in ports for p in [53, 88, 389, 636, 3268]):
                                 new_type = 'server'
                             else:
                                 new_type = 'workstation'
-                        elif any(kw in os_fp for kw in ('darwin', 'mac', 'apple')):
+                        elif probe_winrm:
                             new_type = 'workstation'
-                        else:
-                            new_type = 'workstation'
-                    elif 80 in ports or 443 in ports:
-                        if 161 in ports:
+                        elif probe_ssh:
+                            if any(kw in os_fp for kw in ('linux', 'ubuntu', 'nixos', 'debian', 'centos', 'rhel')):
+                                if any(p in ports for p in [80, 443, 3306, 5432]):
+                                    new_type = 'server'
+                                else:
+                                    new_type = 'workstation'
+                            elif any(kw in os_fp for kw in ('darwin', 'mac', 'apple')):
+                                new_type = 'workstation'
+                            else:
+                                new_type = 'workstation'
+                        elif 80 in ports or 443 in ports:
+                            if 161 in ports:
+                                new_type = 'network'
+                            else:
+                                new_type = 'server'
+                        elif any(p in ports for p in [9100, 515, 631]):
+                            new_type = 'printer'
+                        elif 161 in ports:
                             new_type = 'network'
-                        else:
-                            new_type = 'server'
-                    elif any(p in ports for p in [9100, 515, 631]):
-                        new_type = 'printer'
-                    elif 161 in ports:
-                        new_type = 'network'
 
-                    if new_type != 'unknown':
-                        await conn.execute(
-                            "UPDATE discovered_devices SET device_type = $1, sync_updated_at = NOW() WHERE id = $2",
-                            new_type, device_db_id,
-                        )
-                        logger.info(
-                            "Auto-classified device %s (%s) as %s (ssh=%s winrm=%s ad=%s)",
-                            device.ip_address, device.hostname or "?",
-                            new_type, probe_ssh, probe_winrm, ad_joined,
-                        )
-
-                # Auto-populate os_name from OS fingerprint if currently empty.
-                if device.os_fingerprint:
-                    current_os_row = await conn.fetchrow(
-                        "SELECT os_name FROM discovered_devices WHERE id = $1",
-                        device_db_id,
-                    )
-                    current_os = current_os_row["os_name"] if current_os_row else None
-                    if not current_os:
-                        os_name = device.os_fingerprint.split('/')[0].strip()
-                        if os_name:
+                        if new_type != 'unknown':
                             await conn.execute(
-                                "UPDATE discovered_devices SET os_name = $1, sync_updated_at = NOW() WHERE id = $2",
-                                os_name, device_db_id,
+                                "UPDATE discovered_devices SET device_type = $1, sync_updated_at = NOW() WHERE id = $2",
+                                new_type, device_db_id,
+                            )
+                            logger.info(
+                                "Auto-classified device %s (%s) as %s (ssh=%s winrm=%s ad=%s)",
+                                device.ip_address, device.hostname or "?",
+                                new_type, probe_ssh, probe_winrm, ad_joined,
                             )
 
-                # Upsert compliance check details
-                for check in device.compliance_details:
-                    details_json = check.details
-                    # Parse JSON string to dict if needed for JSONB
-                    if isinstance(details_json, str):
-                        try:
-                            details_json = json.loads(details_json)
-                        except (json.JSONDecodeError, TypeError):
-                            details_json = None
+                    # Auto-populate os_name from OS fingerprint if currently empty.
+                    if device.os_fingerprint:
+                        current_os_row = await conn.fetchrow(
+                            "SELECT os_name FROM discovered_devices WHERE id = $1",
+                            device_db_id,
+                        )
+                        current_os = current_os_row["os_name"] if current_os_row else None
+                        if not current_os:
+                            os_name = device.os_fingerprint.split('/')[0].strip()
+                            if os_name:
+                                await conn.execute(
+                                    "UPDATE discovered_devices SET os_name = $1, sync_updated_at = NOW() WHERE id = $2",
+                                    os_name, device_db_id,
+                                )
 
-                    await conn.execute(
-                        """
-                        INSERT INTO device_compliance_details
-                            (discovered_device_id, check_type, hipaa_control, status, details, checked_at)
-                        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                        ON CONFLICT (discovered_device_id, check_type) DO UPDATE SET
-                            hipaa_control = EXCLUDED.hipaa_control,
-                            status = EXCLUDED.status,
-                            details = EXCLUDED.details,
-                            checked_at = EXCLUDED.checked_at,
-                            synced_at = NOW()
-                        """,
-                        device_db_id,
-                        check.check_type,
-                        check.hipaa_control,
-                        check.status,
-                        json.dumps(details_json) if details_json else None,
-                        check.checked_at,
-                    )
+                    # Upsert compliance check details
+                    for check in device.compliance_details:
+                        details_json = check.details
+                        # Parse JSON string to dict if needed for JSONB
+                        if isinstance(details_json, str):
+                            try:
+                                details_json = json.loads(details_json)
+                            except (json.JSONDecodeError, TypeError):
+                                details_json = None
+
+                        await conn.execute(
+                            """
+                            INSERT INTO device_compliance_details
+                                (discovered_device_id, check_type, hipaa_control, status, details, checked_at)
+                            VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+                            ON CONFLICT (discovered_device_id, check_type) DO UPDATE SET
+                                hipaa_control = EXCLUDED.hipaa_control,
+                                status = EXCLUDED.status,
+                                details = EXCLUDED.details,
+                                checked_at = EXCLUDED.checked_at,
+                                synced_at = NOW()
+                            """,
+                            device_db_id,
+                            check.check_type,
+                            check.hipaa_control,
+                            check.status,
+                            json.dumps(details_json) if details_json else None,
+                            check.checked_at,
+                        )
 
             except Exception as e:
                 errors.append(f"Device {device.device_id}: {str(e)}")
