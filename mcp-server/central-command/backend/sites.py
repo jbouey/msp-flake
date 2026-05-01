@@ -30,7 +30,7 @@ from .shared import require_appliance_bearer, async_session as _reconcile_sessio
 # Do NOT flip this to tenant_connection — reconcile_events writes would
 # then fail RLS because the inline path runs under the checkin's
 # tenant_connection context, which scopes differently.
-from .tenant_middleware import tenant_connection, admin_connection
+from .tenant_middleware import tenant_connection, admin_connection, admin_transaction
 from .credential_crypto import encrypt_credential, decrypt_credential
 from .websocket_manager import broadcast_event
 from .fleet_updates import get_fleet_orders_for_appliance, record_fleet_order_completion
@@ -1980,7 +1980,12 @@ async def relocate_appliance(
 
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # Multi-statement admin path: 4 sequential reads → privileged writes
+    # (mints API key, writes audit log, emits compliance bundle). Use
+    # admin_transaction (NOT admin_connection) so the SET LOCAL pins to
+    # ONE PgBouncer backend — closes the Session 212 routing-pathology
+    # class that would intermittently RLS-hide source rows under load.
+    async with admin_transaction(pool) as conn:
         # Step 1: validate source + target are same org. Read agent_version
         # for the version-gate (RT-5).
         source = await conn.fetchrow(

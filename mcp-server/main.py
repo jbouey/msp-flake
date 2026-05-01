@@ -1375,81 +1375,72 @@ async def _go_agent_status_decay_loop():
     """
     from dashboard_api.fleet import get_pool as _get_pool
 
+    from dashboard_api.tenant_middleware import admin_transaction
+
     await asyncio.sleep(120)  # Let startup settle
     while True:
         try:
+            from dashboard_api.bg_heartbeat import record_heartbeat
+            record_heartbeat("go_agent_status_decay")
+        except Exception:
+            pass
+        try:
             pool = await _get_pool()
-            async with pool.acquire() as conn:
-                async with conn.transaction():
-                    # Compute desired_status per row, UPDATE only if
-                    # different, RETURNING the transitions for audit.
-                    rows = await conn.fetch("""
-                        WITH desired AS (
-                            SELECT agent_id,
-                                   site_id,
-                                   status AS old_status,
-                                   last_heartbeat,
-                                   CASE
-                                     WHEN last_heartbeat IS NULL THEN 'pending'
-                                     WHEN last_heartbeat > NOW()::timestamp - make_interval(mins => 5)
-                                          THEN 'connected'
-                                     WHEN last_heartbeat > NOW()::timestamp - make_interval(mins => 30)
-                                          THEN 'stale'
-                                     WHEN last_heartbeat > NOW()::timestamp - make_interval(hours => 24)
-                                          THEN 'disconnected'
-                                     ELSE 'dead'
-                                   END AS new_status
-                              FROM go_agents
-                        )
+            async with admin_transaction(pool) as conn:
+                # Single-statement compute+update+audit — eliminates the
+                # MVCC race of the prior CTE-snapshot+UPDATE pattern.
+                # FOR UPDATE acquires row locks; PG re-reads locked rows
+                # so the CASE evaluates against fresh `last_heartbeat`.
+                # Heartbeat handler holds its row lock for ~10ms; this
+                # loop briefly waits, then sees fresh data. NO SKIP LOCKED
+                # — that would silently skip every row currently being
+                # heartbeat-upserted, far worse than the race it would
+                # close. (Round-table 2026-04-30 Brian P0.)
+                rows = await conn.fetch("""
+                    WITH locked AS (
+                        SELECT agent_id, site_id,
+                               status AS old_status,
+                               last_heartbeat,
+                               CASE
+                                 WHEN last_heartbeat IS NULL THEN 'pending'
+                                 WHEN last_heartbeat > NOW()::timestamp - make_interval(mins => 5)
+                                      THEN 'connected'
+                                 WHEN last_heartbeat > NOW()::timestamp - make_interval(mins => 30)
+                                      THEN 'stale'
+                                 WHEN last_heartbeat > NOW()::timestamp - make_interval(hours => 24)
+                                      THEN 'disconnected'
+                                 ELSE 'dead'
+                               END AS new_status
+                          FROM go_agents
+                          FOR UPDATE
+                    ),
+                    eligible AS (
+                        SELECT * FROM locked
+                         WHERE old_status IS DISTINCT FROM new_status
+                    ),
+                    updated AS (
                         UPDATE go_agents ga
-                           SET status = d.new_status,
+                           SET status = e.new_status,
                                last_status_transition_at = NOW(),
                                updated_at = NOW()
-                          FROM desired d
-                         WHERE ga.agent_id = d.agent_id
-                           AND ga.status IS DISTINCT FROM d.new_status
-                        RETURNING ga.agent_id, ga.site_id, d.old_status,
-                                  d.new_status, d.last_heartbeat
-                    """)
-
-                    if rows:
-                        # Append one event row per transition.
-                        # Round-table P1 (2026-04-30): go_agents.last_heartbeat
-                        # is `TIMESTAMP` (no tz) per mig 019, written by the
-                        # gRPC handler in UTC by convention. asyncpg returns
-                        # a naive datetime. Use .replace(tzinfo=UTC) — NOT
-                        # .astimezone(UTC), which on naive datetimes
-                        # reinterprets as system-local time (would silently
-                        # corrupt TIMESTAMPTZ writes if container TZ drifted).
-                        # MVCC race note: the CTE+UPDATE share a snapshot
-                        # so a concurrent gRPC heartbeat write is correctly
-                        # last-writer-wins; both paths are correct.
-                        await conn.executemany("""
-                            INSERT INTO go_agent_status_events
-                                (agent_id, site_id, from_status, to_status,
-                                 last_heartbeat_at, reason)
-                            VALUES ($1, $2, $3, $4, $5, 'heartbeat_age_decay')
-                        """, [
-                            (r["agent_id"], r["site_id"], r["old_status"],
-                             r["new_status"],
-                             r["last_heartbeat"].replace(tzinfo=timezone.utc)
-                                if r["last_heartbeat"] else None)
-                            for r in rows
-                        ])
-
-            for r in rows:
+                          FROM eligible e
+                         WHERE ga.agent_id = e.agent_id
+                        RETURNING e.agent_id, e.site_id, e.old_status,
+                                  e.new_status, e.last_heartbeat
+                    )
+                    INSERT INTO go_agent_status_events
+                        (agent_id, site_id, from_status, to_status,
+                         last_heartbeat_at, reason)
+                    SELECT agent_id, site_id, old_status, new_status,
+                           last_heartbeat, 'heartbeat_age_decay'
+                      FROM updated
+                    RETURNING agent_id, site_id, from_status, to_status,
+                              last_heartbeat_at
+                """)
+            if rows:
                 logger.info(
-                    "go_agent_status_transition",
-                    extra={
-                        "agent_id": r["agent_id"],
-                        "site_id": r["site_id"],
-                        "from_status": r["old_status"],
-                        "to_status": r["new_status"],
-                        "last_heartbeat": (
-                            r["last_heartbeat"].isoformat()
-                            if r["last_heartbeat"] else None
-                        ),
-                    },
+                    "go_agent_status_decay_tick",
+                    extra={"transitions": len(rows)},
                 )
         except Exception as e:
             logger.error(

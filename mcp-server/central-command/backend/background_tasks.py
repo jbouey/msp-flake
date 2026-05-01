@@ -1700,22 +1700,27 @@ async def mark_stale_appliances_loop():
         _hb("mark_stale_appliances")
         try:
             from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_transaction
             pool = await get_pool()
-            async with pool.acquire() as conn:
-                async with conn.transaction():
-                    rows = await conn.fetch("""
-                        UPDATE site_appliances
-                        SET status = 'offline',
-                            offline_since = COALESCE(offline_since, NOW()),
-                            offline_event_count = offline_event_count + 1
-                        WHERE status != 'offline'
-                          AND status != 'decommissioned'
-                          AND deleted_at IS NULL
-                          AND last_checkin IS NOT NULL
-                          AND last_checkin < NOW() - ($1 || ' minutes')::INTERVAL
-                        RETURNING appliance_id, site_id, display_name, hostname,
-                                  last_checkin, offline_notified
-                    """, str(APPLIANCE_STALE_THRESHOLD_MINUTES))
+            # admin_transaction (not raw pool.acquire) so SET LOCAL
+            # app.is_admin pins to ONE PgBouncer backend — defense-in-
+            # depth against the Session 212 routing-pathology class.
+            # Same fragility class as the new go_agent state-machine
+            # loop closed in Session 214 P0 round-table.
+            async with admin_transaction(pool) as conn:
+                rows = await conn.fetch("""
+                    UPDATE site_appliances
+                    SET status = 'offline',
+                        offline_since = COALESCE(offline_since, NOW()),
+                        offline_event_count = offline_event_count + 1
+                    WHERE status != 'offline'
+                      AND status != 'decommissioned'
+                      AND deleted_at IS NULL
+                      AND last_checkin IS NOT NULL
+                      AND last_checkin < NOW() - make_interval(mins => $1)
+                    RETURNING appliance_id, site_id, display_name, hostname,
+                              last_checkin, offline_notified
+                """, APPLIANCE_STALE_THRESHOLD_MINUTES)
 
             for row in rows:
                 logger.warning(

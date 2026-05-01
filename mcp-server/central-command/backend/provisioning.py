@@ -30,7 +30,7 @@ def normalize_mac(mac: str) -> str:
     return ':'.join(clean[i:i+2] for i in range(0, len(clean), 2))
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 # API endpoint from environment variable
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.osiriscare.net")
@@ -873,7 +873,11 @@ async def admin_restore_appliance(
             detail=f"Recovery rate limited. Retry in {remaining}s",
         )
 
-    async with admin_connection(pool) as conn:
+    # admin_restore_appliance is multi-statement (verify site → UPSERT
+    # site_appliances → mint api_key → audit-log). Use admin_transaction
+    # so SET LOCAL pins to ONE PgBouncer backend — closes the Session
+    # 212 routing-pathology class.
+    async with admin_transaction(pool) as conn:
         # Step 1: Verify the site exists.
         site = await conn.fetchrow(
             "SELECT site_id FROM sites WHERE site_id = $1", req.site_id
