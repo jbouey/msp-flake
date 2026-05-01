@@ -33,8 +33,16 @@ export const SiteComplianceHero: React.FC<SiteComplianceHeroProps> = ({ site }) 
   const { data, isLoading } = useQuery<ComplianceHealthData | null>({
     queryKey: ['compliance-health-coverage', site.site_id],
     queryFn: async () => {
+      // BUG 2 fix 2026-05-01: 'same-origin' doesn't send the session
+      // cookie when the API mounts on a different port behind Caddy
+      // (production deploy posture). 'include' is the rest of the
+      // codebase's posture (utils/csrf.ts:57,64 documents this; api.ts
+      // fetchApi at :116 uses it). Round-table-approved (fork
+      // ab059e8a8bf6dbaed) — APPROVE_WITH_CHANGES + verify-first;
+      // verified live by user (score went 100% → 94.0% in real-time
+      // when this fetch began succeeding).
       const res = await fetch(`/api/dashboard/sites/${site.site_id}/compliance-health`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (!res.ok) return null;
       return res.json();

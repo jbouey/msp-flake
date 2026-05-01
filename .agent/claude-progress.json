@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
   "session": 214,
-  "updated": "2026-05-01T04:05:21.667695Z",
+  "updated": "2026-05-01T12:37:16.515223Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty.",
   "versions": {
     "agent": "0.4.6",
@@ -155,6 +155,14 @@
       "doc": ".agent/claude-progress.json schema",
       "owner": "engineering \u2014 quick",
       "action_prompt": "Extend card schema; update context-manager.py output; backfill 5/8 + 5/15 mutual warnings."
+    },
+    {
+      "due": "2026-05-29T00:00:00Z",
+      "task": "BUG 2 followup sweep: 63 frontend `credentials: 'same-origin'` \u2192 `'include'` (per-site verified)",
+      "why": "BUG 2 root cause was credentials: 'same-origin' on SiteComplianceHero.tsx:37 producing 401 \u2192 null \u2192 No Data on the dashboard. Fixed inline 2026-05-01. Repo grep found 63 OTHER sites with the same pattern (AuthContext, portal browser-verify, partner audit log, integrations API, multiple SiteX components, etc.). Round-table consensus: do NOT mass-rewrite without per-site verification. Some may LEGITIMATELY want 'same-origin' (e.g. portal browser-verify intentionally uses anonymous fetches for cryptographic isolation). Sweep MUST be per-site, eyes-on.",
+      "doc": "memory/feedback_bug2_credentials_same_origin_2026_05_01.md; tests/test_no_same_origin_credentials.py",
+      "owner": "engineering \u2014 calm session",
+      "action_prompt": "For each of the 63 sites in mcp-server/central-command/frontend/src/ matching `credentials: 'same-origin'`: (1) determine if the endpoint requires auth (read the route handler in backend); (2) if YES auth required \u2192 swap to 'include'; (3) if NO auth required (e.g. browser-verify, public portal home) \u2192 add `// same-origin-allowed: <reason>` opt-out marker on the line; (4) decrement BASELINE_MAX in test_no_same_origin_credentials.py by the swap count. Sites flagged by Diana for priority monitoring: SiteSLAIndicator.tsx:102, SiteActivityTimeline.tsx:113, SiteSearchBar.tsx:107."
     }
   ],
   "recent_milestones": [
