@@ -99,6 +99,14 @@
       "owner": "session pickup engineer (any) \u2014 recurring",
       "recurring_weekly": true,
       "action_prompt": "Spawn a research fork: read .agent/claude-progress.json::scheduled_followups, bucket entries by days_until_due (OVERDUE / DUE_THIS_WEEK / UPCOMING / LATER), cross-check any named substrate invariants against prod via SSH. Emit a markdown digest under 800 words. AFTER digest: re-schedule the weekly cron via CronCreate AND bump this scheduled_followups entry due-date to next Monday. Self-healing chain."
+    },
+    {
+      "due": "2026-05-08T00:00:00Z",
+      "task": "P1: persistence-drift recurrence not escalating to L2",
+      "why": "Audit 2026-05-01: 406 L1 resolutions in 7d for windows_update / defender_exclusions / rogue_scheduled_tasks but ZERO L2 decisions. CLAUDE.md mandates 3+ same-type resolutions in 4h \u2192 bypass L1 \u2192 L2 with root-cause context. The recurrence detector is not routing to the persistence runbooks (RB-WIN-PERSIST-001/002, L1-PERSIST-TASK-001, etc \u2014 all exist + enabled). Investigate _recurrence_velocity_loop + recurrence threshold config + l2_decisions trigger gates.",
+      "doc": "CLAUDE.md persistence-runbook section + l2_decisions table",
+      "owner": "engineering \u2014 multi-day task",
+      "action_prompt": "Spawn fork to: (1) read _recurrence_velocity_loop in main.py and trace its emission logic, (2) check if recurrence rows are written to recurrence_patterns or similar table, (3) inspect what triggers escalation_reason=recurrence on l2_decisions, (4) confirm whether persistence runbook rules are gated on recurrence vs immediate dispatch. Report under 800 words. Research only."
     }
   ],
   "recent_milestones": [
