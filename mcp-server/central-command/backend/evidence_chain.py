@@ -1384,13 +1384,19 @@ async def submit_evidence(
             bundle.agent_signature
         )
 
-    # Map evidence to all enabled framework controls
+    # Map evidence to all enabled framework controls.
+    # Pass appliance_id so the per-appliance score refresh can resolve
+    # site_id correctly (Block-3 audit P3 fix). Pre-fix the helper
+    # passed site_id to refresh_compliance_score which expects an
+    # appliance_id, causing every score INSERT to fail silently and
+    # leaving compliance_scores empty fleet-wide.
     if bundle.checks:
         background_tasks.add_task(
             map_evidence_to_frameworks,
             site_id,
             bundle.bundle_id,
             bundle.checks,
+            matched_appliance_id,
         )
 
     # Populate workstation tables when workstation evidence arrives
@@ -1552,12 +1558,21 @@ async def upload_to_worm_background(
 
 
 async def map_evidence_to_frameworks(
-    site_id: str, bundle_id: str, checks: List[Dict[str, Any]]
+    site_id: str,
+    bundle_id: str,
+    checks: List[Dict[str, Any]],
+    appliance_id: Optional[str] = None,
 ):
     """Map evidence bundle checks to all enabled framework controls.
 
     Populates evidence_framework_mappings table and refreshes compliance_scores.
     Called as a background task after evidence submission.
+
+    `appliance_id` is the matched per-appliance natural key resolved
+    during signature verification. Required for `refresh_compliance_score`
+    which is per-appliance scoped (NOT per-site). Optional for
+    backwards-compat with older callers that didn't pass it; the score
+    refresh skips when appliance_id is None.
     """
     from .framework_mapper import get_controls_for_check_with_hipaa_map
 
@@ -1614,17 +1629,41 @@ async def map_evidence_to_frameworks(
                     except Exception:
                         pass  # Ignore individual insert failures
 
-            # Refresh compliance scores for each enabled framework
-            for framework in enabled:
-                try:
-                    await conn.execute(
-                        "SELECT refresh_compliance_score($1, $2)",
-                        site_id,
-                        framework,
-                    )
-                except Exception as e:
-                    # Function may not exist yet or site has no appliance config
-                    logger.debug(f"Score refresh failed for {site_id}/{framework}: {e}")
+            # Refresh compliance scores for each enabled framework.
+            # MUST pass appliance_id (NOT site_id) — refresh_compliance_score
+            # is per-appliance scoped. Pre-Block-3 we passed site_id,
+            # which silently failed the SQL function's site_id resolution
+            # (cast to UUID exception, fall through to NULL, INSERT
+            # CHECK violation). Result: compliance_scores empty
+            # fleet-wide. Migration 265 also adds a VARCHAR
+            # site_appliances.appliance_id fallback as defense-in-depth.
+            if appliance_id:
+                for framework in enabled:
+                    try:
+                        await conn.execute(
+                            "SELECT refresh_compliance_score($1, $2)",
+                            appliance_id,
+                            framework,
+                        )
+                    except Exception as e:
+                        # Per CLAUDE.md "no silent write failures" —
+                        # but only ERROR for unexpected (the function's
+                        # own NOT-NULL guard is now a benign skip).
+                        logger.error(
+                            "compliance_score_refresh_failed",
+                            exc_info=True,
+                            extra={
+                                "site_id": site_id,
+                                "appliance_id": appliance_id,
+                                "framework": framework,
+                                "exception_class": type(e).__name__,
+                            },
+                        )
+            else:
+                logger.warning(
+                    "compliance_score_refresh_skipped_no_appliance_id",
+                    extra={"site_id": site_id, "bundle_id": bundle_id},
+                )
 
             if mappings_inserted > 0:
                 logger.info(
