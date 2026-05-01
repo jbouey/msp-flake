@@ -87,7 +87,7 @@ EXPECTED_INTERVAL_S: Dict[str, int] = {
     "fleet_order_expiry": 300,
     "merkle_batch": 3600,  # main.py:1593 sleeps 3600
     "audit_log_retention": 86400,
-    "health_monitor": 60,
+    "health_monitor": 300,  # health_monitor.py:101 sleeps 300s (5 min)
     "ots_upgrade": 1800,
     "evidence_chain_check": 86400,  # main.py:1571 sleeps 86400 (daily)
     "alert_digest": 600,
