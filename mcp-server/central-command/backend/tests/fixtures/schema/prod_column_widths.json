@@ -1,0 +1,1823 @@
+{
+  "admin_audit_log": {
+    "action": 100,
+    "ip_address": 45,
+    "target": 255,
+    "username": 100
+  },
+  "admin_oauth_identities": {
+    "provider": 50,
+    "provider_email": 255,
+    "provider_name": 255,
+    "provider_user_id": 255
+  },
+  "admin_orders": {
+    "appliance_id": 50,
+    "created_by": 100,
+    "order_id": 64,
+    "order_type": 50,
+    "site_id": 50,
+    "status": 20
+  },
+  "admin_org_assignments": {
+    "role": 50
+  },
+  "admin_sessions": {
+    "ip_address": 45,
+    "token_hash": 255
+  },
+  "admin_user_invites": {
+    "display_name": 255,
+    "email": 255,
+    "role": 50,
+    "status": 20,
+    "token_hash": 255
+  },
+  "admin_users": {
+    "display_name": 255,
+    "email": 255,
+    "mfa_secret": 255,
+    "password_hash": 255,
+    "role": 50,
+    "status": 20,
+    "username": 100
+  },
+  "agent_deployments": {
+    "agent_version": 50,
+    "deployment_method": 50,
+    "hostname": 255,
+    "site_id": 255
+  },
+  "aggregated_pattern_stats": {
+    "check_type": 100,
+    "pattern_signature": 255,
+    "recommended_action": 255,
+    "site_id": 255
+  },
+  "api_keys": {
+    "key_hash": 64,
+    "key_prefix": 16,
+    "site_id": 255
+  },
+  "app_profile_assets": {
+    "asset_name": 500,
+    "asset_type": 50,
+    "display_name": 500,
+    "runbook_id": 255
+  },
+  "app_profile_rules": {
+    "l1_rule_id": 255
+  },
+  "app_profile_templates": {
+    "category": 100,
+    "icon": 50,
+    "name": 255
+  },
+  "app_protection_profiles": {
+    "created_by": 255,
+    "name": 255,
+    "site_id": 255,
+    "status": 50
+  },
+  "appliance_breakglass_passphrases": {
+    "appliance_id": 255,
+    "site_id": 50
+  },
+  "appliance_commands": {
+    "appliance_id": 255,
+    "command_type": 50,
+    "status": 20
+  },
+  "appliance_framework_configs": {
+    "appliance_id": 255,
+    "industry": 100,
+    "primary_framework": 50,
+    "site_id": 255
+  },
+  "appliance_pattern_sync": {
+    "appliance_id": 255,
+    "site_id": 255,
+    "sync_status": 20
+  },
+  "appliance_provisioning": {
+    "mac_address": 20,
+    "site_id": 100
+  },
+  "appliance_provisions": {
+    "claimed_appliance_id": 255,
+    "claimed_by_mac": 17,
+    "claimed_hardware_id": 255,
+    "client_contact_email": 255,
+    "client_name": 255,
+    "network_range": 50,
+    "provision_code": 32,
+    "status": 20,
+    "target_site_id": 255
+  },
+  "appliance_runbook_config": {
+    "appliance_id": 200,
+    "modified_by": 100,
+    "runbook_id": 100
+  },
+  "appliance_updates": {
+    "error_code": 50,
+    "new_version": 50,
+    "previous_version": 50,
+    "status": 20
+  },
+  "appliances_backup_20260415": {
+    "active_partition": 1,
+    "agent_version": 50,
+    "current_version": 50,
+    "deployment_mode": 50,
+    "host_id": 255,
+    "nixos_version": 100,
+    "policy_version": 50,
+    "previous_version": 50,
+    "reseller_id": 255,
+    "site_id": 255,
+    "status": 50,
+    "update_status": 20
+  },
+  "audit_log": {
+    "actor": 255,
+    "event_type": 100,
+    "resource_type": 100
+  },
+  "check_control_mappings": {
+    "check_id": 100,
+    "control_id": 50,
+    "framework": 30,
+    "mapping_source": 30
+  },
+  "check_type_registry": {
+    "category": 50,
+    "check_name": 100,
+    "display_label": 200,
+    "hipaa_control": 50,
+    "platform": 20
+  },
+  "claim_revocations": {
+    "agent_pubkey_fingerprint": 16,
+    "agent_pubkey_hex": 64,
+    "appliance_id": 80,
+    "revoked_by": 100
+  },
+  "client_approvals": {
+    "action": 20
+  },
+  "client_audit_log": {
+    "action": 100,
+    "actor_email": 255,
+    "ip_address": 45,
+    "target": 255
+  },
+  "client_invites": {
+    "email": 255,
+    "role": 50,
+    "token_hash": 64
+  },
+  "client_monthly_reports": {
+    "pdf_hash": 64,
+    "pdf_path": 500
+  },
+  "client_notifications": {
+    "action_label": 100,
+    "action_url": 500,
+    "severity": 20,
+    "title": 255,
+    "type": 50
+  },
+  "client_orgs": {
+    "address_line1": 255,
+    "address_line2": 255,
+    "alert_email": 255,
+    "billing_email": 255,
+    "cc_email": 255,
+    "city": 100,
+    "client_alert_mode": 20,
+    "compliance_framework": 20,
+    "deprovisioned_by": 255,
+    "name": 255,
+    "npi_number": 20,
+    "postal_code": 20,
+    "practice_type": 100,
+    "primary_email": 255,
+    "primary_phone": 50,
+    "state": 50,
+    "status": 50,
+    "stripe_customer_id": 255,
+    "subscription_plan": 100,
+    "subscription_status": 50,
+    "tax_id": 20
+  },
+  "client_sessions": {
+    "token_hash": 64
+  },
+  "client_telemetry_events": {
+    "component": 100,
+    "endpoint": 200,
+    "event_kind": 40,
+    "field_name": 100,
+    "ip_address": 64,
+    "observed_type": 30,
+    "page": 200,
+    "user_agent": 200
+  },
+  "client_users": {
+    "email": 255,
+    "magic_token": 255,
+    "mfa_secret": 255,
+    "name": 255,
+    "password_hash": 255,
+    "role": 50
+  },
+  "companion_activity_log": {
+    "ip_address": 45
+  },
+  "compliance_attestations": {
+    "attested_by": 200,
+    "control_id": 50,
+    "control_name": 200,
+    "site_id": 50
+  },
+  "compliance_bundles": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_01": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_02": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_03": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_04": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_05": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_06": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_07": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_08": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_09": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_10": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_11": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2025_12": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_01": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_02": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_03": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_04": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_05": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_06": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_07": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_08": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_09": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_10": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_11": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_2026_12": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_bundles_default": {
+    "agent_signature": 128,
+    "anchor_service": 50,
+    "appliance_id": 255,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "chain_hash": 64,
+    "check_result": 20,
+    "check_type": 50,
+    "merkle_batch_id": 50,
+    "ots_bitcoin_txid": 64,
+    "ots_status": 20,
+    "outcome": 50,
+    "prev_bundle_id": 50,
+    "prev_hash": 64,
+    "signature": 128,
+    "signed_by": 100,
+    "site_id": 100
+  },
+  "compliance_packets": {
+    "framework": 50,
+    "generated_by": 100,
+    "packet_id": 100,
+    "site_id": 255
+  },
+  "compliance_scores": {
+    "appliance_id": 255,
+    "framework": 50,
+    "site_id": 255
+  },
+  "cve_entries": {
+    "cve_id": 20,
+    "nvd_status": 30,
+    "severity": 10
+  },
+  "cve_fleet_matches": {
+    "appliance_id": 255,
+    "mitigated_by": 255,
+    "site_id": 255,
+    "status": 20
+  },
+  "cve_watch_config": {
+    "min_severity": 10,
+    "nvd_api_key": 255
+  },
+  "discovered_assets": {
+    "asset_type": 50,
+    "discovery_method": 50,
+    "hostname": 255,
+    "last_check_status": 20,
+    "mac_address": 17,
+    "monitoring_status": 20,
+    "os_info": 255
+  },
+  "discovery_results": {
+    "appliance_id": 50,
+    "compliance_status": 20,
+    "device_type": 50,
+    "hostname": 255,
+    "mac_address": 17,
+    "os_type": 100,
+    "os_version": 100,
+    "site_id": 50
+  },
+  "discovery_scans": {
+    "network_range_scanned": 50,
+    "scan_type": 20,
+    "status": 20,
+    "triggered_by": 20
+  },
+  "enumeration_results": {
+    "appliance_id": 255,
+    "site_id": 255
+  },
+  "evidence_bundles": {
+    "bundle_id": 64,
+    "check_type": 100,
+    "derivation_digest": 128,
+    "nixos_revision": 100,
+    "ots_bitcoin_txid": 64,
+    "ots_calendar_url": 256,
+    "ots_status": 20,
+    "outcome": 50,
+    "policy_version": 50,
+    "ruleset_hash": 128
+  },
+  "evidence_framework_mappings": {
+    "bundle_id": 255,
+    "control_id": 100,
+    "framework": 50
+  },
+  "execution_telemetry": {
+    "appliance_id": 255,
+    "chaos_campaign_id": 255,
+    "evidence_bundle_id": 255,
+    "execution_id": 255,
+    "failure_type": 50,
+    "hostname": 255,
+    "incident_id": 255,
+    "incident_type": 100,
+    "pattern_signature": 255,
+    "platform": 50,
+    "resolution_level": 10,
+    "runbook_id": 255,
+    "site_id": 255,
+    "status": 20
+  },
+  "fleet_orders": {
+    "signing_key_fingerprint": 16,
+    "signing_method": 16
+  },
+  "framework_controls": {
+    "category": 200,
+    "control_id": 50,
+    "control_name": 500,
+    "framework": 30,
+    "parent_control_id": 50,
+    "severity": 20,
+    "subcategory": 200
+  },
+  "framework_crosswalks": {
+    "mapping_type": 20,
+    "source_control_id": 50,
+    "source_framework": 30,
+    "target_control_id": 50,
+    "target_framework": 30
+  },
+  "framework_versions": {
+    "current_version": 50,
+    "display_name": 100,
+    "framework": 30,
+    "last_sync_status": 20,
+    "source_type": 30
+  },
+  "go_agent_checks": {
+    "agent_id": 100,
+    "check_type": 50,
+    "hipaa_control": 50,
+    "site_id": 100,
+    "status": 20
+  },
+  "go_agent_orders": {
+    "agent_id": 100,
+    "order_id": 64,
+    "order_type": 50,
+    "site_id": 100,
+    "status": 20
+  },
+  "go_agent_status_events": {
+    "agent_id": 100,
+    "from_status": 20,
+    "site_id": 100,
+    "to_status": 20
+  },
+  "go_agents": {
+    "agent_id": 100,
+    "agent_version": 50,
+    "hostname": 255,
+    "ip_address": 45,
+    "mac_address": 17,
+    "os_name": 100,
+    "os_version": 100,
+    "rmm_detected": 100,
+    "site_id": 100,
+    "status": 20
+  },
+  "hipaa_documents": {
+    "file_name": 255,
+    "mime_type": 100,
+    "minio_key": 512,
+    "module_key": 50,
+    "uploaded_by_email": 255
+  },
+  "incident_correlation_pairs": {
+    "incident_type_a": 255,
+    "incident_type_b": 255,
+    "site_id": 255
+  },
+  "incident_recurrence_velocity": {
+    "incident_type": 255,
+    "last_l1_runbook": 255,
+    "recurrence_broken_by_runbook": 255,
+    "site_id": 255
+  },
+  "incident_remediation_steps": {
+    "result": 100,
+    "runbook_id": 255,
+    "tier": 10
+  },
+  "incidents": {
+    "check_type": 100,
+    "context_hash": 64,
+    "dedup_key": 64,
+    "incident_type": 100,
+    "resolution_tier": 10,
+    "severity": 50,
+    "site_id": 255,
+    "status": 50
+  },
+  "install_reports": {
+    "bios_vendor": 100,
+    "bios_version": 100,
+    "cpu_model": 200,
+    "drive_model": 200,
+    "drive_path": 50,
+    "drive_smart_status": 20,
+    "error_step": 50,
+    "halt_reason": 80,
+    "halt_stage": 80,
+    "image_sha256": 64,
+    "installer_version": 20,
+    "mac_address": 17,
+    "network_iface": 20,
+    "network_mac": 17,
+    "product_name": 200,
+    "serial_number": 100,
+    "verify_sha256": 64
+  },
+  "integration_audit_log": {
+    "actor_username": 255,
+    "event_category": 50,
+    "event_type": 100,
+    "request_id": 50
+  },
+  "integration_resources": {
+    "compliance_status": 30,
+    "resource_id": 500,
+    "resource_name": 500,
+    "resource_region": 50,
+    "resource_type": 100,
+    "risk_level": 20
+  },
+  "integration_sync_jobs": {
+    "error_type": 100,
+    "status": 30,
+    "triggered_by": 50
+  },
+  "integrations": {
+    "aws_account_id": 20,
+    "aws_external_id": 100,
+    "azure_tenant_id": 50,
+    "error_code": 50,
+    "google_customer_id": 50,
+    "google_domain": 255,
+    "health_status": 30,
+    "name": 255,
+    "oauth_state_hash": 64,
+    "okta_domain": 255,
+    "okta_org_id": 50,
+    "provider": 50,
+    "status": 30
+  },
+  "iso_release_ca_pubkeys": {
+    "ca_pubkey_hex": 64,
+    "iso_release_sha": 64
+  },
+  "journal_upload_events": {
+    "appliance_id": 255,
+    "site_id": 50
+  },
+  "l1_rule_regime_events": {
+    "acknowledged_by": 100,
+    "resolution": 50,
+    "rule_id": 100,
+    "severity": 20
+  },
+  "l1_rules": {
+    "rule_id": 100,
+    "runbook_id": 100,
+    "source": 20
+  },
+  "l2_decisions": {
+    "escalation_reason": 50,
+    "incident_id": 255,
+    "llm_model": 100,
+    "pattern_signature": 255,
+    "prompt_version": 64,
+    "runbook_id": 255,
+    "site_id": 255
+  },
+  "l2_prompt_exemplars": {
+    "approved_by": 100,
+    "incident_type": 100,
+    "runbook_id": 255,
+    "status": 16
+  },
+  "l2_prompt_versions": {
+    "activated_by": 100,
+    "created_by": 100,
+    "purpose": 32,
+    "status": 16,
+    "version_tag": 64
+  },
+  "l2_rate_limits": {
+    "incident_type": 255,
+    "last_runbook_id": 255,
+    "site_id": 255
+  },
+  "learning_promotion_candidates": {
+    "appliance_id": 255,
+    "approval_status": 20,
+    "created_by": 255,
+    "custom_rule_name": 255,
+    "pattern_signature": 255,
+    "recommended_action": 255,
+    "site_id": 255
+  },
+  "learning_promotion_reports": {
+    "appliance_id": 255,
+    "created_by": 255,
+    "site_id": 255
+  },
+  "log_entries": {
+    "boot_id": 64,
+    "hostname": 255,
+    "site_id": 255,
+    "unit": 128
+  },
+  "log_entries_2026_03": {
+    "boot_id": 64,
+    "hostname": 255,
+    "site_id": 255,
+    "unit": 128
+  },
+  "log_entries_2026_04": {
+    "boot_id": 64,
+    "hostname": 255,
+    "site_id": 255,
+    "unit": 128
+  },
+  "log_entries_2026_05": {
+    "boot_id": 64,
+    "hostname": 255,
+    "site_id": 255,
+    "unit": 128
+  },
+  "mesh_assignment_audit": {
+    "appliance_id": 255,
+    "appliance_mac": 64,
+    "site_id": 128
+  },
+  "notifications": {
+    "appliance_id": 255,
+    "category": 50,
+    "severity": 20,
+    "site_id": 255,
+    "title": 255
+  },
+  "oauth_config": {
+    "client_id": 255,
+    "default_role": 50,
+    "provider": 50,
+    "tenant_id": 255
+  },
+  "oauth_partner_state": {
+    "provider": 50,
+    "state_token": 255
+  },
+  "orders": {
+    "nonce": 64,
+    "order_id": 64,
+    "runbook_id": 100,
+    "status": 50
+  },
+  "org_audit_log": {
+    "actor": 255,
+    "actor_type": 32,
+    "event_type": 64,
+    "target": 255
+  },
+  "org_credentials": {
+    "credential_name": 255,
+    "credential_type": 50
+  },
+  "ots_batch_jobs": {
+    "job_id": 50,
+    "job_type": 20,
+    "site_id": 50,
+    "status": 20
+  },
+  "ots_merkle_batches": {
+    "batch_id": 50,
+    "bitcoin_txid": 64,
+    "merkle_root": 64,
+    "ots_status": 20,
+    "site_id": 255
+  },
+  "ots_proofs": {
+    "bitcoin_merkle_root": 64,
+    "bitcoin_txid": 64,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "calendar_url": 256,
+    "site_id": 50,
+    "status": 20
+  },
+  "ots_proofs_needing_upgrade": {
+    "bitcoin_merkle_root": 64,
+    "bitcoin_txid": 64,
+    "bundle_hash": 64,
+    "bundle_id": 50,
+    "calendar_url": 256,
+    "site_id": 50,
+    "status": 20
+  },
+  "ots_status_summary": {
+    "site_id": 50
+  },
+  "partner_activity_log": {
+    "event_category": 50,
+    "event_type": 100,
+    "request_method": 10,
+    "target_type": 50
+  },
+  "partner_invoices": {
+    "payment_reference": 255,
+    "status": 20
+  },
+  "partner_notifications": {
+    "notification_type": 50
+  },
+  "partner_sessions": {
+    "session_token_hash": 255
+  },
+  "partner_transfer_requests": {
+    "reviewed_by": 255,
+    "status": 50
+  },
+  "partner_users": {
+    "email": 255,
+    "magic_token": 255,
+    "name": 255,
+    "password_hash": 255,
+    "role": 50,
+    "status": 20
+  },
+  "partners": {
+    "api_key": 64,
+    "api_key_hash": 255,
+    "auth_provider": 50,
+    "billing_email": 255,
+    "brand_name": 255,
+    "contact_email": 255,
+    "contact_name": 255,
+    "contact_phone": 50,
+    "mfa_secret": 255,
+    "name": 255,
+    "oauth_email": 255,
+    "oauth_name": 255,
+    "oauth_subject": 255,
+    "oauth_tenant_id": 255,
+    "password_hash": 255,
+    "primary_color": 7,
+    "secondary_color": 7,
+    "slug": 100,
+    "status": 20
+  },
+  "password_history": {
+    "user_type": 20
+  },
+  "pattern_decay_config": {
+    "incident_type": 100
+  },
+  "pattern_embeddings": {
+    "check_type": 100,
+    "embedding_method": 32,
+    "incident_type": 100,
+    "pattern_key": 255,
+    "runbook_id": 255
+  },
+  "patterns": {
+    "incident_type": 100,
+    "pattern_id": 100,
+    "pattern_signature": 255,
+    "promoted_to_rule_id": 100,
+    "runbook_id": 100,
+    "status": 50
+  },
+  "pending_alerts": {
+    "alert_type": 50,
+    "severity": 20
+  },
+  "platform_pattern_stats": {
+    "incident_type": 100,
+    "pattern_key": 255,
+    "promoted_rule_id": 255,
+    "runbook_id": 255
+  },
+  "portal_access_log": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_01": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_02": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_03": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_04": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_05": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_06": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_07": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_08": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_09": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_10": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_11": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2025_12": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_01": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_02": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_03": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_04": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_05": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_06": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_07": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_08": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_09": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_10": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_11": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2026_12": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2027_01": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2027_02": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2027_03": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2027_04": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2027_05": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_2027_06": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "portal_access_log_default": {
+    "endpoint": 256,
+    "ip_address": 45,
+    "site_id": 50
+  },
+  "privileged_access_consent_config": {
+    "site_id": 100,
+    "updated_by": 255
+  },
+  "privileged_access_magic_links": {
+    "action": 8,
+    "consumed_by_ip": 45,
+    "consumed_by_ua": 512,
+    "target_user_email": 255,
+    "token_id": 64
+  },
+  "privileged_access_requests": {
+    "attestation_bundle_id": 50,
+    "client_approver_email": 255,
+    "client_approver_role": 32,
+    "event_type": 50,
+    "initiator_email": 255,
+    "initiator_role": 32,
+    "partner_approver_email": 255,
+    "partner_approver_role": 32,
+    "rejected_by": 255,
+    "site_id": 100,
+    "status": 16
+  },
+  "promoted_rule_deployments": {
+    "appliance_id": 255,
+    "deployment_method": 50,
+    "deployment_status": 20,
+    "pattern_signature": 255,
+    "rule_id": 255,
+    "site_id": 255
+  },
+  "promoted_rules": {
+    "pattern_signature": 255,
+    "rule_id": 50,
+    "site_id": 255,
+    "status": 20
+  },
+  "promotion_audit_log": {
+    "actor": 255,
+    "check_type": 100,
+    "event_type": 30,
+    "pattern_signature": 255,
+    "rule_id": 255,
+    "site_id": 255,
+    "source": 30
+  },
+  "promotion_thresholds": {
+    "incident_type": 100
+  },
+  "provisioning_claim_events": {
+    "agent_pubkey_fingerprint": 16,
+    "agent_pubkey_hex": 64,
+    "chain_hash": 64,
+    "chain_prev_hash": 64,
+    "hardware_id": 255,
+    "iso_build_sha": 64,
+    "mac_address": 17,
+    "site_id": 50,
+    "source": 32
+  },
+  "rate_limits": {
+    "action": 255,
+    "site_id": 255
+  },
+  "reconcile_events": {
+    "appliance_id": 255,
+    "plan_nonce_epoch_hex": 64,
+    "plan_signature_hex": 128,
+    "plan_status": 30,
+    "site_id": 255
+  },
+  "relocations": {
+    "evidence_bundle_id": 64,
+    "fleet_order_id": 50,
+    "mac_address": 17,
+    "source_appliance_id": 50,
+    "source_site_id": 50,
+    "status": 20,
+    "target_appliance_id": 50,
+    "target_site_id": 50
+  },
+  "rmm_comparison_history": {
+    "provider": 50,
+    "site_id": 255
+  },
+  "rmm_comparison_reports": {
+    "provider": 50,
+    "site_id": 255
+  },
+  "rollout_progress": {
+    "rollout_status": 20,
+    "version": 50
+  },
+  "runbook_id_mapping": {
+    "l1_rule_id": 100,
+    "runbook_id": 100
+  },
+  "runbooks": {
+    "category": 100,
+    "check_type": 100,
+    "name": 255,
+    "runbook_id": 100,
+    "severity": 50,
+    "version": 50
+  },
+  "schema_migrations": {
+    "checksum": 64,
+    "name": 255,
+    "version": 20
+  },
+  "security_events": {
+    "category": 50,
+    "hostname": 255,
+    "severity": 20,
+    "site_id": 255,
+    "source_host": 255
+  },
+  "security_events_2026_03": {
+    "category": 50,
+    "hostname": 255,
+    "severity": 20,
+    "site_id": 255,
+    "source_host": 255
+  },
+  "security_events_2026_04": {
+    "category": 50,
+    "hostname": 255,
+    "severity": 20,
+    "site_id": 255,
+    "source_host": 255
+  },
+  "security_events_2026_05": {
+    "category": 50,
+    "hostname": 255,
+    "severity": 20,
+    "site_id": 255,
+    "source_host": 255
+  },
+  "security_events_2026_06": {
+    "category": 50,
+    "hostname": 255,
+    "severity": 20,
+    "site_id": 255,
+    "source_host": 255
+  },
+  "sensor_commands": {
+    "site_id": 50
+  },
+  "sensor_registry": {
+    "site_id": 50
+  },
+  "shadow_evaluations": {
+    "decision": 20,
+    "incident_type": 100,
+    "pattern_key": 255,
+    "runbook_id": 255
+  },
+  "shadow_mode_config": {
+    "incident_type": 100
+  },
+  "sigauth_observations": {
+    "fingerprint": 16,
+    "mac_address": 17,
+    "reason": 40,
+    "site_id": 50
+  },
+  "site_appliances": {
+    "agent_identity_public_key": 64,
+    "agent_public_key": 128,
+    "agent_version": 20,
+    "appliance_id": 50,
+    "current_version": 50,
+    "deleted_by": 255,
+    "deployment_mode": 50,
+    "display_name": 128,
+    "flake_hash": 100,
+    "hostname": 255,
+    "l2_mode": 10,
+    "mac_address": 17,
+    "nixos_version": 20,
+    "policy_version": 50,
+    "previous_version": 50,
+    "reseller_id": 255,
+    "serial_number": 100,
+    "server_pubkey_fingerprint_seen": 16,
+    "signature_enforcement_changed_by": 100,
+    "site_id": 50,
+    "status": 20
+  },
+  "site_credentials": {
+    "credential_name": 255,
+    "credential_type": 50,
+    "site_id": 50
+  },
+  "site_drift_config": {
+    "check_type": 100,
+    "modified_by": 100,
+    "site_id": 100
+  },
+  "site_go_agent_summaries": {
+    "site_id": 100
+  },
+  "site_healing_sla": {
+    "site_id": 50
+  },
+  "site_runbook_config": {
+    "modified_by": 100,
+    "runbook_id": 100,
+    "site_id": 100
+  },
+  "site_workstation_summaries": {
+    "bundle_id": 36,
+    "evidence_hash": 64,
+    "site_id": 100
+  },
+  "sites": {
+    "agent_public_key": 128,
+    "airtable_id": 50,
+    "api_key_hash": 128,
+    "client_alert_mode": 20,
+    "client_contact_email": 255,
+    "client_name": 255,
+    "clinic_name": 255,
+    "contact_email": 255,
+    "contact_name": 255,
+    "contact_phone": 50,
+    "created_by": 255,
+    "ehr_system": 100,
+    "hardware_id": 255,
+    "healing_tier": 50,
+    "mesh_topology": 20,
+    "network_mode": 20,
+    "onboarding_stage": 50,
+    "pandadoc_id": 50,
+    "provider_count": 20,
+    "site_id": 50,
+    "status": 20,
+    "tier": 20,
+    "tracking_carrier": 50,
+    "tracking_number": 100
+  },
+  "substrate_action_invocations": {
+    "action_key": 64,
+    "actor_email": 255,
+    "result_status": 32
+  },
+  "substrate_violations": {
+    "invariant_name": 100,
+    "severity": 20,
+    "site_id": 50
+  },
+  "system_settings": {
+    "updated_by": 255
+  },
+  "target_health": {
+    "hostname": 255,
+    "protocol": 20,
+    "reported_by": 255,
+    "site_id": 255,
+    "status": 20
+  },
+  "telemetry_archive": {
+    "incident_type": 100,
+    "pattern_signature": 255,
+    "resolution_level": 10,
+    "runbook_id": 255,
+    "site_id": 255
+  },
+  "update_audit_log": {
+    "event_type": 50,
+    "ip_address": 45
+  },
+  "update_releases": {
+    "agent_version": 20,
+    "sha256": 64,
+    "version": 50
+  },
+  "update_rollouts": {
+    "name": 100,
+    "status": 20,
+    "strategy": 20
+  },
+  "v_appliance_winrm_circuit": {
+    "appliance_id": 255,
+    "site_id": 255
+  },
+  "v_appliances_current": {
+    "agent_version": 20,
+    "host_id": 50,
+    "hostname": 255,
+    "mac_address": 17,
+    "nixos_version": 20,
+    "public_key": 128,
+    "site_id": 50,
+    "status": 20
+  },
+  "v_canonical_aggregated_pattern_stats": {
+    "check_type": 100,
+    "pattern_signature": 255,
+    "recommended_action": 255,
+    "site_id": 255
+  },
+  "v_canonical_incidents": {
+    "check_type": 100,
+    "context_hash": 64,
+    "dedup_key": 64,
+    "incident_type": 100,
+    "resolution_tier": 10,
+    "severity": 50,
+    "site_id": 255,
+    "status": 50
+  },
+  "v_canonical_l2_decisions": {
+    "escalation_reason": 50,
+    "incident_id": 255,
+    "llm_model": 100,
+    "pattern_signature": 255,
+    "prompt_version": 64,
+    "runbook_id": 255,
+    "site_id": 255
+  },
+  "v_canonical_telemetry": {
+    "appliance_id": 255,
+    "chaos_campaign_id": 255,
+    "evidence_bundle_id": 255,
+    "execution_id": 255,
+    "failure_type": 50,
+    "hostname": 255,
+    "incident_id": 255,
+    "incident_type": 100,
+    "pattern_signature": 255,
+    "platform": 50,
+    "resolution_level": 10,
+    "runbook_id": 255,
+    "site_id": 255,
+    "status": 20
+  },
+  "v_compliance_dashboard": {
+    "appliance_id": 255,
+    "framework": 50,
+    "industry": 100,
+    "primary_framework": 50,
+    "site_id": 255
+  },
+  "v_current_appliance_identity": {
+    "agent_pubkey_fingerprint": 16,
+    "agent_pubkey_hex": 64,
+    "iso_build_sha": 64,
+    "mac_address": 17,
+    "site_id": 50,
+    "source": 32
+  },
+  "v_go_agent_latest_checks": {
+    "agent_id": 100,
+    "check_type": 50,
+    "hipaa_control": 50,
+    "site_id": 100,
+    "status": 20
+  },
+  "v_go_agents_with_checks": {
+    "agent_id": 100,
+    "agent_version": 50,
+    "hostname": 255,
+    "ip_address": 45,
+    "mac_address": 17,
+    "os_name": 100,
+    "os_version": 100,
+    "rmm_detected": 100,
+    "site_id": 100,
+    "status": 20
+  },
+  "v_integration_health": {
+    "health_status": 30,
+    "name": 255,
+    "provider": 50,
+    "status": 30
+  },
+  "v_learning_failures": {
+    "execution_id": 255,
+    "failure_type": 50,
+    "incident_type": 100,
+    "runbook_id": 255,
+    "site_id": 255,
+    "site_name": 255
+  },
+  "v_promotion_ready_patterns": {
+    "pattern_signature": 255,
+    "recommended_action": 255,
+    "site_id": 255,
+    "site_name": 255
+  },
+  "v_recent_compliance_changes": {
+    "compliance_status": 30,
+    "external_id": 500,
+    "provider": 50,
+    "resource_name": 500,
+    "resource_type": 100,
+    "risk_level": 20
+  },
+  "v_site_integration_summary": {
+    "site_name": 255
+  },
+  "v_site_workstation_status": {
+    "site_id": 100
+  },
+  "v_substrate_violations_active": {
+    "invariant_name": 100,
+    "severity": 20,
+    "site_id": 50
+  },
+  "v_workstation_latest_checks": {
+    "check_type": 50,
+    "hostname": 255,
+    "site_id": 100,
+    "status": 20
+  },
+  "watchdog_events": {
+    "appliance_id": 255,
+    "event_type": 60,
+    "site_id": 50,
+    "watchdog_order_type": 60
+  },
+  "witness_attestations": {
+    "bundle_hash": 128,
+    "bundle_id": 100,
+    "source_appliance": 200,
+    "witness_appliance": 200,
+    "witness_public_key": 128,
+    "witness_signature": 256
+  },
+  "workstation_checks": {
+    "check_type": 50,
+    "site_id": 100,
+    "status": 20
+  },
+  "workstation_evidence": {
+    "bundle_id": 36,
+    "bundle_type": 50,
+    "evidence_hash": 64,
+    "hostname": 255,
+    "ip_address": 45,
+    "os_name": 100,
+    "overall_status": 20,
+    "previous_bundle_hash": 64,
+    "site_id": 100
+  },
+  "workstations": {
+    "compliance_status": 20,
+    "hostname": 255,
+    "ip_address": 45,
+    "mac_address": 17,
+    "os_name": 100,
+    "os_version": 50,
+    "site_id": 100
+  }
+}

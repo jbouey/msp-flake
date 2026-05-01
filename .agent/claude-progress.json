@@ -115,6 +115,38 @@
       "doc": "migrations/266 (abandoned), 267 (shipped), CLAUDE.md round-table 2026-05-01",
       "owner": "engineering \u2014 calm session",
       "action_prompt": "Spawn fork: write mig 268 with 3 BEGIN/COMMIT blocks: DROP v_canonical_incidents + DROP MATERIALIZED VIEW partner_site_weekly_rollup \u2192 ALTER COLUMN TYPE \u2192 recreate both views + REFRESH MATERIALIZED VIEW. Verify refresh time empirically. Once column is wider, ship mig 269 to RENAME value back to auto_recovered for forensic clarity."
+    },
+    {
+      "due": "2026-05-22T00:00:00Z",
+      "task": "D1: per-control granularity in calculate_compliance_score",
+      "why": "Coach found mig 268 assigns BUNDLE-level cb.check_result to each control via DISTINCT ON. Bundle with 5 controls + 1 failing host scores ALL 5 as failing. Disposition voted IMMEDIATE but actual scope is multi-hour schema design (evidence_framework_mappings.check_status column + framework_mapper writer update + 117K mapping backfill). Escalated to SCHEDULED.",
+      "doc": "CLAUDE.md score-granularity entry; mig 268",
+      "owner": "engineering \u2014 multi-day",
+      "action_prompt": "Round-table on schema design: option A schema column add + writer update + backfill, option B JSONB unnest at query time, option C hybrid cache. Implement + update calculate_compliance_score."
+    },
+    {
+      "due": "2026-05-15T00:00:00Z",
+      "task": "D5: extend ||-INTERVAL lint to scan SQL function bodies (pg_proc.prosrc)",
+      "why": "Python lint cannot see SQL function bodies. mig 268 closed the only known violation. Zero current violations but a future regression would slip through.",
+      "doc": "mig 268; tests/test_flywheel_eligibility_queries.py",
+      "owner": "engineering \u2014 calm session ~30 min",
+      "action_prompt": "Add pg_proc.prosrc scan or parse CREATE FUNCTION blocks in migrations; assert no banned pattern. Sibling to Python-side lint."
+    },
+    {
+      "due": "2026-05-22T00:00:00Z",
+      "task": "D7: prod-fixture coverage for 4 new invariants",
+      "why": "Block 2 + Block 4 added substrate_assertions_meta_silent / bg_loop_silent / compliance_packets_stalled / partition_maintainer_dry. Session 210-B fixture pattern exists but these are uncovered.",
+      "doc": "tests/fixtures/substrate/; tests/test_substrate_prod_fixtures.py",
+      "owner": "engineering \u2014 calm session",
+      "action_prompt": "For each invariant, capture clean + violation fixtures, expand INVARIANTS_WITH_FIXTURES, verify auto-resolve."
+    },
+    {
+      "due": "2026-05-29T00:00:00Z",
+      "task": "D8: scheduled_followups dependency_warnings field",
+      "why": "Coach noted 5/8 column-width + 5/15 calibration sweep overlap thematically; should not bundle. Add dependency_warnings to card schema so context-manager.py status surfaces conflicts.",
+      "doc": ".agent/claude-progress.json schema",
+      "owner": "engineering \u2014 quick",
+      "action_prompt": "Extend card schema; update context-manager.py output; backfill 5/8 + 5/15 mutual warnings."
     }
   ],
   "recent_milestones": [

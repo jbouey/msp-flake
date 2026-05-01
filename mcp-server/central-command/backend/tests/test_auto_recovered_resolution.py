@@ -19,14 +19,11 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 EVIDENCE_CHAIN = (
     REPO_ROOT / "mcp-server" / "central-command" / "backend" / "evidence_chain.py"
 )
-MIGRATION = (
-    REPO_ROOT
-    / "mcp-server"
-    / "central-command"
-    / "backend"
-    / "migrations"
-    / "264_incidents_auto_recovered_tier.sql"
-)
+# D3 cleanup (consistency-coach 2026-05-01): the stale top-level
+# `MIGRATION = "264_..."` constant was removed when mig 264's
+# 'auto_recovered' value was abandoned (mig 266 no-op'd, mig 267
+# swapped CHECK to 'recovered'). Tests now construct migration paths
+# locally per assertion rather than via this module-level constant.
 
 
 def test_migration_267_replaces_resolution_tier_check():
