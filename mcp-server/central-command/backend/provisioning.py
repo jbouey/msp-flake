@@ -910,6 +910,10 @@ async def admin_restore_appliance(
         # Step 2: UPSERT site_appliances. Existing row is left alone
         # (no overwrite of last_checkin / agent_version etc — those are
         # daemon-driven). Only the missing-row case INSERTs.
+        # noqa: site-appliances-deleted-include — admin recovery path
+        # legitimately needs to see soft-deleted rows so it can revive
+        # them via a fresh api_key + state reset. BUG 1 round-table
+        # 2026-05-01 explicitly approved this opt-out.
         existing = await conn.fetchrow(
             """
             SELECT appliance_id, first_checkin

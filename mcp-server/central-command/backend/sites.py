@@ -561,11 +561,15 @@ async def create_appliance_order(
     expires_at = now + timedelta(hours=1)
 
     async with tenant_connection(pool, site_id=site_id) as conn:
-        # Verify appliance exists
+        # Verify appliance exists (BUG 1 round-table 2026-05-01:
+        # AND deleted_at IS NULL — soft-deleted appliances must not
+        # accept new orders; was missing → /sites/{id}/orders fired
+        # for a soft-deleted row would 500 the agent).
         appliance = await conn.fetchrow("""
             SELECT appliance_id, site_id
             FROM site_appliances
             WHERE appliance_id = $1 AND site_id = $2
+              AND deleted_at IS NULL
         """, appliance_id, site_id)
 
         if not appliance:
@@ -770,7 +774,16 @@ async def list_sites(
             LEFT JOIN sites s ON s.site_id = sa.site_id
             LEFT JOIN client_orgs co ON co.id = s.client_org_id
         """
-        where_clauses = ["COALESCE(s.status, 'pending') != 'inactive'"]
+        # BUG 1 round-table 2026-05-01: filter soft-deleted appliances.
+        # FROM is site_appliances (NOT a LEFT JOIN), so a site whose
+        # appliances are ALL soft-deleted will disappear from the fleet
+        # list. Acceptable + desired — fully-deleted sites should not
+        # appear in operator UI. Site row stays in `sites` table for
+        # forensic access via the dedicated /api/sites/{id} endpoint.
+        where_clauses = [
+            "COALESCE(s.status, 'pending') != 'inactive'",
+            "sa.deleted_at IS NULL",
+        ]
         args = []
         arg_idx = 1
 
@@ -860,7 +873,12 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
     pool = await get_pool()
     
     async with tenant_connection(pool, site_id=site_id) as conn:
-        # Get appliances for this site
+        # Get appliances for this site (BUG 1 round-table 2026-05-01:
+        # AND deleted_at IS NULL — was missing, so soft-deleted
+        # rows leaked into the SiteDetail UI; user clicked Delete
+        # on `osiriscare-installer` row, DELETE handler correctly
+        # rejected with 404 because its filter had the predicate.
+        # This was the BUG 1 root cause).
         appliance_rows = await conn.fetch("""
             SELECT
                 appliance_id, hostname, display_name, mac_address, ip_addresses,
@@ -870,6 +888,7 @@ async def get_site(site_id: str, user: dict = Depends(require_auth)):
                 COALESCE(jsonb_array_length(assigned_targets), 0) as assigned_target_count
             FROM site_appliances
             WHERE site_id = $1
+              AND deleted_at IS NULL
             ORDER BY first_checkin, appliance_id
         """, site_id)
         
@@ -1690,13 +1709,17 @@ async def get_mesh_state(site_id: str, user: dict = Depends(require_auth)):
     pool = await get_pool()
 
     async with tenant_connection(pool, site_id=site_id) as conn:
-        # Current appliance state
+        # Current appliance state (BUG 1 round-table 2026-05-01:
+        # AND deleted_at IS NULL — mesh state must not include
+        # soft-deleted appliances; their assigned_targets are stale
+        # and would skew the consistency checks).
         appliances = await conn.fetch("""
             SELECT appliance_id, display_name, hostname, mac_address,
                    status, last_checkin, daemon_health, assigned_targets,
                    assignment_epoch
             FROM site_appliances
             WHERE site_id = $1
+              AND deleted_at IS NULL
             ORDER BY first_checkin ASC
         """, site_id)
 
