@@ -163,6 +163,14 @@
       "doc": "memory/feedback_bug2_credentials_same_origin_2026_05_01.md; tests/test_no_same_origin_credentials.py",
       "owner": "engineering \u2014 calm session",
       "action_prompt": "For each of the 63 sites in mcp-server/central-command/frontend/src/ matching `credentials: 'same-origin'`: (1) determine if the endpoint requires auth (read the route handler in backend); (2) if YES auth required \u2192 swap to 'include'; (3) if NO auth required (e.g. browser-verify, public portal home) \u2192 add `// same-origin-allowed: <reason>` opt-out marker on the line; (4) decrement BASELINE_MAX in test_no_same_origin_credentials.py by the swap count. Sites flagged by Diana for priority monitoring: SiteSLAIndicator.tsx:102, SiteActivityTimeline.tsx:113, SiteSearchBar.tsx:107."
+    },
+    {
+      "due": "2026-05-29T00:00:00Z",
+      "task": "BUG 3 cleanup: migrate 10 legacy compliance_status readers to get_per_device_compliance helper",
+      "why": "BUG 3 Path C round-table 2026-05-01 deprecated discovered_devices.compliance_status (mig 269). 14 callers currently read the column (4 doc references + 10 real reads in partners.py, routes.py, client_portal.py, device_sync.py legacy paths). CI gate ratchet baseline is 14; lower as each is migrated. The 10 real readers return the column to the frontend for display \u2014 migration requires changing response shapes to use the helper output.",
+      "doc": "memory/feedback_bug3_per_device_compliance_2026_05_01.md; tests/test_compliance_status_not_read.py",
+      "owner": "engineering \u2014 calm session",
+      "action_prompt": "For each of the 10 real readers (partners.py:1864, background_tasks.py:1184, client_portal.py:1141+4441, device_sync.py:795+1288+1338, routes.py:5241+5778): replace `d.compliance_status` SELECT with a JOIN to db_queries.get_per_device_compliance() output. Decrement BASELINE_MAX in test_compliance_status_not_read.py for each migrated reader. Once BASELINE_MAX=0, ship a final migration to DROP COLUMN discovered_devices.compliance_status."
     }
   ],
   "recent_milestones": [

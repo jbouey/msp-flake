@@ -725,6 +725,108 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
     return result_scores
 
 
+async def get_per_device_compliance(
+    db: AsyncSession, site_id: str, window_days: int = 30
+) -> Dict[str, str]:
+    """Per-device compliance status derived live from compliance_bundles.
+
+    BUG 3 round-table 2026-05-01 (fork a48dd10968aaf583c, Path C):
+    `discovered_devices.compliance_status` is a denormalized cache that
+    was NEVER wired to bundle-ingest; every device shows 'unknown'
+    forever even when Go agents are actively submitting passing bundles.
+    Site-level score read 94% from compliance_bundles, but per-device
+    "Managed Fleet" read 0% from the stale cache — same writer/reader
+    divergence class as BUG 2 / mig 268.
+
+    Per consensus: source-of-truth is `compliance_bundles` (Ed25519 +
+    OTS-anchored chain). Compute per-device status live; deprecate
+    the cache column.
+
+    Returns: dict mapping hostname → status, where status ∈
+    {'compliant', 'drifted', 'warning', 'unknown'}. Aggregation rule
+    matches the writer at evidence_chain.py:1135-1146:
+      - any 'fail' or 'non_compliant' per-host check → 'drifted'
+      - any 'warning' per-host check → 'warning'  (passing-but-flagged)
+      - all 'pass'/'compliant' → 'compliant'
+      - none of the above → 'unknown'
+
+    Window: 30 days default. Hosts not seen in window → not in result;
+    caller treats absence as 'unknown'.
+
+    Performance: covered by `idx_cb_site_created` (mig 260). One query
+    per device-list page load (cacheable; staleTime). NOT a hot-path
+    impact like Path A's writer-cache approach would have been.
+    """
+    # Same shape as get_compliance_scores_for_site:1135-1146 — fetch
+    # bundles, dedup latest-per (hostname, check) inside, aggregate.
+    result = await db.execute(text("""
+        SELECT checks, checked_at
+          FROM compliance_bundles
+         WHERE site_id = :site_id
+           AND checked_at > NOW() - make_interval(days => :window_days)
+         ORDER BY checked_at DESC
+         LIMIT 200
+    """), {"site_id": site_id, "window_days": window_days})
+    bundles = result.fetchall()
+
+    if not bundles:
+        return {}
+
+    # latest-per-(host, check_type) — bundles ordered DESC, first occurrence is most-recent
+    PASSING = {"pass", "compliant"}
+    WARNING = {"warning", "warn"}
+    FAILING = {"fail", "non_compliant"}
+
+    # hostname -> latest aggregate state across all checks
+    # We compute per-host: any FAIL → drifted; any WARNING (no FAIL) → warning;
+    # any PASS (no FAIL/WARNING) → compliant; none → unknown.
+    seen_keys: set[str] = set()
+    host_has_fail: Dict[str, bool] = {}
+    host_has_warn: Dict[str, bool] = {}
+    host_has_pass: Dict[str, bool] = {}
+
+    for bundle in bundles:
+        checks = bundle.checks or []
+        if isinstance(checks, str):
+            try:
+                checks = json.loads(checks)
+            except Exception:
+                continue
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            check_type = check.get("check") or check.get("check_type") or ""
+            hostname = check.get("hostname")
+            status = (check.get("status") or "").lower()
+            if not hostname or not check_type:
+                continue
+            key = f"{hostname}::{check_type}"
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            if status in FAILING:
+                host_has_fail[hostname] = True
+            elif status in WARNING:
+                host_has_warn[hostname] = True
+            elif status in PASSING:
+                host_has_pass[hostname] = True
+
+    out: Dict[str, str] = {}
+    all_hosts = (
+        set(host_has_fail.keys())
+        | set(host_has_warn.keys())
+        | set(host_has_pass.keys())
+    )
+    for host in all_hosts:
+        if host_has_fail.get(host):
+            out[host] = "drifted"
+        elif host_has_warn.get(host):
+            out[host] = "warning"
+        elif host_has_pass.get(host):
+            out[host] = "compliant"
+    return out
+
+
 async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any]]:
     """Get compliance scores for all sites in a single query (replaces N+1 loop).
 

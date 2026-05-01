@@ -907,46 +907,107 @@ async def get_site_devices(
 async def get_site_device_counts(site_id: str) -> dict:
     """
     Get device count summary for a site.
+
+    BUG 3 round-table 2026-05-01 (fork a48dd10968aaf583c, Path C):
+    `discovered_devices.compliance_status` is DEPRECATED — never
+    populated by the bundle-ingest path; reading it gave 0% Managed
+    Fleet on the dashboard while the site-level score correctly
+    showed 94%. Per consensus, derive compliance counts LIVE from
+    `compliance_bundles` (the cryptographically-anchored source of
+    truth) via `db_queries.get_per_device_compliance`.
+
+    The hostname/IP join: `discovered_devices.hostname` matches the
+    bundle-checks JSONB `hostname` field; `ip_address` is the
+    fallback when hostname is missing. `compliance_bundles.checks`
+    entries set hostname to the IP for Linux hosts and the NetBIOS/AD
+    name for Windows (writer behavior; see evidence_chain.py:1130
+    region for the JSONB shape).
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
-        # Get managed subnets for filtering.
-        # ip_addresses jsonb array → take first entry.
-        appliance_rows = await conn.fetch(
-            """SELECT (ip_addresses->>0) AS ip_address
-               FROM site_appliances
-               WHERE site_id = $1 AND deleted_at IS NULL""",
-            site_id,
-        )
-        managed_prefixes = []
-        for ar in appliance_rows:
-            aip = str(ar["ip_address"] or "")
-            if aip and "." in aip:
-                managed_prefixes.append(".".join(aip.split(".")[:3]) + ".")
+    # Step 1: live-compute per-device compliance from compliance_bundles
+    # (NOT from the deprecated discovered_devices.compliance_status).
+    # Use the SQLAlchemy session path so we hit the same code path as
+    # site-level scoring (db_queries.get_compliance_scores_for_site).
+    from .shared import async_session
+    from .db_queries import get_per_device_compliance
+    async with async_session() as db:
+        per_host_status = await get_per_device_compliance(db, site_id, window_days=30)
 
-        row = await conn.fetchrow(
+    async with admin_connection(pool) as conn:
+        # Step 2: fetch raw device rows (no compliance_status — derived above).
+        # Filter: appliance must be active (v_appliances_current excludes
+        # deleted_at IS NOT NULL — the BUG-1 hygiene now applied here too).
+        rows = await conn.fetch(
             """
             SELECT
-                COUNT(*) as total,
-                COUNT(*) FILTER (WHERE d.compliance_status = 'compliant') as compliant,
-                COUNT(*) FILTER (WHERE d.compliance_status = 'drifted') as drifted,
-                COUNT(*) FILTER (WHERE d.compliance_status = 'unknown') as unknown,
-                COUNT(*) FILTER (WHERE d.medical_device = true) as medical,
-                COUNT(*) FILTER (WHERE d.device_type = 'workstation') as workstations,
-                COUNT(*) FILTER (WHERE d.device_type = 'server') as servers,
-                COUNT(*) FILTER (WHERE d.device_type = 'network') as network_devices,
-                COUNT(*) FILTER (WHERE d.device_type = 'printer') as printers
+                d.id,
+                d.hostname,
+                d.ip_address,
+                d.device_type,
+                d.medical_device
             FROM discovered_devices d
             JOIN v_appliances_current a ON d.appliance_id = a.id
             WHERE a.site_id = $1
             """,
             site_id,
         )
-        return dict(row) if row else {
-            "total": 0, "compliant": 0, "drifted": 0, "unknown": 0,
-            "medical": 0, "workstations": 0, "servers": 0,
-            "network_devices": 0, "printers": 0,
+
+        # Step 3: aggregate counts using the LIVE per-host status from
+        # compliance_bundles, falling back to 'unknown' for devices we
+        # haven't seen in a bundle within the 30-day window.
+        total = 0
+        compliant = 0
+        drifted = 0
+        warning = 0
+        unknown = 0
+        medical = 0
+        workstations = 0
+        servers = 0
+        network_devices = 0
+        printers = 0
+
+        for r in rows:
+            total += 1
+            if r["medical_device"]:
+                medical += 1
+            dt = r["device_type"]
+            if dt == "workstation":
+                workstations += 1
+            elif dt == "server":
+                servers += 1
+            elif dt == "network":
+                network_devices += 1
+            elif dt == "printer":
+                printers += 1
+
+            # Live compliance lookup: try hostname first, then IP fallback
+            host_status = per_host_status.get(r["hostname"])
+            if host_status is None and r["ip_address"]:
+                host_status = per_host_status.get(r["ip_address"])
+
+            if host_status == "compliant":
+                compliant += 1
+            elif host_status == "drifted":
+                drifted += 1
+            elif host_status == "warning":
+                # Treat warning as passing-but-flagged for the by_compliance
+                # bucket; the site-level score weights it 0.5.
+                warning += 1
+            else:
+                unknown += 1
+
+        return {
+            "total": total,
+            "compliant": compliant,
+            "drifted": drifted,
+            "unknown": unknown,
+            "warning": warning,
+            "medical": medical,
+            "workstations": workstations,
+            "servers": servers,
+            "network_devices": network_devices,
+            "printers": printers,
         }
 
 
