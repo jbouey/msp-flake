@@ -2116,11 +2116,11 @@ async def get_kpi_trends(
                     (NOW() - created_at)::interval AS age,
                     COUNT(*) AS cnt
                 FROM incidents
-                WHERE created_at > NOW() - ($1 || ' days')::interval
+                WHERE created_at > NOW() - make_interval(days => $1)
                 GROUP BY date_trunc('day', created_at)
                 ORDER BY date_trunc('day', created_at) ASC
                 """,
-                str(days),
+                days,
             )
             # Rough bucket: day index = days - 1 - floor(age_days)
             for row in rows:
@@ -2140,11 +2140,11 @@ async def get_kpi_trends(
                     COUNT(*) FILTER (WHERE status = 'success') AS success_count,
                     COUNT(*) AS total_count
                 FROM execution_telemetry
-                WHERE created_at > NOW() - ($1 || ' days')::interval
+                WHERE created_at > NOW() - make_interval(days => $1)
                 GROUP BY date_trunc('day', created_at)
                 ORDER BY day ASC
                 """,
-                str(days),
+                days,
             )
             for row in rows:
                 age_days = (datetime.now(timezone.utc).date() - row["day"].date()).days
@@ -2163,12 +2163,12 @@ async def get_kpi_trends(
                 """
                 SELECT
                     generate_series(
-                        date_trunc('day', NOW() - ($1 || ' days')::interval),
+                        date_trunc('day', NOW() - make_interval(days => $1)),
                         date_trunc('day', NOW()),
                         '1 day'::interval
                     ) AS day
                 """,
-                str(days),
+                days,
             )
             # Snapshot the current count into each historical slot. This is
             # intentionally a flat line for now — per-day historical snapshots
@@ -6074,11 +6074,11 @@ async def set_maintenance(
     async with admin_connection(pool) as conn:
         await conn.execute("""
             UPDATE sites
-            SET maintenance_until = NOW() + ($1 || ' hours')::INTERVAL,
+            SET maintenance_until = NOW() + make_interval(hours => $1),
                 maintenance_reason = $2,
                 maintenance_set_by = $3
             WHERE site_id = $4
-        """, str(body.duration_hours), body.reason.strip(), user.get("username", "admin"), site_id)
+        """, body.duration_hours, body.reason.strip(), user.get("username", "admin"), site_id)
 
     logger.info("Maintenance window set",
                 site_id=site_id,

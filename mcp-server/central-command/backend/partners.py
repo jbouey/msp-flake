@@ -3878,11 +3878,11 @@ async def set_partner_maintenance(
         set_by = f"partner:{partner.get('name', partner['id'])}"
         await conn.execute("""
             UPDATE sites
-            SET maintenance_until = NOW() + ($1 || ' hours')::INTERVAL,
+            SET maintenance_until = NOW() + make_interval(hours => $1),
                 maintenance_reason = $2,
                 maintenance_set_by = $3
             WHERE site_id = $4
-        """, str(body.duration_hours), body.reason.strip(), set_by, site_id)
+        """, body.duration_hours, body.reason.strip(), set_by, site_id)
 
     await log_partner_activity(
         partner_id=str(partner["id"]),

@@ -377,12 +377,12 @@ async def _count_recent_zero_results(
                 SELECT runbook_id
                 FROM l2_decisions
                 WHERE site_id = $1
-                  AND created_at >= NOW() - ($2 || ' hours')::interval
+                  AND created_at >= NOW() - make_interval(hours => $2)
                   AND llm_model NOT IN ('none', 'cached')  -- only count actual LLM calls
                 ORDER BY created_at DESC
                 LIMIT 10
                 """,
-                site_id, str(hours),
+                site_id, hours,
             )
             streak = 0
             for r in rows:

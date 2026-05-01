@@ -243,24 +243,81 @@ def test_no_string_concat_interval_pattern():
     issued. The fix is `make_interval(days => :max_age)` which
     accepts int directly.
 
-    This test bans the broken pattern in both files."""
+    Round-table 2026-05-01 Block 3: scope expanded from 2 to ALL
+    backend Python files. The original 2-file lint left 8 ticking
+    landmines (one careless removal of str() casting and the same
+    P0 outage recurs). Per CLAUDE.md, the unit-agnostic ban: ANY
+    `($N || ' <unit>')::INTERVAL` pattern in production code is
+    forbidden — use `make_interval(<unit> => $N)` instead.
+    """
     import re
-    pattern = re.compile(r"\|\|\s*'\s*days\s*'\s*\)\s*::\s*INTERVAL", re.IGNORECASE)
-    for path_str in [
-        "mcp-server/main.py",
-        "mcp-server/central-command/backend/flywheel_eligibility_queries.py",
-    ]:
-        path = REPO_ROOT / path_str
+    # Match `||  '<anything>' )  ::  INTERVAL` — unit-agnostic so the
+    # ban catches days/minutes/hours/seconds variants. Allow any
+    # whitespace pattern between operators.
+    # Match `($N || '<unit>')::INTERVAL` or `(:name || '<unit>')::INTERVAL`
+    # where the LHS is an asyncpg-bound parameter ($N) or a SQLAlchemy
+    # named-bind parameter (:name). Plain column-name LHS is asyncpg-safe
+    # (no binding to fail) and so is NOT caught — PG handles the cast at
+    # runtime. The forbidden class is parameter-bound concat that
+    # tickles asyncpg's type-inference into a TypeError before SQL runs.
+    pattern = re.compile(
+        r"\(\s*(?:\$\d+|:\w+)\s*\|\|\s*'[^']+?'\s*\)\s*::\s*INTERVAL",
+        re.IGNORECASE,
+    )
+    backend_root = REPO_ROOT / "mcp-server" / "central-command" / "backend"
+    main_path = REPO_ROOT / "mcp-server" / "main.py"
+    # Glob: every .py in backend except tests/ + this file itself.
+    candidates: list[pathlib.Path] = [main_path]
+    for p in backend_root.rglob("*.py"):
+        # Skip tests dir entirely — test fixtures often embed
+        # forbidden-pattern regex literals as DOC examples.
+        if "tests" in p.parts:
+            continue
+        # Skip vendored or migration-snapshot fixtures.
+        if "fixtures" in p.parts:
+            continue
+        # Skip test_ prefixed files at backend root (legacy layout
+        # from before the tests/ subdir consolidation).
+        if p.name.startswith("test_"):
+            continue
+        candidates.append(p)
+    failures: list[str] = []
+    for path in candidates:
         if not path.exists():
             continue
         src = path.read_text()
-        match = pattern.search(src)
-        assert not match, (
-            f"{path_str}: forbidden pattern `(:param || ' days')::INTERVAL` found. "
-            f"asyncpg binds int as int, can't auto-cast for `||` text op. "
-            f"Use `make_interval(days => :param)` instead. P0 regression "
-            f"from F6 MVP slice 2026-04-30."
-        )
+        # Strip Python comments (preserve string literals — the
+        # forbidden pattern lives in those, so we want to keep them).
+        # Simple line-by-line: drop content after the first `#` that's
+        # outside any quoted string. Fast approximation: strip comments
+        # only on lines that don't contain `'` or `"`.
+        for m in pattern.finditer(src):
+            # Compute line number for error message.
+            line_no = src.count("\n", 0, m.start()) + 1
+            # Get the line itself.
+            line = src.splitlines()[line_no - 1] if line_no - 1 < len(src.splitlines()) else ""
+            # Skip if the match is inside a comment (quick test:
+            # find the `#` before the match position on the same line).
+            line_start = src.rfind("\n", 0, m.start()) + 1
+            line_prefix = src[line_start:m.start()]
+            if "#" in line_prefix:
+                # Match is after a `#` on this line — likely a
+                # comment. But we also need to exclude `#` that's
+                # inside a string. Crude: if the line starts with
+                # spaces+# it's definitely a comment.
+                stripped = line.lstrip()
+                if stripped.startswith("#"):
+                    continue
+            failures.append(f"{path.relative_to(REPO_ROOT)}:{line_no}: {line.strip()[:120]}")
+    assert not failures, (
+        f"Forbidden `($N || ' <unit>')::INTERVAL` pattern found in "
+        f"{len(failures)} location(s). asyncpg binds int as int and "
+        f"cannot auto-cast for the `||` text operator — TypeError at "
+        f"runtime. Use `make_interval(<unit> => $N)` instead. P0 "
+        f"regression from F6 MVP 2026-04-30 (commit 903746bd hot-fix; "
+        f"scope expanded 2026-05-01 Block 3 round-table).\n\n"
+        + "\n".join(failures)
+    )
 
 
 def test_uses_shared_parse_bool_env():

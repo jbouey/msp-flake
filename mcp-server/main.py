@@ -1756,7 +1756,14 @@ async def lifespan(app: FastAPI):
                         if count > 0:
                             logger.info(f"Expired {count} fleet orders")
             except Exception as e:
-                logger.warning(f"Fleet order expiry check failed: {e}")
+                # Per CLAUDE.md "no silent write failures": fleet order
+                # expiry sweep is a DB write path; failure must surface
+                # at ERROR for the log shipper to alert on.
+                logger.error(
+                    "fleet_order_expiry_failed",
+                    exc_info=True,
+                    extra={"exception_class": type(e).__name__},
+                )
             await asyncio.sleep(300)  # Every 5 minutes
 
     async def _reconciliation_loop():
@@ -1961,7 +1968,23 @@ async def lifespan(app: FastAPI):
                                     break
                             except Exception as e:
                                 errors += 1
-                                logger.warning(f"Compliance packet auto-gen failed for {sid}/{year}-{month:02d}: {e}")
+                                # Per CLAUDE.md "no silent write failures":
+                                # compliance packets are HIPAA monthly
+                                # attestations (mig 141, 6-yr retention).
+                                # A silent miss = silent compliance gap;
+                                # MUST surface at ERROR for log-shipper
+                                # alerting + the new compliance_packets_
+                                # stalled invariant (Block 4).
+                                logger.error(
+                                    "compliance_packet_autogen_failed",
+                                    exc_info=True,
+                                    extra={
+                                        "site_id": sid,
+                                        "year": year,
+                                        "month": month,
+                                        "exception_class": type(e).__name__,
+                                    },
+                                )
                                 break  # Move on to the next site
 
                     if generated or errors:

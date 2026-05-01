@@ -35,11 +35,17 @@ async def _get_excluded_subnets(conn, site_id: str) -> list:
     Per-site config in site_drift_config with check_type='_excluded_subnets'.
     Value is a comma-separated list of subnet prefixes (e.g. '192.168.0.,10.0.0.').
     """
+    # Savepoint per CLAUDE.md asyncpg savepoint invariant: any
+    # conn.execute/fetch* whose failure is caught non-fatally MUST be
+    # inside `async with conn.transaction():`. Python's try/except
+    # does NOT reset the Postgres txn state — a swallowed error here
+    # would poison every subsequent statement on this conn.
     try:
-        row = await conn.fetchrow(
-            "SELECT notes FROM site_drift_config WHERE site_id = $1 AND check_type = '_excluded_subnets'",
-            site_id,
-        )
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT notes FROM site_drift_config WHERE site_id = $1 AND check_type = '_excluded_subnets'",
+                site_id,
+            )
         if row and row['notes']:
             return [s.strip() for s in row['notes'].split(',') if s.strip()]
     except Exception:
@@ -192,19 +198,29 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                     device.mac_address = None
 
         # Batch prefetch: active Go agents for this site (eliminates N+1 per-device query)
+        # Savepoint isolation: failure here is non-fatal (degrades to
+        # empty agent_hosts set; per-device device_status classification
+        # falls back to non-agent path). MUST be inside conn.transaction()
+        # so the outer admin_transaction txn isn't poisoned.
         _agent_hosts = set()
         try:
-            _agent_rows = await conn.fetch(
-                "SELECT hostname, ip_address FROM go_agents WHERE site_id = $1 AND status IN ('active', 'connected')",
-                report.site_id,
-            )
+            async with conn.transaction():
+                _agent_rows = await conn.fetch(
+                    "SELECT hostname, ip_address FROM go_agents WHERE site_id = $1 AND status IN ('active', 'connected')",
+                    report.site_id,
+                )
             for ar in _agent_rows:
                 if ar['hostname']:
                     _agent_hosts.add(ar['hostname'].lower())
                 if ar['ip_address']:
                     _agent_hosts.add(str(ar['ip_address']))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(
+                "device_sync_agent_prefetch_failed",
+                exc_info=True,
+                extra={"exception_class": type(e).__name__,
+                       "site_id": report.site_id},
+            )
 
         # Process each device
         for device in report.devices:
@@ -354,14 +370,34 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
 
                 # Set scan ownership: first appliance to discover a device owns it.
                 # Only set if unowned — never steal from another appliance.
+                # CRITICAL: this UPDATE is inside the per-device for-loop on
+                # the OUTER admin_transaction. Without a savepoint wrapper,
+                # any DB error here (FK violation when appliance_db_id is a
+                # legacy_uuid that doesn't match owner_appliance_id's column
+                # type, missing column on a still-being-deployed schema, etc)
+                # poisons the outer txn — every subsequent device fails with
+                # InFailedSQLTransactionError. This was the active prod bug
+                # 2026-04-30 to 2026-05-01: /api/devices/sync 500ing 26x in
+                # 30 min on netscan-keyed (IP/MAC) device_ids. Savepoint
+                # isolation closes the class.
                 try:
-                    await conn.execute("""
-                        UPDATE discovered_devices
-                        SET owner_appliance_id = $2, owned_since = NOW()
-                        WHERE id = $1 AND owner_appliance_id IS NULL
-                    """, device_db_id, appliance_db_id)
-                except Exception:
-                    pass  # Column may not exist yet (pre-migration 114)
+                    async with conn.transaction():
+                        await conn.execute("""
+                            UPDATE discovered_devices
+                            SET owner_appliance_id = $2, owned_since = NOW()
+                            WHERE id = $1 AND owner_appliance_id IS NULL
+                        """, device_db_id, appliance_db_id)
+                except Exception as e:
+                    logger.error(
+                        "device_sync_owner_update_failed",
+                        exc_info=True,
+                        extra={
+                            "exception_class": type(e).__name__,
+                            "device_db_id": str(device_db_id),
+                            "appliance_db_id": str(appliance_db_id),
+                            "site_id": report.site_id,
+                        },
+                    )
 
                 # Auto-classify device_status based on probe results.
                 # Only update if current status is 'discovered' or null

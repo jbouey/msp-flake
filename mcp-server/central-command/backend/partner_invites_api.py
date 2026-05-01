@@ -146,7 +146,7 @@ async def create_invite(
                      expires_at, metadata)
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8,
-                    NOW() + ($9 || ' days')::interval,
+                    NOW() + make_interval(days => $9),
                     $10::jsonb
                 )
              RETURNING expires_at
@@ -159,7 +159,7 @@ async def create_invite(
                 req.plan,
                 req.partner_brand,
                 uuid.UUID(partner_user_id) if isinstance(partner_user_id, str) else partner_user_id,
-                str(req.ttl_days),
+                req.ttl_days,
                 json.dumps({}),
             )
         except asyncpg.UniqueViolationError:

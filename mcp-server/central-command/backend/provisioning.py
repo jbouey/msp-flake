@@ -608,7 +608,17 @@ async def get_provision_by_mac(mac_address: str):
                 config_canonical = json.dumps(config, sort_keys=True)
                 signature = sign_data(config_canonical)
             except Exception as e:
-                logger.warning(f"[provision] Failed to sign config for {mac}: {e}")
+                # Signing-key load failure is operationally critical:
+                # an unsigned config is still served (appliance daemon
+                # rejects updates without server pubkey verification),
+                # but the channel for delivering signed orders is broken.
+                # Per CLAUDE.md "no silent write failures" — log at ERROR.
+                logger.error(
+                    "provision_config_sign_failed",
+                    exc_info=True,
+                    extra={"mac_address": mac,
+                           "exception_class": type(e).__name__},
+                )
 
             return {
                 "config": config,
@@ -642,7 +652,16 @@ async def get_provision_by_mac(mac_address: str):
             """, mac)
             logger.info(f"[provision] Unclaimed appliance registered: MAC={mac}")
         except Exception as e:
-            logger.warning(f"[provision] Failed to register unclaimed appliance {mac}: {e}")
+            # DB write failure on the unclaimed-appliance INSERT is
+            # operationally critical: the appliance polls indefinitely
+            # without ever appearing in the admin claim queue.
+            # Per CLAUDE.md "no silent write failures" — log at ERROR.
+            logger.error(
+                "provision_unclaimed_register_failed",
+                exc_info=True,
+                extra={"mac_address": mac,
+                       "exception_class": type(e).__name__},
+            )
 
         return {
             "status": "unclaimed",
