@@ -88,23 +88,23 @@ EXPECTED_INTERVAL_S: Dict[str, int] = {
     "merkle_batch": 3600,  # main.py:1593 sleeps 3600
     "audit_log_retention": 86400,
     "health_monitor": 300,  # health_monitor.py:101 sleeps 300s (5 min)
-    "ots_upgrade": 1800,
+    "ots_upgrade": 900,  # evidence_chain.py loop sleeps 900s (15 min)
     "evidence_chain_check": 86400,  # main.py:1571 sleeps 86400 (daily)
-    "alert_digest": 600,
+    "alert_digest": 14400,  # alert_router.py:488 ALERT_DIGEST_INTERVAL_HOURS=4 default
     "compliance_packets": 3600,
-    "healing_sla": 600,
+    "healing_sla": 3600,  # healing_sla.py:35 sleeps 3600 (hourly)
     "recurrence_velocity": 300,
     "recurrence_auto_promotion": 3600,
     "cross_incident_correlation": 3600,
-    "temporal_decay": 86400,
-    "regime_change_detector": 3600,
+    "temporal_decay": 21600,  # background_tasks.py:566 sleeps 21600 (6h)
+    "regime_change_detector": 1800,  # background_tasks.py:922 sleeps 1800 (30 min)
     "threshold_tuner": 86400,
     "exemplar_miner": 86400,
     "phantom_detector": 300,
     "heartbeat_rollup": 60,
     "substrate_assertions": 60,
     "go_agent_status_decay": 60,  # Session 214 fleet-edge liveness
-    "mark_stale_appliances": 60,  # CLAUDE.md APPLIANCE_STALE_THRESHOLD
+    "mark_stale_appliances": 120,  # background_tasks.py:1676 APPLIANCE_OFFLINE_SCAN_SECONDS=120
 }
 
 
