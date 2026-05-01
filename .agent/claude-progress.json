@@ -149,7 +149,10 @@
       "why": "Block 2 + Block 4 added substrate_assertions_meta_silent / bg_loop_silent / compliance_packets_stalled / partition_maintainer_dry. Session 210-B fixture pattern exists but these are uncovered.",
       "doc": "tests/fixtures/substrate/; tests/test_substrate_prod_fixtures.py",
       "owner": "engineering \u2014 calm session",
-      "action_prompt": "For each invariant, capture clean + violation fixtures, expand INVARIANTS_WITH_FIXTURES, verify auto-resolve."
+      "action_prompt": "For each invariant, capture clean + violation fixtures, expand INVARIANTS_WITH_FIXTURES, verify auto-resolve.",
+      "closed": "2026-05-01",
+      "closed_by": "TBD commit",
+      "closure_note": "Advanced from 2026-05-22 during BUG 3 closure same-session momentum. 11 new tests across 3 files: 3 JSON fixtures for compliance_packets_stalled (parametrized pattern), 7 monkeypatch tests for substrate_assertions_meta_silent + bg_loop_silent (in-process bg_heartbeat state), 4 datetime-mocked tests for partition_maintainer_dry (next-month suffix dynamic). All 4 new invariants now have regression coverage."
     },
     {
       "due": "2026-05-29T00:00:00Z",

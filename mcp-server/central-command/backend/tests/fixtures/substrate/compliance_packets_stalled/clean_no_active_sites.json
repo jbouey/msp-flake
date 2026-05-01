@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "scenario": "Empty fetch: no sites had compliance_bundles in the prior month, OR all active sites already have packets. The function returns 0 violations cleanly. This is the steady-state for a healthy fleet at any point past the 24h grace window.",
+    "captured": "2026-05-01 D7 round-table — synthetic clean state",
+    "anonymized": true
+  },
+  "fetchrow_response": [],
+  "expected_violation_count": 0
+}

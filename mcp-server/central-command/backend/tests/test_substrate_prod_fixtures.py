@@ -53,6 +53,17 @@ INVARIANTS_WITH_FIXTURES = {
     # Session 214 fleet-edge liveness slice (round-table 2026-04-30)
     "go_agent_heartbeat_stale": "_check_go_agent_heartbeat_stale",
     "appliance_offline_extended": "_check_appliance_offline_extended",
+    # D7 followup 2026-05-01 — 4 new Block 2+4 invariants. Of those,
+    # only `compliance_packets_stalled` is a direct fetch-based DB
+    # invariant that fits this parametrized fixture pattern.
+    # `partition_maintainer_dry` depends on `datetime.now()` for the
+    # next-month suffix — covered by `test_partition_maintainer_dry.py`
+    # with monkeypatched datetime.
+    # `substrate_assertions_meta_silent` + `bg_loop_silent` read
+    # bg_heartbeat in-process state, not DB — covered by
+    # `test_bg_heartbeat_invariants.py` with monkeypatched
+    # bg_heartbeat module.
+    "compliance_packets_stalled": "_check_compliance_packets_stalled",
 }
 
 FIXTURE_ROOT = pathlib.Path(__file__).parent / "fixtures" / "substrate"

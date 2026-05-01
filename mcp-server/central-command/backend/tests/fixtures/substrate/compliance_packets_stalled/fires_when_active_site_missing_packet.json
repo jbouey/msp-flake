@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "scenario": "Site emitted compliance_bundles in the prior completed month but has NO compliance_packets row for that site+month+year+framework='hipaa'. Fires sev1 with site_id + year + month populated. This is the canary HIPAA §164.316(b)(2)(i) 6-yr retention regression class.",
+    "captured": "2026-05-01 D7 round-table — synthetic single-site fire",
+    "anonymized": true
+  },
+  "fetchrow_response": [
+    {
+      "site_id": "anon-clinic-A",
+      "year": 2026,
+      "month": 4
+    }
+  ],
+  "expected_violation_count": 1,
+  "expected_details": {
+    "site_id": "anon-clinic-A",
+    "year": 2026,
+    "month": 4,
+    "framework": "hipaa"
+  }
+}

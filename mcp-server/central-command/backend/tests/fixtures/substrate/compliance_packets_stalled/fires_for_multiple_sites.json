@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "scenario": "3 sites all missing the prior month's HIPAA packet. The check function emits 3 distinct violations (LIMIT 50 in SQL prevents bloat for fleet-wide outages). This shape captures a partition_maintainer-loop-stuck class where the auto-gen never ran for any site.",
+    "captured": "2026-05-01 D7 round-table — synthetic multi-site fire",
+    "anonymized": true
+  },
+  "fetchrow_response": [
+    {"site_id": "anon-clinic-A", "year": 2026, "month": 4},
+    {"site_id": "anon-clinic-B", "year": 2026, "month": 4},
+    {"site_id": "anon-clinic-C", "year": 2026, "month": 4}
+  ],
+  "expected_violation_count": 3
+}
