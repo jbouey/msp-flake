@@ -200,16 +200,30 @@ def test_relocate_emits_evidence_chain_bundle():
     )
 
 
-def test_relocate_uses_admin_connection_not_tenant():
+def test_relocate_uses_admin_context_not_tenant():
     """Relocation crosses two sites — `tenant_connection(site_id=...)`
-    would only see one. Must use `admin_connection` so the txn can
-    read both sites + write to both."""
+    would only see one. Must use `admin_connection` OR `admin_transaction`
+    so the txn can read both sites + write to both.
+
+    Session 214 Block 1 round-table 2026-05-01 swapped to
+    `admin_transaction` (multi-statement admin paths require the
+    txn-pinned variant per the Session 212 routing-pathology fix).
+    Either helper is acceptable here; tenant_connection is the
+    failure mode this test guards against.
+    """
     src = (pathlib.Path(__file__).resolve().parent.parent / "sites.py").read_text()
     relocate_idx = src.find("async def relocate_appliance(")
     body = src[relocate_idx : relocate_idx + 20000]
-    assert "admin_connection(pool)" in body, (
-        "relocate must use admin_connection — tenant_connection scopes to "
-        "one site_id and would block the cross-site INSERT/UPDATE"
+    assert ("admin_transaction(pool)" in body
+            or "admin_connection(pool)" in body), (
+        "relocate must use admin_transaction OR admin_connection — "
+        "tenant_connection scopes to one site_id and would block the "
+        "cross-site INSERT/UPDATE"
+    )
+    # And EXPLICITLY no tenant_connection inside the relocate body.
+    assert "tenant_connection(" not in body, (
+        "relocate body contains tenant_connection — would scope RLS "
+        "to one site, breaking cross-site reads/writes"
     )
 
 
