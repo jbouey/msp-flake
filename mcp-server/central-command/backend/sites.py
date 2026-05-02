@@ -4154,24 +4154,70 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         f"Appliance recovered from offline: appliance_id={canonical_id} "
                         f"site_id={checkin.site_id} display_name={label}"
                     )
+                    # Per-site coalesce (Steve adversarial round-table
+                    # 2026-05-02). When a site-wide network event recovers
+                    # and all N appliances flip back online within seconds
+                    # of each other, ship ONE batch email — not N. Use
+                    # earliest-in-60s-window-wins: query all siblings at
+                    # this site that recovered in the last 60s; only
+                    # actually email if THIS appliance is the earliest.
+                    # Race window: two recoveries arriving simultaneously
+                    # may both think they're earliest → 2 emails instead
+                    # of 1. Acceptable trade-off; still dramatically
+                    # better than N emails per site flap.
                     try:
-                        from dashboard_api.email_alerts import send_critical_alert
-                        send_critical_alert(
-                            title=f"Appliance recovered: {label}",
-                            message=(
-                                f"Appliance {label} at site {checkin.site_id} "
-                                f"resumed check-ins. Lifetime offline events: "
-                                f"{rec['offline_event_count']}."
-                            ),
-                            site_id=checkin.site_id,
-                            category="appliance_health",
-                            severity="info",
-                            metadata={
-                                "appliance_id": canonical_id,
-                                "display_name": label,
-                                "event": "appliance_recovered",
-                            },
-                        )
+                        async with conn.transaction():
+                            batch = await conn.fetch("""
+                                SELECT appliance_id, display_name, hostname,
+                                       recovered_at, offline_event_count
+                                  FROM site_appliances
+                                 WHERE site_id = $1
+                                   AND recovered_at IS NOT NULL
+                                   AND recovered_at > NOW() - INTERVAL '60 seconds'
+                                   AND deleted_at IS NULL
+                              ORDER BY recovered_at ASC
+                            """, checkin.site_id)
+                        if batch and batch[0]["appliance_id"] == canonical_id:
+                            from dashboard_api.email_alerts import send_critical_alert
+                            n = len(batch)
+                            labels = [
+                                r["display_name"] or r["hostname"] or r["appliance_id"]
+                                for r in batch
+                            ]
+                            if n == 1:
+                                title = f"Appliance recovered: {label}"
+                                message = (
+                                    f"Appliance {label} at site {checkin.site_id} "
+                                    f"resumed check-ins. Lifetime offline events: "
+                                    f"{rec['offline_event_count']}."
+                                )
+                            else:
+                                title = f"{n} appliances recovered at {checkin.site_id}"
+                                message = (
+                                    f"{n} appliances at site {checkin.site_id} "
+                                    f"resumed check-ins within the last 60 seconds: "
+                                    f"{', '.join(labels)}. Most likely a site-wide "
+                                    f"network event resolved (LAN, WAN, or upstream "
+                                    f"ISP) rather than {n} independent recoveries."
+                                )
+                            send_critical_alert(
+                                title=title,
+                                message=message,
+                                site_id=checkin.site_id,
+                                category="appliance_health",
+                                severity="info",
+                                metadata={
+                                    "appliance_count": n,
+                                    "appliance_ids": [r["appliance_id"] for r in batch],
+                                    "labels": labels,
+                                    "event": "appliance_recovered_batch" if n > 1 else "appliance_recovered",
+                                },
+                            )
+                        else:
+                            logger.info(
+                                f"recovery alert suppressed (sibling already alerted within 60s) "
+                                f"appliance_id={canonical_id} site_id={checkin.site_id}"
+                            )
                     except Exception:
                         logger.error(
                             f"Failed to send appliance_recovered alert for {canonical_id}",

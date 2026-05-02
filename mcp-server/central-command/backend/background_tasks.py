@@ -1549,6 +1549,15 @@ async def mark_stale_appliances_loop():
                               last_checkin, offline_notified
                 """, APPLIANCE_STALE_THRESHOLD_MINUTES)
 
+            # Per-site coalesce (Steve adversarial round-table 2026-05-02):
+            # When N appliances at the SAME site go offline together (almost
+            # always a LAN/WAN flap, not N independent failures), send ONE
+            # email naming all N — not N emails. Cuts email volume by N for
+            # site-wide events. Pre-fix observed 6 emails per site flap on
+            # a 3-appliance site flapping every 5 min. Per-appliance flap
+            # protection is a separate concern (#83).
+            from collections import defaultdict
+            transitioned_by_site: dict[str, list] = defaultdict(list)
             for row in rows:
                 logger.warning(
                     "Appliance transitioned to offline",
@@ -1557,61 +1566,84 @@ async def mark_stale_appliances_loop():
                     display_name=row["display_name"],
                     last_checkin=str(row["last_checkin"]),
                 )
-                # Only send email on the FIRST detection — debounced
-                # via offline_notified flag (reset on recovery).
-                # P2-fix (round-table): send_critical_alert returns False
-                # when SMTP is unconfigured/failed — must NOT mark notified
-                # in that case, or we'd silently miss the alert and never
-                # re-arm. Only stamp the flag after a CONFIRMED send.
+                # Only batch unnotified rows — debounced via offline_notified
+                # flag (reset on recovery). Notified rows still surface in
+                # the log above for forensic completeness.
                 if not row["offline_notified"]:
-                    sent_ok = False
+                    transitioned_by_site[row["site_id"]].append(row)
+
+            for site_id, site_rows in transitioned_by_site.items():
+                labels = [
+                    r["display_name"] or r["hostname"] or r["appliance_id"]
+                    for r in site_rows
+                ]
+                n = len(site_rows)
+                if n == 1:
+                    title = f"Appliance offline: {labels[0]}"
+                    message = (
+                        f"Appliance {labels[0]} at site {site_id} stopped "
+                        f"checking in at {site_rows[0]['last_checkin']}. "
+                        f"Threshold: {APPLIANCE_STALE_THRESHOLD_MINUTES} min."
+                    )
+                else:
+                    title = f"{n} appliances offline at {site_id}"
+                    message = (
+                        f"{n} appliances at site {site_id} stopped checking "
+                        f"in within {APPLIANCE_STALE_THRESHOLD_MINUTES} min: "
+                        f"{', '.join(labels)}. Most likely a site-wide "
+                        f"network event (LAN, WAN, or upstream ISP) rather "
+                        f"than {n} independent appliance failures."
+                    )
+                sent_ok = False
+                try:
+                    from dashboard_api.email_alerts import send_critical_alert
+                    sent_ok = bool(send_critical_alert(
+                        title=title,
+                        message=message,
+                        site_id=site_id,
+                        category="appliance_health",
+                        severity="critical",
+                        metadata={
+                            "appliance_count": n,
+                            "appliance_ids": [r["appliance_id"] for r in site_rows],
+                            "labels": labels,
+                            "event": "appliance_offline_batch" if n > 1 else "appliance_offline",
+                        },
+                    ))
+                except Exception:
+                    logger.error(
+                        "Failed to send appliance_offline alert",
+                        site_id=site_id,
+                        appliance_count=n,
+                        exc_info=True,
+                    )
+                if sent_ok:
                     try:
-                        from dashboard_api.email_alerts import send_critical_alert
-                        label = row["display_name"] or row["hostname"] or row["appliance_id"]
-                        sent_ok = bool(send_critical_alert(
-                            title=f"Appliance offline: {label}",
-                            message=(
-                                f"Appliance {label} at site {row['site_id']} "
-                                f"stopped checking in at {row['last_checkin']}. "
-                                f"Threshold: {APPLIANCE_STALE_THRESHOLD_MINUTES} min."
-                            ),
-                            site_id=row["site_id"],
-                            category="appliance_health",
-                            severity="critical",
-                            metadata={
-                                "appliance_id": row["appliance_id"],
-                                "display_name": row["display_name"],
-                                "last_checkin": str(row["last_checkin"]),
-                                "event": "appliance_offline",
-                            },
-                        ))
+                        async with pool.acquire() as c2:
+                            async with c2.transaction():
+                                # Bulk-set flag for all N — escape the
+                                # site-wide UPDATE row-guard (mig 192/208)
+                                # since this is a legitimate batch op.
+                                await c2.execute("SET LOCAL app.allow_multi_row='true'")
+                                await c2.execute(
+                                    "UPDATE site_appliances SET offline_notified = true "
+                                    "WHERE appliance_id = ANY($1::text[])",
+                                    [r["appliance_id"] for r in site_rows],
+                                )
                     except Exception:
                         logger.error(
-                            "Failed to send appliance_offline alert",
-                            appliance_id=row["appliance_id"],
+                            "Failed to set offline_notified flag",
+                            site_id=site_id,
+                            appliance_count=n,
                             exc_info=True,
                         )
-                    if sent_ok:
-                        try:
-                            async with pool.acquire() as c2:
-                                async with c2.transaction():
-                                    await c2.execute(
-                                        "UPDATE site_appliances SET offline_notified = true "
-                                        "WHERE appliance_id = $1",
-                                        row["appliance_id"],
-                                    )
-                        except Exception:
-                            logger.error(
-                                "Failed to set offline_notified flag",
-                                appliance_id=row["appliance_id"],
-                                exc_info=True,
-                            )
-                    else:
-                        logger.warning(
-                            "appliance_offline alert NOT sent — leaving "
-                            "offline_notified=false so we retry next pass",
-                            appliance_id=row["appliance_id"],
-                        )
+                else:
+                    logger.warning(
+                        "appliance_offline alert NOT sent — leaving "
+                        "offline_notified=false so we retry next pass",
+                        site_id=site_id,
+                        appliance_count=n,
+                    )
         except asyncio.CancelledError:
             break
         except Exception as e:
