@@ -202,6 +202,18 @@ class CompliancePacket:
         else:
             self._period_end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
 
+        # #70 closure 2026-05-02: partition-pruning window. compliance_bundles
+        # is partitioned on created_at; queries filter on checked_at. Without
+        # a created_at predicate, EVERY partition scans (17+ months → 30s+
+        # for sites with thousands of bundles, the original cause of #42's
+        # statement_timeout fires). The 7-day grace handles bundles uploaded
+        # late (network outage on the appliance). Filtering both narrows
+        # partition pruning to ~3 monthly children while preserving the
+        # checked_at semantic (a bundle BELONGS to the month it was
+        # CHECKED, not when it happened to be ingested).
+        self._partition_window_start = self._period_start - timedelta(days=7)
+        self._partition_window_end = self._period_end + timedelta(days=7)
+
     def _resolve_control(self, check_type: str) -> str:
         """Resolve a check_type to a control_id for the current framework."""
         from .framework_mapper import resolve_control_id
@@ -445,6 +457,7 @@ class CompliancePacket:
                          jsonb_array_elements(cb.checks) as c
                     WHERE cb.site_id = :sid
                       AND cb.checked_at >= :start AND cb.checked_at < :end
+                      AND cb.created_at >= :p_start AND cb.created_at < :p_end
                       AND jsonb_array_length(cb.checks) > 0
                 )
                 SELECT check_type,
@@ -454,7 +467,7 @@ class CompliancePacket:
                 WHERE check_type IS NOT NULL
                 GROUP BY check_type
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
         rows = result.fetchall()
         if not rows:
@@ -487,12 +500,13 @@ class CompliancePacket:
                     FROM compliance_bundles
                     WHERE site_id = :sid
                       AND checked_at >= :start AND checked_at < :end
+                      AND created_at >= :p_start AND created_at < :p_end
                     ORDER BY check_type, checked_at DESC
                 )
                 SELECT COUNT(*) FROM latest_per_check
                 WHERE check_result = 'fail'
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
         return result.scalar() or 0
 
@@ -503,15 +517,17 @@ class CompliancePacket:
                 SELECT COUNT(DISTINCT check_type) FROM compliance_bundles
                 WHERE site_id = :sid
                   AND checked_at >= :start AND checked_at < :end
+                      AND created_at >= :p_start AND created_at < :p_end
                   AND check_result = 'pass'
                   AND check_type IN (
                       SELECT DISTINCT check_type FROM compliance_bundles
                       WHERE site_id = :sid
                         AND checked_at >= :start AND checked_at < :end
+                      AND created_at >= :p_start AND created_at < :p_end
                         AND check_result = 'fail'
                   )
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
         return result.scalar() or 0
 
@@ -528,6 +544,7 @@ class CompliancePacket:
                     FROM compliance_bundles
                     WHERE site_id = :sid
                       AND checked_at >= :start AND checked_at < :end
+                      AND created_at >= :p_start AND created_at < :p_end
                       AND check_result = 'fail'
                     ORDER BY checked_at DESC
                     LIMIT 500
@@ -546,7 +563,7 @@ class CompliancePacket:
                     LIMIT 1
                 ) recovery
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
         row = result.fetchone()
         return round(row.avg_mttr, 1) if row and row.avg_mttr else 0.0
@@ -561,6 +578,7 @@ class CompliancePacket:
                          jsonb_array_elements(cb.checks) as c
                     WHERE cb.site_id = :sid
                       AND cb.checked_at >= :start AND cb.checked_at < :end
+                      AND cb.created_at >= :p_start AND cb.created_at < :p_end
                       AND jsonb_array_length(cb.checks) > 0
                       AND c->>'check' = 'windows_backup_status'
                 )
@@ -569,7 +587,7 @@ class CompliancePacket:
                     COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) as pass_count
                 FROM expanded
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
         row = result.fetchone()
         if not row or row.total == 0:
@@ -596,6 +614,7 @@ class CompliancePacket:
                          jsonb_array_elements(cb.checks) as c
                     WHERE cb.site_id = :sid
                       AND cb.checked_at >= :start AND cb.checked_at < :end
+                      AND cb.created_at >= :p_start AND cb.created_at < :p_end
                       AND jsonb_array_length(cb.checks) > 0
                 ),
                 stats AS (
@@ -620,7 +639,7 @@ class CompliancePacket:
                 LEFT JOIN latest l USING (check_type)
                 ORDER BY s.check_type
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
 
         # Consolidate by framework control code
@@ -684,6 +703,7 @@ class CompliancePacket:
                          jsonb_array_elements(cb.checks) as c
                     WHERE cb.site_id = :sid
                       AND cb.checked_at >= :start AND cb.checked_at < :end
+                      AND cb.created_at >= :p_start AND cb.created_at < :p_end
                       AND jsonb_array_length(cb.checks) > 0
                       AND c->>'check' = 'windows_backup_status'
                 )
@@ -697,7 +717,7 @@ class CompliancePacket:
                 GROUP BY EXTRACT(WEEK FROM checked_at)
                 ORDER BY week_num
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
 
         weeks = []
@@ -763,10 +783,11 @@ class CompliancePacket:
                 FROM compliance_bundles
                 WHERE site_id = :sid
                   AND checked_at >= :start AND checked_at < :end
+                      AND created_at >= :p_start AND created_at < :p_end
                   AND check_type = 'windows_password_policy'
                 GROUP BY check_result
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
 
         results = {r.check_result: r.count for r in result.fetchall()}
@@ -811,10 +832,11 @@ class CompliancePacket:
                 FROM compliance_bundles
                 WHERE site_id = :sid
                   AND checked_at >= :start AND checked_at < :end
+                      AND created_at >= :p_start AND created_at < :p_end
                   AND check_type = 'windows_bitlocker_status'
                 GROUP BY check_result
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
 
         results = {r.check_result: r.count for r in result.fetchall()}
@@ -837,11 +859,12 @@ class CompliancePacket:
                 FROM compliance_bundles
                 WHERE site_id = :sid
                   AND checked_at >= :start AND checked_at < :end
+                      AND created_at >= :p_start AND created_at < :p_end
                   AND check_result = 'fail'
                 ORDER BY checked_at DESC
                 LIMIT 20
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
 
         incidents = []
@@ -896,8 +919,9 @@ class CompliancePacket:
                 FROM compliance_bundles
                 WHERE site_id = :sid
                   AND checked_at >= :start AND checked_at < :end
+                      AND created_at >= :p_start AND created_at < :p_end
             """),
-            {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+            {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
         )
         row = result.fetchone()
 
@@ -1024,7 +1048,7 @@ class CompliancePacket:
                 text("""SELECT control_id FROM compliance_attestations
                         WHERE site_id = :sid
                         AND attested_at >= :start AND attested_at < :end"""),
-                {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+                {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
             )
             for row in result.fetchall():
                 attested.add(row[0])
@@ -1113,7 +1137,7 @@ class CompliancePacket:
                 FROM incidents
                 WHERE site_id = :sid
                 AND created_at >= :start AND created_at < :end"""),
-                {"sid": self.site_id, "start": self._period_start, "end": self._period_end},
+                {"sid": self.site_id, "start": self._period_start, "end": self._period_end, "p_start": self._partition_window_start, "p_end": self._partition_window_end},
             )
             row = result.fetchone()
             if row and row.total > 0:
