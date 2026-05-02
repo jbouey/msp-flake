@@ -117,11 +117,34 @@ class TestChainMetadata:
                 or 'kit_version=' in src)
 
     def test_chain_metadata_has_disclosures(self):
-        """Every kit ships with the public Merkle disclosure inline so an
-        auditor sees the remediation log without leaving the file."""
+        """Every kit ships with security advisories inline so an auditor
+        sees remediation logs without leaving the file.
+
+        Pre-#41: hardcoded list in chain.json referenced the Merkle
+        disclosure literal directly. Post-#41 (2026-05-02): dynamic
+        `_collect_security_advisories()` walks docs/security/ at
+        request time. Hardcoded literal MOVED to docs/security/
+        SECURITY_ADVISORY_2026-04-09_MERKLE.md.
+        """
         body = _get_func("download_auditor_kit")
         assert '"disclosures"' in body
-        assert "OSIRIS-2026-04-09-MERKLE-COLLISION" in body
+        # Post-#41 dynamic walk must appear in the function body
+        assert "_collect_security_advisories()" in body, (
+            "download_auditor_kit no longer iterates "
+            "_collect_security_advisories(). Either #41 was reverted "
+            "or someone re-hardcoded the disclosure list. Check that "
+            "auditors still receive every advisory in docs/security/."
+        )
+        # The Merkle disclosure ID must still exist somewhere in the
+        # repo (as a markdown file). Grep docs/security/.
+        import pathlib as _pl
+        sec_dir = _pl.Path(__file__).resolve().parent.parent.parent.parent.parent / "docs" / "security"
+        merkle_files = list(sec_dir.glob("SECURITY_ADVISORY_2026-04-09_MERKLE*"))
+        assert len(merkle_files) >= 1, (
+            "Expected docs/security/SECURITY_ADVISORY_2026-04-09_MERKLE*.md "
+            "to exist (Session 203 disclosure-first commitment artifact). "
+            "Either the file was deleted or moved — investigate."
+        )
 
     def test_chain_metadata_has_genesis_block(self):
         body = _get_func("download_auditor_kit")

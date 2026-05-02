@@ -335,6 +335,11 @@ def test_allowed_events_matches_privileged_order_types():
         # v36 post-t740 round-table — appliance physical-move compliance
         # chain. Admin acknowledgment of a detected move; NOT a fleet_order.
         "appliance_relocation_acknowledged",
+        # #74 closure 2026-05-02 (sub-followup of #64 P0 kill-switch).
+        # Admin API actions (no fleet_order) — fan-out per-site Ed25519
+        # attestation when fleet-wide healing is paused/resumed.
+        "fleet_healing_global_pause",
+        "fleet_healing_global_resume",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted. Got {paa.ALLOWED_EVENTS}. Update "
