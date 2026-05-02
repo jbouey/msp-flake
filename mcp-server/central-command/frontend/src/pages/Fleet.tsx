@@ -20,6 +20,7 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { GlassCard, Spinner } from '../components/shared';
+import { BulkActionToolbar } from '../components/composed/BulkActionToolbar';
 import { useApplianceRollup } from '../hooks';
 import { formatTimeAgo } from '../constants';
 import type { ApplianceRollupRow } from '../utils/api';
@@ -74,118 +75,26 @@ function compareRows(a: ApplianceRollupRow, b: ApplianceRollupRow, col: SortCol,
   return 0;
 }
 
-/**
- * BulkActionToolbar — appears when ≥1 appliance is checkbox-selected.
- *
- * #66 closure 2026-05-02. Adversarial admin-tool review found Fleet
- * lacked bulk operations; operator forced to one-at-a-time for mass
- * restart/checkin/scan.
- *
- * Adversarial round-table caught:
- *   Brian: confirmation needed for destructive bulk (restart_agent ×N
- *     could fleet-shock). Mitigation: explicit modal phrasing.
- *   Steve: partial-state risk on N=large. Mitigation: progress modal
- *     showing N done / N failed; operator can re-select failed + retry.
- *   Coach: bulk = privileged-class action. audit-logged via existing
- *     fleet_orders chain (each issued order gets its own audit trail).
- */
-const BulkActionToolbar: React.FC<{
-  selectedIds: Set<string>;
-  onClear: () => void;
-  onRunBulk: (action: 'restart_agent' | 'force_checkin' | 'run_drift') => void;
-  onClose: () => void;
-  inProgress: boolean;
-  progress: {total: number; done: number; failed: number} | null;
-}> = ({ selectedIds, onClear, onRunBulk, onClose, inProgress, progress }) => {
-  const [pendingAction, setPendingAction] = useState<'restart_agent' | 'force_checkin' | 'run_drift' | null>(null);
-  return (
-    <>
-      <div className="rounded-lg border border-blue-500/40 bg-blue-950/30 p-3 flex items-center gap-3 sticky top-0 z-10 backdrop-blur">
-        <div className="flex-1 text-sm text-blue-100">
-          <span className="font-semibold">{selectedIds.size}</span>{' '}
-          appliance{selectedIds.size === 1 ? '' : 's'} selected
-        </div>
-        <button
-          onClick={() => setPendingAction('force_checkin')}
-          disabled={inProgress}
-          className="px-3 py-1.5 text-xs rounded bg-blue-600/80 hover:bg-blue-500 text-white disabled:opacity-50"
-        >Force checkin</button>
-        <button
-          onClick={() => setPendingAction('run_drift')}
-          disabled={inProgress}
-          className="px-3 py-1.5 text-xs rounded bg-blue-600/80 hover:bg-blue-500 text-white disabled:opacity-50"
-        >Run drift scan</button>
-        <button
-          onClick={() => setPendingAction('restart_agent')}
-          disabled={inProgress}
-          className="px-3 py-1.5 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
-        >Restart agent</button>
-        <button
-          onClick={onClear}
-          disabled={inProgress}
-          className="px-3 py-1.5 text-xs rounded text-blue-200 hover:text-white disabled:opacity-50"
-        >Clear</button>
-      </div>
+// #71 closure 2026-05-02: BulkActionToolbar extracted to shared
+// component at components/composed/BulkActionToolbar.tsx. Generic
+// over action enum so any table page can reuse it.
+type FleetBulkAction = 'restart_agent' | 'force_checkin' | 'run_drift';
 
-      {pendingAction && !progress && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-slate-900 rounded-xl border border-white/10 p-6 max-w-md w-full">
-            <h3 className="text-white font-semibold">Confirm bulk action</h3>
-            <p className="text-white/70 text-sm mt-2">
-              About to issue <span className="font-mono text-amber-300">{pendingAction}</span>{' '}
-              order to <span className="font-bold">{selectedIds.size}</span> appliance{selectedIds.size === 1 ? '' : 's'}.
-              {pendingAction === 'restart_agent' && (
-                <span className="block mt-2 text-rose-300">
-                  ⚠ Restart will briefly disconnect each agent. If selecting many appliances,
-                  expect concurrent downtime.
-                </span>
-              )}
-            </p>
-            <div className="flex gap-2 mt-4 justify-end">
-              <button
-                onClick={() => setPendingAction(null)}
-                className="px-4 py-2 rounded text-white/70 hover:text-white text-sm"
-              >Cancel</button>
-              <button
-                onClick={() => { onRunBulk(pendingAction); setPendingAction(null); }}
-                className="px-4 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium"
-              >Issue {selectedIds.size} order{selectedIds.size === 1 ? '' : 's'}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {progress && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-slate-900 rounded-xl border border-white/10 p-6 max-w-md w-full">
-            <h3 className="text-white font-semibold">Bulk progress</h3>
-            <div className="mt-4 space-y-2">
-              <div className="flex justify-between text-sm text-white/80">
-                <span>Issued</span>
-                <span className="font-mono">{progress.done} / {progress.total}</span>
-              </div>
-              <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
-                <div
-                  className="h-full bg-emerald-500 transition-all"
-                  style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }}
-                />
-              </div>
-              {progress.failed > 0 && (
-                <div className="text-xs text-rose-300">{progress.failed} failed</div>
-              )}
-            </div>
-            {progress.done + progress.failed === progress.total && (
-              <button
-                onClick={onClose}
-                className="mt-4 w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm"
-              >Done</button>
-            )}
-          </div>
-        </div>
-      )}
-    </>
-  );
-};
+const FLEET_BULK_ACTIONS: ReadonlyArray<{
+  id: FleetBulkAction;
+  label: string;
+  buttonClass: string;
+  confirmWarning?: string;
+}> = [
+  { id: 'force_checkin', label: 'Force checkin', buttonClass: 'bg-blue-600/80 hover:bg-blue-500' },
+  { id: 'run_drift',     label: 'Run drift scan', buttonClass: 'bg-blue-600/80 hover:bg-blue-500' },
+  {
+    id: 'restart_agent',
+    label: 'Restart agent',
+    buttonClass: 'bg-amber-600 hover:bg-amber-500',
+    confirmWarning: 'Restart will briefly disconnect each agent. If selecting many appliances, expect concurrent downtime.',
+  },
+];
 
 
 const Fleet: React.FC = () => {
@@ -297,10 +206,13 @@ const Fleet: React.FC = () => {
         </div>
       </GlassCard>
 
-      {/* #66 bulk-action toolbar — appears when ≥1 row selected */}
+      {/* #66 bulk-action toolbar — appears when ≥1 row selected.
+          #71 (2026-05-02) extracted to shared component. */}
       {selectedIds.size > 0 && (
-        <BulkActionToolbar
+        <BulkActionToolbar<FleetBulkAction>
           selectedIds={selectedIds}
+          entityNoun="appliance"
+          actions={FLEET_BULK_ACTIONS}
           onClear={() => setSelectedIds(new Set())}
           onRunBulk={async (action) => {
             const ids = Array.from(selectedIds);
