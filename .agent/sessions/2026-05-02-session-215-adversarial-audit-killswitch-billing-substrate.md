@@ -73,3 +73,44 @@ Pending only: #59 (AI-audit cost projection — explicitly excluded by user).
 
 ## Memory hygiene
 No new memory files needed — all session learnings either land in CLAUDE.md (technical) or are captured in this session log (chronological). Validate passes.
+
+---
+
+## Postscript: live prod incident triggered by my own fleet order (17:37–20:30 UTC)
+
+The fleet_order `5ce11e16` (`nixos_rebuild` for B6:61) issued during the original session at 17:25 was the **proximate cause of a 3-hour production incident** that surfaced via a `phantom_detector` "liveness lie" alert at 17:42.
+
+### Timeline
+- 17:25 — fleet_order issued (target_appliance_id=B6:61), 6h TTL
+- 17:36:54 — daemon completed first attempt (failed, 11min 16sec curl-timeout against api.github.com per #80 egress allowlist)
+- 17:37 — all 3 appliances at site go silent simultaneously (root cause buried for hours; misdiagnosed initially as LAN flap)
+- 17:42 — phantom_detector fires `APPLIANCE_LIVENESS_LIE`, email arrives
+- 17:42–18:08 — diagnosis: `mark_stale_appliances_loop` was **silently failing every 60s** with `Site-wide UPDATE on site_appliances blocked` (mig 192/208 row-guard rejecting bulk multi-appliance UPDATE). Latent P0 bug exposed by the multi-appliance offline event.
+- 18:08 — P0 fix shipped (`92d66bf4`): `SET LOCAL app.allow_multi_row='true'` inside the loop's `admin_transaction`. Documented escape-hatch path.
+- 19:13–19:51 — operator inbox FLOODED with 6-emails-per-flap (3 offline + 3 recovery) because the loop now correctly fires AND all 3 boxes flap together.
+- 19:51 — per-site coalesce shipped (`6c35cefb`): mark_stale_appliances_loop GROUP BY site_id Python-side → 1 email per site naming all N affected; checkin handler uses earliest-in-60s-window-wins coalesce on the recovery side.
+- 19:52–20:14 — flapping continues; coalesce confirmed working (1 offline email per cycle, recovery email under-reports the batch as documented trade-off).
+- 20:14 — `WITH chk AS (… LAG window …)` analysis revealed the smoking gun: every silence is **EXACTLY 676 seconds = 11 min 16 sec** — the precise nixos-rebuild curl timeout duration. NOT a network flap — the daemon is **retrying the failed fleet order every 11 min**, blocking checkins synchronously each time.
+- 20:19 — manual hot-fix: `UPDATE fleet_orders SET status='completed', expires_at=NOW() WHERE id='5ce11e16-…'`. Backend-side cancel.
+- 20:30 — daemon resumed normal cadence after current iteration's curl-timeout exhausted.
+- 20:46 — verified gap-free for 16 min; cycle truly broken (daemon does NOT cache orders locally).
+
+### Lessons (now in CLAUDE.md as load-bearing entries — see Session 215 entries)
+1. **fleet_cli MUST refuse to issue orders that depend on `github.com` or other domains outside the appliance egress allowlist** (api.osiriscare.net, release.osiriscare.net only). Filed as #80; should add the refusal in fleet_cli's input validator BEFORE this class can recur. The order I issued was structurally impossible to succeed.
+2. **Failed fleet orders are retried indefinitely until expires_at** (#84 P0 daemon bug). Three completion rows existed for one order — daemon polled, ran, failed, polled again, ran again. Backend should auto-mark `status='failed'` after N consecutive failed completions; daemon should query `fleet_order_completions` for THIS appliance_id+order_id BEFORE re-running.
+3. **`mark_stale_appliances_loop` was silently broken** (#92d66bf4) for an unknown duration before today. The legitimate-bulk-op escape hatch (`SET LOCAL app.allow_multi_row='true'`) needs to be explicitly applied to every legitimate batch loop. Same fragility class as Session 214 Block 1 admin_transaction adopters.
+4. **Per-site coalesce is a real operator-grade need** (`6c35cefb`) — site-wide events should produce 1 email per site, not N emails per appliance. Especially important once we have multi-tenant customers.
+5. **Recovery coalesce under-reports the batch** (race window: first appliance back wins, names only itself). Acceptable trade-off for today; proper fix is delayed-send (~10s sleep + re-query) — filed implicitly via #83.
+
+### Net session totals (revised)
+- 33 commits today (29 in original session + 4 in incident response)
+- 41 task closures + 5 follow-ups filed (#80, #82, #83, #84, plus #81 closed)
+- 1 P0 latent bug surfaced + fixed (mark_stale row-guard)
+- 1 self-inflicted incident (caused by my own fleet_order; resolved via backend hot-fix)
+- Substrate worked exactly as designed throughout — `phantom_detector` caught the lie, `APPLIANCE_LIVENESS_LIE` log fired correctly, the broken response path was the bug
+
+### Updated next priorities (supersedes the original list above)
+1. **#80 + #84 are the most urgent follow-ups.** Both are root-cause fixes for the incident class that hit today. Neither is a one-off — same shape will recur on any failed fleet order with a long TTL or any order requiring github.com egress.
+2. **Site-network investigation NO LONGER NEEDED** — the perceived "network flap" was the daemon retry loop blocking checkins. There is no LAN/WAN issue. (The MikroTik gateway change 7 days ago is unrelated.)
+3. **Recovery-coalesce delayed-send** — proper fix for the under-reporting trade-off documented in `6c35cefb`. ~30 min ship.
+4. Original 2026-05-05 sigauth canary watch + 2026-05-07 F6 phase-2 health check still pending.
