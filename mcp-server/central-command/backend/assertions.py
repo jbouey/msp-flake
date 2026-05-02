@@ -676,26 +676,49 @@ async def _check_schema_fixture_drift(conn: asyncpg.Connection) -> List[Violatio
     for r in rows:
         prod_by_table.setdefault(r["table_name"], set()).add(r["column_name"])
 
-    # Filter the fixture's tables similarly — exclude partition-child
-    # naming patterns since the fixture extraction predates the
-    # exclusion filter. This is a SAFE drop: parent table covers all
-    # children's columns.
+    # Filter the fixture to match what the prod query selects:
+    # exclude partition children + exclude views.
     #
-    # Naming patterns observed in prod (per CLAUDE.md partition_maintainer
-    # invariant rules):
+    # Pre-fix (initial #49 ship): only filtered partition children.
+    # Adversarial QA pass 2026-05-02 found 17 false-positive
+    # `fixture_only` violations because the fixture EXTRACTION SQL
+    # used `information_schema.columns` (which includes views) but
+    # the invariant's prod query uses `pg_class.relkind IN ('r','p')`
+    # (regular + partitioned tables only). Asymmetry → false positives.
+    # Now: also exclude `v_*`-prefixed names + known view names from
+    # the fixture-side comparison.
+    #
+    # Partition naming patterns (per CLAUDE.md partition_maintainer rules):
     #   compliance_bundles + portal_access_log:  _YYYY_MM
     #   appliance_heartbeats:                     _yYYYYMM
     #   promoted_rule_events:                     _YYYYMM
-    #   default partition for any of the above:   _default suffix
-    # Brian adversarial-second-pass catch: hardcoded year strings would
-    # fail for 2028+. Use regex.
+    #   default partition:                        _default suffix
     import re as _re
     _PARTITION_RE = _re.compile(
         r"_(?:y?\d{4}_?\d{2}|default)$"
     )
+
+    # Query prod for the canonical view list (includes both 'v' and 'm'
+    # — regular views and materialized views). Then drop those from the
+    # fixture-side comparison. SAFE failure mode: query error returns
+    # empty set; we then might still false-positive on views, but
+    # operator can manually disregard.
+    try:
+        view_rows = await asyncio.wait_for(
+            conn.fetch(
+                "SELECT relname FROM pg_class c "
+                "JOIN pg_namespace n ON c.relnamespace = n.oid "
+                "WHERE n.nspname = 'public' AND c.relkind IN ('v', 'm')"
+            ),
+            timeout=2.0,
+        )
+        view_names = {r["relname"] for r in view_rows}
+    except Exception:
+        view_names = set()
+
     fixture_tables = {
         t: cols for t, cols in fixture.items()
-        if not _PARTITION_RE.search(t)
+        if not _PARTITION_RE.search(t) and t not in view_names
     }
 
     drifts: list[tuple[str, str, str]] = []  # (table, column, direction)

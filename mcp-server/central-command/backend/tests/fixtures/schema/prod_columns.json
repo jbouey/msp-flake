@@ -289,6 +289,19 @@
     "site_id",
     "status"
   ],
+  "appliance_heartbeats_y202607": [
+    "agent_signature",
+    "agent_version",
+    "appliance_id",
+    "boot_source",
+    "has_anycast",
+    "heartbeat_hash",
+    "id",
+    "observed_at",
+    "primary_subnet",
+    "site_id",
+    "status"
+  ],
   "appliance_pattern_sync": [
     "appliance_id",
     "error_message",
@@ -1979,6 +1992,22 @@
     "sync_created_at",
     "sync_updated_at"
   ],
+  "discovered_devices_archive_orphans": [
+    "appliance_id",
+    "archive_reason",
+    "archived_at",
+    "compliance_status",
+    "device_status",
+    "device_type",
+    "first_seen_at",
+    "hostname",
+    "id",
+    "ip_address",
+    "last_seen_at",
+    "local_device_id",
+    "mac_address",
+    "medical_device"
+  ],
   "discovery_results": [
     "appliance_id",
     "compliance_status",
@@ -2177,6 +2206,31 @@
     "skip_version",
     "status"
   ],
+  "flywheel_eligibility_tiers": [
+    "calibrated_at",
+    "created_at",
+    "description",
+    "enabled",
+    "max_age_days",
+    "min_distinct_orgs",
+    "min_distinct_sites",
+    "min_l2_resolutions",
+    "min_success_rate",
+    "min_total_occurrences",
+    "org_isolation_required",
+    "tier_level",
+    "tier_name"
+  ],
+  "flywheel_federation_candidate_daily": [
+    "candidate_count",
+    "client_org_id",
+    "id",
+    "p50_success_rate",
+    "p95_success_rate",
+    "snapshot_at",
+    "snapshot_date",
+    "tier_name"
+  ],
   "framework_controls": [
     "category",
     "control_id",
@@ -2248,6 +2302,16 @@
     "site_id",
     "status"
   ],
+  "go_agent_status_events": [
+    "agent_id",
+    "from_status",
+    "id",
+    "last_heartbeat_at",
+    "reason",
+    "site_id",
+    "to_status",
+    "transitioned_at"
+  ],
   "go_agents": [
     "agent_id",
     "agent_version",
@@ -2261,6 +2325,7 @@
     "id",
     "ip_address",
     "last_heartbeat",
+    "last_status_transition_at",
     "mac_address",
     "offline_queue_size",
     "os_name",
@@ -3761,7 +3826,8 @@
     "reason",
     "rule_id",
     "site_id",
-    "stage"
+    "stage",
+    "tier_at_promotion"
   ],
   "promoted_rule_events_202604": [
     "actor",
@@ -3774,7 +3840,8 @@
     "reason",
     "rule_id",
     "site_id",
-    "stage"
+    "stage",
+    "tier_at_promotion"
   ],
   "promoted_rule_events_202605": [
     "actor",
@@ -3787,7 +3854,8 @@
     "reason",
     "rule_id",
     "site_id",
-    "stage"
+    "stage",
+    "tier_at_promotion"
   ],
   "promoted_rule_events_202606": [
     "actor",
@@ -3800,7 +3868,8 @@
     "reason",
     "rule_id",
     "site_id",
-    "stage"
+    "stage",
+    "tier_at_promotion"
   ],
   "promoted_rule_events_202607": [
     "actor",
@@ -3813,7 +3882,8 @@
     "reason",
     "rule_id",
     "site_id",
-    "stage"
+    "stage",
+    "tier_at_promotion"
   ],
   "promoted_rule_events_202608": [
     "actor",
@@ -3826,7 +3896,8 @@
     "reason",
     "rule_id",
     "site_id",
-    "stage"
+    "stage",
+    "tier_at_promotion"
   ],
   "promoted_rule_events_default": [
     "actor",
@@ -3839,7 +3910,8 @@
     "reason",
     "rule_id",
     "site_id",
-    "stage"
+    "stage",
+    "tier_at_promotion"
   ],
   "promoted_rule_lifecycle_transitions": [
     "from_state",
@@ -4285,6 +4357,15 @@
     "trigger_immediate_scan",
     "uptime_seconds"
   ],
+  "site_canonical_mapping": [
+    "actor",
+    "effective_at",
+    "from_site_id",
+    "id",
+    "reason",
+    "related_migration",
+    "to_site_id"
+  ],
   "site_credentials": [
     "created_at",
     "credential_name",
@@ -4621,6 +4702,109 @@
     "site_id",
     "status",
     "updated_at"
+  ],
+  "v_canonical_aggregated_pattern_stats": [
+    "avg_resolution_time_ms",
+    "canonical_site_id",
+    "check_type",
+    "first_seen",
+    "id",
+    "l1_resolutions",
+    "l2_resolutions",
+    "l3_resolutions",
+    "last_seen",
+    "last_synced_at",
+    "pattern_signature",
+    "promotion_eligible",
+    "recommended_action",
+    "site_id",
+    "success_count",
+    "success_rate",
+    "total_occurrences",
+    "total_resolution_time_ms"
+  ],
+  "v_canonical_incidents": [
+    "appliance_id",
+    "canonical_site_id",
+    "check_type",
+    "context_hash",
+    "created_at",
+    "dedup_key",
+    "details",
+    "hipaa_controls",
+    "id",
+    "incident_type",
+    "order_id",
+    "pre_state",
+    "remediation_attempts",
+    "remediation_exhausted",
+    "remediation_history",
+    "reopen_count",
+    "reported_at",
+    "resolution_tier",
+    "resolved_at",
+    "severity",
+    "site_id",
+    "status"
+  ],
+  "v_canonical_l2_decisions": [
+    "canonical_site_id",
+    "confidence",
+    "created_at",
+    "escalation_reason",
+    "hypotheses",
+    "id",
+    "incident_id",
+    "llm_latency_ms",
+    "llm_model",
+    "pattern_signature",
+    "prompt_version",
+    "reasoning",
+    "requires_human_review",
+    "runbook_id",
+    "site_id"
+  ],
+  "v_canonical_telemetry": [
+    "appliance_id",
+    "canonical_site_id",
+    "chaos_campaign_id",
+    "completed_at",
+    "confidence",
+    "cost_usd",
+    "created_at",
+    "duration_seconds",
+    "error_message",
+    "error_step",
+    "error_traceback",
+    "evidence_bundle_id",
+    "executed_steps",
+    "execution_id",
+    "failure_type",
+    "hostname",
+    "human_feedback",
+    "id",
+    "incident_id",
+    "incident_type",
+    "input_tokens",
+    "manual_intervention_needed",
+    "output_tokens",
+    "pattern_signature",
+    "platform",
+    "reasoning",
+    "resolution_level",
+    "retry_count",
+    "runbook_id",
+    "site_id",
+    "started_at",
+    "state_after",
+    "state_before",
+    "state_diff",
+    "status",
+    "success",
+    "tags",
+    "verification_passed",
+    "was_correct_diagnosis",
+    "was_correct_runbook"
   ],
   "v_compliance_dashboard": [
     "appliance_id",
