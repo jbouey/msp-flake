@@ -1412,6 +1412,18 @@ async def _go_agent_status_decay_loop():
                                  ELSE 'dead'
                                END AS new_status
                           FROM go_agents
+                          -- D4 closure 2026-05-02: terminal operator-set
+                          -- statuses are NEVER overwritten by the heartbeat
+                          -- decay machine. An operator marking an agent
+                          -- decommissioned (e.g. workstation retired) means
+                          -- "stop alarming on this." The state machine
+                          -- skipping these rows preserves that signal even
+                          -- if the agent later sends a heartbeat (which
+                          -- would still be visible in last_heartbeat). The
+                          -- substrate predicate honors the same exclusion
+                          -- — see assertions.py::_check_go_agent_heartbeat_stale.
+                          -- Lockstep enforced by tests/test_go_agent_terminal_status_lockstep.py.
+                         WHERE status NOT IN ('decommissioned', 'archived')
                           FOR UPDATE
                     ),
                     eligible AS (

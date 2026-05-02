@@ -2035,7 +2035,15 @@ async def _check_rename_site_immutable_list_drift(conn: asyncpg.Connection) -> L
 
 async def _check_go_agent_heartbeat_stale(conn: asyncpg.Connection) -> List[Violation]:
     """Sev2 — workstation agents silent > 6 hours, excluding chaos-
-    lab-tagged dev builds. Round-table 2026-04-30 fleet-edge liveness."""
+    lab-tagged dev builds. Round-table 2026-04-30 fleet-edge liveness.
+
+    D4 closure 2026-05-02: also excludes operator-marked terminal
+    statuses ('decommissioned', 'archived'). When an MSP retires a
+    workstation, marking the row terminal stops the alarm — the state
+    machine in main.py::_go_agent_status_decay_loop also skips these
+    rows so the operator's decision is durable. Lockstep enforced by
+    tests/test_go_agent_terminal_status_lockstep.py.
+    """
     rows = await conn.fetch(
         """
         SELECT agent_id,
@@ -2050,6 +2058,7 @@ async def _check_go_agent_heartbeat_stale(conn: asyncpg.Connection) -> List[Viol
          WHERE last_heartbeat IS NOT NULL
            AND last_heartbeat < NOW()::timestamp - make_interval(hours => 6)
            AND (agent_version IS NULL OR agent_version != 'dev')
+           AND status NOT IN ('decommissioned', 'archived')
          ORDER BY last_heartbeat ASC
          LIMIT 50
         """
