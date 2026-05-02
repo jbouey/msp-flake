@@ -340,6 +340,11 @@ def test_allowed_events_matches_privileged_order_types():
         # attestation when fleet-wide healing is paused/resumed.
         "fleet_healing_global_pause",
         "fleet_healing_global_resume",
+        # #72 closure 2026-05-02 (sub-followup of #67 admin billing UI).
+        # Destructive Stripe ops by an admin acting on a customer's
+        # billing relationship. NOT fleet orders.
+        "customer_subscription_cancel",
+        "customer_subscription_refund",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted. Got {paa.ALLOWED_EVENTS}. Update "
