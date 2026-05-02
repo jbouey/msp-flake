@@ -34,6 +34,14 @@ interface HomeData {
   devices: { appliances: number; workstations: number };
   coverage_30d: Array<{ date: string; covered: boolean; incidents: number }>;
   auditor_kit_url: string;
+  // #73 closure 2026-05-02: fleet-wide healing pause state surfaces
+  // to client portal so an auditor visiting during a paused window
+  // can see auto-remediation was off.
+  fleet_healing_state?: {
+    disabled: boolean;
+    paused_since?: string;
+    paused_reason?: string;
+  };
 }
 
 interface Props {
@@ -78,6 +86,35 @@ export const PracticeHomeCard: React.FC<Props> = ({ data, practiceName, isLoadin
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
+      {/* #73 closure 2026-05-02: fleet-wide healing pause banner.
+          Surfaces to client when MSP/admin has paused auto-remediation
+          fleet-wide. Auditor-visible record per HIPAA chain-of-custody. */}
+      {data.fleet_healing_state?.disabled && (
+        <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4">
+          <div className="flex items-start gap-3">
+            <span className="text-xl text-amber-300 leading-none">⚠</span>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-semibold text-amber-100">
+                Auto-remediation is paused fleet-wide
+              </h3>
+              <p className="text-xs text-amber-200/90 mt-1">
+                Your IT partner has paused automatic healing across all
+                accounts they manage.
+                {data.fleet_healing_state.paused_since && (
+                  <> Since {formatDate(data.fleet_healing_state.paused_since)}.</>
+                )}
+                {data.fleet_healing_state.paused_reason && (
+                  <> Reason: <span className="italic">"{data.fleet_healing_state.paused_reason}"</span></>
+                )}
+                {' '}New compliance issues are being routed to manual triage
+                instead of being auto-fixed. Existing evidence (signing,
+                anchoring, audit chain) continues to operate normally.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Greeting + last-updated */}
       <div className="flex items-center justify-between px-2">
         <h1 className="text-lg font-semibold text-white/90">

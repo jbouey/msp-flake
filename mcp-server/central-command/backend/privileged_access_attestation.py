@@ -81,6 +81,16 @@ ALLOWED_EVENTS = {
     # detection bundle. HIPAA §164.310(d)(1).
     # Not a fleet_order — admin API call only, like break_glass_passphrase_retrieval.
     "appliance_relocation_acknowledged",
+    # #74 closure 2026-05-02 (sub-followup of #64 P0 kill-switch).
+    # Fleet-wide healing pause/resume is admin API call (no fleet
+    # order issued — server-side flag flip), so absent from
+    # PRIVILEGED_ORDER_TYPES + v_privileged_types. ALLOWED_EVENTS
+    # ⊇ those two so this asymmetry is permitted by lockstep checker.
+    # Endpoints in main.py fan out per-site attestations (each site
+    # gets its own chain-linked bundle) so HIPAA §164.312(b) integrity
+    # controls have crypto evidence the operator paused healing.
+    "fleet_healing_global_pause",
+    "fleet_healing_global_resume",
 }
 
 

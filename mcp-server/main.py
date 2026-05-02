@@ -2746,9 +2746,16 @@ async def admin_healing_global_pause(
             status_code=400,
             detail="confirm_phrase must be exactly 'DISABLE-FLEET-HEALING'",
         )
-    actor = (user.get("email") if isinstance(user, dict) else None) \
-            or (user.get("username") if isinstance(user, dict) else None) \
-            or "unknown"
+    # #74 closure 2026-05-02: actor MUST be email format —
+    # create_privileged_access_attestation enforces "@" check.
+    # Without email, attestation chain rejects + we fall back to
+    # admin_audit_log only (loses the crypto integrity Camila required).
+    actor = (user.get("email") if isinstance(user, dict) else None) or ""
+    if "@" not in actor:
+        raise HTTPException(
+            status_code=403,
+            detail="kill-switch requires authenticated email actor (privileged-access chain)",
+        )
     now_iso = datetime.now(timezone.utc).isoformat()
     new_state = {
         "disabled": True,
@@ -2794,11 +2801,36 @@ async def admin_healing_global_pause(
                 }),
                 "ip": http_request.client.host if http_request.client else None,
             })
+
+    # #74 closure 2026-05-02 (Camila adversarial-round): per-site
+    # Ed25519-signed attestation chain. Fans out to all active sites
+    # so each site's HIPAA §164.312(b) audit chain captures the pause.
+    # Failure on any single site does NOT block the pause (settings
+    # update + admin_audit_log already committed above) — but logs at
+    # ERROR so substrate can detect partial-attestation events.
+    pause_att_count, pause_att_failed = await _kill_switch_per_site_attestation(
+        event_type="fleet_healing_global_pause",
+        actor=actor,
+        reason=request.reason,
+        origin_ip=http_request.client.host if http_request.client else None,
+    )
+
     logger.error(
         "fleet_healing_globally_paused",
-        extra={"actor": actor, "reason": request.reason},
+        extra={
+            "actor": actor,
+            "reason": request.reason,
+            "attestation_count": pause_att_count,
+            "attestation_failed": pause_att_failed,
+        },
     )
-    return {"disabled": True, "actor": actor, "set_at": now_iso}
+    return {
+        "disabled": True,
+        "actor": actor,
+        "set_at": now_iso,
+        "attestation_count": pause_att_count,
+        "attestation_failed": pause_att_failed,
+    }
 
 
 @app.post("/api/admin/healing/global-resume", include_in_schema=True)
@@ -2818,9 +2850,13 @@ async def admin_healing_global_resume(
             status_code=400,
             detail="confirm_phrase must be exactly 'ENABLE-FLEET-HEALING'",
         )
-    actor = (user.get("email") if isinstance(user, dict) else None) \
-            or (user.get("username") if isinstance(user, dict) else None) \
-            or "unknown"
+    # #74 closure 2026-05-02: same email enforcement as pause endpoint.
+    actor = (user.get("email") if isinstance(user, dict) else None) or ""
+    if "@" not in actor:
+        raise HTTPException(
+            status_code=403,
+            detail="kill-switch requires authenticated email actor (privileged-access chain)",
+        )
     now_iso = datetime.now(timezone.utc).isoformat()
     new_state = {
         "disabled": False,
@@ -2861,11 +2897,89 @@ async def admin_healing_global_resume(
                 }),
                 "ip": http_request.client.host if http_request.client else None,
             })
+
+    # Same per-site Ed25519 attestation as the pause endpoint.
+    resume_att_count, resume_att_failed = await _kill_switch_per_site_attestation(
+        event_type="fleet_healing_global_resume",
+        actor=actor,
+        reason=request.reason,
+        origin_ip=http_request.client.host if http_request.client else None,
+    )
+
     logger.warning(
         "fleet_healing_globally_resumed",
-        extra={"actor": actor, "reason": request.reason},
+        extra={
+            "actor": actor,
+            "reason": request.reason,
+            "attestation_count": resume_att_count,
+            "attestation_failed": resume_att_failed,
+        },
     )
-    return {"disabled": False, "actor": actor, "set_at": now_iso}
+    return {
+        "disabled": False,
+        "actor": actor,
+        "set_at": now_iso,
+        "attestation_count": resume_att_count,
+        "attestation_failed": resume_att_failed,
+    }
+
+
+async def _kill_switch_per_site_attestation(
+    event_type: str,
+    actor: str,
+    reason: str,
+    origin_ip: Optional[str],
+) -> tuple[int, int]:
+    """Fan out a privileged-access attestation per active site.
+
+    Used by both pause + resume endpoints. Returns (success_count,
+    failed_count). Failure on any single site is logged at ERROR but
+    does NOT raise — the kill-switch state flip already committed
+    above; the attestation chain is best-effort crypto evidence.
+
+    #74 closure 2026-05-02 (Camila adversarial-round).
+    """
+    success_count = 0
+    failed_count = 0
+    try:
+        from dashboard_api.fleet import get_pool as _ks_get_pool
+        from dashboard_api.privileged_access_attestation import (
+            create_privileged_access_attestation as _ks_create_attestation,
+            PrivilegedAccessAttestationError as _ks_err,
+        )
+        ks_pool = await _ks_get_pool()
+        async with ks_pool.acquire() as att_conn:
+            site_rows = await att_conn.fetch(
+                "SELECT site_id FROM sites "
+                "WHERE status NOT IN ('decommissioned', 'inactive')"
+            )
+            for srow in site_rows:
+                try:
+                    await _ks_create_attestation(
+                        att_conn,
+                        site_id=srow["site_id"],
+                        event_type=event_type,
+                        actor_email=actor,
+                        reason=reason,
+                        origin_ip=origin_ip,
+                    )
+                    success_count += 1
+                except _ks_err as e:
+                    failed_count += 1
+                    logger.error(
+                        f"{event_type}_attestation_failed",
+                        extra={"site_id": srow["site_id"], "error": str(e)},
+                    )
+    except Exception as e:
+        # Setup-time failure (pool unavailable, import error). Logged
+        # but doesn't raise — the operator's kill-switch action
+        # already committed via the settings table.
+        logger.error(
+            f"{event_type}_attestation_setup_failed",
+            exc_info=True,
+            extra={"error": str(e)},
+        )
+    return success_count, failed_count
 
 
 class VersionDriftResponse(BaseModel):

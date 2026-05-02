@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { Sidebar } from './components/layout/Sidebar';
+import { KillSwitchBanner } from './components/composed/KillSwitchBanner';
 import { Header } from './components/layout/Header';
 import { CommandBar } from './components/command';
 import { ErrorBoundary, Spinner, OsirisCareLeaf, IdleTimeoutWarning } from './components/shared';
@@ -359,6 +360,12 @@ const AppLayout: React.FC = () => {
           user={user}
           onMenuToggle={() => setSidebarOpen(true)}
         />
+
+        {/* #75 closure 2026-05-02: cross-page kill-switch banner.
+            Renders above ALL admin route content when fleet healing
+            is globally paused. Operator on any page sees it. Action
+            button + modal stay on /admin/substrate-health. */}
+        <KillSwitchBanner />
 
         <main className="p-6 content-atmosphere">
           <Suspense fallback={<PageLoader />}>

@@ -1336,6 +1336,35 @@ async def get_portal_home(
         # table may not exist yet on pre-migration deploys
         pass
 
+    # #73 closure 2026-05-02 (Camila adversarial-round sub-followup
+    # of #64 P0 kill-switch). Surface fleet-wide healing-pause state
+    # to the client portal so a clinic auditor visiting during a
+    # paused window can SEE that auto-remediation was off. HIPAA
+    # §164.316(b)(2)(i) chain-of-custody implication if a
+    # fail-to-pass transition was missed during the pause window —
+    # the clinic needs the audit-visible record.
+    fleet_healing_state: Dict[str, Any] = {"disabled": False}
+    try:
+        fh_row = await db.execute(text(
+            "SELECT settings -> 'fleet_healing_disabled' FROM system_settings WHERE id = 1"
+        ))
+        fh_state = fh_row.scalar()
+        if fh_state and isinstance(fh_state, dict) and fh_state.get("disabled"):
+            fleet_healing_state = {
+                "disabled": True,
+                "paused_since": fh_state.get("set_at"),
+                "paused_reason": fh_state.get("reason"),
+                # Intentionally do NOT expose the actor email to the
+                # client (that's admin-internal). The reason is
+                # operator-written and may already be public-safe; we
+                # surface it so the auditor sees the substantive why.
+            }
+    except Exception:
+        # Best-effort. If settings table not readable, omit the field
+        # rather than block the home payload — graceful-degrade per
+        # the round-table-documented "200 even when partial" rule.
+        pass
+
     return {
         "site_id": site_id,
         "protected": protected,
@@ -1353,6 +1382,7 @@ async def get_portal_home(
         "packets": packets,
         "notification_prefs": notification_prefs,
         "auditor_kit_url": f"/api/evidence/sites/{site_id}/auditor-kit",
+        "fleet_healing_state": fleet_healing_state,
     }
 
 

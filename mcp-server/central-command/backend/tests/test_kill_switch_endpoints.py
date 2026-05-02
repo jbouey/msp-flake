@@ -126,3 +126,55 @@ def test_kill_switch_uses_singleton_system_settings():
         "consistency with the existing config primitive. Don't add a "
         "new table."
     )
+
+
+# ─── #74 Ed25519 attestation chain wire ───────────────────────────────
+
+
+def test_kill_switch_events_in_allowed_events():
+    """ALLOWED_EVENTS in privileged_access_attestation.py must contain
+    fleet_healing_global_pause + fleet_healing_global_resume so the
+    kill-switch attestations can be written. Without this the attestation
+    raises and falls through to admin_audit_log only — losing the
+    crypto-grade evidence Camila required."""
+    pa_path = _BACKEND / "privileged_access_attestation.py"
+    src = pa_path.read_text()
+    for event in ("fleet_healing_global_pause", "fleet_healing_global_resume"):
+        assert f'"{event}"' in src, (
+            f"ALLOWED_EVENTS missing {event!r}. Kill-switch attestation "
+            f"will raise PrivilegedAccessAttestationError and fall back "
+            f"to admin_audit_log only. Camila adversarial-round required "
+            f"Ed25519-grade evidence for fleet-wide healing pause/resume."
+        )
+
+
+def test_kill_switch_endpoints_call_per_site_attestation():
+    """Both pause + resume MUST call the per-site attestation helper.
+    Otherwise the ALLOWED_EVENTS entry is dead weight + the kill-
+    switch silently lacks crypto evidence."""
+    src = _read(_MAIN_PY)
+    assert "_kill_switch_per_site_attestation" in src, (
+        "Kill-switch endpoints don't invoke per-site attestation. The "
+        "ALLOWED_EVENTS entries are dead weight without callers."
+    )
+    # Verify both event types appear in the call sites
+    for event in ("fleet_healing_global_pause", "fleet_healing_global_resume"):
+        assert f'event_type="{event}"' in src, (
+            f"Kill-switch endpoint not invoking attestation with "
+            f"event_type={event!r}."
+        )
+
+
+def test_kill_switch_actor_must_be_email():
+    """create_privileged_access_attestation rejects actors without '@'.
+    Both endpoints MUST validate actor is email format BEFORE invoking
+    attestation, else operator gets 500 instead of 403 with clear
+    'use-email-actor' message."""
+    src = _read(_MAIN_PY)
+    # Both pause + resume should have an "@" check before the attestation
+    # call. Look for the explicit email-check pattern.
+    assert src.count('"@" not in actor') >= 2, (
+        "Kill-switch endpoints don't validate email format on actor. "
+        "Without this check, attestation raises PrivilegedAccessAttestation"
+        "Error with confusing 'no @' message instead of clean 403."
+    )
