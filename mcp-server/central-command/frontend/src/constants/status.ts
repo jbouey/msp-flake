@@ -298,6 +298,28 @@ export function scoreToBarColor(score: number): string {
   return 'bg-health-critical';
 }
 
+
+/**
+ * Risk score → Tailwind text-* class. INVERSE semantic to compliance:
+ * higher risk score = worse posture. Used by the SRA wizard
+ * (HIPAA Security Risk Analysis §164.308(a)(1)(ii)(A)) where the
+ * computed score is on a 0-100 scale and a high score means more risk
+ * surfaces are unmitigated.
+ *
+ * Threshold rationale (50/25 split, inverse of compliance 90/70/50):
+ * - > 50: red — substantial unmitigated risk; remediation backlog
+ * - > 25: yellow — moderate; targeted remediation
+ * - ≤ 25: green — well-controlled
+ *
+ * If the SRA scoring methodology changes, update HERE — not in
+ * call sites. D2 collapse 2026-05-02.
+ */
+export function riskScoreToColor(score: number): string {
+  if (score > 50) return 'text-red-600';
+  if (score > 25) return 'text-yellow-600';
+  return 'text-green-600';
+}
+
 // =============================================================================
 // FORMATTERS
 // =============================================================================

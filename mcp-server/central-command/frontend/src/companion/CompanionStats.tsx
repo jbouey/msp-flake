@@ -76,8 +76,10 @@ export const CompanionStats: React.FC = () => {
                     className="h-full rounded-full transition-all"
                     style={{
                       width: `${pct}%`,
-                      background: pct >= 70 ? companionColors.complete
-                        : pct >= 40 ? companionColors.amber
+                      // Companion chat-progress, distinct domain from compliance score
+                      // (uses companionColors palette, 70/40 split — not the 90/70/50 canon)
+                      background: pct >= 70 ? companionColors.complete  // noqa: score-threshold-gate — companion progress, different domain
+                        : pct >= 40 ? companionColors.amber  // noqa: score-threshold-gate — companion progress, different domain
                         : companionColors.inProgress,
                     }}
                   />

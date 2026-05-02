@@ -469,6 +469,16 @@ async def digest_sender_loop() -> None:
     logger.info("Digest sender loop started", extra={"interval_hours": DIGEST_INTERVAL_HOURS})
 
     while True:
+        # Heartbeat at top of every iteration so bg_loop_silent can
+        # distinguish "loop stuck" from "loop idle". _supervised only
+        # records ONE startup heartbeat — without this call the loop
+        # would silently false-fire bg_loop_silent after 3x EXPECTED.
+        try:
+            from dashboard_api.bg_heartbeat import record_heartbeat
+            record_heartbeat("alert_digest")
+        except Exception:
+            pass
+
         try:
             pool = await get_pool()
             async with admin_connection(pool) as conn:

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { SRA_CATEGORY_LABELS } from '../../constants';
+import { riskScoreToColor } from '../../constants/status';
 
 interface Question {
   key: string;
@@ -228,7 +229,7 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
                 </div>
                 <div className="flex items-center gap-3">
                   {a.status === 'completed' && a.overall_risk_score !== null && (
-                    <span className={`text-lg font-bold ${a.overall_risk_score > 50 ? 'text-red-600' : a.overall_risk_score > 25 ? 'text-yellow-600' : 'text-green-600'}`}>
+                    <span className={`text-lg font-bold ${riskScoreToColor(a.overall_risk_score)}`}>
                       Risk: {a.overall_risk_score}
                     </span>
                   )}
@@ -285,7 +286,7 @@ export const SRAWizard: React.FC<SRAWizardProps> = ({ apiBase = '/api/client/com
           {activeAssessment.overall_risk_score !== null && (
             <div className="mb-6 p-6 rounded-xl bg-slate-50">
               <p className="text-sm text-slate-500 mb-1">Overall Risk Score</p>
-              <p className={`text-4xl font-bold ${activeAssessment.overall_risk_score > 50 ? 'text-red-600' : activeAssessment.overall_risk_score > 25 ? 'text-yellow-600' : 'text-green-600'}`}>
+              <p className={`text-4xl font-bold ${riskScoreToColor(activeAssessment.overall_risk_score)}`}>
                 {activeAssessment.overall_risk_score}
               </p>
             </div>

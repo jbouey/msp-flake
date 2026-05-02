@@ -43,10 +43,11 @@ from bg_heartbeat import DRAIN_LOOPS, EXPECTED_INTERVAL_S  # noqa: E402
 _LOOP_LOCATIONS: dict[str, Tuple[str, str]] = {
     "healing_sla": ("healing_sla", "healing_sla_loop"),
     "alert_digest": ("alert_router", "digest_sender_loop"),
-    "ots_upgrade": ("background_tasks", "ots_upgrade_loop"),
+    # ots_upgrade + fleet_order_expiry deferred to _LIFESPAN_INLINE_LOOPS
+    # — dead duplicates exist in background_tasks.py; wired versions are
+    # in main.py. See followup dead-loop-cleanup 2026-05-08.
     "temporal_decay": ("background_tasks", "temporal_decay_loop"),
     "regime_change_detector": ("background_tasks", "regime_change_detector_loop"),
-    "fleet_order_expiry": ("background_tasks", "expire_fleet_orders_loop"),
     "recurrence_velocity": ("background_tasks", "recurrence_velocity_loop"),
     "recurrence_auto_promotion": ("background_tasks", "recurrence_auto_promotion_loop"),
     "cross_incident_correlation": ("background_tasks", "cross_incident_correlation_loop"),
@@ -75,6 +76,10 @@ _LIFESPAN_INLINE_LOOPS = {
     "health_monitor",
     "substrate_assertions",
     "go_agent_status_decay",
+    # Have dead duplicates in background_tasks.py; wired versions
+    # are inline in main.py. See followup dead-loop-cleanup 2026-05-08.
+    "ots_upgrade",
+    "fleet_order_expiry",
 }
 
 _BACKEND_DIR = pathlib.Path(__file__).resolve().parent.parent

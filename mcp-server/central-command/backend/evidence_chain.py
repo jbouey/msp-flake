@@ -1580,13 +1580,31 @@ async def map_evidence_to_frameworks(
         pool = None
         try:
             from .fleet import get_pool
-            from .tenant_middleware import admin_connection
+            # Coach #1 (D1 design 2026-05-01): admin_transaction not
+            # admin_connection — multi-statement admin path under PgBouncer
+            # transaction pool needs the txn-pinned variant per Session
+            # 212 routing-pathology rule. See feedback_admin_transaction*.
+            from .tenant_middleware import admin_transaction
             pool = await get_pool()
         except Exception:
             logger.debug("framework mapping: pool unavailable, skipping")
             return
 
-        async with admin_connection(pool) as conn:
+        # D1 fix 2026-05-02: per-control aggregation taxonomy. Matches
+        # the writer's existing PASSING/FAILING split at line ~1137.
+        # Aggregation rule: ANY status in FAILING → control is fail
+        # (HIPAA conservative); ELSE ANY in PASSING → pass; ELSE unknown.
+        PASSING = {"pass", "compliant", "warning"}
+        FAILING = {"fail", "non_compliant"}
+
+        def _agg(statuses: list[str]) -> str:
+            if any(s in FAILING for s in statuses):
+                return "fail"
+            if any(s in PASSING for s in statuses):
+                return "pass"
+            return "unknown"
+
+        async with admin_transaction(pool) as conn:
             # Get enabled frameworks for this site
             row = await conn.fetchrow(
                 "SELECT enabled_frameworks FROM appliance_framework_configs WHERE site_id = $1",
@@ -1604,30 +1622,58 @@ async def map_evidence_to_frameworks(
             else:
                 enabled = list(row["enabled_frameworks"])
 
-            # Map each check to framework controls
-            mappings_inserted = 0
+            # Build per-control aggregation: (framework, control_id) → list[status]
+            control_to_statuses: dict[tuple[str, str], list[str]] = {}
             for check in checks:
                 check_type = check.get("check") or check.get("check_type")
-                if not check_type:
+                status = check.get("status")
+                if not check_type or not status:
                     continue
-
                 controls = get_controls_for_check_with_hipaa_map(check_type, enabled)
                 for ctrl in controls:
-                    try:
+                    key = (ctrl["framework"], ctrl["control_id"])
+                    control_to_statuses.setdefault(key, []).append(status)
+
+            # Per-control INSERT in a savepoint so a single failed row
+            # doesn't poison the outer admin_transaction (coach #2 +
+            # CLAUDE.md asyncpg savepoint invariant + Block 3 sweep).
+            mappings_inserted = 0
+            for (framework, control_id), statuses in control_to_statuses.items():
+                # Brian delta (D1 round-table): defensive guard before _agg
+                # — empty statuses list shouldn't reach here (we skip
+                # check entries without a status), but belt-and-suspenders.
+                if not statuses:
+                    continue
+                agg = _agg(statuses)
+                try:
+                    async with conn.transaction():  # nested savepoint
                         await conn.execute(
                             """
                             INSERT INTO evidence_framework_mappings
-                                (bundle_id, framework, control_id)
-                            VALUES ($1, $2, $3)
-                            ON CONFLICT (bundle_id, framework, control_id) DO NOTHING
+                                (bundle_id, framework, control_id, check_status)
+                            VALUES ($1, $2, $3, $4)
+                            ON CONFLICT (bundle_id, framework, control_id)
+                            DO UPDATE SET check_status = EXCLUDED.check_status
                             """,
-                            bundle_id,
-                            ctrl["framework"],
-                            ctrl["control_id"],
+                            bundle_id, framework, control_id, agg,
                         )
                         mappings_inserted += 1
-                    except Exception:
-                        pass  # Ignore individual insert failures
+                except Exception as e:
+                    # Per CLAUDE.md "no silent write failures" — coach #2
+                    # of D1 design. evidence_framework_mappings is the
+                    # writer-side projection that powers compliance scores;
+                    # silent failure here = the score regression class
+                    # this fix is closing in the first place.
+                    logger.error(
+                        "evidence_framework_mapping_insert_failed",
+                        exc_info=True,
+                        extra={
+                            "bundle_id": bundle_id,
+                            "framework": framework,
+                            "control_id": control_id,
+                            "exception_class": type(e).__name__,
+                        },
+                    )
 
             # Refresh compliance scores for each enabled framework.
             # MUST pass appliance_id (NOT site_id) — refresh_compliance_score

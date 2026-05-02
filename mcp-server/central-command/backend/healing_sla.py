@@ -25,6 +25,16 @@ async def healing_sla_loop():
     logger.info("Healing SLA tracker started")
 
     while True:
+        # Heartbeat at top of every iteration so bg_loop_silent can
+        # distinguish "loop stuck" from "loop idle". _supervised only
+        # records ONE startup heartbeat — without this call the loop
+        # would silently false-fire bg_loop_silent after 3x EXPECTED.
+        try:
+            from .bg_heartbeat import record_heartbeat
+            record_heartbeat("healing_sla")
+        except Exception:
+            pass
+
         try:
             await _compute_hourly_sla()
         except asyncio.CancelledError:

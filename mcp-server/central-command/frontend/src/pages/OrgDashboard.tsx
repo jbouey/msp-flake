@@ -5,7 +5,7 @@ import { GlassCard, Spinner, Badge } from '../components/shared';
 import { organizationsApi } from '../utils/api';
 import type { OrgSite, OrgCredential, OrgHealth } from '../utils/api';
 import { formatTimeAgo, getStatusConfig } from '../constants';
-import { scoreToBadgeVariant, scoreToBarColor } from '../constants/status';
+import { scoreToBadgeVariant, scoreToBarColor, getScoreStatus } from '../constants/status';
 
 const formatRelativeTime = formatTimeAgo;
 
@@ -16,7 +16,11 @@ const StatusDot: React.FC<{ status: string }> = ({ status }) => {
 
 const ComplianceBar: React.FC<{ site: OrgSite }> = ({ site }) => {
   const pct = site.compliance_score;
-  const color = pct >= 80 ? 'bg-health-healthy' : pct >= 50 ? 'bg-health-warning' : pct > 0 ? 'bg-health-critical' : 'bg-fill-quaternary';
+  // 90/70/50 canon via constants/status.ts. Pre-canon code used 80/50;
+  // collapsed 2026-05-02 D2. The pct === 0 "no data" case keeps the
+  // original neutral grey rather than going through the canon (which
+  // would tint it orange — wrong for "no evidence yet" UX).
+  const color = pct > 0 ? scoreToBarColor(pct) : 'bg-fill-quaternary';
 
   return (
     <div className="flex items-center gap-3">
@@ -201,9 +205,19 @@ export const OrgDashboard: React.FC = () => {
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <GlassCard padding="md" className="text-center">
-          <p className={`text-2xl font-bold ${(health?.compliance.score ?? avgCompliance) >= 80 ? 'text-health-healthy' : (health?.compliance.score ?? avgCompliance) >= 50 ? 'text-health-warning' : 'text-label-primary'}`}>
-            {(health?.compliance.score ?? avgCompliance) > 0 ? `${Math.round(health?.compliance.score ?? avgCompliance)}%` : 'N/A'}
-          </p>
+          {(() => {
+            const score = health?.compliance.score ?? avgCompliance;
+            // 90/70/50 canon via getScoreStatus. Pre-canon code used 80/50;
+            // collapsed 2026-05-02 D2. The score === 0 "no data" branch
+            // intentionally falls through to label-primary (neutral) so
+            // an empty fleet doesn't paint critical-orange.
+            const colorClass = score > 0 ? getScoreStatus(score).color : 'text-label-primary';
+            return (
+              <p className={`text-2xl font-bold ${colorClass}`}>
+                {score > 0 ? `${Math.round(score)}%` : 'N/A'}
+              </p>
+            );
+          })()}
           <p className="text-xs text-label-tertiary">Compliance Score</p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
@@ -213,9 +227,16 @@ export const OrgDashboard: React.FC = () => {
           <p className="text-xs text-label-tertiary">Incidents 24h</p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
-          <p className={`text-2xl font-bold ${(health?.healing.success_rate ?? avgHealing) >= 80 ? 'text-health-healthy' : (health?.healing.success_rate ?? avgHealing) >= 50 ? 'text-health-warning' : 'text-label-primary'}`}>
-            {(health?.healing.success_rate ?? avgHealing) > 0 ? `${Math.round(health?.healing.success_rate ?? avgHealing)}%` : 'N/A'}
-          </p>
+          {(() => {
+            const score = health?.healing.success_rate ?? avgHealing;
+            // 90/70/50 canon via getScoreStatus (D2 collapse 2026-05-02)
+            const colorClass = score > 0 ? getScoreStatus(score).color : 'text-label-primary';
+            return (
+              <p className={`text-2xl font-bold ${colorClass}`}>
+                {score > 0 ? `${Math.round(score)}%` : 'N/A'}
+              </p>
+            );
+          })()}
           <p className="text-xs text-label-tertiary">Healing Rate</p>
         </GlassCard>
         <GlassCard padding="md" className="text-center">
