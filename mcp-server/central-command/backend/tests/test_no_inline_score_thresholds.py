@@ -33,13 +33,20 @@ import pytest
 
 _FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "frontend" / "src"
 
-# Match: (score|risk_score|<*>_score) [<>] [=]? <number>
+# Match: (score-like-identifier) [<>] [=]? <number>
 # Known canonical thresholds: 90/70/50 (compliance), 50/25 (risk inverse),
 # 80/40 (legacy style-tokens). Catching any of these inline is a violation.
+#
+# Adversarial-audit broadening 2026-05-02: original regex missed
+# camelCase identifiers (coveredPct, avgCompliance) and bare names
+# (avg, rate, success_rate). Now matches any identifier ending in
+# pct/score/rate/success_rate/risk* OR exactly 'avg', 'pct', 'score',
+# 'rate' as standalone names.
 _THRESHOLD_PATTERN = re.compile(
-    r"\b(?:[a-z_]+_score|score|pct|risk[_a-z]*)"
+    r"\b(?:[a-zA-Z_][a-zA-Z0-9_]*?(?:[Pp]ct|[Ss]core|[Rr]ate|Success[Rr]ate)"
+    r"|score|pct|rate|avg|risk[_a-z]*)"
     r"\s*[><]=?\s*"
-    r"(?:25|40|50|70|80|90)\b",
+    r"(?:25|40|50|60|70|80|90)\b",
     re.IGNORECASE,
 )
 
@@ -56,10 +63,13 @@ _NOQA_MARKER = re.compile(r"//\s*noqa\s*:\s*score-threshold-gate\b")
 # Must DECREASE in each PR; cannot increase. Adjusting upward without
 # explicit deviation justification = violation.
 #
-# 2026-05-02 D2 collapse: started at 3 (OrgDashboard.tsx ×3 inline +
-# SRAWizard.tsx ×2 inline + CompanionStats.tsx ×2). After collapse +
-# noqa opt-outs for companion (distinct domain), count is 0.
-BASELINE_MAX = 0
+# 2026-05-02 D2 collapse — first pass with narrow regex (matched only
+# `score|pct|risk*` standalone) found 5 sites; collapsed to 0.
+# Adversarial audit re-ran with broader regex (matches camelCase
+# identifiers ending in Pct/Score/Rate, plus `avg`/`rate` standalones)
+# and surfaced ~27 additional sites. Honest baseline starts at 27;
+# ratchet target is 0. P1 followup: collapse the remaining 27.
+BASELINE_MAX = 27
 
 
 def _walk_frontend_files():

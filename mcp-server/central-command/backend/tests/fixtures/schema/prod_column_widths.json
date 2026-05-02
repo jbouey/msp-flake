@@ -804,6 +804,7 @@
   },
   "evidence_framework_mappings": {
     "bundle_id": 255,
+    "check_status": 20,
     "control_id": 100,
     "framework": 50
   },

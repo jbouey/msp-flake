@@ -2097,6 +2097,7 @@
   ],
   "evidence_framework_mappings": [
     "bundle_id",
+    "check_status",
     "control_id",
     "created_at",
     "framework",
