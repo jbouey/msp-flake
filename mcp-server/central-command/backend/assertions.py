@@ -2589,19 +2589,27 @@ async def _check_journal_upload_stale(conn: asyncpg.Connection) -> List[Violatio
     Does NOT fire for appliances that have never uploaded — same
     pattern as `watchdog_silent`, avoids spurious violations during
     the v30 rollout window.
+
+    JOINs site_appliances + filters deleted_at IS NULL so soft-deleted
+    appliances (e.g. relocated rows from mig 245) don't keep firing
+    after decommission. The reported site_id comes from site_appliances
+    (the LIVE site_id), not from journal_upload_events (which records
+    the site_id at upload time and is immutable post-relocation).
     """
     rows = await conn.fetch(
         """
         WITH latest AS (
             SELECT DISTINCT ON (appliance_id)
-                   site_id, appliance_id, received_at
+                   appliance_id, received_at
               FROM journal_upload_events
           ORDER BY appliance_id, received_at DESC
         )
-        SELECT site_id, appliance_id, received_at,
-               EXTRACT(EPOCH FROM (NOW() - received_at))/60 AS minutes_stale
-          FROM latest
-         WHERE received_at < NOW() - INTERVAL '90 minutes'
+        SELECT sa.site_id, sa.appliance_id, l.received_at,
+               EXTRACT(EPOCH FROM (NOW() - l.received_at))/60 AS minutes_stale
+          FROM latest l
+          JOIN site_appliances sa ON sa.appliance_id = l.appliance_id
+         WHERE l.received_at < NOW() - INTERVAL '90 minutes'
+           AND sa.deleted_at IS NULL
         """
     )
     return [
