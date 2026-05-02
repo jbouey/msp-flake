@@ -72,6 +72,7 @@ _TIER1_PATTERNS = [
     re.compile(r"^test_kill_switch_endpoints"),      # #64 P0
     re.compile(r"^test_compliance_packet_timeout_override"),  # #42
     re.compile(r"^test_kill_switch_portal_disclosure"),  # #73
+    re.compile(r"^test_admin_billing_destructive"),  # #72
 ]
 
 # Tests that match a TIER-1 pattern but are dep-heavy and exempted

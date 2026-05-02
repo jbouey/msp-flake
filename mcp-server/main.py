@@ -2641,6 +2641,274 @@ class HealingPauseRequest(BaseModel):
 _KILL_SWITCH_KEY = "fleet_healing_disabled"
 
 
+class AdminBillingActionRequest(BaseModel):
+    reason: str = Field(..., min_length=20, max_length=500,
+        description="Plain-English reason ≥20 chars; lands in admin_audit_log "
+                    "for HIPAA chain-of-custody.")
+    confirm_phrase: str = Field(..., description=(
+        "Must be exactly 'CANCEL-CUSTOMER-SUBSCRIPTION' for cancel "
+        "or 'REFUND-CUSTOMER-CHARGE' for refund. Prevents accidental clicks."
+    ))
+
+
+class AdminBillingRefundRequest(AdminBillingActionRequest):
+    amount_cents: Optional[int] = Field(None, gt=0,
+        description="Optional partial refund amount (cents). Omit for full refund.")
+    charge_id: str = Field(...,
+        description="Stripe charge_id to refund (e.g. ch_...). UI fetches via "
+                    "billing/customers list.")
+
+
+@app.post("/api/admin/billing/customers/{stripe_customer_id}/cancel-subscription",
+          include_in_schema=True)
+async def admin_billing_cancel_subscription(
+    stripe_customer_id: str,
+    request: AdminBillingActionRequest,
+    http_request: Request,
+    user: dict = Depends(require_auth),
+):
+    """Admin-initiated subscription cancel (cancel_at_period_end=True).
+
+    #72 closure 2026-05-02. Distinct from partner self-service
+    `/subscription/cancel` — this is OWNER-OPERATOR acting on a
+    customer's subscription. Privileged-action chain:
+      - actor MUST be email format
+      - reason ≥20 chars (audit-logged)
+      - confirm_phrase = 'CANCEL-CUSTOMER-SUBSCRIPTION' typed-literal
+      - Stripe call with idempotency_key (request reason hash)
+      - admin_audit_log INSERT
+      - Ed25519 privileged_access_attestation to customer's site_id
+    Webhook updates the local subscriptions row asynchronously.
+    """
+    if request.confirm_phrase != "CANCEL-CUSTOMER-SUBSCRIPTION":
+        raise HTTPException(status_code=400,
+            detail="confirm_phrase must be exactly 'CANCEL-CUSTOMER-SUBSCRIPTION'")
+    actor = (user.get("email") if isinstance(user, dict) else None) or ""
+    if "@" not in actor:
+        raise HTTPException(status_code=403,
+            detail="admin billing requires authenticated email actor")
+
+    # Stripe API import (the lib is optional in dev — fail clean)
+    try:
+        import stripe
+    except ImportError:
+        raise HTTPException(status_code=503, detail="stripe library not installed")
+    if not stripe.api_key:
+        raise HTTPException(status_code=503, detail="stripe API key not configured")
+
+    # Look up subscription_id + site_id from local table
+    from dashboard_api.shared import async_session, execute_with_retry
+    async with async_session() as db:
+        row = (await execute_with_retry(db, text(
+            "SELECT stripe_subscription_id, site_id FROM subscriptions "
+            "WHERE stripe_customer_id = :cust AND status NOT IN ('canceled','incomplete_expired') "
+            "ORDER BY created_at DESC LIMIT 1"
+        ), {"cust": stripe_customer_id})).fetchone()
+    if not row:
+        raise HTTPException(status_code=404,
+            detail=f"no active subscription for customer {stripe_customer_id}")
+    subscription_id, target_site_id = row[0], row[1]
+
+    # Idempotency key: hash(actor + customer + reason + day) so
+    # operator's accidental double-click within the same day no-ops.
+    import hashlib
+    idem_key = "admin-cancel-" + hashlib.sha256(
+        f"{actor}-{stripe_customer_id}-{request.reason}-{datetime.now(timezone.utc).date()}"
+        .encode()
+    ).hexdigest()[:32]
+
+    try:
+        sub = stripe.Subscription.modify(
+            subscription_id,
+            cancel_at_period_end=True,
+            metadata={"admin_cancel_actor": actor, "admin_cancel_reason": request.reason[:200]},
+            idempotency_key=idem_key,
+        )
+    except Exception as e:
+        logger.error("admin_billing_cancel_failed", exc_info=True,
+            extra={"actor": actor, "customer": stripe_customer_id, "error": str(e)})
+        raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)[:200]}")
+
+    # Audit chain (admin_audit_log + Ed25519 attestation)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with async_session() as db:
+        async with db.begin():
+            await execute_with_retry(db, text("""
+                INSERT INTO admin_audit_log (username, action, target, details, ip_address)
+                VALUES (:actor, 'billing.subscription_cancel', :target, :details, :ip)
+            """), {
+                "actor": actor,
+                "target": f"customer:{stripe_customer_id}",
+                "details": json.dumps({
+                    "reason": request.reason,
+                    "subscription_id": subscription_id,
+                    "site_id": target_site_id,
+                    "set_at": now_iso,
+                    "stripe_idempotency_key": idem_key,
+                }),
+                "ip": http_request.client.host if http_request.client else None,
+            })
+
+    # Ed25519 attestation (best-effort; doesn't block return)
+    try:
+        from dashboard_api.fleet import get_pool as _get_pool
+        from dashboard_api.privileged_access_attestation import (
+            create_privileged_access_attestation,
+        )
+        if target_site_id:
+            ks_pool = await _get_pool()
+            async with ks_pool.acquire() as att_conn:
+                await create_privileged_access_attestation(
+                    att_conn,
+                    site_id=target_site_id,
+                    event_type="customer_subscription_cancel",
+                    actor_email=actor,
+                    reason=request.reason,
+                    origin_ip=http_request.client.host if http_request.client else None,
+                )
+    except Exception as e:
+        logger.error("admin_billing_cancel_attestation_failed", exc_info=True,
+            extra={"customer": stripe_customer_id, "error": str(e)})
+
+    return {
+        "status": "canceling",
+        "subscription_id": subscription_id,
+        "stripe_customer_id": stripe_customer_id,
+        "cancel_at_period_end": True,
+        "current_period_end": sub.current_period_end if hasattr(sub, "current_period_end") else None,
+    }
+
+
+@app.post("/api/admin/billing/customers/{stripe_customer_id}/refund-charge",
+          include_in_schema=True)
+async def admin_billing_refund_charge(
+    stripe_customer_id: str,
+    request: AdminBillingRefundRequest,
+    http_request: Request,
+    user: dict = Depends(require_auth),
+):
+    """Admin-initiated charge refund (full or partial).
+
+    #72 closure 2026-05-02. Same privileged-action chain as cancel.
+    Customer-impacting; reason becomes part of customer-success metric.
+    """
+    if request.confirm_phrase != "REFUND-CUSTOMER-CHARGE":
+        raise HTTPException(status_code=400,
+            detail="confirm_phrase must be exactly 'REFUND-CUSTOMER-CHARGE'")
+    actor = (user.get("email") if isinstance(user, dict) else None) or ""
+    if "@" not in actor:
+        raise HTTPException(status_code=403,
+            detail="admin billing requires authenticated email actor")
+
+    try:
+        import stripe
+    except ImportError:
+        raise HTTPException(status_code=503, detail="stripe library not installed")
+    if not stripe.api_key:
+        raise HTTPException(status_code=503, detail="stripe API key not configured")
+
+    # Look up site_id for attestation chain
+    from dashboard_api.shared import async_session, execute_with_retry
+    async with async_session() as db:
+        row = (await execute_with_retry(db, text(
+            "SELECT site_id FROM subscriptions WHERE stripe_customer_id = :cust LIMIT 1"
+        ), {"cust": stripe_customer_id})).fetchone()
+    target_site_id = row[0] if row else None
+
+    # Verify charge belongs to this customer BEFORE refunding. Without
+    # this check, an operator typo on either the URL or the charge_id
+    # would refund a different customer's charge while writing the
+    # audit-log + Ed25519 attestation against the URL's site_id —
+    # silently misattributing the financial event.
+    try:
+        ch = stripe.Charge.retrieve(request.charge_id)
+    except Exception as e:
+        raise HTTPException(status_code=404,
+            detail=f"charge {request.charge_id} not found in Stripe: {str(e)[:160]}")
+    charge_customer = getattr(ch, "customer", None)
+    if charge_customer != stripe_customer_id:
+        logger.error("admin_billing_refund_charge_mismatch",
+            extra={"url_customer": stripe_customer_id,
+                   "charge_id": request.charge_id,
+                   "charge_customer": charge_customer,
+                   "actor": actor})
+        raise HTTPException(status_code=400,
+            detail=f"charge {request.charge_id} belongs to customer "
+                   f"{charge_customer}, not {stripe_customer_id}")
+
+    import hashlib
+    idem_key = "admin-refund-" + hashlib.sha256(
+        f"{actor}-{request.charge_id}-{request.reason}-{datetime.now(timezone.utc).date()}"
+        .encode()
+    ).hexdigest()[:32]
+
+    try:
+        refund_kwargs = {
+            "charge": request.charge_id,
+            "reason": "requested_by_customer",
+            "metadata": {
+                "admin_refund_actor": actor,
+                "admin_refund_reason": request.reason[:200],
+            },
+            "idempotency_key": idem_key,
+        }
+        if request.amount_cents is not None:
+            refund_kwargs["amount"] = request.amount_cents
+        rf = stripe.Refund.create(**refund_kwargs)
+    except Exception as e:
+        logger.error("admin_billing_refund_failed", exc_info=True,
+            extra={"actor": actor, "customer": stripe_customer_id, "error": str(e)})
+        raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)[:200]}")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with async_session() as db:
+        async with db.begin():
+            await execute_with_retry(db, text("""
+                INSERT INTO admin_audit_log (username, action, target, details, ip_address)
+                VALUES (:actor, 'billing.charge_refund', :target, :details, :ip)
+            """), {
+                "actor": actor,
+                "target": f"customer:{stripe_customer_id}",
+                "details": json.dumps({
+                    "reason": request.reason,
+                    "charge_id": request.charge_id,
+                    "amount_cents": request.amount_cents,
+                    "refund_id": rf.id if hasattr(rf, "id") else None,
+                    "set_at": now_iso,
+                    "stripe_idempotency_key": idem_key,
+                }),
+                "ip": http_request.client.host if http_request.client else None,
+            })
+
+    try:
+        from dashboard_api.fleet import get_pool as _get_pool
+        from dashboard_api.privileged_access_attestation import (
+            create_privileged_access_attestation,
+        )
+        if target_site_id:
+            ks_pool = await _get_pool()
+            async with ks_pool.acquire() as att_conn:
+                await create_privileged_access_attestation(
+                    att_conn,
+                    site_id=target_site_id,
+                    event_type="customer_subscription_refund",
+                    actor_email=actor,
+                    reason=request.reason,
+                    origin_ip=http_request.client.host if http_request.client else None,
+                )
+    except Exception as e:
+        logger.error("admin_billing_refund_attestation_failed", exc_info=True,
+            extra={"customer": stripe_customer_id, "error": str(e)})
+
+    return {
+        "status": "refunded",
+        "refund_id": rf.id if hasattr(rf, "id") else None,
+        "charge_id": request.charge_id,
+        "amount_cents": rf.amount if hasattr(rf, "amount") else request.amount_cents,
+        "stripe_customer_id": stripe_customer_id,
+    }
+
+
 @app.get("/api/admin/billing/customers", include_in_schema=True)
 async def admin_billing_customers(
     user: dict = Depends(require_auth),

@@ -389,6 +389,17 @@
       "ApplianceCheckin": {
         "description": "Check-in request from appliance agent.",
         "properties": {
+          "agent_identity_public_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Identity Public Key"
+          },
           "agent_public_key": {
             "anyOf": [
               {
@@ -2052,6 +2063,47 @@
           }
         },
         "title": "CVEWatchConfigUpdate",
+        "type": "object"
+      },
+      "CanonicalAliasing": {
+        "description": "Site's place in the site_canonical_mapping graph.",
+        "properties": {
+          "canonical_site_id": {
+            "title": "Canonical Site Id",
+            "type": "string"
+          },
+          "inbound_aliases": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Inbound Aliases",
+            "type": "array"
+          },
+          "is_canonical": {
+            "title": "Is Canonical",
+            "type": "boolean"
+          },
+          "outbound_alias": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outbound Alias"
+          }
+        },
+        "required": [
+          "canonical_site_id",
+          "is_canonical",
+          "inbound_aliases",
+          "outbound_alias"
+        ],
+        "title": "CanonicalAliasing",
         "type": "object"
       },
       "CheckinRequest": {
@@ -5622,6 +5674,120 @@
         "title": "FailureReport",
         "type": "object"
       },
+      "FederationCandidateSummary": {
+        "description": "One row of federation candidate observation. Tier 1 rows have\n`client_org_id` set; tier 2 rows have it NULL (platform-level).",
+        "properties": {
+          "candidate_count": {
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "client_org_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Org Id"
+          },
+          "p50_success_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Success Rate"
+          },
+          "p95_success_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Success Rate"
+          },
+          "snapshot_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Date"
+          },
+          "threshold_calibrated": {
+            "default": false,
+            "title": "Threshold Calibrated",
+            "type": "boolean"
+          },
+          "tier_name": {
+            "title": "Tier Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier_name",
+          "candidate_count"
+        ],
+        "title": "FederationCandidateSummary",
+        "type": "object"
+      },
+      "FederationCandidatesResponse": {
+        "description": "Round-table consensus: counts + summary, NO rule_id-level\ndisclosure across orgs at the API layer. This is operator\nvisibility into 'what would be eligible' — not the eligibility\nlist itself.",
+        "properties": {
+          "notes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "object"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/FederationCandidateSummary"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "snapshot_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Date"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          },
+          "total_candidates": {
+            "title": "Total Candidates",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tier",
+          "rows",
+          "total_candidates",
+          "notes"
+        ],
+        "title": "FederationCandidatesResponse",
+        "type": "object"
+      },
       "FleetOrderCreate": {
         "description": "Create a fleet-wide order. All appliances pick it up during checkin.",
         "properties": {
@@ -5658,6 +5824,106 @@
           "order_type"
         ],
         "title": "FleetOrderCreate",
+        "type": "object"
+      },
+      "FlywheelDiagnostic": {
+        "properties": {
+          "canonical_aliasing": {
+            "$ref": "#/components/schemas/CanonicalAliasing"
+          },
+          "canonical_site_id": {
+            "title": "Canonical Site Id",
+            "type": "string"
+          },
+          "flywheel_state": {
+            "$ref": "#/components/schemas/FlywheelStateSummary"
+          },
+          "notes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "object"
+          },
+          "operational_health": {
+            "$ref": "#/components/schemas/OperationalHealth"
+          },
+          "pending_fleet_orders": {
+            "$ref": "#/components/schemas/PendingFleetOrders"
+          },
+          "recent_admin_events": {
+            "items": {
+              "$ref": "#/components/schemas/RecentAdminEvent"
+            },
+            "title": "Recent Admin Events",
+            "type": "array"
+          },
+          "recommendations": {
+            "items": {
+              "$ref": "#/components/schemas/Recommendation"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
+          "site_id_input": {
+            "title": "Site Id Input",
+            "type": "string"
+          },
+          "substrate_signals": {
+            "items": {
+              "$ref": "#/components/schemas/SubstrateSignal"
+            },
+            "title": "Substrate Signals",
+            "type": "array"
+          },
+          "telemetry_recency": {
+            "$ref": "#/components/schemas/TelemetryRecency"
+          },
+          "tier_resolution": {
+            "$ref": "#/components/schemas/TierResolution"
+          }
+        },
+        "required": [
+          "site_id_input",
+          "canonical_site_id",
+          "canonical_aliasing",
+          "operational_health",
+          "telemetry_recency",
+          "flywheel_state",
+          "pending_fleet_orders",
+          "substrate_signals",
+          "recent_admin_events",
+          "tier_resolution",
+          "recommendations",
+          "notes"
+        ],
+        "title": "FlywheelDiagnostic",
+        "type": "object"
+      },
+      "FlywheelStateSummary": {
+        "properties": {
+          "flywheel_events_24h": {
+            "title": "Flywheel Events 24H",
+            "type": "integer"
+          },
+          "promoted_rules_by_lifecycle": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Promoted Rules By Lifecycle",
+            "type": "object"
+          },
+          "promotion_candidates": {
+            "title": "Promotion Candidates",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "promotion_candidates",
+          "promoted_rules_by_lifecycle",
+          "flywheel_events_24h"
+        ],
+        "title": "FlywheelStateSummary",
         "type": "object"
       },
       "ForwardRequest": {
@@ -6130,6 +6396,28 @@
           }
         },
         "title": "HardwareInfo",
+        "type": "object"
+      },
+      "HealingPauseRequest": {
+        "properties": {
+          "confirm_phrase": {
+            "description": "Must be exactly 'DISABLE-FLEET-HEALING' for pause or 'ENABLE-FLEET-HEALING' for resume. Prevents accidental clicks.",
+            "title": "Confirm Phrase",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Plain-English reason ≥20 chars; lands in admin_audit_log for HIPAA chain-of-custody.",
+            "maxLength": 500,
+            "minLength": 20,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "confirm_phrase"
+        ],
+        "title": "HealingPauseRequest",
         "type": "object"
       },
       "HealingTier": {
@@ -9333,6 +9621,34 @@
         "title": "OnboardingStage",
         "type": "string"
       },
+      "OperationalHealth": {
+        "properties": {
+          "is_orphan": {
+            "title": "Is Orphan",
+            "type": "boolean"
+          },
+          "live_appliances_count": {
+            "title": "Live Appliances Count",
+            "type": "integer"
+          },
+          "relocating_appliances_count": {
+            "title": "Relocating Appliances Count",
+            "type": "integer"
+          },
+          "site_exists": {
+            "title": "Site Exists",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "live_appliances_count",
+          "relocating_appliances_count",
+          "site_exists",
+          "is_orphan"
+        ],
+        "title": "OperationalHealth",
+        "type": "object"
+      },
       "OrderAcknowledgement": {
         "description": "Order acknowledgement from appliance.",
         "properties": {
@@ -10224,6 +10540,42 @@
           "notes"
         ],
         "title": "PayoutRun",
+        "type": "object"
+      },
+      "PendingFleetOrders": {
+        "description": "Pending fleet orders targeted at this site_id (per\n`parameters->>'site_id'` in fleet_orders). Round-table Angle 3\nP1 — operators investigating flywheel incidents need to see\norders that promoted but didn't get acked.",
+        "properties": {
+          "oldest_pending_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Pending At"
+          },
+          "other_pending": {
+            "title": "Other Pending",
+            "type": "integer"
+          },
+          "sync_promoted_rule_pending": {
+            "title": "Sync Promoted Rule Pending",
+            "type": "integer"
+          },
+          "update_daemon_pending": {
+            "title": "Update Daemon Pending",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sync_promoted_rule_pending",
+          "update_daemon_pending",
+          "other_pending",
+          "oldest_pending_at"
+        ],
+        "title": "PendingFleetOrders",
         "type": "object"
       },
       "PhysicalSafeguardBatch": {
@@ -11949,6 +12301,76 @@
         "title": "QuotaUpdateRequest",
         "type": "object"
       },
+      "RecentAdminEvent": {
+        "description": "Most-recent admin_audit_log event touching this site_id.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "details_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details Summary"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "username",
+          "created_at"
+        ],
+        "title": "RecentAdminEvent",
+        "type": "object"
+      },
+      "Recommendation": {
+        "description": "Structured recommendation surfaced to the operator. Round-table\nAngle 2 P1 — replaces List[str] so the frontend can drive badges,\nseverity colors, and click-through links from a stable contract.",
+        "properties": {
+          "action_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Hint"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "message"
+        ],
+        "title": "Recommendation",
+        "type": "object"
+      },
       "ReconcileAckRequest": {
         "properties": {
           "error_message": {
@@ -12318,13 +12740,16 @@
         "type": "object"
       },
       "RelocateApplianceRequest": {
-        "description": "Move an appliance from one site to another within the same org.\n\nSession 210-B 2026-04-25 hardening #6: today's orphan recovery\nsurfaced the gap that a partner couldn't move an appliance between\ntheir owned sites without three layers of manual ops (SQL, SSH,\nconfig.yaml hand-edit). This endpoint makes it a first-class\nadministrative action with audit + scoping + key minting in one\natomic transaction.",
+        "description": "Move an appliance from one site to another within the same org.\n\nSession 210-B 2026-04-25 hardening #6: today's orphan recovery\nsurfaced the gap that a partner couldn't move an appliance between\ntheir owned sites without three layers of manual ops (SQL, SSH,\nconfig.yaml hand-edit). This endpoint makes it a first-class\nadministrative action with audit + scoping + key minting in one\natomic transaction.\n\nSession 213 F1-followup round-table P1-SWE-2: target_site_id is\nconstrained to the standard substrate site_id format (lowercase\nalphanumeric + hyphens + underscores) so it's safe to interpolate\ninto operator-facing messages, audit details, and SQL via bound\nparameters. Quotes/semicolons/whitespace are rejected at the model\nlayer.",
         "properties": {
           "reason": {
             "title": "Reason",
             "type": "string"
           },
           "target_site_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_\\-]+$",
             "title": "Target Site Id",
             "type": "string"
           }
@@ -13747,6 +14172,40 @@
         "title": "StatsDeltas",
         "type": "object"
       },
+      "SubstrateSignal": {
+        "properties": {
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "detected_at": {
+            "title": "Detected At",
+            "type": "string"
+          },
+          "invariant_name": {
+            "title": "Invariant Name",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "invariant_name",
+          "severity",
+          "detected_at",
+          "last_seen_at",
+          "details"
+        ],
+        "title": "SubstrateSignal",
+        "type": "object"
+      },
       "SyncResponse": {
         "description": "Sync job response.",
         "properties": {
@@ -13915,6 +14374,39 @@
         "title": "TOTPVerifyRequest",
         "type": "object"
       },
+      "TelemetryRecency": {
+        "properties": {
+          "aggregated_pattern_stats_count": {
+            "title": "Aggregated Pattern Stats Count",
+            "type": "integer"
+          },
+          "execution_telemetry_24h": {
+            "title": "Execution Telemetry 24H",
+            "type": "integer"
+          },
+          "incidents_24h": {
+            "title": "Incidents 24H",
+            "type": "integer"
+          },
+          "l2_decisions_24h": {
+            "title": "L2 Decisions 24H",
+            "type": "integer"
+          },
+          "orphan_telemetry_24h": {
+            "title": "Orphan Telemetry 24H",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "execution_telemetry_24h",
+          "incidents_24h",
+          "l2_decisions_24h",
+          "orphan_telemetry_24h",
+          "aggregated_pattern_stats_count"
+        ],
+        "title": "TelemetryRecency",
+        "type": "object"
+      },
       "TemplateSummary": {
         "properties": {
           "category": {
@@ -14017,6 +14509,176 @@
           "resolution_notes"
         ],
         "title": "TicketResolve",
+        "type": "object"
+      },
+      "TierResolution": {
+        "description": "F6 phase 2 read-only tier-eligibility breakdown. Counts are\ndiagnostic; no enforcement, no rollout. `*_active` reports whether\neach tier is currently making decisions (env-on AND\ntier.enabled AND calibrated). All three counts use the\n`would_be_eligible` framing for consistency — local is also\nspeculative until enabled+calibrated. Round-table 2026-04-30.\n\n`*_thresholds` (round-table P3) exposes the actual threshold\nbundle used to compute the count — operator transparency. NULL\nwhen the tier row doesn't exist; populated even when calibration\nis pending (so an operator can see seed values vs calibrated).",
+        "properties": {
+          "client_org_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Org Id"
+          },
+          "local_would_be_eligible": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Would Be Eligible"
+          },
+          "notes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Notes",
+            "type": "object"
+          },
+          "org_would_be_eligible": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org Would Be Eligible"
+          },
+          "platform_would_be_eligible": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Would Be Eligible"
+          },
+          "tier_local_active": {
+            "default": false,
+            "title": "Tier Local Active",
+            "type": "boolean"
+          },
+          "tier_local_calibrated": {
+            "default": false,
+            "title": "Tier Local Calibrated",
+            "type": "boolean"
+          },
+          "tier_local_thresholds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TierThresholdsView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tier_org_active": {
+            "default": false,
+            "title": "Tier Org Active",
+            "type": "boolean"
+          },
+          "tier_org_calibrated": {
+            "default": false,
+            "title": "Tier Org Calibrated",
+            "type": "boolean"
+          },
+          "tier_org_thresholds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TierThresholdsView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tier_platform_active": {
+            "default": false,
+            "title": "Tier Platform Active",
+            "type": "boolean"
+          },
+          "tier_platform_calibrated": {
+            "default": false,
+            "title": "Tier Platform Calibrated",
+            "type": "boolean"
+          },
+          "tier_platform_thresholds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TierThresholdsView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "TierResolution",
+        "type": "object"
+      },
+      "TierThresholdsView": {
+        "description": "The threshold values currently configured for one tier. NULL\ndistinct fields indicate calibration-pending. Round-table P3\nexposure for operator transparency — see WHY a count came out\nthe way it did without cross-referencing the migration.",
+        "properties": {
+          "max_age_days": {
+            "title": "Max Age Days",
+            "type": "integer"
+          },
+          "min_distinct_orgs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Distinct Orgs"
+          },
+          "min_distinct_sites": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Distinct Sites"
+          },
+          "min_l2_resolutions": {
+            "title": "Min L2 Resolutions",
+            "type": "integer"
+          },
+          "min_success_rate": {
+            "title": "Min Success Rate",
+            "type": "number"
+          },
+          "min_total_occurrences": {
+            "title": "Min Total Occurrences",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "min_total_occurrences",
+          "min_success_rate",
+          "min_l2_resolutions",
+          "max_age_days"
+        ],
+        "title": "TierThresholdsView",
         "type": "object"
       },
       "TokenResponse": {
@@ -14660,6 +15322,46 @@
           "totp_code"
         ],
         "title": "VerifyTOTPRequest",
+        "type": "object"
+      },
+      "VersionDriftResponse": {
+        "description": "Shape of GET /api/version/drift. Surfaces silent deploy-cascade\nfailure mode (Session 212 round-table angle 2 P1).",
+        "properties": {
+          "behind_main": {
+            "title": "Behind Main",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "last_check_at": {
+            "title": "Last Check At",
+            "type": "string"
+          },
+          "main_head_sha": {
+            "title": "Main Head Sha",
+            "type": "string"
+          },
+          "runtime_sha": {
+            "title": "Runtime Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_sha",
+          "main_head_sha",
+          "behind_main",
+          "last_check_at"
+        ],
+        "title": "VersionDriftResponse",
         "type": "object"
       },
       "VersionResponse": {
@@ -15325,6 +16027,51 @@
         ]
       }
     },
+    "/api/admin/billing/customers": {
+      "get": {
+        "description": "READ-ONLY admin view of all customer subscriptions.\n\n#67 closure 2026-05-02 (read-only slice). Adversarial-audit\nfinding: owner-operator had no UI for billing/subscription mgmt;\nforced to use Stripe dashboard out-of-band (no audit trail in\nadmin_audit_log).\n\nThis endpoint exposes the local `subscriptions` table aggregated\nby customer. Read-only. Destructive admin actions (refund, cancel\ncustomer X) deferred — they require: (a) per-customer access-\ncontrol review, (b) Ed25519-grade audit chain, (c) Stripe\nidempotency tokens. Filed as separate followup #73.\n\nOperator workflow today: list customers in this UI → identify\ntarget → click \"Open in Stripe dashboard\" deep-link to perform\ndestructive action there with Stripe's own audit trail.",
+        "operationId": "admin_billing_customers_api_admin_billing_customers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status_filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status Filter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Billing Customers"
+      }
+    },
     "/api/admin/chaos-quicktest": {
       "post": {
         "description": "Create a chaos quicktest fleet order that injects drift into Windows targets.\n\nThe order tells the appliance daemon to run the inject commands via WinRM.\nThe normal scan cycle then detects the drift and the healing pipeline remediates.\nUse the GET status endpoint to check progress.",
@@ -15796,6 +16543,143 @@
         ]
       }
     },
+    "/api/admin/flywheel/federation-candidates": {
+      "get": {
+        "description": "Round-table consensus SHIP_FOUNDATION_SLICE: read-only\noperator endpoint exposing the candidate counts that WOULD\nclear current seed thresholds at tier 1 (org) or tier 2\n(platform), if federation were enforced.\n\nNO enforcement. NO rollout. NO PHI. NO cross-org rule_id\ndisclosure (counts + summary only).\n\nAuth: require_admin. Rate limit: 30/min/actor (more permissive\nthan F7 because this is calibration-analysis, not incident-\nresponse).",
+        "operationId": "get_federation_candidates_api_admin_flywheel_federation_candidates_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tier",
+            "required": true,
+            "schema": {
+              "pattern": "^(org|platform)$",
+              "title": "Tier",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FederationCandidatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "F6 calibration-analysis read surface (admin only)",
+        "tags": [
+          "admin",
+          "flywheel",
+          "federation"
+        ]
+      }
+    },
+    "/api/admin/healing/global-pause": {
+      "post": {
+        "description": "EMERGENCY STOP: pause fleet-wide L2 healing.\n\nIdempotent — calling when already paused returns 200 with\nno-op flag. agent_l2_plan checks the flag at request-handler\nentry; if set, returns 503 with structured body so daemons\nknow to fall through to L3 escalation.\n\nAudit-logged. Reason ≥20 chars. confirm_phrase prevents\naccidental clicks.",
+        "operationId": "admin_healing_global_pause_api_admin_healing_global_pause_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealingPauseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Healing Global Pause"
+      }
+    },
+    "/api/admin/healing/global-resume": {
+      "post": {
+        "description": "Resume fleet-wide L2 healing. Idempotent.\n\nReverse of /global-pause. Same friction: confirm_phrase must be\n'ENABLE-FLEET-HEALING' (NOT 'DISABLE-' — different phrase prevents\ntypo-resumes).",
+        "operationId": "admin_healing_global_resume_api_admin_healing_global_resume_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealingPauseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Healing Global Resume"
+      }
+    },
+    "/api/admin/healing/global-state": {
+      "get": {
+        "description": "Returns current fleet-wide healing-disabled state.\n\nUsed by the kill-switch UI button + the cross-page banner to\nsurface \"FLEET HEALING PAUSED\" prominently.",
+        "operationId": "admin_healing_global_state_api_admin_healing_global_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Healing Global State"
+      }
+    },
     "/api/admin/health": {
       "get": {
         "description": "Detailed health check — Redis, MinIO, DB, background tasks (admin only).",
@@ -15828,6 +16712,23 @@
           }
         },
         "summary": "Admin Health Loops"
+      }
+    },
+    "/api/admin/l2/status": {
+      "get": {
+        "description": "L2 healing pipeline availability. Auth-gated (admin role).\n\nAI-independence audit followup #61 (2026-05-02). The Incidents\npage polls this so an operator working in LLM-off mode sees a\nbanner (\"L2 healing degraded — incidents routing direct to L4\nmanual queue\") instead of inferring from missing recentL2 count.\n\nReads `is_l2_available()` from l2_planner — the same primitive\n`agent_l2_plan` uses to short-circuit. So if this returns\n`enabled=false`, the appliance-side L2 calls return 503 too.\n\nReturns the full L2 config (provider, model) so the UI can show\noperator-actionable diagnostics (\"Anthropic key missing\" vs\n\"L2_ENABLED=false flag set\").",
+        "operationId": "admin_l2_status_api_admin_l2_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin L2 Status"
       }
     },
     "/api/admin/oauth/approve/{user_id}": {
@@ -16405,6 +17306,50 @@
         "summary": "Promote",
         "tags": [
           "sigauth-enforcement"
+        ]
+      }
+    },
+    "/api/admin/sites/{site_id}/flywheel-diagnostic": {
+      "get": {
+        "description": "Read-only aggregation of flywheel state for one site_id.\n\nResolves the input through `canonical_site_id()` so an operator\ncan pass either an orphan site_id or its canonical and get the\nsame diagnostic — the response distinguishes the input from the\ncanonical.\n\nAuth: admin only.",
+        "operationId": "get_flywheel_diagnostic_api_admin_sites__site_id__flywheel_diagnostic_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlywheelDiagnostic"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator diagnostic — flywheel signals for one site",
+        "tags": [
+          "admin",
+          "flywheel"
         ]
       }
     },
@@ -50708,7 +51653,7 @@
     },
     "/api/provision/admin/restore": {
       "post": {
-        "description": "ADMIN-ONLY recovery for orphaned appliances.\n\nUse case (Session 210-B 2026-04-25): a manual cleanup pass deleted\n`site_appliances` rows for a MAC but the physical box was still\nalive. The standard `/api/provision/rekey` endpoint refuses to\nre-key because it requires an existing row. This endpoint:\n\n  1. Verifies the site exists\n  2. UPSERTs the site_appliances row (status='pending' if new,\n     left alone if existing)\n  3. Mints a fresh api_key\n  4. Deactivates any prior active keys for this (site, appliance)\n  5. Writes an audit-log entry with the operator's reason\n\nAuth: admin Bearer token. The endpoint is mounted on the public\nAPI surface but require_admin gates it. We use FastAPI's regular\n`Depends(require_admin)` rather than the appliance bearer because\nthe calling actor is an operator, not the appliance itself.\n\nRate limited via the same _rekey_cooldowns map as /rekey.\n\nReturns the same shape as /rekey so the recovery script can be\na drop-in replacement.",
+        "description": "ADMIN-ONLY recovery for orphaned appliances.\n\nUse case (Session 210-B 2026-04-25): a manual cleanup pass deleted\n`site_appliances` rows for a MAC but the physical box was still\nalive. The standard `/api/provision/rekey` endpoint refuses to\nre-key because it requires an existing row. This endpoint:\n\n  1. Verifies the site exists\n  2. UPSERTs the site_appliances row (status='pending' if new,\n     left alone if existing)\n  3. Mints a fresh api_key\n  4. Deactivates any prior active keys for this (site, appliance)\n  5. Writes an audit-log entry with the operator's reason\n\nAuth: admin Bearer token via `_resolve_admin(request)` (Session 213\nround-table P0 — we keep manual dispatch because auth.py +\nprovisioning.py have a known-circular-import history; the lazy-\nimport inside `_resolve_admin` keeps the resolution path clear and\nauditable. Functionally identical to `Depends(require_admin)`).\n\nRate limited via the same _rekey_cooldowns map as /rekey.\n\nReturns the same shape as /rekey so the recovery script can be\na drop-in replacement.",
         "operationId": "admin_restore_appliance_api_provision_admin_restore_post",
         "requestBody": {
           "content": {
@@ -53748,7 +54693,7 @@
         ]
       },
       "put": {
-        "description": "Set mesh topology mode. 'independent' suppresses mesh alerts for sites\nwith consumer-grade routers where cross-subnet routing is impossible.",
+        "description": "Set mesh topology mode. 'independent' suppresses mesh alerts for sites\nwith consumer-grade routers where cross-subnet routing is impossible.\n\nAuth: require_operator (Session 213 round-table P1) — was require_auth,\npromoted because this mutates fleet-shaping policy. Mirrors the auth\nposture of sister mutations on the same router.",
         "operationId": "set_mesh_topology_api_sites__site_id__mesh_topology_put",
         "parameters": [
           {
@@ -53838,7 +54783,7 @@
         ]
       },
       "put": {
-        "description": "Set network stability mode. Onboarding gate — no site should operate\nwithout an explicit network decision.",
+        "description": "Set network stability mode. Onboarding gate — no site should operate\nwithout an explicit network decision.\n\nAuth: require_operator (Session 213 round-table P1) — was require_auth,\npromoted because this is the onboarding-gate decision recorded in\nthe audit trail.",
         "operationId": "set_network_mode_api_sites__site_id__network_mode_put",
         "parameters": [
           {
@@ -55076,6 +56021,25 @@
           }
         },
         "summary": "App Version"
+      }
+    },
+    "/api/version/drift": {
+      "get": {
+        "description": "Public deploy-drift endpoint (Session 212 round-table P1).\n\nSurfaces the gap between the running process's SHA and the\ncurrent main HEAD. Operators can spot a silent-cascade failure\n(CI broken, fixes piling up but never deploying) within the\n60s cache window instead of finding out when a feature mysteriously\ndoesn't work.\n\nCached 60s to respect GitHub's 60/h unauthenticated rate limit.\nSet GITHUB_TOKEN to lift to 5000/h.\n\nReturns:\n  runtime_sha: SHA the process is running\n  main_head_sha: SHA of jbouey/msp-flake refs/heads/main\n  behind_main: True iff runtime != main HEAD AND main HEAD known\n  last_check_at: ISO8601 of last GitHub fetch\n  error: populated when GitHub fetch failed (still returns 200 so\n    monitors don't conflate transient GitHub outage with deploy\n    cascade — read error + behind_main together).",
+        "operationId": "app_version_drift_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionDriftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "App Version Drift"
       }
     },
     "/api/watchdog/bootstrap": {

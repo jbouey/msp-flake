@@ -91,6 +91,13 @@ ALLOWED_EVENTS = {
     # controls have crypto evidence the operator paused healing.
     "fleet_healing_global_pause",
     "fleet_healing_global_resume",
+    # #72 closure 2026-05-02 (sub-followup of #67 admin billing UI).
+    # Destructive Stripe ops by an admin acting on a customer's
+    # billing relationship. NOT fleet orders (Stripe API direct).
+    # Each action audit-logs to admin_audit_log + writes Ed25519
+    # attestation to the customer's site_id chain.
+    "customer_subscription_cancel",
+    "customer_subscription_refund",
 }
 
 
