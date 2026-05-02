@@ -575,6 +575,47 @@ async def _check_partition_maintainer_dry(conn: asyncpg.Connection) -> List[Viol
     return out
 
 
+_SCHEMA_FIXTURE_DRIFT_LIMIT = 50  # Cap per-tick violation rows so a
+                                  # wholesale schema event doesn't flood
+                                  # the dashboard. Operator sees first 50
+                                  # drifts; remaining surface next tick.
+_SCHEMA_FIXTURE_QUERY_TIMEOUT_S = 5.0  # information_schema query MUST NOT
+                                       # block the substrate loop. Diana
+                                       # adversarial-round catch.
+_FIXTURE_CACHE: Optional[Dict[str, Any]] = None  # Module-level cache —
+                                                 # fixture is immutable
+                                                 # for the lifetime of a
+                                                 # process (deploy = new
+                                                 # process). Steve catch:
+                                                 # path.read_text() per-
+                                                 # tick is sync blocking.
+
+
+def _load_fixture_once() -> Optional[Dict[str, Any]]:
+    """Lazy-load + cache the schema fixture. Returns None if missing
+    or malformed (skip-graceful for test/local env). Re-load on
+    process restart only."""
+    global _FIXTURE_CACHE
+    if _FIXTURE_CACHE is not None:
+        return _FIXTURE_CACHE
+    import json
+    import pathlib as _pl
+    fixture_path = (
+        _pl.Path(__file__).resolve().parent
+        / "tests" / "fixtures" / "schema" / "prod_columns.json"
+    )
+    if not fixture_path.exists():
+        return None
+    try:
+        data = json.loads(fixture_path.read_text())
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not data:
+        return None
+    _FIXTURE_CACHE = data
+    return data
+
+
 async def _check_schema_fixture_drift(conn: asyncpg.Connection) -> List[Violation]:
     """Sev3 — prod's information_schema differs from the deployed code's
     tests/fixtures/schema/prod_columns.json.
@@ -592,51 +633,74 @@ async def _check_schema_fixture_drift(conn: asyncpg.Connection) -> List[Violatio
     Sev3 because the deployed code is functioning; the gap is in
     future-CI signal accuracy. Surfaces on /admin/substrate-health.
 
-    One violation row per (table, column) drift, capped at LIMIT 50 to
-    prevent dashboard flood after a wholesale schema change.
+    Defenses (added 2026-05-02 adversarial round-table):
+    1. EXCLUDES partition children + default partition (pg_class.relispartition).
+       Otherwise every monthly partition rollover fires false positives.
+    2. Query timeout 5s — prevents blocking the substrate loop on a
+       slow information_schema scan (Diana catch).
+    3. Fixture cached at module level — no per-tick sync IO (Steve catch).
+    4. LIMIT 50 violation rows per tick (named constant, not magic).
     """
-    import json
-    import pathlib as _pl
-
-    # Locate the deployed fixture relative to this file. In prod
-    # container the path is /app/dashboard_api/tests/fixtures/schema/
-    # prod_columns.json. Skip if missing (test env, non-deploy run).
-    fixture_path = (
-        _pl.Path(__file__).resolve().parent
-        / "tests" / "fixtures" / "schema" / "prod_columns.json"
-    )
-    if not fixture_path.exists():
+    fixture = _load_fixture_once()
+    if fixture is None:
         return []
 
+    # Partition-child filter: information_schema.columns does NOT
+    # distinguish parent from partition child. If we don't filter, every
+    # monthly partition rollover (eg compliance_bundles_2026_06 created)
+    # fires `prod_only` — alarm-fatigue class. Use pg_class.relispartition
+    # to exclude. Brian + Diana adversarial catch.
     try:
-        fixture = json.loads(fixture_path.read_text())
-    except Exception:
-        # Per CLAUDE.md "no silent write failures" — for READS in a
-        # display-tier invariant, log + skip. The invariant should
-        # never crash the substrate loop.
+        rows = await asyncio.wait_for(
+            conn.fetch(
+                """
+                SELECT c.relname AS table_name,
+                       a.attname AS column_name
+                  FROM pg_class c
+                  JOIN pg_namespace n ON c.relnamespace = n.oid
+                  JOIN pg_attribute a ON a.attrelid = c.oid
+                 WHERE n.nspname = 'public'
+                   AND c.relkind IN ('r', 'p')      -- regular + partitioned parent
+                   AND NOT c.relispartition          -- exclude partition children
+                   AND a.attnum > 0                  -- exclude system columns
+                   AND NOT a.attisdropped
+                """
+            ),
+            timeout=_SCHEMA_FIXTURE_QUERY_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        # Skip this tick rather than block the substrate loop.
         return []
 
-    if not isinstance(fixture, dict) or not fixture:
-        return []
-
-    # Query prod's columns. Limit to public schema (matches fixture
-    # extraction command in test_sql_columns_match_schema docstring).
-    rows = await conn.fetch(
-        """
-        SELECT table_name, column_name
-          FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name NOT LIKE 'pg_%'
-        """
-    )
     prod_by_table: dict[str, set[str]] = {}
     for r in rows:
         prod_by_table.setdefault(r["table_name"], set()).add(r["column_name"])
 
+    # Filter the fixture's tables similarly — exclude partition-child
+    # naming patterns since the fixture extraction predates the
+    # exclusion filter. This is a SAFE drop: parent table covers all
+    # children's columns.
+    #
+    # Naming patterns observed in prod (per CLAUDE.md partition_maintainer
+    # invariant rules):
+    #   compliance_bundles + portal_access_log:  _YYYY_MM
+    #   appliance_heartbeats:                     _yYYYYMM
+    #   promoted_rule_events:                     _YYYYMM
+    #   default partition for any of the above:   _default suffix
+    # Brian adversarial-second-pass catch: hardcoded year strings would
+    # fail for 2028+. Use regex.
+    import re as _re
+    _PARTITION_RE = _re.compile(
+        r"_(?:y?\d{4}_?\d{2}|default)$"
+    )
+    fixture_tables = {
+        t: cols for t, cols in fixture.items()
+        if not _PARTITION_RE.search(t)
+    }
+
     drifts: list[tuple[str, str, str]] = []  # (table, column, direction)
-    for table_name, fixture_cols in fixture.items():
+    for table_name, fixture_cols in fixture_tables.items():
         if table_name not in prod_by_table:
-            # Fixture knows a table prod doesn't have — table-level drift.
             drifts.append((table_name, "<entire table>", "fixture_only"))
             continue
         prod_cols = prod_by_table[table_name]
@@ -647,7 +711,7 @@ async def _check_schema_fixture_drift(conn: asyncpg.Connection) -> List[Violatio
             drifts.append((table_name, col, "prod_only"))
 
     out: list[Violation] = []
-    for table, column, direction in drifts[:50]:
+    for table, column, direction in drifts[:_SCHEMA_FIXTURE_DRIFT_LIMIT]:
         out.append(Violation(
             site_id=None,  # global
             details={
@@ -655,8 +719,6 @@ async def _check_schema_fixture_drift(conn: asyncpg.Connection) -> List[Violatio
                 "column": column,
                 "direction": direction,
                 "interpretation": (
-                    "fixture_only" if direction == "fixture_only" else "prod_only"
-                ) + ": " + (
                     f"deployed fixture lists `{table}.{column}` but prod "
                     f"information_schema does not — fixture is stale "
                     f"(column dropped without removing from fixture?)."
@@ -672,6 +734,8 @@ async def _check_schema_fixture_drift(conn: asyncpg.Connection) -> List[Violatio
                     f"fixture-only commit. If drift was caused by a "
                     f"manual SQL ALTER, audit who did it via admin_audit_log."
                 ),
+                "total_drifts": len(drifts),  # so operator knows if cap was hit
+                "shown": min(len(drifts), _SCHEMA_FIXTURE_DRIFT_LIMIT),
             },
         ))
     return out
