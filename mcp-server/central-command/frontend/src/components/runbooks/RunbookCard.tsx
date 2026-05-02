@@ -14,9 +14,13 @@ const formatTime = (ms: number): string => {
 };
 
 export const RunbookCard: React.FC<RunbookCardProps> = memo(({ runbook, onClick }) => {
-  const successColor = runbook.success_rate >= 95
+  // Per-runbook quality bar is INTENTIONALLY stricter than aggregate
+  // success rate — 95% is the published runbook-quality threshold.
+  // Distinct from successRateToColor (80/50) which applies to
+  // aggregated metrics. Documented in #43 closure 2026-05-02.
+  const successColor = runbook.success_rate >= 95  // noqa: score-threshold-gate — per-runbook quality bar (95/80)
     ? 'text-health-healthy'
-    : runbook.success_rate >= 80
+    : runbook.success_rate >= 80  // noqa: score-threshold-gate — per-runbook quality bar (95/80)
       ? 'text-health-warning'
       : 'text-health-critical';
 

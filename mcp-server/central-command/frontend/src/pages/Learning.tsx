@@ -198,7 +198,12 @@ export const Learning: React.FC = () => {
               ) : (
                 <>
                   <p className={`text-3xl font-semibold ${
-                    status.promotion_success_rate >= 90
+                    // Promotion success rate — single 90% threshold for
+                    // "healthy promotion class." Below = warning;
+                    // intentionally binary (no critical tier — promoted
+                    // rules can't go below ~50% by design or they're
+                    // demoted by the orchestrator).
+                    status.promotion_success_rate >= 90  // noqa: score-threshold-gate — binary promotion-quality bar
                       ? 'text-health-healthy'
                       : 'text-health-warning'
                   }`}>

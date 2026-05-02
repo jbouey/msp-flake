@@ -12,6 +12,7 @@ import {
   WORKSTATION_CHECK_HIPAA,
 } from '../types';
 import { formatTimeAgo } from '../constants';
+import { successRateToColor } from '../constants/status';
 
 const formatRelativeTime = formatTimeAgo;
 
@@ -80,8 +81,8 @@ const statusLabels: Record<WorkstationComplianceStatus, string> = {
  */
 const SummaryCard: React.FC<{ summary: SiteWorkstationSummary }> = ({ summary }) => {
   const complianceRate = summary.overall_compliance_rate || 0;
-  const rateColor = complianceRate >= 80 ? 'text-health-healthy' :
-                    complianceRate >= 50 ? 'text-health-warning' : 'text-health-critical';
+  // #43 closure 2026-05-02: canon helper.
+  const rateColor = successRateToColor(complianceRate);
 
   return (
     <GlassCard className="p-6 mb-6">

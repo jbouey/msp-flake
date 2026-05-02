@@ -109,11 +109,16 @@ interface ChainVerification {
 
 type Grade = { letter: string; color: string; bg: string; border: string; message: string };
 
+// Letter-grade scoring (95/85/75/60) — A/B/C/D/F school-grade
+// taxonomy distinct from getScoreStatus (90/70/50). Customer-facing
+// portal uses school grades for accessibility; internal admin uses
+// the compliance canon. Both are correct for their audience.
+// Documented in #43 closure 2026-05-02.
 const getGrade = (pct: number): Grade => {
-  if (pct >= 95) return { letter: 'A', color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200', message: 'Excellent — your compliance posture is strong.' };
-  if (pct >= 85) return { letter: 'B', color: 'text-green-500', bg: 'bg-green-50', border: 'border-green-200', message: 'Good — your systems are well-maintained with minor areas to improve.' };
-  if (pct >= 75) return { letter: 'C', color: 'text-orange-500', bg: 'bg-orange-50', border: 'border-orange-200', message: 'Fair — some compliance controls need attention.' };
-  if (pct >= 60) return { letter: 'D', color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200', message: 'Needs improvement — several compliance gaps require action.' };
+  if (pct >= 95) return { letter: 'A', color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200', message: 'Excellent — your compliance posture is strong.' };  // noqa: score-threshold-gate — letter-grade taxonomy
+  if (pct >= 85) return { letter: 'B', color: 'text-green-500', bg: 'bg-green-50', border: 'border-green-200', message: 'Good — your systems are well-maintained with minor areas to improve.' };  // noqa: score-threshold-gate — letter-grade taxonomy
+  if (pct >= 75) return { letter: 'C', color: 'text-orange-500', bg: 'bg-orange-50', border: 'border-orange-200', message: 'Fair — some compliance controls need attention.' };  // noqa: score-threshold-gate — letter-grade taxonomy
+  if (pct >= 60) return { letter: 'D', color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200', message: 'Needs improvement — several compliance gaps require action.' };  // noqa: score-threshold-gate — letter-grade taxonomy
   return { letter: 'F', color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', message: 'Critical — immediate action needed to restore compliance.' };
 };
 

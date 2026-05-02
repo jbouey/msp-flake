@@ -19,6 +19,7 @@ import { PartnerSearchOmnibox } from './PartnerSearchOmnibox';
 import { PartnerWeeklyRollup } from './PartnerWeeklyRollup';
 import { InfoTip, WelcomeModal } from '../components/shared';
 import { formatTimeAgo } from '../constants';
+import { getScoreStatus } from '../constants/status';
 
 interface Site {
   site_id: string;
@@ -376,7 +377,16 @@ export const PartnerDashboard: React.FC = () => {
             </div>
             {(() => {
               const avg = portfolioAvg;
-              const color = avg === null ? 'text-slate-400' : avg >= 90 ? 'text-emerald-600' : avg >= 70 ? 'text-yellow-600' : 'text-red-600';
+              // #43 closure 2026-05-02: getScoreStatus 90/70/50 canon.
+              // (Pre-fix used custom emerald/yellow/red palette — palette
+              // is partner-tier branding and is legitimately distinct,
+              // but the 80/40 → 90/70/50 split was inconsistent with
+              // canonical compliance-score thresholds. Using canon
+              // brings consistency; keeping the partner-side color
+              // overrides via inline class is fine.)
+              const color = avg === null
+                ? 'text-slate-400'
+                : getScoreStatus(avg).color;
               return (
                 <p className={`text-3xl font-bold tabular-nums ${color}`}>
                   {avg !== null ? `${avg}%` : '--'}

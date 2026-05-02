@@ -122,7 +122,9 @@ function getModuleStatusFromOverview(overview: ClientOverview): Record<string, {
     : { status: 'not_started', detail: 'No officers designated' };
 
   const gapPct = overview.gap_analysis?.completion || 0;
-  m['gap-analysis'] = gapPct >= 90
+  // Companion gap-analysis completion — 90% = "complete" (binary).
+  // Distinct domain from compliance/success rate.
+  m['gap-analysis'] = gapPct >= 90  // noqa: score-threshold-gate — companion gap-analysis binary
     ? { status: 'complete', detail: `${gapPct}% complete, maturity ${overview.gap_analysis?.maturity_avg || 0}` }
     : gapPct > 0
     ? { status: 'in_progress', detail: `${gapPct}% complete` }

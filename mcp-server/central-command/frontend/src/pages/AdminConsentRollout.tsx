@@ -208,8 +208,10 @@ export const AdminConsentRollout: React.FC = () => {
                   {c.active_consent_count}/{c.total_sites}
                 </td>
                 <td className={`py-1.5 text-right tabular-nums font-semibold ${
-                  c.coverage_pct >= 75 ? 'text-emerald-400'
-                  : c.coverage_pct >= 25 ? 'text-amber-400'
+                  // Runbook-consent class coverage (75/25) — same domain as
+                  // PartnerConsentPage. Distinct from compliance score.
+                  c.coverage_pct >= 75 ? 'text-emerald-400'  // noqa: score-threshold-gate — consent-coverage domain
+                  : c.coverage_pct >= 25 ? 'text-amber-400'  // noqa: score-threshold-gate — consent-coverage domain
                   : 'text-label-tertiary'
                 }`}>
                   {c.coverage_pct.toFixed(1)}%

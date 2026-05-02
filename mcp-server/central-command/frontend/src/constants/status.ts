@@ -349,6 +349,44 @@ export function companionProgressPaletteKey(
   return 'inProgress';
 }
 
+
+/**
+ * Success/healing rate → Tailwind text-* class.
+ *
+ * DOMAIN-DISTINCT from compliance score. Used for rates where 80% is
+ * "good" and 50% is "warning":
+ *   - L1 healing success rate (per-runbook, per-pattern, per-rule)
+ *   - L2 promotion success rate (Flywheel ledger)
+ *   - Healing rate 24h (OrgHealthPanel)
+ *   - Promoted-pattern success rate (PromotionTimeline, PatternCard)
+ *   - Workstation/device managed-rate (SiteWorkstations, SiteDevices)
+ *
+ * Threshold rationale (80/50 — looser than compliance 90/70/50):
+ * - >= 80: green — healthy success rate
+ * - >= 50: yellow — degraded but functional
+ * - < 50: red — needs investigation
+ *
+ * #43 closure 2026-05-02. Single source of truth for the 80/50 split
+ * across success/healing/managed-rate metrics. If the methodology
+ * changes, update HERE — not in 8+ call sites.
+ */
+export function successRateToColor(rate: number): string {
+  if (rate >= 80) return 'text-health-healthy';
+  if (rate >= 50) return 'text-health-warning';
+  return 'text-health-critical';
+}
+
+
+/**
+ * Success/healing rate → Tailwind bg-* class. Same 80/50 thresholds
+ * as successRateToColor. Used for fill bars + accent backgrounds.
+ */
+export function successRateToBg(rate: number): string {
+  if (rate >= 80) return 'bg-health-healthy';
+  if (rate >= 50) return 'bg-health-warning';
+  return 'bg-health-critical';
+}
+
 // =============================================================================
 // FORMATTERS
 // =============================================================================

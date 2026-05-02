@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { GlassCard, Spinner, Badge } from '../components/shared';
 import { rmmComparisonApi } from '../utils/api';
+import { getScoreStatus } from '../constants/status';
 import type {
   RMMCompareRequest,
   RMMComparisonReport,
@@ -101,8 +102,9 @@ function parseCSV(content: string): Array<Record<string, string>> {
  * Summary Card Component
  */
 const SummaryCard: React.FC<{ summary: RMMComparisonReport['summary'] }> = ({ summary }) => {
-  const coverageColor = summary.coverage_rate >= 90 ? 'text-health-healthy' :
-                        summary.coverage_rate >= 70 ? 'text-health-warning' : 'text-health-critical';
+  // #43 closure 2026-05-02: getScoreStatus 90/70/50 canon (matches
+  // existing thresholds; coverage_rate is compliance-equivalent metric).
+  const coverageColor = getScoreStatus(summary.coverage_rate).color;
 
   return (
     <GlassCard className="p-6 mb-6">

@@ -27,10 +27,11 @@ export const PatternCard: React.FC<PatternCardProps> = memo(({
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
+  // Per-pattern quality bar (95/80) — consistent with RunbookCard.
   const successColor =
-    candidate.success_rate >= 95
+    candidate.success_rate >= 95  // noqa: score-threshold-gate — per-pattern quality bar
       ? 'text-health-healthy'
-      : candidate.success_rate >= 80
+      : candidate.success_rate >= 80  // noqa: score-threshold-gate — per-pattern quality bar
       ? 'text-health-warning'
       : 'text-health-critical';
 

@@ -36,9 +36,10 @@ export const RunbookDetail: React.FC<RunbookDetailProps> = ({
   isLoadingExecutions,
   onClose,
 }) => {
-  const successColor = runbook.success_rate >= 95
+  // Per-runbook quality bar (95/80) — see RunbookCard.tsx for rationale.
+  const successColor = runbook.success_rate >= 95  // noqa: score-threshold-gate — per-runbook quality bar
     ? 'text-health-healthy'
-    : runbook.success_rate >= 80
+    : runbook.success_rate >= 80  // noqa: score-threshold-gate — per-runbook quality bar
       ? 'text-health-warning'
       : 'text-health-critical';
 

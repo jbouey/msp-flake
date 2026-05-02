@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { GlassCard } from '../shared';
 import type { PromotionHistory } from '../../types';
+import { successRateToColor, successRateToBg } from '../../constants/status';
 
 interface PromotionTimelineProps {
   history: PromotionHistory[];
@@ -32,17 +33,10 @@ export const PromotionTimeline: React.FC<PromotionTimelineProps> = ({
     });
   };
 
-  const getSuccessColor = (rate: number): string => {
-    if (rate >= 80) return 'text-health-healthy';
-    if (rate >= 50) return 'text-health-warning';
-    return 'text-health-critical';
-  };
-
-  const getSuccessBg = (rate: number): string => {
-    if (rate >= 80) return 'bg-health-healthy/10';
-    if (rate >= 50) return 'bg-health-warning/10';
-    return 'bg-health-critical/10';
-  };
+  // #43 closure 2026-05-02: collapsed to canon helper.
+  // Local wrappers preserve the /10 opacity suffix on bg variant.
+  const getSuccessColor = (rate: number): string => successRateToColor(rate);
+  const getSuccessBg = (rate: number): string => successRateToBg(rate) + '/10';
 
   if (isLoading) {
     return (

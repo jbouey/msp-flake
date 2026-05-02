@@ -307,7 +307,8 @@ export const Reports: React.FC = () => {
                       {report.categories.map((cat) => {
                         const total = cat.passed + cat.failed;
                         const rate = total > 0 ? Math.round((cat.passed / total) * 100) : 0;
-                        const rateColor = rate >= 90 ? 'text-health-healthy' : rate >= 70 ? 'text-health-warning' : 'text-health-critical';
+                        // #43 closure 2026-05-02: getScoreStatus canon.
+                        const rateColor = getScoreStatus(rate).color;
                         return (
                           <tr key={cat.check_type} className="border-b border-border-primary/50">
                             <td className="py-2 pr-4 text-label-primary font-medium">{cat.check_type}</td>

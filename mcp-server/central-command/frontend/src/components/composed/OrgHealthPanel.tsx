@@ -7,6 +7,7 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { orgManagementApi } from '../../utils/api';
+import { successRateToColor } from '../../constants/status';
 
 interface OrgHealth {
   org: {
@@ -125,7 +126,7 @@ export const OrgHealthPanel: React.FC<Props> = ({ orgId }) => {
         </div>
         <div>
           <div className="text-xs text-label-tertiary uppercase">Healing 24h</div>
-          <div className={`text-xl font-semibold ${metrics.healing_rate_24h_pct >= 80 ? 'text-health-healthy' : 'text-amber-500'}`}>
+          <div className={`text-xl font-semibold ${successRateToColor(metrics.healing_rate_24h_pct)}`}>
             {metrics.healing_rate_24h_pct.toFixed(0)}%
           </div>
           <div className="text-xs text-label-tertiary">

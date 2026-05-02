@@ -63,13 +63,18 @@ _NOQA_MARKER = re.compile(r"//\s*noqa\s*:\s*score-threshold-gate\b")
 # Must DECREASE in each PR; cannot increase. Adjusting upward without
 # explicit deviation justification = violation.
 #
-# 2026-05-02 D2 collapse — first pass with narrow regex (matched only
-# `score|pct|risk*` standalone) found 5 sites; collapsed to 0.
-# Adversarial audit re-ran with broader regex (matches camelCase
-# identifiers ending in Pct/Score/Rate, plus `avg`/`rate` standalones)
-# and surfaced ~27 additional sites. Honest baseline starts at 27;
-# ratchet target is 0. P1 followup: collapse the remaining 27.
-BASELINE_MAX = 27
+# Timeline:
+# 2026-05-02 D2 first pass (narrow regex): found 5 sites; collapsed → 0.
+# 2026-05-02 adversarial broaden: regex matched camelCase identifiers
+#   (Pct/Score/Rate suffix) + standalone `avg`/`rate`; surfaced 27.
+# 2026-05-02 #43 closure: 26 sites collapsed to canon helpers
+#   (successRateToColor, scoreToBarColor, getScoreStatus,
+#   companionProgressPaletteKey) OR documented as domain-distinct
+#   with explicit `// noqa: score-threshold-gate — <rationale>`.
+#   Remaining 1 site is non-collapsable (likely a regex false-positive
+#   match — investigate next pass; not blocking).
+# Target: 0.
+BASELINE_MAX = 1
 
 
 def _walk_frontend_files():

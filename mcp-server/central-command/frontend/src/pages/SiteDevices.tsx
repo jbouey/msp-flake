@@ -7,6 +7,7 @@ import { useSiteDevices, useSiteDeviceSummary } from '../hooks';
 import type { DiscoveredDevice, SiteDeviceSummary as DeviceSummaryType } from '../utils/api';
 import { CHECK_TYPE_LABELS } from '../types';
 import { formatTimeAgo } from '../constants';
+import { successRateToColor } from '../constants/status';
 
 const formatRelativeTime = formatTimeAgo;
 
@@ -50,8 +51,8 @@ const SummaryCard: React.FC<{ summary: DeviceSummaryType }> = ({ summary }) => {
   const managed = compliant + failing;
   const unknown = summary.by_compliance?.unknown ?? 0;
   const managedRate = managed > 0 ? Math.round(compliant / managed * 100) : 0;
-  const managedRateColor = managedRate >= 80 ? 'text-health-healthy' :
-                           managedRate >= 50 ? 'text-health-warning' : 'text-health-critical';
+  // #43 closure 2026-05-02: canon helper.
+  const managedRateColor = successRateToColor(managedRate);
 
   return (
     <GlassCard className="p-6 mb-6">

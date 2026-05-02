@@ -42,7 +42,11 @@ export const CoverageGapPanel: React.FC<CoverageGapPanelProps> = ({
         </div>
         <div className="text-right">
           <p className={`text-2xl font-bold tabular-nums ${
-            coveredPct >= 80 ? 'text-health-healthy' : coveredPct >= 60 ? 'text-health-warning' : 'text-health-critical'
+            // L1-rule-coverage thresholds (80/60) intentionally distinct
+            // from compliance score (90/70/50) and aggregate success
+            // rate (80/50). 60% of check-types covered is "warning"
+            // territory — covered.length/total is a different KPI.
+            coveredPct >= 80 ? 'text-health-healthy' : coveredPct >= 60 ? 'text-health-warning' : 'text-health-critical'  // noqa: score-threshold-gate — L1-coverage domain (80/60)
           }`}>
             {coveredPct}%
           </p>
@@ -54,7 +58,7 @@ export const CoverageGapPanel: React.FC<CoverageGapPanelProps> = ({
       <div className="w-full h-2 bg-separator-light rounded-full mb-4 overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${
-            coveredPct >= 80 ? 'bg-health-healthy' : coveredPct >= 60 ? 'bg-health-warning' : 'bg-health-critical'
+            coveredPct >= 80 ? 'bg-health-healthy' : coveredPct >= 60 ? 'bg-health-warning' : 'bg-health-critical'  // noqa: score-threshold-gate — L1-coverage domain (80/60)
           }`}
           style={{ width: `${coveredPct}%` }}
         />

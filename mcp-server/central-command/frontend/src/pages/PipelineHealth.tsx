@@ -1,7 +1,7 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { GlassCard, StatCard, Spinner } from '../components/shared';
-import { formatTimeAgo } from '../constants/status';
+import { formatTimeAgo, successRateToColor } from '../constants/status';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -113,11 +113,8 @@ function groupTelemetry(entries: TelemetryEntry[]) {
     .sort((a, b) => b.attempts - a.attempts);
 }
 
-function rateColor(rate: number): string {
-  if (rate >= 80) return 'text-health-healthy';
-  if (rate >= 50) return 'text-health-warning';
-  return 'text-health-critical';
-}
+// #43 closure 2026-05-02: delegated to canon helper.
+const rateColor = successRateToColor;
 
 // ---------------------------------------------------------------------------
 // Badge components
@@ -309,9 +306,12 @@ export const PipelineHealth: React.FC = () => {
           icon={<HeartPulseIcon className="w-[18px] h-[18px] text-health-healthy" />}
           color="#14A89E"
           trend={healingRate !== null ? {
-            direction: healingRate >= 80 ? 'up' : healingRate >= 50 ? 'flat' : 'down',
+            // 80/50 thresholds match successRateToColor canon — these
+            // map to trend-direction tokens, not color. Distinct
+            // abstraction (direction vs color) so no helper.
+            direction: healingRate >= 80 ? 'up' : healingRate >= 50 ? 'flat' : 'down',  // noqa: score-threshold-gate — trend direction not color
             value: `${healingData?.totals.succeeded ?? 0}/${healingData?.totals.total ?? 0}`,
-            positive: healingRate >= 80 ? true : healingRate >= 50 ? undefined : false,
+            positive: healingRate >= 80 ? true : healingRate >= 50 ? undefined : false,  // noqa: score-threshold-gate — trend polarity not color
           } : undefined}
         />
         <StatCard
