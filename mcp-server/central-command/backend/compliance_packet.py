@@ -216,8 +216,39 @@ class CompliancePacket:
         """Generate compliance packet from real evidence data.
 
         Returns dict with packet data and file paths.
+
+        Followup #42 closure 2026-05-02: per-call statement_timeout
+        override. The mcp_app role has a 30s statement_timeout (good
+        default for normal CRUD). Packet generation runs ~10 sequential
+        analytical queries — for sites with thousands of bundles
+        (e.g. 962 April bundles on physical-appliance-pilot-1aea78),
+        the SUM exceeds the 30s budget and the auto-gen loop fails
+        with QueryCanceledError, triggering compliance_packets_stalled
+        sev1.
+
+        SET LOCAL is transaction-scoped — the override reverts at
+        transaction commit, so it doesn't leak to other connections
+        through PgBouncer's transaction pool. 120s is generous; sites
+        with 10k+ bundles still complete.
+
+        Adversarial-round honest scope: this masks the underlying
+        per-query optimization opportunity. Followup ticket should
+        EXPLAIN ANALYZE each individual query and add indexes / rewrite
+        as needed; this fix is the immediate stop-bleeding patch.
         """
         logger.info(f"Generating compliance packet: {self.packet_id}")
+
+        try:
+            await self.db.execute(text("SET LOCAL statement_timeout = '120s'"))
+        except Exception as e:
+            # Best-effort. If the SET fails (eg. autocommit mode), we
+            # still attempt packet generation — original 30s timeout
+            # still applies. Log so substrate notices if the override
+            # silently no-ops in the future.
+            logger.warning(
+                "compliance_packet_statement_timeout_set_failed",
+                extra={"error": str(e), "packet_id": self.packet_id},
+            )
 
         # Get site name
         site_name = await self._get_site_name()

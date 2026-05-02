@@ -1120,6 +1120,23 @@ export const organizationsApi = {
       method: 'DELETE',
     }),
 
+  // #65 closure 2026-05-02: deprovision/reprovision admin actions.
+  // Backend endpoints exist (org_management.py:202, :286). Pre-fix
+  // they were CLI-only. Marks org as 'deprovisioned' (data retained
+  // for HIPAA §164.316(b)(2)(i) 6-yr retention; portal access blocked,
+  // billing paused).
+  deprovisionOrganization: (orgId: string, reason: string) =>
+    fetchApi<{ status: string; id: string }>(`/organizations/${orgId}/deprovision`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  reprovisionOrganization: (orgId: string, reason: string) =>
+    fetchApi<{ status: string; id: string }>(`/organizations/${orgId}/reprovision`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
   getCredentials: (orgId: string) =>
     fetchSitesApi<{ credentials: OrgCredential[]; count: number }>(`/organizations/${orgId}/credentials`),
 

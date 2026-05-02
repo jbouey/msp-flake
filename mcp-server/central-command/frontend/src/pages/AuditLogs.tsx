@@ -42,6 +42,14 @@ export const AuditLogs: React.FC = () => {
   const [filterAction, setFilterAction] = useState<string>('all');
   const [filterUser, setFilterUser] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  // #69 closure 2026-05-02: forensic-investigation filters.
+  // IP filter (typed substring on log.ip) + date range (from/to ISO).
+  // Pre-fix: only action + user + free-text search. Forensic
+  // investigation of "who hit endpoint X from IP Y on date Z" required
+  // typing search keywords + manual eyeballing.
+  const [filterIp, setFilterIp] = useState<string>('');
+  const [filterDateFrom, setFilterDateFrom] = useState<string>('');
+  const [filterDateTo, setFilterDateTo] = useState<string>('');
 
   // Fetch audit logs on mount
   useEffect(() => {
@@ -60,7 +68,16 @@ export const AuditLogs: React.FC = () => {
       searchQuery === '' ||
       log.target.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (log.details?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
-    return matchesAction && matchesUser && matchesSearch;
+    const matchesIp =
+      filterIp === '' ||
+      (log.ip?.toLowerCase().includes(filterIp.toLowerCase()) ?? false);
+    // Date range — inclusive on both bounds. Empty = unbounded.
+    const logTime = new Date(log.timestamp).getTime();
+    const fromTime = filterDateFrom ? new Date(filterDateFrom).getTime() : -Infinity;
+    const toTime = filterDateTo ? new Date(filterDateTo + 'T23:59:59').getTime() : Infinity;
+    const matchesDate =
+      Number.isFinite(logTime) && logTime >= fromTime && logTime <= toTime;
+    return matchesAction && matchesUser && matchesSearch && matchesIp && matchesDate;
   });
 
   // Stats
@@ -185,6 +202,42 @@ export const AuditLogs: React.FC = () => {
             </option>
           ))}
         </select>
+
+        {/* IP filter (#69 closure 2026-05-02) — forensic substring match */}
+        <input
+          type="text"
+          placeholder="Filter by IP (substring)..."
+          value={filterIp}
+          onChange={(e) => setFilterIp(e.target.value)}
+          className="px-4 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent-primary w-48"
+        />
+
+        {/* Date range (#69 closure 2026-05-02) */}
+        <div className="flex items-center gap-1 text-xs text-label-tertiary">
+          <span>From</span>
+          <input
+            type="date"
+            value={filterDateFrom}
+            onChange={(e) => setFilterDateFrom(e.target.value)}
+            className="px-2 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
+          />
+          <span>To</span>
+          <input
+            type="date"
+            value={filterDateTo}
+            onChange={(e) => setFilterDateTo(e.target.value)}
+            className="px-2 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary"
+          />
+        </div>
+
+        {(filterIp || filterDateFrom || filterDateTo) && (
+          <button
+            onClick={() => { setFilterIp(''); setFilterDateFrom(''); setFilterDateTo(''); }}
+            className="px-3 py-2 text-xs text-label-tertiary hover:text-label-primary"
+          >
+            Clear
+          </button>
+        )}
       </div>
 
       {/* Logs Table */}

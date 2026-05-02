@@ -36,11 +36,23 @@ export const Runbooks: React.FC = () => {
       filterSource === 'all' ||
       (filterSource === 'learned' && isLearnedRunbook(rb)) ||
       (filterSource === 'builtin' && !isLearnedRunbook(rb));
+    // #62 closure 2026-05-02: extended from name/id/hipaa_controls
+    // to also include description. Operators paste incident summary
+    // keywords into search; description match is the natural path.
+    // Whitespace-tokenized AND-match: every search token must match
+    // SOMETHING (any field). Substring within field, case-insensitive.
+    const tokens = searchQuery
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
     const matchesSearch =
-      searchQuery === '' ||
-      rb.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      rb.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      rb.hipaa_controls.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
+      tokens.length === 0 ||
+      tokens.every((tok) =>
+        rb.name.toLowerCase().includes(tok) ||
+        rb.id.toLowerCase().includes(tok) ||
+        rb.description.toLowerCase().includes(tok) ||
+        rb.hipaa_controls.some((c) => c.toLowerCase().includes(tok))
+      );
     return matchesLevel && matchesSource && matchesSearch;
   });
 
@@ -117,7 +129,7 @@ export const Runbooks: React.FC = () => {
           </svg>
           <input
             type="text"
-            placeholder="Search runbooks, HIPAA controls..."
+            placeholder="Search runbooks: name, ID, description, HIPAA controls (multi-word AND)..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-fill-secondary border border-separator-light rounded-ios-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent"

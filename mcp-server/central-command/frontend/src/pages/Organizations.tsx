@@ -21,7 +21,13 @@ const OrgRow: React.FC<{
   onClick: () => void;
   onEdit: () => void;
   onDelete: () => void;
-}> = ({ org, onClick, onEdit, onDelete }) => {
+  onDeprovision: () => void;
+  onReprovision: () => void;
+}> = ({ org, onClick, onEdit, onDelete, onDeprovision, onReprovision }) => {
+  // #65 closure 2026-05-02: deprovision/reprovision admin button.
+  // Toggles based on current org.status. Distinct icon (pause/resume)
+  // from delete-trash icon to prevent click confusion.
+  const isDeprovisioned = org.status === 'deprovisioned' || org.status === 'inactive';
   return (
     <tr
       onClick={onClick}
@@ -40,6 +46,17 @@ const OrgRow: React.FC<{
               title="Edit"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); isDeprovisioned ? onReprovision() : onDeprovision(); }}
+              className={`p-1.5 rounded-ios-sm text-label-tertiary ${isDeprovisioned ? 'hover:text-health-healthy hover:bg-health-healthy/10' : 'hover:text-amber-600 hover:bg-amber-100'}`}
+              title={isDeprovisioned ? 'Reprovision (re-activate)' : 'Deprovision (pause; data retained)'}
+            >
+              {isDeprovisioned ? (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              )}
             </button>
             <button
               onClick={e => { e.stopPropagation(); onDelete(); }}
@@ -201,6 +218,9 @@ export const Organizations: React.FC = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [editOrg, setEditOrg] = useState<Organization | null>(null);
   const [deleteOrg, setDeleteOrg] = useState<Organization | null>(null);
+  // #65 closure 2026-05-02: deprovision/reprovision modal state
+  const [deprovOrg, setDeprovOrg] = useState<{org: Organization; mode: 'deprovision' | 'reprovision'} | null>(null);
+  const [deprovReason, setDeprovReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState('');
 
@@ -419,12 +439,84 @@ export const Organizations: React.FC = () => {
                   onClick={() => navigate(`/organizations/${org.id}`)}
                   onEdit={() => setEditOrg(org)}
                   onDelete={() => setDeleteOrg(org)}
+                  onDeprovision={() => { setDeprovOrg({org, mode: 'deprovision'}); setDeprovReason(''); setActionError(''); }}
+                  onReprovision={() => { setDeprovOrg({org, mode: 'reprovision'}); setDeprovReason(''); setActionError(''); }}
                 />
               ))}
             </tbody>
           </table>
         )}
       </GlassCard>
+
+      {/* #65 deprovision/reprovision modal */}
+      {deprovOrg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-fill-primary rounded-ios-lg shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-label-primary">
+              {deprovOrg.mode === 'deprovision' ? 'Deprovision' : 'Reprovision'} {deprovOrg.org.name}
+            </h2>
+            <p className="text-sm text-label-secondary mt-2">
+              {deprovOrg.mode === 'deprovision'
+                ? 'Mark organization as inactive. Portal access blocked. Billing paused. ALL DATA RETAINED for HIPAA §164.316(b)(2)(i) 6-year retention. Reversible via Reprovision.'
+                : 'Re-activate this organization. Portal access restored, billing resumes. Data was retained throughout deprovisioned state.'}
+            </p>
+            <label className="block mt-4 text-xs font-medium text-label-secondary">
+              Reason (audit-logged, ≥10 chars):
+            </label>
+            <textarea
+              value={deprovReason}
+              onChange={(e) => setDeprovReason(e.target.value)}
+              className="w-full mt-1 px-3 py-2 text-sm bg-fill-secondary border border-separator-light rounded-ios-md focus:outline-none focus:ring-2 focus:ring-accent-primary"
+              rows={3}
+              placeholder="e.g. Customer canceled per email 2026-05-02; retention required..."
+            />
+            {actionError && (
+              <div className="mt-3 p-2 rounded-ios bg-health-critical/10 text-health-critical text-sm">{actionError}</div>
+            )}
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={() => { setDeprovOrg(null); setActionError(''); }}
+                disabled={actionLoading}
+                className="flex-1 px-4 py-2 text-sm rounded-ios bg-fill-secondary text-label-primary hover:bg-fill-tertiary"
+              >Cancel</button>
+              <button
+                onClick={async () => {
+                  if (deprovReason.trim().length < 10) {
+                    setActionError('Reason must be at least 10 characters (audit-log requirement)');
+                    return;
+                  }
+                  setActionLoading(true);
+                  setActionError('');
+                  try {
+                    if (deprovOrg.mode === 'deprovision') {
+                      await organizationsApi.deprovisionOrganization(deprovOrg.org.id, deprovReason);
+                    } else {
+                      await organizationsApi.reprovisionOrganization(deprovOrg.org.id, deprovReason);
+                    }
+                    setDeprovOrg(null);
+                    setDeprovReason('');
+                    queryClient.invalidateQueries({ queryKey: ['organizations'] });
+                  } catch (err) {
+                    setActionError(err instanceof Error ? err.message : 'Action failed');
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
+                disabled={actionLoading || deprovReason.trim().length < 10}
+                className={`flex-1 px-4 py-2 text-sm rounded-ios text-white disabled:opacity-50 ${
+                  deprovOrg.mode === 'deprovision'
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-health-healthy hover:bg-health-healthy/90'
+                }`}
+              >
+                {actionLoading
+                  ? 'Working...'
+                  : deprovOrg.mode === 'deprovision' ? 'Confirm Deprovision' : 'Confirm Reprovision'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
