@@ -1,49 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
+import { useKillSwitchState } from '../../hooks/useKillSwitchState';
 
 /**
  * KillSwitchBanner — global cross-page banner for fleet-wide healing
  * pause state.
  *
  * #75 closure 2026-05-02 (sub-followup of #64 P0 kill-switch).
+ * #76 closure 2026-05-02: switched from local useState/setInterval
+ * to shared useKillSwitchState() React Query hook. Banner + panel
+ * on AdminSubstrateHealth now share the same poller; no more
+ * duplicate fetches.
  *
- * Pre-fix: kill-switch state was visible only on
- * AdminSubstrateHealth.tsx. Operator on Sites/Incidents/Fleet during
- * an incident wouldn't see the banner — could believe healing was
- * active when it was actually paused. Steve adversarial-round catch.
- *
- * Now: rendered above the route content in App.tsx so EVERY admin
+ * Rendered above the route content in App.tsx so EVERY admin
  * page shows the banner when paused. Read-only (action button +
  * modal stay on AdminSubstrateHealth where operator goes to act).
- *
- * Polls /api/admin/healing/global-state every 60s. Silent on
- * fetch failure (banner is non-critical UX; fail-safe = render
- * nothing rather than wrong-state).
  */
 export const KillSwitchBanner: React.FC = () => {
-  const [state, setState] = useState<{
-    disabled: boolean;
-    actor?: string;
-    reason?: string;
-    set_at?: string;
-  } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const probe = async () => {
-      try {
-        const res = await fetch('/api/admin/healing/global-state', { credentials: 'include' });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) setState(data);
-      } catch {
-        // Silent — non-critical UX
-      }
-    };
-    probe();
-    const interval = setInterval(probe, 60 * 1000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  const { data: state } = useKillSwitchState();
 
   if (!state || !state.disabled) return null;
 

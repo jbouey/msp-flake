@@ -11,7 +11,9 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner } from '../components/shared';
+import { useKillSwitchState } from '../hooks/useKillSwitchState';
 import RunbookDrawer from '../components/substrate/RunbookDrawer';
 import CopyCliButton from '../components/substrate/CopyCliButton';
 import ActionPreviewModal from '../components/substrate/ActionPreviewModal';
@@ -156,27 +158,24 @@ function relTime(iso: string): string {
  *   - Polls /api/admin/healing/global-state every 30s
  */
 const KillSwitchPanel: React.FC = () => {
-  const [state, setState] = useState<{disabled: boolean; reason?: string; actor?: string; set_at?: string} | null>(null);
+  // #76 closure 2026-05-02: switched from local useState/setInterval
+  // (every 30s) to shared useKillSwitchState() React Query hook.
+  // Banner in app shell + this panel now share one queryKey →
+  // single fetch every 60s. Cache-hit across both consumers.
+  const { data: state } = useKillSwitchState();
+  const queryClient = useQueryClient();
+
   const [modalOpen, setModalOpen] = useState(false);
   const [confirmInput, setConfirmInput] = useState('');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const loadState = async () => {
-    try {
-      const res = await fetch('/api/admin/healing/global-state', { credentials: 'include' });
-      if (res.ok) setState(await res.json());
-    } catch {
-      // Silent — banner non-critical
-    }
-  };
-
-  useEffect(() => {
-    loadState();
-    const interval = setInterval(loadState, 30 * 1000);
-    return () => clearInterval(interval);
-  }, []);
+  // After a pause/resume action, force-refresh the shared cache so
+  // both consumers see the new state immediately rather than waiting
+  // up to 60s for the next poll.
+  const refreshKillSwitchState = () =>
+    queryClient.invalidateQueries({ queryKey: ['admin', 'healing', 'global-state'] });
 
   const expectedPhrase = state?.disabled ? 'ENABLE-FLEET-HEALING' : 'DISABLE-FLEET-HEALING';
   const actionLabel = state?.disabled ? 'Resume fleet healing' : 'Pause fleet healing';
@@ -213,7 +212,8 @@ const KillSwitchPanel: React.FC = () => {
       setModalOpen(false);
       setConfirmInput('');
       setReason('');
-      await loadState();
+      // Force-refresh the shared cache (also wakes the app-shell banner)
+      await refreshKillSwitchState();
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'Unknown error');
     } finally {
