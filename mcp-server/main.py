@@ -2641,6 +2641,64 @@ class HealingPauseRequest(BaseModel):
 _KILL_SWITCH_KEY = "fleet_healing_disabled"
 
 
+@app.get("/api/admin/billing/customers", include_in_schema=True)
+async def admin_billing_customers(
+    user: dict = Depends(require_auth),
+    status_filter: Optional[str] = None,
+):
+    """READ-ONLY admin view of all customer subscriptions.
+
+    #67 closure 2026-05-02 (read-only slice). Adversarial-audit
+    finding: owner-operator had no UI for billing/subscription mgmt;
+    forced to use Stripe dashboard out-of-band (no audit trail in
+    admin_audit_log).
+
+    This endpoint exposes the local `subscriptions` table aggregated
+    by customer. Read-only. Destructive admin actions (refund, cancel
+    customer X) deferred — they require: (a) per-customer access-
+    control review, (b) Ed25519-grade audit chain, (c) Stripe
+    idempotency tokens. Filed as separate followup #73.
+
+    Operator workflow today: list customers in this UI → identify
+    target → click "Open in Stripe dashboard" deep-link to perform
+    destructive action there with Stripe's own audit trail.
+    """
+    from dashboard_api.shared import async_session
+    sql = """
+        SELECT s.stripe_subscription_id, s.stripe_customer_id, s.site_id,
+               s.plan, s.status, s.trial_end, s.current_period_end,
+               s.cancel_at_period_end, s.canceled_at, s.billing_mode,
+               s.partner_id, p.name AS partner_name
+          FROM subscriptions s
+          LEFT JOIN partners p ON p.id = s.partner_id
+         WHERE :status_filter IS NULL OR s.status = :status_filter
+         ORDER BY s.created_at DESC
+         LIMIT 500
+    """
+    async with async_session() as db:
+        rows = (await db.execute(text(sql), {"status_filter": status_filter})).fetchall()
+    out = []
+    for r in rows:
+        out.append({
+            "stripe_subscription_id": r[0],
+            "stripe_customer_id": r[1],
+            "site_id": r[2],
+            "plan": r[3],
+            "status": r[4],
+            "trial_end": r[5].isoformat() if r[5] else None,
+            "current_period_end": r[6].isoformat() if r[6] else None,
+            "cancel_at_period_end": r[7],
+            "canceled_at": r[8].isoformat() if r[8] else None,
+            "billing_mode": r[9],
+            "partner_id": str(r[10]) if r[10] else None,
+            "partner_name": r[11],
+            # Deep-link to Stripe dashboard for destructive ops.
+            # Operator clicks → Stripe shows full sub UI.
+            "stripe_dashboard_url": f"https://dashboard.stripe.com/customers/{r[1]}",
+        })
+    return {"customers": out, "count": len(out)}
+
+
 @app.get("/api/admin/healing/global-state", include_in_schema=True)
 async def admin_healing_global_state(user: dict = Depends(require_auth)):
     """Returns current fleet-wide healing-disabled state.

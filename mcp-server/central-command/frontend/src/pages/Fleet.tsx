@@ -74,11 +74,132 @@ function compareRows(a: ApplianceRollupRow, b: ApplianceRollupRow, col: SortCol,
   return 0;
 }
 
+/**
+ * BulkActionToolbar — appears when ≥1 appliance is checkbox-selected.
+ *
+ * #66 closure 2026-05-02. Adversarial admin-tool review found Fleet
+ * lacked bulk operations; operator forced to one-at-a-time for mass
+ * restart/checkin/scan.
+ *
+ * Adversarial round-table caught:
+ *   Brian: confirmation needed for destructive bulk (restart_agent ×N
+ *     could fleet-shock). Mitigation: explicit modal phrasing.
+ *   Steve: partial-state risk on N=large. Mitigation: progress modal
+ *     showing N done / N failed; operator can re-select failed + retry.
+ *   Coach: bulk = privileged-class action. audit-logged via existing
+ *     fleet_orders chain (each issued order gets its own audit trail).
+ */
+const BulkActionToolbar: React.FC<{
+  selectedIds: Set<string>;
+  onClear: () => void;
+  onRunBulk: (action: 'restart_agent' | 'force_checkin' | 'run_drift') => void;
+  onClose: () => void;
+  inProgress: boolean;
+  progress: {total: number; done: number; failed: number} | null;
+}> = ({ selectedIds, onClear, onRunBulk, onClose, inProgress, progress }) => {
+  const [pendingAction, setPendingAction] = useState<'restart_agent' | 'force_checkin' | 'run_drift' | null>(null);
+  return (
+    <>
+      <div className="rounded-lg border border-blue-500/40 bg-blue-950/30 p-3 flex items-center gap-3 sticky top-0 z-10 backdrop-blur">
+        <div className="flex-1 text-sm text-blue-100">
+          <span className="font-semibold">{selectedIds.size}</span>{' '}
+          appliance{selectedIds.size === 1 ? '' : 's'} selected
+        </div>
+        <button
+          onClick={() => setPendingAction('force_checkin')}
+          disabled={inProgress}
+          className="px-3 py-1.5 text-xs rounded bg-blue-600/80 hover:bg-blue-500 text-white disabled:opacity-50"
+        >Force checkin</button>
+        <button
+          onClick={() => setPendingAction('run_drift')}
+          disabled={inProgress}
+          className="px-3 py-1.5 text-xs rounded bg-blue-600/80 hover:bg-blue-500 text-white disabled:opacity-50"
+        >Run drift scan</button>
+        <button
+          onClick={() => setPendingAction('restart_agent')}
+          disabled={inProgress}
+          className="px-3 py-1.5 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
+        >Restart agent</button>
+        <button
+          onClick={onClear}
+          disabled={inProgress}
+          className="px-3 py-1.5 text-xs rounded text-blue-200 hover:text-white disabled:opacity-50"
+        >Clear</button>
+      </div>
+
+      {pendingAction && !progress && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-slate-900 rounded-xl border border-white/10 p-6 max-w-md w-full">
+            <h3 className="text-white font-semibold">Confirm bulk action</h3>
+            <p className="text-white/70 text-sm mt-2">
+              About to issue <span className="font-mono text-amber-300">{pendingAction}</span>{' '}
+              order to <span className="font-bold">{selectedIds.size}</span> appliance{selectedIds.size === 1 ? '' : 's'}.
+              {pendingAction === 'restart_agent' && (
+                <span className="block mt-2 text-rose-300">
+                  ⚠ Restart will briefly disconnect each agent. If selecting many appliances,
+                  expect concurrent downtime.
+                </span>
+              )}
+            </p>
+            <div className="flex gap-2 mt-4 justify-end">
+              <button
+                onClick={() => setPendingAction(null)}
+                className="px-4 py-2 rounded text-white/70 hover:text-white text-sm"
+              >Cancel</button>
+              <button
+                onClick={() => { onRunBulk(pendingAction); setPendingAction(null); }}
+                className="px-4 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium"
+              >Issue {selectedIds.size} order{selectedIds.size === 1 ? '' : 's'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {progress && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-slate-900 rounded-xl border border-white/10 p-6 max-w-md w-full">
+            <h3 className="text-white font-semibold">Bulk progress</h3>
+            <div className="mt-4 space-y-2">
+              <div className="flex justify-between text-sm text-white/80">
+                <span>Issued</span>
+                <span className="font-mono">{progress.done} / {progress.total}</span>
+              </div>
+              <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 transition-all"
+                  style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }}
+                />
+              </div>
+              {progress.failed > 0 && (
+                <div className="text-xs text-rose-300">{progress.failed} failed</div>
+              )}
+            </div>
+            {progress.done + progress.failed === progress.total && (
+              <button
+                onClick={onClose}
+                className="mt-4 w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm"
+              >Done</button>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+
 const Fleet: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'online' | 'stale' | 'offline'>('all');
   const [filterText, setFilterText] = useState('');
   const [sortCol, setSortCol] = useState<SortCol>('live_status');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  // #66 closure 2026-05-02: bulk-select state. Set of appliance_id
+  // strings. Per-row checkboxes drive this; bulk-action toolbar
+  // appears when size > 0.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<'restart_agent' | 'force_checkin' | 'run_drift' | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{total: number; done: number; failed: number} | null>(null);
 
   const { data, isLoading, error } = useApplianceRollup();
 
@@ -176,6 +297,54 @@ const Fleet: React.FC = () => {
         </div>
       </GlassCard>
 
+      {/* #66 bulk-action toolbar — appears when ≥1 row selected */}
+      {selectedIds.size > 0 && (
+        <BulkActionToolbar
+          selectedIds={selectedIds}
+          onClear={() => setSelectedIds(new Set())}
+          onRunBulk={async (action) => {
+            const ids = Array.from(selectedIds);
+            setBulkAction(action);
+            setBulkProgress({total: ids.length, done: 0, failed: 0});
+            // Fan out N fleet-order POSTs sequentially (sequential, not
+            // parallel — backend rate-limits + we want predictable ordering).
+            // Adversarial-round Steve catch: partial-state risk. Mitigation:
+            // progress modal shows N done / N total; operator can see partial
+            // success and re-run on the remainder.
+            let done = 0;
+            let failed = 0;
+            for (const applianceId of ids) {
+              try {
+                const appliance = filteredSorted.find(a => a.appliance_id === applianceId);
+                if (!appliance) { failed++; continue; }
+                const csrfMatch = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+                const csrf = csrfMatch ? decodeURIComponent(csrfMatch[1]) : '';
+                const res = await fetch(`/api/sites/${appliance.site_id}/fleet/orders`, {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': csrf,
+                  },
+                  body: JSON.stringify({
+                    order_type: action,
+                    target_appliance_id: applianceId,
+                    parameters: { site_id: appliance.site_id, bulk_origin: 'fleet_page' },
+                  }),
+                });
+                if (res.ok) done++; else failed++;
+              } catch {
+                failed++;
+              }
+              setBulkProgress({total: ids.length, done, failed});
+            }
+          }}
+          onClose={() => { setBulkAction(null); setBulkProgress(null); setSelectedIds(new Set()); }}
+          inProgress={bulkAction !== null}
+          progress={bulkProgress}
+        />
+      )}
+
       {/* Fleet table */}
       <GlassCard className="p-0 overflow-hidden">
         {filteredSorted.length === 0 ? (
@@ -186,6 +355,20 @@ const Fleet: React.FC = () => {
           <table className="w-full text-sm">
             <thead className="text-[11px] uppercase tracking-wide text-label-tertiary border-b border-glass-border bg-fill-secondary/40">
               <tr>
+                <th className="py-2 px-3 w-8">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible"
+                    checked={filteredSorted.length > 0 && filteredSorted.every(a => selectedIds.has(a.appliance_id))}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedIds(new Set(filteredSorted.map(a => a.appliance_id)));
+                      } else {
+                        setSelectedIds(new Set());
+                      }
+                    }}
+                  />
+                </th>
                 <ThSort col="display_name" sortCol={sortCol} sortDir={sortDir} onClick={toggleSort}>Appliance</ThSort>
                 <ThSort col="site_id" sortCol={sortCol} sortDir={sortDir} onClick={toggleSort}>Site</ThSort>
                 <ThSort col="live_status" sortCol={sortCol} sortDir={sortDir} onClick={toggleSort}>Status</ThSort>
@@ -197,7 +380,20 @@ const Fleet: React.FC = () => {
               {filteredSorted.map((a) => {
                 const hasDrift = Math.abs(a.liveness_drift_seconds || 0) > 60;
                 return (
-                  <tr key={a.appliance_id} className="hover:bg-fill-secondary/20">
+                  <tr key={a.appliance_id} className={`hover:bg-fill-secondary/20 ${selectedIds.has(a.appliance_id) ? 'bg-blue-500/10' : ''}`}>
+                    <td className="py-2 px-3 w-8">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${a.display_name || a.hostname || a.appliance_id}`}
+                        checked={selectedIds.has(a.appliance_id)}
+                        onChange={(e) => {
+                          const next = new Set(selectedIds);
+                          if (e.target.checked) next.add(a.appliance_id);
+                          else next.delete(a.appliance_id);
+                          setSelectedIds(next);
+                        }}
+                      />
+                    </td>
                     <td className="py-2 px-3 text-label-primary">
                       <div className="flex items-center gap-2">
                         <div className="font-medium">

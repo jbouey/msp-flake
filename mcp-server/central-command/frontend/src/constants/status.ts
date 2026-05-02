@@ -219,7 +219,12 @@ export function getStatusConfig(status: string): StatusConfig {
 
 /**
  * Compliance score -> status config.
- * Consistent thresholds used everywhere.
+ * Consistent thresholds used everywhere (90/70/50 canon).
+ *
+ * For FLEET-HEALTH metrics (uptime, connectivity %), use
+ * `getHealthStatus()` from `tokens/style-tokens.ts` (80/40 canon).
+ * Different domain, different thresholds — both are canonical for
+ * their domain. #50 closure 2026-05-02 documented the boundary.
  */
 export function getScoreStatus(score: number | null): StatusConfig {
   if (score === null) {

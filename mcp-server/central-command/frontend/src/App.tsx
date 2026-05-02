@@ -52,6 +52,7 @@ const IntegrationResources = lazy(() => import('./pages/IntegrationResources'));
 const SetPassword = lazy(() => import('./pages/SetPassword'));
 const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
 const AdminOAuthSettings = lazy(() => import('./pages/AdminOAuthSettings'));
+const AdminBilling = lazy(() => import('./pages/AdminBilling'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const RecoveryLanding = lazy(() => import('./pages/RecoveryLanding'));
 const PublicChangelog = lazy(() => import('./pages/PublicChangelog'));
@@ -402,6 +403,7 @@ const AppLayout: React.FC = () => {
               <Route path="/logs" element={<LogExplorer />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/settings/oauth" element={<AdminOAuthSettings />} />
+              <Route path="/admin/billing" element={<AdminBilling />} />
               <Route path="/fleet-updates" element={<FleetUpdates />} />
               <Route path="/provisions" element={<Provisions />} />
               <Route path="/chaos-lab" element={<ChaosLab />} />

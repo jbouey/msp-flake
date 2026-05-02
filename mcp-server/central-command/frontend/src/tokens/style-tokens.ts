@@ -157,6 +157,25 @@ export const typography = {
 // HEALTH THRESHOLDS
 // =============================================================================
 
+/**
+ * Fleet-health thresholds — DOMAIN-DISTINCT from compliance score.
+ *
+ * These 80/40 thresholds are for FLEET HEALTH metrics (uptime ratio,
+ * agent connectivity %, gauge dashboards) — NOT compliance score.
+ *
+ * Compliance score uses 90/70/50 thresholds via
+ * `getScoreStatus()` in constants/status.ts. The two domains are
+ * semantically distinct (fleet uptime tolerance is looser than
+ * compliance posture tolerance) so different thresholds are correct.
+ *
+ * #50 closure 2026-05-02: documented + linked. CI gate for inline
+ * threshold drift (`test_no_inline_score_thresholds`) treats this
+ * file as canon-exempt for the same-canon reason.
+ *
+ * If a NEW domain needs threshold mapping, add a NEW helper here or
+ * in constants/status.ts with a docstring explaining the domain. Do
+ * NOT inline in component files.
+ */
 export const HEALTH_THRESHOLDS = {
   critical: { max: 39, color: colors.health.critical, label: 'Critical' },
   warning: { min: 40, max: 79, color: colors.health.warning, label: 'Warning' },
@@ -165,6 +184,19 @@ export const HEALTH_THRESHOLDS = {
 
 export type HealthStatus = 'critical' | 'warning' | 'healthy';
 
+/**
+ * Fleet-health status from a 0-100 score (uptime/connectivity domain).
+ *
+ * NOT for compliance score — use `getScoreStatus()` from
+ * `constants/status.ts` (90/70/50) for compliance.
+ *
+ * Today's call sites:
+ *   - components/fleet/HealthGauge.tsx (gauge dashboard)
+ *   - components/command-center/FleetHealthMatrix.tsx (matrix viz)
+ *
+ * Both are operational-health metrics where 80% uptime is "healthy"
+ * and 40% is "critical." Compliance posture uses tighter thresholds.
+ */
 export function getHealthStatus(score: number): HealthStatus {
   if (score < 40) return 'critical';
   if (score < 80) return 'warning';
