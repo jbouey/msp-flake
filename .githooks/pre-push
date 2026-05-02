@@ -120,6 +120,10 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_privileged_order_four_list_lockstep.py"
     "tests/test_sql_filter_attaches_to_aggregate.py"
     "tests/test_sql_on_conflict_uniqueness.py"
+    # AI-independence audit dim 8 (2026-05-02). Pins the cryptographic-
+    # chain LLM-free property as a ratchet. Any future PR adding LLM
+    # imports to a chain-component file fails CI.
+    "tests/test_compliance_chain_llm_free.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."

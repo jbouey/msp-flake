@@ -66,6 +66,7 @@ _TIER1_PATTERNS = [
     re.compile(r"^test_go_agent_terminal_status_lockstep"),
     re.compile(r"^test_pre_push_ci_parity"),  # this very file
     re.compile(r"^test_compliance_status_not_read"),
+    re.compile(r"^test_compliance_chain_llm_free"),  # AI-audit dim 8
 ]
 
 # Tests that match a TIER-1 pattern but are dep-heavy and exempted
