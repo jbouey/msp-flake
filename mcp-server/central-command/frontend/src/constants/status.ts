@@ -320,6 +320,30 @@ export function riskScoreToColor(score: number): string {
   return 'text-green-600';
 }
 
+
+/**
+ * Companion chat-progress percentage → palette key for the
+ * `companionColors` palette. DISTINCT DOMAIN from compliance score
+ * (chat-task completion, not security posture) so it uses a separate
+ * palette and 70/40 thresholds. This helper exists so call sites
+ * don't inline-fork the threshold logic — same canon-helper philosophy
+ * as scoreToBarColor + riskScoreToColor.
+ *
+ * Returns the palette KEY (not the color value) so call sites can
+ * resolve via their imported `companionColors` palette and the helper
+ * stays decoupled from the palette object's import path.
+ *
+ * Followup #51 closure 2026-05-02. Replaces 2 noqa opt-outs in
+ * CompanionStats.tsx with a single source-of-truth helper.
+ */
+export function companionProgressPaletteKey(
+  pct: number,
+): 'complete' | 'amber' | 'inProgress' {
+  if (pct >= 70) return 'complete';
+  if (pct >= 40) return 'amber';
+  return 'inProgress';
+}
+
 // =============================================================================
 // FORMATTERS
 // =============================================================================
