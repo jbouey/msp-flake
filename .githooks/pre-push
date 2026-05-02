@@ -83,6 +83,43 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_client_telemetry_ingest.py"
     "tests/test_ci_prod_version_lockstep.py"
     "tests/test_lifespan_imports_resolve.py"
+    # Added 2026-05-02 followup #46: pre-push CI parity. The 675fa1a6
+    # CI failure was test_sql_columns_match_schema not seeing mig 271's
+    # new column — pre-push didn't include it. Grandfathering critical
+    # source-level governance gates so pre-push mirrors CI for this
+    # class. Verified each runs without backend deps (asyncpg, pynacl,
+    # pydantic v2). Add to this list when shipping a new source-level
+    # CI gate; do NOT add *_pg.py tests (DB-gated, would fail to collect).
+    "tests/test_sql_columns_match_schema.py"
+    "tests/test_check_constraint_fits_column.py"
+    "tests/test_no_silent_write_warnings.py"
+    "tests/test_test_filename_uniqueness.py"
+    "tests/test_no_unfiltered_site_appliances_select.py"
+    "tests/test_compliance_status_not_read.py"
+    "tests/test_no_sql_function_interval_concat.py"
+    "tests/test_canonical_not_used_for_compliance_bundles.py"
+    "tests/test_no_direct_site_id_update.py"
+    "tests/test_admin_transaction_for_multistatement.py"
+    "tests/test_frontend_mutation_csrf.py"
+    "tests/test_no_same_origin_credentials.py"
+    "tests/test_no_stdlib_logger_kwargs.py"
+    "tests/test_loop_records_heartbeat.py"
+    "tests/test_per_control_lockstep.py"
+    "tests/test_no_inline_score_thresholds.py"
+    "tests/test_expected_interval_calibration.py"
+    "tests/test_go_agent_terminal_status_lockstep.py"
+    # 8 additional TIER-1 gates surfaced by test_pre_push_ci_parity gate
+    # (2026-05-02 followup #46). All verified to collect without
+    # backend deps. The pre_push_ci_parity test enforces this list
+    # stays in sync with new TIER-1 tests by naming convention.
+    "tests/test_admin_audit_log_column_lockstep.py"
+    "tests/test_canonical_site_id_function.py"
+    "tests/test_iso_ca.py"
+    "tests/test_no_site_wide_update.py"
+    "tests/test_pre_push_ci_parity.py"
+    "tests/test_privileged_order_four_list_lockstep.py"
+    "tests/test_sql_filter_attaches_to_aggregate.py"
+    "tests/test_sql_on_conflict_uniqueness.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
