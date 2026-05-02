@@ -76,8 +76,9 @@ _LIFESPAN_INLINE_LOOPS = {
     "health_monitor",
     "substrate_assertions",
     "go_agent_status_decay",
-    # Have dead duplicates in background_tasks.py; wired versions
-    # are inline in main.py. See followup dead-loop-cleanup 2026-05-08.
+    # ots_upgrade + fleet_order_expiry are inline in main.py's lifespan
+    # (the dead duplicates in background_tasks.py were removed
+    # 2026-05-02 followup #44). Nested-closure parsing limitations.
     "ots_upgrade",
     "fleet_order_expiry",
 }

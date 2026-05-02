@@ -151,3 +151,79 @@ def test_writer_returns_cover_check_domain():
         f"reserved value populated by a different pathway), document "
         f"the path here and add to an exemption set."
     )
+
+
+# ── Cross-location PASSING/FAILING lockstep (D1 followup #48) ──────
+
+def _extract_taxonomy_sets() -> list[tuple[int, set[str], set[str]]]:
+    """Find all (PASSING, FAILING) constant pairs in evidence_chain.py.
+    Two locations today (both within evidence_chain.py):
+      - line ~1137: lowercase `passing` / `failing` in
+        `derive_check_result` codepath
+      - line ~1597: uppercase `PASSING` / `FAILING` in
+        `map_evidence_to_frameworks` per-control aggregation
+    Both MUST agree byte-for-byte; otherwise a bundle's bundle-level
+    `check_result` derivation taxonomy could differ from the per-control
+    aggregation taxonomy → silent score regression class.
+
+    Returns list of (line_number, passing_set, failing_set).
+    """
+    text = _EVIDENCE_CHAIN.read_text()
+    pairs: list[tuple[int, set[str], set[str]]] = []
+
+    # Iterate line-by-line looking for `(?i)passing\s*=\s*\{...\}` near
+    # a `(?i)failing\s*=\s*\{...\}` (within 3 lines).
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m_p = re.search(
+            r"(?i)\b(passing)\s*=\s*\{([^}]+)\}",
+            line,
+        )
+        if not m_p:
+            continue
+        # Look up to 3 lines after for FAILING
+        for j in range(i + 1, min(i + 4, len(lines))):
+            m_f = re.search(
+                r"(?i)\b(failing)\s*=\s*\{([^}]+)\}",
+                lines[j],
+            )
+            if m_f:
+                passing_set = set(re.findall(r"'([^']+)'", m_p.group(2)))
+                failing_set = set(re.findall(r"'([^']+)'", m_f.group(2)))
+                pairs.append((i + 1, passing_set, failing_set))
+                break
+    return pairs
+
+
+def test_all_passing_failing_taxonomy_sites_agree():
+    """Cross-location: every PASSING/FAILING constant pair in
+    evidence_chain.py must use IDENTICAL value sets. D1 followup #48.
+
+    Today there are 2 sites (line ~1137 + line ~1597). If a future
+    refactor splits the taxonomy across files, extend this test to
+    walk a documented file list rather than just evidence_chain.py.
+    """
+    pairs = _extract_taxonomy_sets()
+    assert len(pairs) >= 2, (
+        f"Expected ≥2 PASSING/FAILING pairs in evidence_chain.py for "
+        f"this gate to be meaningful; found {len(pairs)}. Either the "
+        f"writer was refactored to a single source-of-truth (which is "
+        f"GREAT — delete this test) or the gate's locator regex needs "
+        f"updating."
+    )
+
+    canonical_passing = pairs[0][1]
+    canonical_failing = pairs[0][2]
+    for line_num, passing, failing in pairs[1:]:
+        assert passing == canonical_passing, (
+            f"PASSING taxonomy at evidence_chain.py:{line_num} "
+            f"({sorted(passing)}) differs from canonical at "
+            f"evidence_chain.py:{pairs[0][0]} ({sorted(canonical_passing)}). "
+            f"Both writer codepaths must use identical taxonomy or "
+            f"bundle-level vs per-control scoring silently diverge."
+        )
+        assert failing == canonical_failing, (
+            f"FAILING taxonomy at evidence_chain.py:{line_num} "
+            f"({sorted(failing)}) differs from canonical at "
+            f"evidence_chain.py:{pairs[0][0]} ({sorted(canonical_failing)})."
+        )

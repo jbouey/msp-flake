@@ -32,197 +32,15 @@ def _hb(name: str) -> None:
         pass
 
 
-async def ots_repair_block_heights():
-    """One-time repair: re-extract bitcoin_block from stored proof data."""
-    try:
-        import base64
-        from dashboard_api.evidence_chain import BTC_ATTESTATION_TAG, extract_btc_block_height
-        async with async_session() as db:
-            result = await db.execute(text("""
-                SELECT bundle_id, proof_data, bitcoin_block
-                FROM ots_proofs
-                WHERE status = 'anchored'
-                  AND bitcoin_block IS NOT NULL
-                  AND (bitcoin_block <= 10 OR bitcoin_block > 100000000)
-                LIMIT 100000
-            """))
-            bad_proofs = result.fetchall()
-            if not bad_proofs:
-                logger.info("OTS block height repair: no proofs need fixing")
-                return
-
-            fixed = 0
-            for proof in bad_proofs:
-                try:
-                    proof_bytes = base64.b64decode(proof.proof_data)
-                    tag_pos = proof_bytes.find(BTC_ATTESTATION_TAG)
-                    if tag_pos >= 0:
-                        correct_height = extract_btc_block_height(proof_bytes, tag_pos)
-                        if correct_height and correct_height != proof.bitcoin_block:
-                            await db.execute(text("""
-                                UPDATE ots_proofs
-                                SET bitcoin_block = :height
-                                WHERE bundle_id = :bid
-                            """), {"height": correct_height, "bid": proof.bundle_id})
-                            fixed += 1
-                except Exception:
-                    continue
-
-            await db.commit()
-            logger.info(f"OTS block height repair: fixed {fixed}/{len(bad_proofs)} proofs")
-    except Exception as e:
-        logger.exception(f"OTS block height repair failed: {e}")
-
-
-async def ots_upgrade_loop():
-    """Periodically upgrade pending OTS proofs (every 15 minutes)."""
-    await asyncio.sleep(30)
-
-    await ots_repair_block_heights()
-
-    while True:
-        try:
-            from dashboard_api.evidence_chain import upgrade_pending_proofs
-            async with async_session() as db:
-                result = await upgrade_pending_proofs(db, limit=500)
-                if result.get("upgraded", 0) > 0 or result.get("checked", 0) > 0:
-                    logger.info("OTS upgrade cycle", **result)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.exception(f"OTS upgrade cycle failed: {e}")
-        await asyncio.sleep(900)
-
-
-async def ots_resubmit_expired_loop():
-    """One-time background drain of expired OTS proofs."""
-    await asyncio.sleep(90)
-
-    total_resubmitted = 0
-    total_failed = 0
-    consecutive_zero = 0
-
-    while True:
-        try:
-            from dashboard_api.evidence_chain import submit_hash_to_ots
-            async with async_session() as db:
-                result = await db.execute(text("""
-                    SELECT bundle_id, bundle_hash, site_id
-                    FROM ots_proofs
-                    WHERE status = 'expired'
-                    AND (last_upgrade_attempt IS NULL
-                         OR last_upgrade_attempt < NOW() - INTERVAL '1 hour')
-                    ORDER BY submitted_at ASC
-                    LIMIT 500
-                """))
-                expired_proofs = result.fetchall()
-
-                if not expired_proofs:
-                    logger.info(
-                        "OTS resubmission drain complete",
-                        total_resubmitted=total_resubmitted,
-                        total_failed=total_failed,
-                    )
-                    return
-
-                batch_ok = 0
-                batch_fail = 0
-
-                for proof in expired_proofs:
-                    try:
-                        ots_result = await submit_hash_to_ots(
-                            proof.bundle_hash, proof.bundle_id
-                        )
-                        async with db.begin_nested():
-                            if ots_result:
-                                submitted_at = ots_result["submitted_at"]
-                                if submitted_at.tzinfo is not None:
-                                    submitted_at = submitted_at.replace(tzinfo=None)
-
-                                await db.execute(text("""
-                                    UPDATE ots_proofs
-                                    SET status = 'pending',
-                                        proof_data = :proof_data,
-                                        calendar_url = :calendar_url,
-                                        submitted_at = :submitted_at,
-                                        error = NULL,
-                                        upgrade_attempts = 0,
-                                        last_upgrade_attempt = NULL
-                                    WHERE bundle_id = :bundle_id
-                                """), {
-                                    "proof_data": ots_result["proof_data"],
-                                    "calendar_url": ots_result["calendar_url"],
-                                    "submitted_at": submitted_at,
-                                    "bundle_id": proof.bundle_id,
-                                })
-
-                                await db.execute(text("""
-                                    UPDATE compliance_bundles
-                                    SET ots_status = 'pending',
-                                        ots_proof = :proof_data,
-                                        ots_calendar_url = :calendar_url,
-                                        ots_submitted_at = :submitted_at,
-                                        ots_error = NULL
-                                    WHERE bundle_id = :bundle_id
-                                """), {
-                                    "proof_data": ots_result["proof_data"],
-                                    "calendar_url": ots_result["calendar_url"],
-                                    "submitted_at": submitted_at,
-                                    "bundle_id": proof.bundle_id,
-                                })
-                                batch_ok += 1
-                            else:
-                                batch_fail += 1
-                                await db.execute(text("""
-                                    UPDATE ots_proofs
-                                    SET error = 'Resubmission failed - all calendars returned errors',
-                                        last_upgrade_attempt = NOW()
-                                    WHERE bundle_id = :bundle_id
-                                """), {"bundle_id": proof.bundle_id})
-                    except Exception as e:
-                        batch_fail += 1
-                        logger.warning(f"OTS resubmit failed {proof.bundle_id[:8]}: {e}")
-
-                    if (batch_ok + batch_fail) % 50 == 0:
-                        await db.commit()
-
-                await db.commit()
-
-                total_resubmitted += batch_ok
-                total_failed += batch_fail
-
-                remaining = await db.execute(text(
-                    "SELECT COUNT(*) FROM ots_proofs WHERE status = 'expired'"
-                ))
-                remaining_count = remaining.scalar() or 0
-
-                logger.info(
-                    "OTS resubmission batch",
-                    batch_ok=batch_ok,
-                    batch_fail=batch_fail,
-                    total_resubmitted=total_resubmitted,
-                    total_failed=total_failed,
-                    remaining=remaining_count,
-                )
-
-                if batch_ok == 0 and batch_fail > 0:
-                    consecutive_zero += 1
-                    if consecutive_zero >= 5:
-                        logger.error(
-                            "OTS resubmission stopped: 5 consecutive zero-success batches. "
-                            "Calendars may be down. Will retry on next server restart."
-                        )
-                        return
-                else:
-                    consecutive_zero = 0
-
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.exception(f"OTS resubmission batch failed: {e}")
-
-        delay = 300 if consecutive_zero > 0 else 30
-        await asyncio.sleep(delay)
+# DEAD CODE REMOVED 2026-05-02 (audit followup #44):
+# `ots_repair_block_heights`, `ots_upgrade_loop`, and
+# `ots_resubmit_expired_loop` lived here as DEAD duplicates — the
+# wired versions are inline in main.py as `_ots_repair_block_heights`,
+# `_ots_upgrade_loop`, `_ots_resubmit_expired_loop` (underscore-
+# prefixed). Confirmed nothing imports the bg copies.
+#
+# `ots_reverify_sample_loop` below IS wired (main.py imports it).
+# Don't accidentally delete it — it's the live one.
 
 
 async def ots_reverify_sample_loop():
@@ -1138,24 +956,10 @@ async def l2_auto_candidate_loop():
         await asyncio.sleep(1800)  # 30 minutes
 
 
-async def expire_fleet_orders_loop():
-    """Background task to mark expired fleet orders."""
-    while True:
-        try:
-            from dashboard_api.fleet import get_pool
-            pool = await get_pool()
-            async with pool.acquire() as conn:
-                updated = await conn.execute("""
-                    UPDATE fleet_orders SET status = 'expired'
-                    WHERE status IN ('active', 'pending') AND expires_at < NOW()
-                """)
-                if updated and 'UPDATE' in updated:
-                    count = int(updated.split()[-1])
-                    if count > 0:
-                        logger.info(f"Expired {count} fleet orders")
-        except Exception as e:
-            logger.warning(f"Fleet order expiry check failed: {e}")
-        await asyncio.sleep(300)
+# DEAD CODE REMOVED 2026-05-02 (audit followup #44):
+# `expire_fleet_orders_loop` lived here as a DEAD duplicate — the
+# wired version is inline in main.py:1754 (also called
+# `expire_fleet_orders_loop`). Confirmed nothing imports the bg copy.
 
 
 async def unregistered_device_alert_loop():

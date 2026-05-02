@@ -81,8 +81,10 @@ _LIFESPAN_INLINE_LOOPS = {
     "health_monitor",
     "substrate_assertions",
     "go_agent_status_decay",
-    # Have dead duplicates in background_tasks.py; wired versions
-    # are inline in main.py. See followup dead-loop-cleanup 2026-05-08.
+    # ots_upgrade + fleet_order_expiry are inline in main.py's lifespan
+    # (the dead duplicates in background_tasks.py were removed
+    # 2026-05-02 followup #44). They're nested closures so AST-walking
+    # them is unreliable — manual verification on edit.
     "ots_upgrade",
     "fleet_order_expiry",
 }
@@ -101,24 +103,44 @@ def _parse_function(module_basename: str, function_name: str) -> ast.AsyncFuncti
     )
 
 
+def _is_heartbeat_call(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    # Bare-name call: record_heartbeat(...) or _hb(...)
+    if isinstance(node.func, ast.Name) and node.func.id in {"record_heartbeat", "_hb"}:
+        return True
+    # Attribute call: bg_heartbeat.record_heartbeat(...)
+    if isinstance(node.func, ast.Attribute) and node.func.attr == "record_heartbeat":
+        return True
+    return False
+
+
 def _calls_heartbeat(func: ast.AsyncFunctionDef, loop_name: str) -> bool:
-    """True if the function body contains any of:
-      - record_heartbeat("<loop_name>") or record_heartbeat(...)
-      - _hb("<loop_name>") or _hb(...)
-    Argument matching is loose — presence of the call is the lockstep
-    signal we care about. A future tightening could require the literal
-    loop_name argument, at the cost of false-failing dynamically-named
-    instrumentations.
+    """True if the function body contains a record_heartbeat()/_hb() call
+    INSIDE a `while True:` block (the inter-iteration scope).
+
+    Tightened 2026-05-02 (followup #45): the original version only
+    checked function-body presence. A future engineer placing the
+    call BEFORE the while-True (one-time, like the buggy startup-only
+    pattern that bg_loop_silent was originally meant to catch) would
+    have falsely passed. Restricting to while-True descendants closes
+    that loophole.
+
+    `_supervised`'s startup heartbeat is OUTSIDE the loop body, so it
+    doesn't satisfy this gate — only loop-body self-instrumentation does.
     """
     for node in ast.walk(func):
-        if not isinstance(node, ast.Call):
+        if not (
+            isinstance(node, ast.While)
+            and (
+                (isinstance(node.test, ast.Constant) and node.test.value is True)
+                or (isinstance(node.test, ast.Name) and node.test.id == "True")
+            )
+        ):
             continue
-        # Bare-name call: record_heartbeat(...) or _hb(...)
-        if isinstance(node.func, ast.Name) and node.func.id in {"record_heartbeat", "_hb"}:
-            return True
-        # Attribute call: bg_heartbeat.record_heartbeat(...)
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "record_heartbeat":
-            return True
+        for inner in ast.walk(node):
+            if _is_heartbeat_call(inner):
+                return True
     return False
 
 
