@@ -20,8 +20,9 @@ import hmac
 import base64
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
+import pathlib
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, Cookie, Query
 from pydantic import BaseModel, Field
@@ -4425,6 +4426,87 @@ fi
 '''
 
 
+# ─── Security advisory auto-include (followup #41) ────────────────────
+#
+# AI-independence audit Camila finding: the Session-203 disclosure-first
+# commitment is "every advisory must be visible to the auditor without
+# an auditor having to know to ask." Pre-fix, only the Merkle disclosure
+# was hardcoded into chain.json — newer advisories (e.g. PACKET_GAP)
+# sat in docs/security/ unseen. This helper auto-walks docs/security/
+# SECURITY_ADVISORY_*.md and includes both metadata + full markdown in
+# every kit ZIP.
+#
+# Metadata format expected (relaxed parsing; missing fields fall to None):
+#   # Security Advisory — <ADVISORY_ID>
+#   **Title:** ...
+#   **Date discovered:** YYYY-MM-DD ...
+#   **Date remediated:** YYYY-MM-DD ...
+#   **Severity:** ...
+#   **Status:** ...
+
+import re as _adv_re
+
+_ADV_ID_RE = _adv_re.compile(r"#\s*Security Advisory\s*[—-]\s*(\S+)", _adv_re.IGNORECASE)
+_ADV_FIELD_RE = _adv_re.compile(
+    r"\*\*(Title|Date discovered|Date remediated|Severity|Status):\*\*\s*([^\n]+)",
+    _adv_re.IGNORECASE,
+)
+
+
+def _parse_advisory_metadata(text: str, filename: str) -> Dict[str, Any]:
+    """Extract structured metadata from a security advisory markdown file.
+
+    Always returns a dict with at least `advisory_filename` populated;
+    fields not found stay None so the kit JSON shape is stable.
+    """
+    out: Dict[str, Any] = {
+        "id": None,
+        "title": None,
+        "date_discovered": None,
+        "date_remediated": None,
+        "severity": None,
+        "status": None,
+        "advisory_filename": filename,
+    }
+    m = _ADV_ID_RE.search(text)
+    if m:
+        out["id"] = m.group(1).strip()
+    for fm in _ADV_FIELD_RE.finditer(text):
+        key = fm.group(1).lower().replace(" ", "_")
+        val = fm.group(2).strip()
+        if key in out:
+            out[key] = val
+    return out
+
+
+def _collect_security_advisories() -> List[Tuple[Dict[str, Any], str]]:
+    """Walk docs/security/SECURITY_ADVISORY_*.md and return list of
+    (metadata_dict, raw_markdown_text). Sorted by filename so kit
+    contents are deterministic. Returns empty list (not raises) if
+    the directory is missing — tests run from a tmp dir without docs.
+    """
+    # Walk up to repo root from this file. Backend file is at
+    # mcp-server/central-command/backend/evidence_chain.py; docs/security/
+    # is at repo root.
+    here = pathlib.Path(__file__).resolve()
+    repo_root = here.parents[3]  # backend → central-command → mcp-server → repo
+    advisories_dir = repo_root / "docs" / "security"
+    if not advisories_dir.exists():
+        return []
+    out: List[Tuple[Dict[str, Any], str]] = []
+    for path in sorted(advisories_dir.glob("SECURITY_ADVISORY_*.md")):
+        try:
+            content = path.read_text()
+        except Exception:
+            # Per CLAUDE.md "no silent write failures" — for READS in a
+            # display path, swallow + continue. The kit downloads even
+            # if one advisory file is unreadable.
+            continue
+        meta = _parse_advisory_metadata(content, path.name)
+        out.append((meta, content))
+    return out
+
+
 @router.get("/sites/{site_id}/auditor-kit")
 async def download_auditor_kit(
     site_id: str,
@@ -4661,16 +4743,26 @@ async def download_auditor_kit(
             }
             for r in canonical_alias_rows
         ],
+        # Disclosures auto-included from docs/security/SECURITY_ADVISORY_*.md
+        # per Camila's AI-independence-audit finding (followup #41,
+        # 2026-05-02). Each advisory's full markdown also lands in the
+        # ZIP under disclosures/<filename>. Pre-fix only the Merkle
+        # disclosure was hardcoded — newer advisories (e.g. PACKET_GAP)
+        # were repo-grep-only, violating the Session-203 disclosure-first
+        # commitment ("visible to the auditor without an auditor having
+        # to know to ask").
         "disclosures": [
             {
-                "id": "OSIRIS-2026-04-09-MERKLE-COLLISION",
-                "title": "Merkle batch_id collision remediation",
-                "date": "2026-04-09",
-                "scope": "1198 bundles across 47 batches reclassified to ots_status='legacy'",
-                "fix_commit": "965dd36",
-                "advisory": "/docs/security/SECURITY_ADVISORY_2026-04-09_MERKLE.md",
-                "status": "remediated",
+                "id": _adv_meta.get("id"),
+                "title": _adv_meta.get("title"),
+                "date_discovered": _adv_meta.get("date_discovered"),
+                "date_remediated": _adv_meta.get("date_remediated"),
+                "severity": _adv_meta.get("severity"),
+                "status": _adv_meta.get("status"),
+                "advisory_in_kit": f"disclosures/{_adv_meta['advisory_filename']}",
+                "advisory_in_repo": f"/docs/security/{_adv_meta['advisory_filename']}",
             }
+            for (_adv_meta, _) in _collect_security_advisories()
         ],
         "verification": {
             "tools_required": ["python3", "sha256sum", "cryptography (pip)", "ots-cli (optional)"],
@@ -4830,6 +4922,11 @@ async def download_auditor_kit(
         zf.writestr("verify_identity.sh", _AUDITOR_KIT_VERIFY_IDENTITY_SH)
         for filename, data in ots_files.items():
             zf.writestr(f"ots/{filename}", data)
+        # Write each security advisory under disclosures/ so the auditor
+        # has the FULL markdown text inline with the kit, not just a
+        # repo URL. Closes the disclosure-first commitment gap (#41).
+        for _adv_meta, _adv_text in _collect_security_advisories():
+            zf.writestr(f"disclosures/{_adv_meta['advisory_filename']}", _adv_text)
 
     buf.seek(0)
     zip_bytes = buf.getvalue()

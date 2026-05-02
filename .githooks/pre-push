@@ -125,6 +125,7 @@ SOURCE_LEVEL_TESTS=(
     # imports to a chain-component file fails CI.
     "tests/test_compliance_chain_llm_free.py"
     "tests/test_data_completeness_field.py"
+    "tests/test_auditor_kit_disclosures.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
