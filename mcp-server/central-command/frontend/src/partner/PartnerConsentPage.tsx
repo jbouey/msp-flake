@@ -83,9 +83,18 @@ export const PartnerConsentPage: React.FC = () => {
             <div className="text-sm text-slate-500">Site: <span className="font-mono">{data.site_id}</span></div>
           </div>
           <div className="text-right">
-            <div className={`text-3xl font-bold tabular-nums ${data.coverage_pct >= 75 ? 'text-emerald-600' : data.coverage_pct >= 25 ? 'text-amber-600' : 'text-rose-600'}`}>{/* noqa: score-threshold-gate — runbook-consent class coverage (75/25, distinct domain) */}
-              {data.coverage_pct.toFixed(0)}%
-            </div>
+            {(() => {
+              // Runbook-consent class coverage (75/25 thresholds) is a
+              // domain-distinct metric — fraction of HIPAA-control classes
+              // with active operator-consent. Lower-bar than compliance
+              // score because partial-consent during rollout is normal.
+              const coverageColor = data.coverage_pct >= 75 ? 'text-emerald-600' : data.coverage_pct >= 25 ? 'text-amber-600' : 'text-rose-600';  // noqa: score-threshold-gate — consent-coverage domain (75/25)
+              return (
+                <div className={`text-3xl font-bold tabular-nums ${coverageColor}`}>
+                  {data.coverage_pct.toFixed(0)}%
+                </div>
+              );
+            })()}
             <div className="text-[11px] text-slate-500">{data.covered_classes} / {data.total_classes} classes</div>
           </div>
         </div>

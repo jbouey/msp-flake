@@ -71,10 +71,12 @@ _NOQA_MARKER = re.compile(r"//\s*noqa\s*:\s*score-threshold-gate\b")
 #   (successRateToColor, scoreToBarColor, getScoreStatus,
 #   companionProgressPaletteKey) OR documented as domain-distinct
 #   with explicit `// noqa: score-threshold-gate — <rationale>`.
-#   Remaining 1 site is non-collapsable (likely a regex false-positive
-#   match — investigate next pass; not blocking).
-# Target: 0.
-BASELINE_MAX = 1
+# 2026-05-02 #43 final pass: PartnerConsentPage refactored from JSX
+#   inline ternary (which can't accept // noqa) to extracted
+#   variable + line-comment noqa. Count to 0.
+# Future: any new threshold-color logic must use a canon helper OR
+# extract to a variable + // noqa with rationale.
+BASELINE_MAX = 0
 
 
 def _walk_frontend_files():
