@@ -296,58 +296,7 @@ async def test_count_recent_privileged_events(conn):
 
 
 # ─── ALLOWED_EVENTS lockstep guard ────────────────────────────────
-
-
-def test_allowed_events_matches_privileged_order_types():
-    """The ALLOWED_EVENTS set MUST match fleet_cli.PRIVILEGED_ORDER_TYPES
-    MUST match the latest migration defining v_privileged_types. The
-    lockstep CI script (scripts/check_privileged_chain_lockstep.py) is
-    the authoritative enforcer; this test gives a fast signal during
-    development AND asserts the shape of the expected set so future
-    additions can't silently drift.
-
-    Session 207 Phase W0 (migration 218) added 6 watchdog_* events to
-    power the SSH-free recovery surface. Session 207 ship order:
-    W→T→H4→H1→H6→S. Every addition to the set requires:
-      fleet_cli.PRIVILEGED_ORDER_TYPES
-      privileged_access_attestation.ALLOWED_EVENTS
-      migration v_privileged_types
-    all updated together.
-    """
-    import privileged_access_attestation as paa
-    expected = {
-        "enable_emergency_access",
-        "disable_emergency_access",
-        "signing_key_rotation",
-        "bulk_remediation",
-        # Session 207 Phase W0 watchdog catalog
-        "watchdog_restart_daemon",
-        "watchdog_refetch_config",
-        "watchdog_reset_pin_store",
-        "watchdog_reset_api_key",
-        "watchdog_redeploy_daemon",
-        "watchdog_collect_diagnostics",
-        # Session 207 Phase S escape hatch
-        "enable_recovery_shell_24h",
-        # Session 207 R+S non-blocking follow-up — break-glass retrievals
-        # write an attestation bundle; NOT a fleet_order type.
-        "break_glass_passphrase_retrieval",
-        # v36 post-t740 round-table — appliance physical-move compliance
-        # chain. Admin acknowledgment of a detected move; NOT a fleet_order.
-        "appliance_relocation_acknowledged",
-        # #74 closure 2026-05-02 (sub-followup of #64 P0 kill-switch).
-        # Admin API actions (no fleet_order) — fan-out per-site Ed25519
-        # attestation when fleet-wide healing is paused/resumed.
-        "fleet_healing_global_pause",
-        "fleet_healing_global_resume",
-        # #72 closure 2026-05-02 (sub-followup of #67 admin billing UI).
-        # Destructive Stripe ops by an admin acting on a customer's
-        # billing relationship. NOT fleet orders.
-        "customer_subscription_cancel",
-        "customer_subscription_refund",
-    }
-    assert paa.ALLOWED_EVENTS == expected, (
-        f"ALLOWED_EVENTS drifted. Got {paa.ALLOWED_EVENTS}. Update "
-        f"fleet_cli + attestation + migration + this test + the "
-        f"lockstep script together or the chain has a gap."
-    )
+# Promoted to TIER-1 source-level test in
+# test_privileged_chain_allowed_events_lockstep.py (#79 closure 2026-05-02)
+# so pre-push catches drift before push. This _pg.py file is gated to
+# CI-only by the parity rule — see test_pre_push_ci_parity.py.
