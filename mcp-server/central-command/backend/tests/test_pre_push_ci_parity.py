@@ -69,6 +69,7 @@ _TIER1_PATTERNS = [
     re.compile(r"^test_compliance_chain_llm_free"),  # AI-audit dim 8
     re.compile(r"^test_data_completeness_field"),    # D1 followup #47
     re.compile(r"^test_auditor_kit_disclosures"),    # followup #41
+    re.compile(r"^test_kill_switch_endpoints"),      # #64 P0
 ]
 
 # Tests that match a TIER-1 pattern but are dep-heavy and exempted

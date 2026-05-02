@@ -258,6 +258,58 @@ const IncidentDetailPanel: React.FC<{ incidentId: string; onClose: () => void }>
   );
 };
 
+/**
+ * L2DegradedBanner — surfaces when L2 healing pipeline is unavailable.
+ *
+ * AI-independence audit dim 5 finding (#61 closure 2026-05-02). Polls
+ * /api/admin/l2/status every 5 minutes; renders an amber banner with
+ * operator-actionable diagnostics when `enabled === false`. Failures
+ * to fetch (network, 401) are silent — banner doesn't render rather
+ * than display a wrong-state.
+ */
+const L2DegradedBanner: React.FC = () => {
+  const [l2State, setL2State] = useState<{enabled: boolean; provider: string | null; model: string} | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const probe = async () => {
+      try {
+        const res = await fetch('/api/admin/l2/status', { credentials: 'include' });
+        if (!res.ok) return;  // silent on 401/403 — banner is a "best effort" UX
+        const data = await res.json();
+        if (!cancelled) setL2State(data);
+      } catch {
+        // Silent — banner is non-critical.
+      }
+    };
+    probe();
+    const interval = setInterval(probe, 5 * 60 * 1000);  // 5 min
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  if (!l2State || l2State.enabled) return null;
+
+  const reason = l2State.provider
+    ? `Provider configured (${l2State.provider}/${l2State.model}) but disabled — check L2_ENABLED env var.`
+    : 'No LLM provider configured (no API key for OpenAI/Anthropic/Azure).';
+
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 flex items-start gap-3">
+      <span className="text-amber-700 text-lg leading-none mt-0.5">⚠</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-amber-900">
+          L2 healing pipeline is degraded
+        </p>
+        <p className="text-xs text-amber-800 mt-1">
+          New incidents are routing direct to the L4 manual-triage queue. {reason} Operator should triage incidents in priority order;
+          {' '}<a href="/l4-queue" className="underline font-medium">open the L4 queue →</a>
+        </p>
+      </div>
+    </div>
+  );
+};
+
+
 export const Incidents: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlSiteId = searchParams.get('site_id') || '';
@@ -436,6 +488,12 @@ export const Incidents: React.FC = () => {
 
   return (
     <div className="space-y-5 page-enter">
+      {/* L2-degraded banner (#61). Surfaces when L2 healing pipeline is
+          unavailable. Operator infers manual-triage mode from this banner
+          rather than from missing recentL2 count. AI-independence audit
+          dim 5 finding (Steve recommendation). */}
+      <L2DegradedBanner />
+
       {/* ============================================================= */}
       {/* Page header                                                    */}
       {/* ============================================================= */}

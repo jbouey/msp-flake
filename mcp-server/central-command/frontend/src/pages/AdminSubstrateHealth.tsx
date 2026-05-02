@@ -139,6 +139,198 @@ function relTime(iso: string): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+/**
+ * KillSwitchPanel — fleet-wide L2 healing emergency stop (#64 P0).
+ *
+ * Adversarial-audit P0 finding (2026-05-02). Pre-fix: no UI for emergency
+ * stop; operator forced to SSH+psql. Now: prominent button on the
+ * substrate health page (operator's go-to during incidents).
+ *
+ * Design (round-table consensus):
+ *   - Always renders pause OR resume button based on current state
+ *   - Confirmation modal requires typing the literal phrase
+ *     "DISABLE-FLEET-HEALING" or "ENABLE-FLEET-HEALING" — anti-accident
+ *   - Reason field min 20 chars (privileged-action audit chain)
+ *   - When paused: red banner across the entire panel; reason + actor
+ *     + set_at surface to all admins
+ *   - Polls /api/admin/healing/global-state every 30s
+ */
+const KillSwitchPanel: React.FC = () => {
+  const [state, setState] = useState<{disabled: boolean; reason?: string; actor?: string; set_at?: string} | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [confirmInput, setConfirmInput] = useState('');
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const loadState = async () => {
+    try {
+      const res = await fetch('/api/admin/healing/global-state', { credentials: 'include' });
+      if (res.ok) setState(await res.json());
+    } catch {
+      // Silent — banner non-critical
+    }
+  };
+
+  useEffect(() => {
+    loadState();
+    const interval = setInterval(loadState, 30 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const expectedPhrase = state?.disabled ? 'ENABLE-FLEET-HEALING' : 'DISABLE-FLEET-HEALING';
+  const actionLabel = state?.disabled ? 'Resume fleet healing' : 'Pause fleet healing';
+  const apiPath = state?.disabled ? '/api/admin/healing/global-resume' : '/api/admin/healing/global-pause';
+
+  const handleConfirm = async () => {
+    setErrorMsg(null);
+    if (confirmInput !== expectedPhrase) {
+      setErrorMsg(`Type ${expectedPhrase} exactly to confirm.`);
+      return;
+    }
+    if (reason.length < 20) {
+      setErrorMsg('Reason must be at least 20 characters (privileged-action audit chain).');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const csrfMatch = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+      const csrf = csrfMatch ? decodeURIComponent(csrfMatch[1]) : '';
+      const res = await fetch(apiPath, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrf,
+        },
+        body: JSON.stringify({ reason, confirm_phrase: confirmInput }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setErrorMsg(`Action failed: ${data.detail || res.statusText}`);
+        return;
+      }
+      setModalOpen(false);
+      setConfirmInput('');
+      setReason('');
+      await loadState();
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!state) return null;
+
+  return (
+    <>
+      <div className={`rounded-lg border p-4 flex items-center justify-between gap-4 ${
+        state.disabled
+          ? 'border-rose-500 bg-rose-950/40'
+          : 'border-white/10 bg-white/5'
+      }`}>
+        <div className="flex-1 min-w-0">
+          {state.disabled ? (
+            <>
+              <div className="text-rose-100 font-semibold text-sm uppercase tracking-wide">
+                ⛔ Fleet healing GLOBALLY PAUSED
+              </div>
+              <div className="text-rose-200/90 text-xs mt-1">
+                Set by <span className="font-medium">{state.actor}</span> at{' '}
+                {state.set_at ? new Date(state.set_at).toLocaleString() : 'unknown time'}.
+                Reason: <span className="italic">{state.reason || '(none provided)'}</span>
+              </div>
+              <div className="text-rose-200/70 text-xs mt-1">
+                L2 healing pipeline returns 503 to all appliances.
+                Incidents route direct to L4 manual triage queue.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-white/80 font-medium text-sm">Fleet healing: ACTIVE</div>
+              <div className="text-white/50 text-xs mt-0.5">
+                L2 pipeline operational. Click Pause for emergency stop (incident response).
+              </div>
+            </>
+          )}
+        </div>
+        <button
+          onClick={() => { setModalOpen(true); setErrorMsg(null); setConfirmInput(''); setReason(''); }}
+          className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${
+            state.disabled
+              ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+              : 'bg-rose-600 text-white hover:bg-rose-500'
+          }`}
+        >
+          {actionLabel}
+        </button>
+      </div>
+
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="bg-slate-900 rounded-xl border border-white/10 p-6 max-w-md w-full">
+            <h3 className="text-white font-semibold text-lg">{actionLabel}</h3>
+            <p className="text-white/70 text-sm mt-2">
+              {state.disabled
+                ? 'Resuming will allow L2 LLM-driven healing to run again across the fleet.'
+                : 'Pausing will halt L2 healing across ALL sites. Incidents route direct to L4 manual queue. This is an emergency-stop action.'}
+            </p>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="block text-white/80 text-xs font-medium mb-1">
+                  Reason (≥20 chars, audit-logged):
+                </label>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  className="w-full bg-slate-800 border border-white/20 rounded text-white text-sm p-2"
+                  rows={3}
+                  placeholder="Describe why you are taking this action..."
+                />
+                <div className="text-white/50 text-xs mt-1">{reason.length}/20 chars minimum</div>
+              </div>
+              <div>
+                <label className="block text-white/80 text-xs font-medium mb-1">
+                  Confirm by typing <code className="text-rose-300">{expectedPhrase}</code>:
+                </label>
+                <input
+                  value={confirmInput}
+                  onChange={(e) => setConfirmInput(e.target.value)}
+                  className="w-full bg-slate-800 border border-white/20 rounded text-white text-sm p-2 font-mono"
+                  placeholder={expectedPhrase}
+                />
+              </div>
+              {errorMsg && (
+                <div className="text-rose-300 text-xs">{errorMsg}</div>
+              )}
+            </div>
+            <div className="flex gap-2 mt-6 justify-end">
+              <button
+                onClick={() => setModalOpen(false)}
+                disabled={submitting}
+                className="px-4 py-2 rounded text-white/70 hover:text-white text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirm}
+                disabled={submitting || confirmInput !== expectedPhrase || reason.length < 20}
+                className={`px-4 py-2 rounded text-white text-sm font-medium disabled:opacity-40 ${
+                  state.disabled ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-rose-600 hover:bg-rose-500'
+                }`}
+              >
+                {submitting ? 'Working…' : `Confirm ${state.disabled ? 'resume' : 'pause'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+
 export const AdminSubstrateHealth: React.FC = () => {
   const [violations, setViolations] = useState<ViolationsPayload | null>(null);
   const [sla, setSla] = useState<SlaPayload | null>(null);
@@ -206,6 +398,11 @@ export const AdminSubstrateHealth: React.FC = () => {
 
   return (
     <div className="p-6 space-y-6">
+      {/* Fleet-wide healing kill-switch banner + button (#64 P0).
+          When healing is paused, banner is RED and prominent; pause/resume
+          button always present in the header for fast incident response. */}
+      <KillSwitchPanel />
+
       <div>
         <h1 className="text-2xl font-semibold text-white">Substrate Integrity</h1>
         <p className="text-white/60 text-sm mt-1">

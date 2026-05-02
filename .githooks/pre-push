@@ -126,6 +126,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_compliance_chain_llm_free.py"
     "tests/test_data_completeness_field.py"
     "tests/test_auditor_kit_disclosures.py"
+    "tests/test_kill_switch_endpoints.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."

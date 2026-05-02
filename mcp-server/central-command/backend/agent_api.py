@@ -2113,6 +2113,43 @@ async def agent_l2_plan(
     _enforce_site_id(auth_site_id, request.site_id, "agent_l2_plan")
     from dashboard_api.l2_planner import analyze_incident as l2_analyze, record_l2_decision, is_l2_available
 
+    # #64 P0: fleet-wide healing kill-switch check. If admin has paused
+    # healing globally (system_settings.fleet_healing_disabled.disabled=true),
+    # short-circuit BEFORE the LLM call. Daemon falls through to L3 escalation.
+    # Single source of truth — no fleet-order fan-out, no partial state.
+    #
+    # Adversarial-round catch (Brian #3): FAIL-CLOSED on read error.
+    # A kill-switch that fails-open if its own SELECT fails is
+    # broken-by-design — operator hits "pause" expecting to stop
+    # healing, query fails on read-side, healing keeps running.
+    # Better: 503 with structured "kill_switch_unverifiable" so
+    # daemon knows substrate is sick; operator escalates.
+    try:
+        kill_row = await db.execute(text(
+            "SELECT settings -> 'fleet_healing_disabled' FROM system_settings WHERE id = 1"
+        ))
+        kill_state = kill_row.scalar()
+    except Exception as e:
+        logger.error("kill_switch_read_failed", exc_info=True, extra={"error": str(e)})
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "degraded_reason": "kill_switch_unverifiable",
+                "fallback": "L2 short-circuited because kill-switch state could not be read",
+            },
+        )
+    if kill_state and isinstance(kill_state, dict) and kill_state.get("disabled"):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "degraded_reason": "fleet_healing_globally_disabled",
+                "actor": kill_state.get("actor"),
+                "reason": kill_state.get("reason"),
+                "set_at": kill_state.get("set_at"),
+                "fallback": "incident routes direct to L4 manual queue",
+            },
+        )
+
     if not is_l2_available():
         raise HTTPException(status_code=503, detail="L2 LLM not configured (no API key)")
 

@@ -2588,6 +2588,228 @@ async def app_version():
     })
 
 
+@app.get("/api/admin/l2/status", include_in_schema=True)
+async def admin_l2_status(user: dict = Depends(require_auth)):
+    """L2 healing pipeline availability. Auth-gated (admin role).
+
+    AI-independence audit followup #61 (2026-05-02). The Incidents
+    page polls this so an operator working in LLM-off mode sees a
+    banner ("L2 healing degraded — incidents routing direct to L4
+    manual queue") instead of inferring from missing recentL2 count.
+
+    Reads `is_l2_available()` from l2_planner — the same primitive
+    `agent_l2_plan` uses to short-circuit. So if this returns
+    `enabled=false`, the appliance-side L2 calls return 503 too.
+
+    Returns the full L2 config (provider, model) so the UI can show
+    operator-actionable diagnostics ("Anthropic key missing" vs
+    "L2_ENABLED=false flag set").
+    """
+    from dashboard_api.l2_planner import get_l2_config
+    return get_l2_config()
+
+
+# ─── #64 P0: fleet-wide healing kill-switch ──────────────────────────
+#
+# Adversarial-audit P0 finding (2026-05-02): no emergency-stop button
+# for healing pipeline today. If a bad L1 rule promotes fleet-wide and
+# starts mass-poisoning data, operator must SSH+psql for manual SQL
+# UPDATE. Incident response in MINUTES not SECONDS.
+#
+# Design (round-table consensus):
+#   - Server-side global flag in system_settings.settings JSONB
+#     (singleton table, id=1). NO fleet-order fan-out — no partial-
+#     state class. agent_l2_plan checks flag at top → 503 with
+#     structured body when paused.
+#   - Pause + Resume endpoints; both audit-logged via admin_audit_log
+#     with reason ≥20 chars (privileged-access-chain semantics).
+#     Idempotent (double-click during panic must not double-issue).
+#   - Confirmation friction: caller MUST send confirm_phrase exactly
+#     equal to "DISABLE-FLEET-HEALING" (or "ENABLE-FLEET-HEALING") to
+#     prevent accidental clicks.
+
+class HealingPauseRequest(BaseModel):
+    reason: str = Field(..., min_length=20, max_length=500,
+        description="Plain-English reason ≥20 chars; lands in admin_audit_log "
+                    "for HIPAA chain-of-custody.")
+    confirm_phrase: str = Field(..., description=(
+        "Must be exactly 'DISABLE-FLEET-HEALING' for pause or "
+        "'ENABLE-FLEET-HEALING' for resume. Prevents accidental clicks."
+    ))
+
+
+_KILL_SWITCH_KEY = "fleet_healing_disabled"
+
+
+@app.get("/api/admin/healing/global-state", include_in_schema=True)
+async def admin_healing_global_state(user: dict = Depends(require_auth)):
+    """Returns current fleet-wide healing-disabled state.
+
+    Used by the kill-switch UI button + the cross-page banner to
+    surface "FLEET HEALING PAUSED" prominently.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession  # noqa
+    from dashboard_api.shared import async_session
+    async with async_session() as db:
+        result = await db.execute(text(
+            "SELECT settings FROM system_settings WHERE id = 1"
+        ))
+        row = result.fetchone()
+    settings = (row[0] if row else {}) or {}
+    state = settings.get(_KILL_SWITCH_KEY, {})
+    if isinstance(state, bool):
+        state = {"disabled": state}  # legacy bool form
+    return {
+        "disabled": bool(state.get("disabled", False)),
+        "reason": state.get("reason"),
+        "actor": state.get("actor"),
+        "set_at": state.get("set_at"),
+    }
+
+
+@app.post("/api/admin/healing/global-pause", include_in_schema=True)
+async def admin_healing_global_pause(
+    request: HealingPauseRequest,
+    http_request: Request,
+    user: dict = Depends(require_auth),
+):
+    """EMERGENCY STOP: pause fleet-wide L2 healing.
+
+    Idempotent — calling when already paused returns 200 with
+    no-op flag. agent_l2_plan checks the flag at request-handler
+    entry; if set, returns 503 with structured body so daemons
+    know to fall through to L3 escalation.
+
+    Audit-logged. Reason ≥20 chars. confirm_phrase prevents
+    accidental clicks.
+    """
+    if request.confirm_phrase != "DISABLE-FLEET-HEALING":
+        raise HTTPException(
+            status_code=400,
+            detail="confirm_phrase must be exactly 'DISABLE-FLEET-HEALING'",
+        )
+    actor = (user.get("email") if isinstance(user, dict) else None) \
+            or (user.get("username") if isinstance(user, dict) else None) \
+            or "unknown"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    new_state = {
+        "disabled": True,
+        "reason": request.reason,
+        "actor": actor,
+        "set_at": now_iso,
+    }
+    # Adversarial-round Diana #2 + #3: UPSERT (singleton may not exist
+    # on a fresh DB) + transactional (audit row MUST land iff settings
+    # update lands; sequence-failure leaves orphan state).
+    from dashboard_api.shared import async_session
+    async with async_session() as db:
+        async with db.begin():
+            await db.execute(text("""
+                INSERT INTO system_settings (id, settings, updated_by)
+                VALUES (1, jsonb_build_object(:key, :val::jsonb), :actor)
+                ON CONFLICT (id) DO UPDATE
+                  SET settings = jsonb_set(
+                        COALESCE(system_settings.settings, '{}'::jsonb),
+                        ARRAY[:key],
+                        :val::jsonb
+                      ),
+                      updated_at = NOW(),
+                      updated_by = :actor
+            """), {
+                "key": _KILL_SWITCH_KEY,
+                "val": json.dumps(new_state),
+                "actor": actor,
+            })
+            # Privileged-access-chain audit row — same txn so audit lands
+            # iff settings update lands.
+            await db.execute(text("""
+                INSERT INTO admin_audit_log
+                    (username, action, target, details, ip_address)
+                VALUES
+                    (:actor, 'healing.global_pause', 'fleet:all',
+                     :details, :ip)
+            """), {
+                "actor": actor,
+                "details": json.dumps({
+                    "reason": request.reason,
+                    "set_at": now_iso,
+                }),
+                "ip": http_request.client.host if http_request.client else None,
+            })
+    logger.error(
+        "fleet_healing_globally_paused",
+        extra={"actor": actor, "reason": request.reason},
+    )
+    return {"disabled": True, "actor": actor, "set_at": now_iso}
+
+
+@app.post("/api/admin/healing/global-resume", include_in_schema=True)
+async def admin_healing_global_resume(
+    request: HealingPauseRequest,
+    http_request: Request,
+    user: dict = Depends(require_auth),
+):
+    """Resume fleet-wide L2 healing. Idempotent.
+
+    Reverse of /global-pause. Same friction: confirm_phrase must be
+    'ENABLE-FLEET-HEALING' (NOT 'DISABLE-' — different phrase prevents
+    typo-resumes).
+    """
+    if request.confirm_phrase != "ENABLE-FLEET-HEALING":
+        raise HTTPException(
+            status_code=400,
+            detail="confirm_phrase must be exactly 'ENABLE-FLEET-HEALING'",
+        )
+    actor = (user.get("email") if isinstance(user, dict) else None) \
+            or (user.get("username") if isinstance(user, dict) else None) \
+            or "unknown"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    new_state = {
+        "disabled": False,
+        "reason": request.reason,  # reason for un-pause also captured
+        "actor": actor,
+        "set_at": now_iso,
+    }
+    from dashboard_api.shared import async_session
+    async with async_session() as db:
+        async with db.begin():
+            await db.execute(text("""
+                INSERT INTO system_settings (id, settings, updated_by)
+                VALUES (1, jsonb_build_object(:key, :val::jsonb), :actor)
+                ON CONFLICT (id) DO UPDATE
+                  SET settings = jsonb_set(
+                        COALESCE(system_settings.settings, '{}'::jsonb),
+                        ARRAY[:key],
+                        :val::jsonb
+                      ),
+                      updated_at = NOW(),
+                      updated_by = :actor
+            """), {
+                "key": _KILL_SWITCH_KEY,
+                "val": json.dumps(new_state),
+                "actor": actor,
+            })
+            await db.execute(text("""
+                INSERT INTO admin_audit_log
+                    (username, action, target, details, ip_address)
+                VALUES
+                    (:actor, 'healing.global_resume', 'fleet:all',
+                     :details, :ip)
+            """), {
+                "actor": actor,
+                "details": json.dumps({
+                    "reason": request.reason,
+                    "set_at": now_iso,
+                }),
+                "ip": http_request.client.host if http_request.client else None,
+            })
+    logger.warning(
+        "fleet_healing_globally_resumed",
+        extra={"actor": actor, "reason": request.reason},
+    )
+    return {"disabled": False, "actor": actor, "set_at": now_iso}
+
+
 class VersionDriftResponse(BaseModel):
     """Shape of GET /api/version/drift. Surfaces silent deploy-cascade
     failure mode (Session 212 round-table angle 2 P1)."""
