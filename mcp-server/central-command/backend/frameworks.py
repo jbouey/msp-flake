@@ -217,7 +217,23 @@ async def get_compliance_scores(
     db: AsyncSession,
     appliance_id: str
 ) -> List[Dict[str, Any]]:
-    """Get compliance scores for all enabled frameworks"""
+    """Get compliance scores for all enabled frameworks.
+
+    D1 followup #47 (Steve delta #3) closure 2026-05-02: each row now
+    includes `data_completeness_pct` showing what fraction of mapped
+    controls have populated check_status. Useful during post-mig backfill
+    windows where some rows are still NULL — operator + dashboard can
+    surface "score based on N% of available evidence" instead of
+    silently under-counting.
+
+    Today (post-D1 backfill) data_completeness_pct is 100% for all sites;
+    the field exists so future partial-data windows (new framework added,
+    new bundle inflow, schema migration) surface honestly to the caller.
+
+    Formula:
+      total_mapped = COUNT(efm) for site/framework in window
+      data_completeness_pct = (total_mapped - null_count) / total_mapped * 100
+    """
     query = text("""
         SELECT
             cs.framework,
@@ -238,6 +254,41 @@ async def get_compliance_scores(
 
     result = await db.execute(query, {"appliance_id": appliance_id})
     rows = result.fetchall()
+    if not rows:
+        return []
+
+    # Resolve site_id once for the data-completeness query.
+    site_q = await db.execute(
+        text("SELECT site_id FROM site_appliances WHERE appliance_id = :aid LIMIT 1"),
+        {"aid": appliance_id},
+    )
+    site_row = site_q.fetchone()
+    site_id = site_row.site_id if site_row else None
+
+    completeness_by_framework: Dict[str, float] = {}
+    if site_id:
+        # Per-framework: total_mapped vs null_count for this site over the
+        # default 30-day window (matches calculate_compliance_score default).
+        comp_q = await db.execute(text("""
+            SELECT efm.framework,
+                   COUNT(*) AS total_mapped,
+                   COUNT(*) FILTER (WHERE efm.check_status IS NULL) AS null_count
+              FROM compliance_bundles cb
+              JOIN evidence_framework_mappings efm
+                ON efm.bundle_id = cb.bundle_id
+             WHERE cb.site_id = :sid
+               AND cb.created_at >= NOW() - make_interval(days => 30)
+             GROUP BY efm.framework
+        """), {"sid": site_id})
+        for c in comp_q.fetchall():
+            total = int(c.total_mapped or 0)
+            null_n = int(c.null_count or 0)
+            if total > 0:
+                completeness_by_framework[c.framework] = round(
+                    (total - null_n) / total * 100.0, 2
+                )
+            else:
+                completeness_by_framework[c.framework] = 0.0
 
     return [
         {
@@ -250,6 +301,10 @@ async def get_compliance_scores(
             "is_compliant": row.is_compliant,
             "at_risk": row.at_risk,
             "calculated_at": row.calculated_at,
+            # D1 Steve delta #3 — partial-data signal for the dashboard.
+            # 100.0 when post-backfill / fully populated; lower during
+            # backfill windows or freshly-added frameworks.
+            "data_completeness_pct": completeness_by_framework.get(row.framework, 0.0),
         }
         for row in rows
     ]
