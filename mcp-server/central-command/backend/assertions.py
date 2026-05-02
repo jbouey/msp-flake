@@ -575,6 +575,108 @@ async def _check_partition_maintainer_dry(conn: asyncpg.Connection) -> List[Viol
     return out
 
 
+async def _check_schema_fixture_drift(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev3 — prod's information_schema differs from the deployed code's
+    tests/fixtures/schema/prod_columns.json.
+
+    Followup #49 (2026-05-02 Diana adversarial-audit recommendation).
+    Catches the 'forgot to update fixture' deploy class that bit Session
+    214 audit cycle TWICE (mig 271 forward-merge required manual edits).
+
+    The `test_sql_columns_match_schema` CI gate prevents new deploys
+    with drift, but doesn't catch the case where prod has drifted from
+    the fixture in the CURRENTLY DEPLOYED code (manual SQL ALTER outside
+    migration, partial migration, fixture commit reverted but mig left
+    in place). This invariant fires when that gap exists.
+
+    Sev3 because the deployed code is functioning; the gap is in
+    future-CI signal accuracy. Surfaces on /admin/substrate-health.
+
+    One violation row per (table, column) drift, capped at LIMIT 50 to
+    prevent dashboard flood after a wholesale schema change.
+    """
+    import json
+    import pathlib as _pl
+
+    # Locate the deployed fixture relative to this file. In prod
+    # container the path is /app/dashboard_api/tests/fixtures/schema/
+    # prod_columns.json. Skip if missing (test env, non-deploy run).
+    fixture_path = (
+        _pl.Path(__file__).resolve().parent
+        / "tests" / "fixtures" / "schema" / "prod_columns.json"
+    )
+    if not fixture_path.exists():
+        return []
+
+    try:
+        fixture = json.loads(fixture_path.read_text())
+    except Exception:
+        # Per CLAUDE.md "no silent write failures" — for READS in a
+        # display-tier invariant, log + skip. The invariant should
+        # never crash the substrate loop.
+        return []
+
+    if not isinstance(fixture, dict) or not fixture:
+        return []
+
+    # Query prod's columns. Limit to public schema (matches fixture
+    # extraction command in test_sql_columns_match_schema docstring).
+    rows = await conn.fetch(
+        """
+        SELECT table_name, column_name
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name NOT LIKE 'pg_%'
+        """
+    )
+    prod_by_table: dict[str, set[str]] = {}
+    for r in rows:
+        prod_by_table.setdefault(r["table_name"], set()).add(r["column_name"])
+
+    drifts: list[tuple[str, str, str]] = []  # (table, column, direction)
+    for table_name, fixture_cols in fixture.items():
+        if table_name not in prod_by_table:
+            # Fixture knows a table prod doesn't have — table-level drift.
+            drifts.append((table_name, "<entire table>", "fixture_only"))
+            continue
+        prod_cols = prod_by_table[table_name]
+        fixture_set = set(fixture_cols) if isinstance(fixture_cols, list) else set()
+        for col in fixture_set - prod_cols:
+            drifts.append((table_name, col, "fixture_only"))
+        for col in prod_cols - fixture_set:
+            drifts.append((table_name, col, "prod_only"))
+
+    out: list[Violation] = []
+    for table, column, direction in drifts[:50]:
+        out.append(Violation(
+            site_id=None,  # global
+            details={
+                "table": table,
+                "column": column,
+                "direction": direction,
+                "interpretation": (
+                    "fixture_only" if direction == "fixture_only" else "prod_only"
+                ) + ": " + (
+                    f"deployed fixture lists `{table}.{column}` but prod "
+                    f"information_schema does not — fixture is stale "
+                    f"(column dropped without removing from fixture?)."
+                    if direction == "fixture_only" else
+                    f"prod has `{table}.{column}` but the deployed "
+                    f"fixture does not — fixture forward-merge missed "
+                    f"the migration that added it."
+                ),
+                "fix": (
+                    f"Regenerate prod_columns.json from current prod "
+                    f"information_schema (see test_sql_columns_match_schema "
+                    f"docstring for the SQL+jq pipeline). Ship as a "
+                    f"fixture-only commit. If drift was caused by a "
+                    f"manual SQL ALTER, audit who did it via admin_audit_log."
+                ),
+            },
+        ))
+    return out
+
+
 async def _check_substrate_assertions_meta_silent(conn: asyncpg.Connection) -> List[Violation]:
     """The substrate engine's META watcher (Session 214 Block 2 round-table).
 
@@ -1062,6 +1164,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="A critical partitioned table (compliance_bundles, portal_access_log, appliance_heartbeats, promoted_rule_events) has NO partition for next month. INSERTs land in the _default partition (bloats it + degrades query plans) or fail if no default exists. Indicates partition_maintainer_loop / heartbeat_partition_maintainer_loop are wedged. Round-table 2026-05-01 Block 4 P1 closure.",
         check=lambda c: _check_partition_maintainer_dry(c),
     ),
+    Assertion(
+        name="schema_fixture_drift",
+        severity="sev3",
+        description="The deployed code's tests/fixtures/schema/prod_columns.json differs from prod's information_schema. Catches the 'forgot to update fixture' deploy class — bit Session 214 audit cycle TWICE (mig 271 forward-merge required manual fixture edits). Sev3 because the test_sql_columns_match_schema CI gate already prevents new deploys with drift; this invariant catches the case where prod has drifted from the fixture in the CURRENTLY DEPLOYED code (rare, but happens via manual SQL or partial migration). Round-table 2026-05-02 Diana adversarial recommendation. Followup #49.",
+        check=lambda c: _check_schema_fixture_drift(c),
+    ),
 ]
 
 
@@ -1512,6 +1620,23 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "unblock. (3) `docker compose restart mcp-server` to rearm "
             "the loop. Sev1 because the evidence chain depends on "
             "compliance_bundles partition health.",
+    },
+    "schema_fixture_drift": {
+        "display_name": "Prod schema differs from deployed code's fixture",
+        "recommended_action": "Prod's information_schema differs from "
+            "tests/fixtures/schema/prod_columns.json in the deployed "
+            "code. The test_sql_columns_match_schema CI gate prevents "
+            "new deploys with drift, so this firing means EITHER (a) a "
+            "manual SQL ALTER ran on prod outside the migration system "
+            "(bypassed CI — investigate audit log), OR (b) a migration "
+            "applied but the fixture wasn't forward-merged in the same "
+            "PR (deploy slipped past the gate). Each violation row "
+            "names one (table, column) drift. To fix: verify the "
+            "drift is intentional, then update prod_columns.json to "
+            "match prod (run the regen command in the test file's "
+            "docstring) and ship as a fixture-only commit. Sev3 "
+            "because the deployed code is functioning; the gap is in "
+            "future-CI signal accuracy. Followup #49.",
     },
     "substrate_assertions_meta_silent": {
         "display_name": "Substrate watcher itself is silent (meta)",
