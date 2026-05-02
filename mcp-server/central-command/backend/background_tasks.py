@@ -1431,30 +1431,40 @@ PARTITION_MAINTAINER_LOOKAHEAD_MONTHS = 3
 
 
 async def partition_maintainer_loop():
-    """Keep the next N months of promoted_rule_events partitions alive."""
+    """Keep the next N months of promoted_rule_events partitions alive.
+
+    #78 closure 2026-05-02. The application role (mcp_app, via PgBouncer)
+    lacks CREATE on schema public, so DDL must run as the migration
+    superuser. Same pattern as heartbeat_partition_maintainer_loop —
+    open a direct asyncpg connection to MIGRATION_DATABASE_URL, run the
+    DDL, close the connection. Single-shot per tick; never holds a
+    long-lived superuser socket open.
+
+    Pre-fix the loop logged `partition_maintainer_loop_failed` every
+    24h with `permission denied for schema public` and only survived
+    because partitions were pre-created through Dec 2026 by a one-off
+    run as the `mcp` superuser. Substrate invariant
+    `partition_maintainer_dry` (sev1) catches this at the outcome
+    layer regardless.
+    """
+    import asyncpg as _asyncpg
     from datetime import date
 
     await asyncio.sleep(600)  # 10 min after startup
     while True:
         _hb("partition_maintainer")
         try:
-            from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
-
-            pool = await get_pool()
             today = date.today()
-            async with admin_connection(pool) as conn:
+            conn = await _asyncpg.connect(_migration_db_url())
+            try:
                 for offset in range(1, PARTITION_MAINTAINER_LOOKAHEAD_MONTHS + 1):
-                    # Compute first-of-month for offset months ahead
                     year = today.year + ((today.month - 1 + offset) // 12)
                     month = ((today.month - 1 + offset) % 12) + 1
                     start = date(year, month, 1)
                     end_year = year + (1 if month == 12 else 0)
                     end_month = 1 if month == 12 else month + 1
                     end = date(end_year, end_month, 1)
-                    partition = (
-                        f"promoted_rule_events_{year:04d}{month:02d}"
-                    )
+                    partition = f"promoted_rule_events_{year:04d}{month:02d}"
                     await conn.execute(
                         f"""
                         CREATE TABLE IF NOT EXISTS {partition}
@@ -1463,6 +1473,8 @@ async def partition_maintainer_loop():
                                     TO ('{end.isoformat()}')
                         """
                     )
+            finally:
+                await conn.close()
             logger.info("partition_maintainer_tick_complete")
         except asyncio.CancelledError:
             break
