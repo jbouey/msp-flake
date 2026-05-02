@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { GlassCard, Spinner } from '../components/shared';
 import { formatTimeAgo } from '../constants';
 
@@ -112,6 +112,27 @@ export const L4Queue: React.FC = () => {
 
   const openCount = tickets.length;
 
+  // Triage-priority sort (#63 closure 2026-05-02). Wrapped in useMemo
+  // so re-renders don't re-sort. Adversarial round-table catches:
+  // (a) NaN guard on malformed created_at (Brian); (b) memo on bounded
+  // array (Brian).
+  const sortedTickets = useMemo(() => {
+    const sevRank: Record<string, number> = {
+      critical: 0, high: 1, medium: 2, low: 3,
+    };
+    const tsOrZero = (s: string): number => {
+      const t = new Date(s).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
+    return [...tickets].sort((a, b) => {
+      const sa = sevRank[a.severity?.toLowerCase()] ?? 99;
+      const sb = sevRank[b.severity?.toLowerCase()] ?? 99;
+      if (sa !== sb) return sa - sb;
+      if (a.sla_breached !== b.sla_breached) return a.sla_breached ? -1 : 1;
+      return tsOrZero(a.created_at) - tsOrZero(b.created_at);
+    });
+  }, [tickets]);
+
   return (
     <div className="space-y-6 page-enter">
       {/* Feedback */}
@@ -187,7 +208,7 @@ export const L4Queue: React.FC = () => {
 
         {!loading && tickets.length > 0 && (
           <div className="space-y-3 stagger-list">
-            {tickets.map(ticket => (
+            {sortedTickets.map(ticket => (
               <div
                 key={ticket.id}
                 onClick={() => setSelectedTicket(ticket)}
