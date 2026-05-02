@@ -178,6 +178,51 @@ def test_pre_push_allowlist_only_references_real_files():
     )
 
 
+def test_pre_push_allowlist_only_references_git_tracked_files():
+    """Adversarial CI gate (added 2026-05-02 after a 9-deploy-fail
+    cascade caused by `test_sql_on_conflict_uniqueness.py` being on
+    dev disk but UNTRACKED in git).
+
+    Pre-fix: the prior `_only_references_real_files` test asks the
+    FILESYSTEM. Dev box has the file → pre-push passes. CI checks out
+    the repo (tracked-only) → file missing → CI fails. Operator gets
+    "deploy success" claim from local hooks but prod silently stays
+    behind. 12 deploys failed in this session before we caught it.
+
+    This test asks GIT instead — every allowlist entry must be a
+    git-tracked file. Catches dev-vs-CI filesystem divergence at
+    pre-push time.
+
+    Skipped if the test runner can't shell out to git (e.g. CI image
+    without git binary). The on-disk test above remains as fallback.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "tests/test_*.py"],
+            cwd=_BACKEND,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pytest.skip("git binary unavailable; on-disk test is the fallback")
+    if result.returncode != 0:
+        pytest.skip(f"git ls-files failed: {result.stderr.strip()}")
+    tracked = {pathlib.Path(line).name for line in result.stdout.strip().splitlines() if line}
+    allowlist = _read_pre_push_allowlist()
+    untracked_referenced = allowlist - tracked
+    assert not untracked_referenced, (
+        f"Pre-push allowlist references files that exist on disk but "
+        f"are NOT git-tracked:\n"
+        + "\n".join(f"  - tests/{name}" for name in sorted(untracked_referenced))
+        + "\n\nThese files are on your dev disk but absent from the "
+        f"repo. CI will fail because the file isn't in the checkout. "
+        f"Either (a) `git add` the file so it ships, or (b) remove "
+        f"from SOURCE_LEVEL_TESTS in .githooks/pre-push."
+    )
+
+
 def test_no_pg_tests_in_pre_push_allowlist():
     """DB-gated tests (filename ends in _pg.py) require a live Postgres
     fixture — they'd skip locally anyway, but listing them in pre-push

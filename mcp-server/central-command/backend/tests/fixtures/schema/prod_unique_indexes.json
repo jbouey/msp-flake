@@ -1,0 +1,1632 @@
+{
+  "admin_audit_log": [
+    [
+      "id"
+    ]
+  ],
+  "admin_oauth_identities": [
+    [
+      "provider",
+      "provider_user_id"
+    ],
+    [
+      "id"
+    ],
+    [
+      "provider",
+      "user_id"
+    ]
+  ],
+  "admin_orders": [
+    [
+      "order_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "admin_org_assignments": [
+    [
+      "id"
+    ],
+    [
+      "admin_user_id",
+      "client_org_id"
+    ]
+  ],
+  "admin_sessions": [
+    [
+      "id"
+    ]
+  ],
+  "admin_user_invites": [
+    [
+      "id"
+    ],
+    [
+      "email",
+      "status"
+    ]
+  ],
+  "admin_users": [
+    [
+      "email"
+    ],
+    [
+      "username"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "agent_deployments": [
+    [
+      "id"
+    ],
+    [
+      "hostname",
+      "site_id"
+    ]
+  ],
+  "aggregated_pattern_stats": [
+    [
+      "pattern_signature",
+      "site_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "api_keys": [
+    [
+      "id"
+    ]
+  ],
+  "app_profile_assets": [
+    [
+      "id"
+    ]
+  ],
+  "app_profile_rules": [
+    [
+      "id"
+    ]
+  ],
+  "app_profile_templates": [
+    [
+      "id"
+    ],
+    [
+      "name"
+    ]
+  ],
+  "app_protection_profiles": [
+    [
+      "name",
+      "site_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "appliance_audit_trail": [
+    [
+      "entry_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "appliance_breakglass_passphrases": [
+    [
+      "appliance_id"
+    ]
+  ],
+  "appliance_commands": [
+    [
+      "id"
+    ],
+    [
+      "appliance_id",
+      "command_type",
+      "params"
+    ]
+  ],
+  "appliance_framework_configs": [
+    [
+      "appliance_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "appliance_heartbeats_default": [
+    [
+      "id",
+      "observed_at"
+    ]
+  ],
+  "appliance_heartbeats_y202604": [
+    [
+      "id",
+      "observed_at"
+    ]
+  ],
+  "appliance_heartbeats_y202605": [
+    [
+      "id",
+      "observed_at"
+    ]
+  ],
+  "appliance_heartbeats_y202606": [
+    [
+      "id",
+      "observed_at"
+    ]
+  ],
+  "appliance_pattern_sync": [
+    [
+      "id"
+    ],
+    [
+      "appliance_id"
+    ]
+  ],
+  "appliance_provisioning": [
+    [
+      "id"
+    ],
+    [
+      "mac_address"
+    ]
+  ],
+  "appliance_provisions": [
+    [
+      "id"
+    ],
+    [
+      "provision_code"
+    ]
+  ],
+  "appliance_runbook_config": [
+    [
+      "appliance_id",
+      "runbook_id"
+    ]
+  ],
+  "appliance_updates": [
+    [
+      "appliance_id",
+      "rollout_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "audit_log": [
+    [
+      "id"
+    ]
+  ],
+  "audit_package_downloads": [
+    [
+      "download_id"
+    ]
+  ],
+  "audit_packages": [
+    [
+      "package_id"
+    ]
+  ],
+  "baa_signatures": [
+    [
+      "signature_id"
+    ]
+  ],
+  "check_control_mappings": [
+    [
+      "check_id",
+      "control_id",
+      "framework"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "check_type_registry": [
+    [
+      "check_name"
+    ]
+  ],
+  "claim_revocations": [
+    [
+      "id"
+    ]
+  ],
+  "client_approvals": [
+    [
+      "id"
+    ]
+  ],
+  "client_audit_log": [
+    [
+      "id"
+    ]
+  ],
+  "client_escalation_preferences": [
+    [
+      "id"
+    ],
+    [
+      "client_org_id"
+    ]
+  ],
+  "client_invites": [
+    [
+      "token_hash"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "client_monthly_reports": [
+    [
+      "client_org_id",
+      "report_month"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "client_notification_prefs": [
+    [
+      "site_id"
+    ]
+  ],
+  "client_notifications": [
+    [
+      "id"
+    ]
+  ],
+  "client_oauth_state": [
+    [
+      "id"
+    ],
+    [
+      "state_hash"
+    ]
+  ],
+  "client_org_sso": [
+    [
+      "id"
+    ],
+    [
+      "client_org_id"
+    ]
+  ],
+  "client_orgs": [
+    [
+      "id"
+    ],
+    [
+      "primary_email"
+    ]
+  ],
+  "client_sessions": [
+    [
+      "token_hash"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "client_telemetry_events": [
+    [
+      "id"
+    ]
+  ],
+  "client_users": [
+    [
+      "id"
+    ],
+    [
+      "email"
+    ]
+  ],
+  "companion_activity_log": [
+    [
+      "id"
+    ]
+  ],
+  "companion_alerts": [
+    [
+      "id"
+    ]
+  ],
+  "companion_notes": [
+    [
+      "id"
+    ]
+  ],
+  "compliance_attestations": [
+    [
+      "id"
+    ]
+  ],
+  "compliance_bundles_2025_01": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_02": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_03": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_04": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_05": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_06": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_07": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_08": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_09": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_10": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_11": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2025_12": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_01": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_02": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_03": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_04": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_05": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_06": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_07": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_08": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_09": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_10": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_11": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_2026_12": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_bundles_default": [
+    [
+      "bundle_id"
+    ]
+  ],
+  "compliance_controls": [
+    [
+      "control_id",
+      "framework_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "compliance_exceptions": [
+    [
+      "id"
+    ]
+  ],
+  "compliance_packets": [
+    [
+      "id"
+    ],
+    [
+      "framework",
+      "month",
+      "site_id",
+      "year"
+    ]
+  ],
+  "compliance_scores": [
+    [
+      "id"
+    ],
+    [
+      "appliance_id",
+      "framework"
+    ]
+  ],
+  "consent_amendments": [
+    [
+      "amendment_id"
+    ]
+  ],
+  "consent_request_tokens": [
+    [
+      "token_hash"
+    ]
+  ],
+  "control_runbook_mapping": [
+    [
+      "control_id",
+      "framework_id",
+      "runbook_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "cve_entries": [
+    [
+      "id"
+    ],
+    [
+      "cve_id"
+    ]
+  ],
+  "cve_fleet_matches": [
+    [
+      "id"
+    ],
+    [
+      "appliance_id",
+      "cve_id"
+    ]
+  ],
+  "cve_watch_config": [
+    [
+      "id"
+    ]
+  ],
+  "delegated_keys": [
+    [
+      "key_id"
+    ]
+  ],
+  "device_compliance_details": [
+    [
+      "id"
+    ],
+    [
+      "check_type",
+      "discovered_device_id"
+    ]
+  ],
+  "discovered_assets": [
+    [
+      "id"
+    ],
+    [
+      "ip_address",
+      "site_id"
+    ]
+  ],
+  "discovered_devices": [
+    [
+      "id"
+    ],
+    [
+      "appliance_id",
+      "local_device_id"
+    ],
+    [
+      "site_id"
+    ]
+  ],
+  "discovery_results": [
+    [
+      "id"
+    ]
+  ],
+  "discovery_scans": [
+    [
+      "id"
+    ]
+  ],
+  "enumeration_results": [
+    [
+      "id"
+    ]
+  ],
+  "escalation_tickets": [
+    [
+      "id"
+    ]
+  ],
+  "evidence_bundles": [
+    [
+      "id"
+    ],
+    [
+      "bundle_id"
+    ]
+  ],
+  "evidence_framework_mappings": [
+    [
+      "bundle_id",
+      "control_id",
+      "framework"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "exception_audit_log": [
+    [
+      "id"
+    ]
+  ],
+  "execution_telemetry": [
+    [
+      "execution_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "fleet_order_completions": [
+    [
+      "appliance_id",
+      "fleet_order_id"
+    ]
+  ],
+  "fleet_orders": [
+    [
+      "id"
+    ]
+  ],
+  "framework_controls": [
+    [
+      "control_id",
+      "framework"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "framework_crosswalks": [
+    [
+      "source_control_id",
+      "source_framework",
+      "target_control_id",
+      "target_framework"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "framework_versions": [
+    [
+      "framework"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "go_agent_checks": [
+    [
+      "id"
+    ]
+  ],
+  "go_agent_orders": [
+    [
+      "order_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "go_agents": [
+    [
+      "agent_id"
+    ],
+    [
+      "id"
+    ],
+    [
+      "hostname",
+      "site_id"
+    ]
+  ],
+  "hipaa_baas": [
+    [
+      "id"
+    ]
+  ],
+  "hipaa_breach_log": [
+    [
+      "id"
+    ]
+  ],
+  "hipaa_contingency_plans": [
+    [
+      "id"
+    ]
+  ],
+  "hipaa_documents": [
+    [
+      "id"
+    ]
+  ],
+  "hipaa_gap_responses": [
+    [
+      "id"
+    ],
+    [
+      "org_id",
+      "question_key",
+      "questionnaire_version"
+    ]
+  ],
+  "hipaa_ir_plans": [
+    [
+      "id"
+    ]
+  ],
+  "hipaa_officers": [
+    [
+      "org_id",
+      "role_type"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "hipaa_physical_safeguards": [
+    [
+      "id"
+    ],
+    [
+      "category",
+      "item_key",
+      "org_id"
+    ]
+  ],
+  "hipaa_policies": [
+    [
+      "id"
+    ],
+    [
+      "org_id",
+      "policy_key",
+      "version"
+    ]
+  ],
+  "hipaa_sra_assessments": [
+    [
+      "id"
+    ]
+  ],
+  "hipaa_sra_responses": [
+    [
+      "assessment_id",
+      "question_key"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "hipaa_training_records": [
+    [
+      "id"
+    ]
+  ],
+  "hipaa_workforce_access": [
+    [
+      "id"
+    ]
+  ],
+  "incident_correlation_pairs": [
+    [
+      "id"
+    ],
+    [
+      "incident_type_a",
+      "incident_type_b",
+      "site_id"
+    ]
+  ],
+  "incident_recurrence_velocity": [
+    [
+      "id"
+    ],
+    [
+      "incident_type",
+      "site_id"
+    ]
+  ],
+  "incident_remediation_steps": [
+    [
+      "id"
+    ]
+  ],
+  "incidents": [
+    [
+      "id"
+    ],
+    [
+      "dedup_key"
+    ]
+  ],
+  "install_reports": [
+    [
+      "installer_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "install_sessions": [
+    [
+      "session_id"
+    ]
+  ],
+  "integration_audit_log": [
+    [
+      "id"
+    ]
+  ],
+  "integration_resources": [
+    [
+      "id"
+    ],
+    [
+      "integration_id",
+      "resource_id",
+      "resource_type"
+    ]
+  ],
+  "integration_sync_jobs": [
+    [
+      "id"
+    ]
+  ],
+  "integrations": [
+    [
+      "id"
+    ],
+    [
+      "name",
+      "provider",
+      "site_id"
+    ]
+  ],
+  "iso_release_ca_pubkeys": [
+    [
+      "iso_release_sha"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "journal_upload_events": [
+    [
+      "appliance_id",
+      "chain_prev_hash"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "l1_rule_regime_events": [
+    [
+      "id"
+    ]
+  ],
+  "l1_rules": [
+    [
+      "rule_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "l2_decisions": [
+    [
+      "id"
+    ]
+  ],
+  "l2_prompt_exemplars": [
+    [
+      "incident_type",
+      "runbook_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "l2_prompt_versions": [
+    [
+      "purpose"
+    ],
+    [
+      "version_tag"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "l2_rate_limits": [
+    [
+      "day",
+      "incident_type",
+      "site_id"
+    ]
+  ],
+  "learning_promotion_candidates": [
+    [
+      "id"
+    ],
+    [
+      "pattern_signature",
+      "site_id"
+    ]
+  ],
+  "learning_promotion_reports": [
+    [
+      "id"
+    ]
+  ],
+  "liveness_claims": [
+    [
+      "claim_id"
+    ]
+  ],
+  "log_entries_2026_03": [
+    [
+      "id",
+      "timestamp"
+    ]
+  ],
+  "log_entries_2026_04": [
+    [
+      "id",
+      "timestamp"
+    ]
+  ],
+  "log_entries_2026_05": [
+    [
+      "id",
+      "timestamp"
+    ]
+  ],
+  "mesh_assignment_audit": [
+    [
+      "id"
+    ]
+  ],
+  "mesh_target_assignments": [
+    [
+      "assignment_id"
+    ],
+    [
+      "site_id",
+      "target_key",
+      "target_type"
+    ]
+  ],
+  "nonces": [
+    [
+      "nonce"
+    ]
+  ],
+  "notification_deliveries": [
+    [
+      "id"
+    ]
+  ],
+  "notifications": [
+    [
+      "id"
+    ]
+  ],
+  "oauth_config": [
+    [
+      "provider"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "oauth_partner_state": [
+    [
+      "state_token"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "orders": [
+    [
+      "id"
+    ],
+    [
+      "order_id"
+    ]
+  ],
+  "org_audit_log": [
+    [
+      "id"
+    ]
+  ],
+  "org_credentials": [
+    [
+      "id"
+    ]
+  ],
+  "ots_batch_jobs": [
+    [
+      "id"
+    ],
+    [
+      "job_id"
+    ]
+  ],
+  "ots_merkle_batches": [
+    [
+      "id"
+    ],
+    [
+      "batch_id"
+    ]
+  ],
+  "ots_proofs": [
+    [
+      "id"
+    ],
+    [
+      "bundle_id"
+    ]
+  ],
+  "partner_activity_log": [
+    [
+      "id"
+    ]
+  ],
+  "partner_agreements": [
+    [
+      "agreement_id"
+    ]
+  ],
+  "partner_invites": [
+    [
+      "invite_id"
+    ],
+    [
+      "token_sha256"
+    ]
+  ],
+  "partner_invoices": [
+    [
+      "id"
+    ]
+  ],
+  "partner_notification_settings": [
+    [
+      "id"
+    ],
+    [
+      "partner_id"
+    ]
+  ],
+  "partner_notifications": [
+    [
+      "id"
+    ]
+  ],
+  "partner_oauth_config": [
+    [
+      "id"
+    ]
+  ],
+  "partner_payout_runs": [
+    [
+      "id"
+    ],
+    [
+      "partner_id",
+      "period_start"
+    ]
+  ],
+  "partner_revenue_tiers": [
+    [
+      "min_clinic_count",
+      "partner_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "partner_sessions": [
+    [
+      "id"
+    ],
+    [
+      "session_token_hash"
+    ]
+  ],
+  "partner_transfer_requests": [
+    [
+      "id"
+    ]
+  ],
+  "partner_users": [
+    [
+      "email",
+      "partner_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "partners": [
+    [
+      "slug"
+    ],
+    [
+      "id"
+    ],
+    [
+      "stripe_connect_account_id"
+    ],
+    [
+      "auth_provider",
+      "oauth_subject"
+    ],
+    [
+      "api_key"
+    ]
+  ],
+  "password_history": [
+    [
+      "id"
+    ]
+  ],
+  "pattern_decay_config": [
+    [
+      "incident_type"
+    ]
+  ],
+  "pattern_embeddings": [
+    [
+      "pattern_key"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "patterns": [
+    [
+      "pattern_signature"
+    ],
+    [
+      "pattern_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "pending_alerts": [
+    [
+      "incident_id",
+      "org_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "platform_pattern_stats": [
+    [
+      "id"
+    ],
+    [
+      "pattern_key"
+    ]
+  ],
+  "privileged_access_consent_config": [
+    [
+      "site_id"
+    ]
+  ],
+  "privileged_access_magic_links": [
+    [
+      "token_id"
+    ]
+  ],
+  "privileged_access_requests": [
+    [
+      "id"
+    ]
+  ],
+  "processed_escalations": [
+    [
+      "escalation_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "promoted_rule_deployments": [
+    [
+      "appliance_id",
+      "rule_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "promoted_rule_events_202604": [
+    [
+      "created_at",
+      "event_id"
+    ]
+  ],
+  "promoted_rule_events_202605": [
+    [
+      "created_at",
+      "event_id"
+    ]
+  ],
+  "promoted_rule_events_202606": [
+    [
+      "created_at",
+      "event_id"
+    ]
+  ],
+  "promoted_rule_events_202607": [
+    [
+      "created_at",
+      "event_id"
+    ]
+  ],
+  "promoted_rule_events_202608": [
+    [
+      "created_at",
+      "event_id"
+    ]
+  ],
+  "promoted_rule_events_default": [
+    [
+      "created_at",
+      "event_id"
+    ]
+  ],
+  "promoted_rule_lifecycle_transitions": [
+    [
+      "from_state",
+      "to_state"
+    ]
+  ],
+  "promoted_rules": [
+    [
+      "rule_id",
+      "site_id"
+    ],
+    [
+      "id"
+    ],
+    [
+      "rule_id",
+      "site_id"
+    ]
+  ],
+  "promotion_audit_log": [
+    [
+      "id"
+    ]
+  ],
+  "promotion_thresholds": [
+    [
+      "incident_type"
+    ]
+  ],
+  "provisioning_claim_events": [
+    [
+      "id"
+    ]
+  ],
+  "rate_limits": [
+    [
+      "action",
+      "site_id",
+      "window_start"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "reconcile_events": [
+    [
+      "id"
+    ]
+  ],
+  "relocations": [
+    [
+      "mac_address",
+      "status"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "rmm_comparison_history": [
+    [
+      "id"
+    ]
+  ],
+  "rmm_comparison_reports": [
+    [
+      "id"
+    ],
+    [
+      "site_id"
+    ]
+  ],
+  "runbook_class_consent": [
+    [
+      "class_id",
+      "revoked_at",
+      "site_id"
+    ],
+    [
+      "consent_id"
+    ]
+  ],
+  "runbook_classes": [
+    [
+      "class_id"
+    ]
+  ],
+  "runbook_id_mapping": [
+    [
+      "l1_rule_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "runbook_registry": [
+    [
+      "runbook_id",
+      "version"
+    ]
+  ],
+  "runbooks": [
+    [
+      "runbook_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "schema_migrations": [
+    [
+      "version"
+    ]
+  ],
+  "security_events_2026_03": [
+    [
+      "event_timestamp",
+      "id"
+    ]
+  ],
+  "security_events_2026_04": [
+    [
+      "event_timestamp",
+      "id"
+    ]
+  ],
+  "security_events_2026_05": [
+    [
+      "event_timestamp",
+      "id"
+    ]
+  ],
+  "security_events_2026_06": [
+    [
+      "event_timestamp",
+      "id"
+    ]
+  ],
+  "sensor_commands": [
+    [
+      "id"
+    ]
+  ],
+  "sensor_registry": [
+    [
+      "hostname",
+      "site_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "shadow_evaluations": [
+    [
+      "id"
+    ]
+  ],
+  "shadow_mode_config": [
+    [
+      "incident_type"
+    ]
+  ],
+  "sigauth_observations": [
+    [
+      "id"
+    ]
+  ],
+  "signup_sessions": [
+    [
+      "signup_id"
+    ]
+  ],
+  "site_appliances": [
+    [
+      "appliance_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "site_credentials": [
+    [
+      "credential_name",
+      "credential_type",
+      "site_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "site_drift_config": [
+    [
+      "check_type",
+      "site_id"
+    ]
+  ],
+  "site_go_agent_summaries": [
+    [
+      "id"
+    ],
+    [
+      "site_id"
+    ]
+  ],
+  "site_healing_sla": [
+    [
+      "period_start",
+      "site_id"
+    ]
+  ],
+  "site_notification_overrides": [
+    [
+      "site_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "site_runbook_config": [
+    [
+      "runbook_id",
+      "site_id"
+    ]
+  ],
+  "site_workstation_summaries": [
+    [
+      "id"
+    ],
+    [
+      "bundle_id"
+    ],
+    [
+      "site_id"
+    ]
+  ],
+  "sites": [
+    [
+      "id"
+    ],
+    [
+      "site_id"
+    ],
+    [
+      "public_status_slug"
+    ]
+  ],
+  "sla_definitions": [
+    [
+      "partner_id",
+      "priority"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "stripe_events": [
+    [
+      "event_id"
+    ]
+  ],
+  "subscriptions": [
+    [
+      "stripe_subscription_id"
+    ]
+  ],
+  "substrate_action_invocations": [
+    [
+      "id"
+    ],
+    [
+      "actor_email",
+      "idempotency_key"
+    ]
+  ],
+  "substrate_violations": [
+    [
+      "id"
+    ],
+    [
+      "invariant_name"
+    ]
+  ],
+  "system_settings": [
+    [
+      "id"
+    ]
+  ],
+  "target_health": [
+    [
+      "hostname",
+      "port",
+      "protocol",
+      "site_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "telemetry_archive": [
+    [
+      "pattern_signature",
+      "period_end",
+      "period_start",
+      "site_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "update_audit_log": [
+    [
+      "id"
+    ]
+  ],
+  "update_releases": [
+    [
+      "id"
+    ],
+    [
+      "version"
+    ]
+  ],
+  "update_rollouts": [
+    [
+      "id"
+    ]
+  ],
+  "watchdog_events": [
+    [
+      "id"
+    ]
+  ],
+  "witness_attestations": [
+    [
+      "id"
+    ],
+    [
+      "bundle_id",
+      "witness_appliance"
+    ]
+  ],
+  "workstation_checks": [
+    [
+      "id"
+    ]
+  ],
+  "workstation_evidence": [
+    [
+      "bundle_id"
+    ],
+    [
+      "id"
+    ]
+  ],
+  "workstations": [
+    [
+      "id"
+    ],
+    [
+      "hostname",
+      "site_id"
+    ]
+  ]
+}
