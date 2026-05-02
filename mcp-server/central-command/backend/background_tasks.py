@@ -1524,6 +1524,17 @@ async def mark_stale_appliances_loop():
             # Same fragility class as the new go_agent state-machine
             # loop closed in Session 214 P0 round-table.
             async with admin_transaction(pool) as conn:
+                # Legitimate bulk op: this loop's whole purpose is to flip
+                # MULTIPLE appliances to offline in one pass. The mig 192/208
+                # row-guard otherwise refuses any UPDATE touching >1 row
+                # under the same site_id (anti-footgun for ad-hoc ops).
+                # Set the escape-hatch flag — documented in
+                # feedback_site_wide_update_footgun.md as the prescribed
+                # path for legitimate bulk operations. Pre-fix observed
+                # 2026-05-02: 3 appliances at one site went stale together
+                # and the loop failed every 60s for 10+ min, leaving them
+                # falsely 'online' on the customer-facing SLA dashboard.
+                await conn.execute("SET LOCAL app.allow_multi_row='true'")
                 rows = await conn.fetch("""
                     UPDATE site_appliances
                     SET status = 'offline',
