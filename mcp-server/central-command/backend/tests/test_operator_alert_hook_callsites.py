@@ -170,16 +170,25 @@ def test_ast_gate_accepts_real_call(tmp_path):
 
 
 def test_helper_routes_to_alert_email():
-    """The helper MUST send to ALERT_EMAIL (operator inbox). If a
-    refactor accidentally routed it to client_orgs.alert_email or
-    a partner address, every operator-visibility event would land
-    in customer inboxes — a privacy + ops incident."""
+    """The helper MUST send to operator inbox (ALERT_EMAIL or, since
+    2026-05-04 deferred-batch, the ALERT_EMAILS-DL resolver). If a
+    refactor accidentally routed it to client_orgs.alert_email or a
+    partner address, every operator-visibility event would land in
+    customer inboxes — a privacy + ops incident."""
     src = _read(_BACKEND / "email_alerts.py")
     helper_start = src.find("def send_operator_alert(")
     assert helper_start >= 0
     helper_body = src[helper_start:helper_start + 6000]
-    assert "ALERT_EMAIL" in helper_body, (
-        "send_operator_alert no longer references ALERT_EMAIL. The "
-        "helper MUST route to the operator inbox, NOT to client/partner "
-        "addresses. Recipient resolution drift was caught here."
+    # Either direct ALERT_EMAIL reference (legacy single-recipient form)
+    # OR _resolve_alert_recipients() call (new DL form) is acceptable.
+    # The DL resolver itself unconditionally falls back to [ALERT_EMAIL]
+    # — pinned by test_alert_emails_dl_parsing.
+    assert (
+        "ALERT_EMAIL" in helper_body
+        or "_resolve_alert_recipients" in helper_body
+    ), (
+        "send_operator_alert no longer references ALERT_EMAIL or the "
+        "_resolve_alert_recipients() resolver. The helper MUST route to "
+        "the operator inbox, NOT to client/partner addresses. Recipient "
+        "resolution drift was caught here."
     )

@@ -215,6 +215,7 @@ async def deprovision_org(
         raise HTTPException(status_code=403, detail="Admin only")
 
     pool = await get_pool()
+    notify_recipients: list[dict] = []
     async with admin_connection(pool) as conn:
         async with conn.transaction():
             org = await conn.fetchrow(
@@ -259,6 +260,22 @@ async def deprovision_org(
                 org_id,
             )
 
+            # Notify-users wiring: collect active client_user emails INSIDE
+            # the txn (RLS-safe). The actual SMTP send happens AFTER the
+            # txn commits — never hold a transaction open across SMTP I/O.
+            # Pre-2026-05-04: notify_users flag was logged but never fired.
+            if req.notify_users:
+                rows = await conn.fetch(
+                    """
+                    SELECT email, name FROM client_users
+                    WHERE client_org_id = $1::uuid AND is_active = true
+                    """,
+                    org_id,
+                )
+                notify_recipients = [
+                    {"email": r["email"], "name": r["name"]} for r in rows
+                ]
+
             await _audit(
                 conn, org_id, "org_deprovisioned",
                 user.get("username", "admin"), "admin",
@@ -267,6 +284,7 @@ async def deprovision_org(
                     "retention_days": req.retention_days,
                     "retention_until": retention_until.isoformat(),
                     "notify_users": req.notify_users,
+                    "notify_recipient_count": len(notify_recipients),
                 },
                 ip_address=request.client.host if request.client else None,
             )
@@ -284,22 +302,105 @@ async def deprovision_org(
                     "retention_days": req.retention_days,
                     "retention_until": retention_until.isoformat(),
                     "notify_users": req.notify_users,
+                    "notify_recipient_count": len(notify_recipients),
                 },
                 actor_email=user.get("email") or user.get("username"),
             )
         except Exception:
             logger.error("operator_alert_dispatch_failed_deprovision", exc_info=True)
 
+        # Client-facing notification: send each active user a deprovision
+        # notice with retention-window context. Best-effort per-user —
+        # one bad address must not block the others. Logged at ERROR on
+        # failure so the shipper alerts (per CLAUDE.md no-silent-write).
+        if notify_recipients:
+            await _send_deprovision_notices(
+                org_name=org["name"],
+                recipients=notify_recipients,
+                retention_until=retention_until,
+                reason=req.reason,
+            )
+
         return {
             "org_id": org_id,
             "name": org["name"],
             "deprovisioned_at": datetime.now(timezone.utc).isoformat(),
             "data_retention_until": retention_until.isoformat(),
+            "notified_user_count": len(notify_recipients),
             "message": (
                 f"Org deprovisioned. Data retained until {retention_until}. "
                 f"All sites archived, client sessions invalidated."
             ),
         }
+
+
+async def _send_deprovision_notices(
+    org_name: str,
+    recipients: list[dict],
+    retention_until,  # datetime.date
+    reason: str,
+) -> None:
+    """Send a deprovision notice to each active client_user. Best-effort
+    per-recipient. Failures log at ERROR (no silent-write) but never
+    propagate — the cryptographic audit (org_audit_log via _audit) is
+    the authoritative record; this email is the human-readable echo
+    so customers know access has been disabled.
+
+    Per CLAUDE.md Session 199 legal-language rules: framing is
+    operator-neutral ("access has been disabled by your operator") —
+    Osiris is the substrate, the MSP/operator is the actor.
+    """
+    from .email_service import send_email
+    body_template = (
+        "Access to OsirisCare has been disabled for {org_name}.\n"
+        "\n"
+        "What this means:\n"
+        "- All sites under this organization are now read-only.\n"
+        "- Active sessions have been invalidated; you will be signed out.\n"
+        "- Your evidence and audit data are preserved through "
+        "{retention_until}.\n"
+        "\n"
+        "Reason recorded: {reason}\n"
+        "\n"
+        "If you believe this was done in error, please contact your "
+        "operator (the MSP / administrator who manages your OsirisCare "
+        "account) directly. OsirisCare cannot reverse a deprovision "
+        "without operator initiation.\n"
+        "\n"
+        "After {retention_until}, data may be permanently removed per "
+        "the configured retention policy.\n"
+        "\n"
+        "---\n"
+        "OsirisCare — substrate-level deprovision notice"
+    )
+    for rec in recipients:
+        try:
+            ok = await send_email(
+                rec["email"],
+                f"Access disabled: {org_name}",
+                body_template.format(
+                    org_name=org_name,
+                    retention_until=retention_until.isoformat(),
+                    reason=reason,
+                ),
+            )
+            if not ok:
+                logger.error(
+                    "deprovision_notice_send_failed",
+                    extra={
+                        "org_name": org_name,
+                        "recipient_email": rec["email"],
+                    },
+                )
+        except Exception:
+            logger.error(
+                "deprovision_notice_unexpected_failure",
+                exc_info=True,
+                extra={
+                    "org_name": org_name,
+                    "recipient_email": rec["email"],
+                },
+            )
 
 
 @router.post("/{org_id}/reprovision")

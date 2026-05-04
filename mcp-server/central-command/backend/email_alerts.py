@@ -27,6 +27,27 @@ ALERT_EMAIL = os.getenv("ALERT_EMAIL", "administrator@osiriscare.net")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://www.osiriscare.net")
 
 
+def _resolve_alert_recipients() -> list[str]:
+    """Resolve operator-alert recipient list.
+
+    Steve adversarial-round 2026-05-04 P3 follow-up: ALERT_EMAIL is
+    a single address — bus-factor 1 if administrator@osiriscare.net
+    is asleep / on PTO / departed. Closes the operator-DL gap by
+    parsing ALERT_EMAILS (comma-separated) when set; falls back to
+    ALERT_EMAIL otherwise. Backward-compatible — existing deploys
+    keep working unchanged.
+    """
+    raw = os.getenv("ALERT_EMAILS", "").strip()
+    if raw:
+        # Comma-separated, whitespace-tolerant. Reject empties +
+        # accidental newlines without raising.
+        addresses = [a.strip() for a in raw.split(",")]
+        addresses = [a for a in addresses if a and "@" in a]
+        if addresses:
+            return addresses
+    return [ALERT_EMAIL]
+
+
 def is_email_configured() -> bool:
     """Check if email is properly configured."""
     return bool(SMTP_USER and SMTP_PASSWORD)
@@ -81,8 +102,76 @@ def _send_smtp_with_retry(
                 _time.sleep(2 ** attempt)
             else:
                 logger.error(f"Failed to send {label} after {max_retries} attempts: {smtp_err}")
+                # Email DLQ hook: append a row to email_send_failures so
+                # the substrate invariant `email_dlq_growing` can fire
+                # when SMTP is silently broken. Best-effort — DLQ write
+                # failure must NOT amplify the original send failure.
+                _record_email_dlq_failure(
+                    label=label,
+                    recipient_count=len(recipients),
+                    error=smtp_err,
+                    retry_count=max_retries,
+                )
                 return False
     return False
+
+
+def _record_email_dlq_failure(
+    label: str,
+    recipient_count: int,
+    error: BaseException,
+    retry_count: int,
+) -> None:
+    """Append a row to email_send_failures (mig 272). Best-effort —
+    swallows any exception so the DLQ-write itself can never amplify
+    a send failure into a request failure. Recipient addresses are
+    NOT stored (privacy + minimization)."""
+    try:
+        # Lazy import: avoid pulling SQLAlchemy / asyncpg at module load
+        # since email_alerts.py is imported by paths that don't have
+        # the DB layer fully wired up (CLI, tests, etc.).
+        import os as _os
+        # Use a synchronous direct connection — _send_smtp_with_retry
+        # is called from sync paths (alert digests) AND async paths
+        # (operator alerts). Sync DB path keeps this universal.
+        try:
+            import psycopg2  # type: ignore
+        except ImportError:
+            # psycopg2 may not be installed in some test fixtures —
+            # silently skip rather than logging another error on the
+            # already-failing path.
+            return
+        dsn = _os.getenv("MIGRATION_DATABASE_URL") or _os.getenv("DATABASE_URL")
+        if not dsn:
+            return
+        # psycopg2 expects "postgresql://" (asyncpg accepts both).
+        if dsn.startswith("postgresql+asyncpg://"):
+            dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
+        msg_text = str(error)[:480]
+        with psycopg2.connect(dsn, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO email_send_failures
+                        (label, recipient_count, error_class,
+                         error_message, retry_count)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (label, recipient_count, type(error).__name__,
+                     msg_text, retry_count),
+                )
+    except Exception as e:
+        # Last-resort log — but do NOT escalate. The original send
+        # failure already logged at ERROR; this is a secondary
+        # observability path.
+        logger.error(
+            "email_dlq_write_failed",
+            extra={
+                "label": label,
+                "exception_class": type(e).__name__,
+                "exception_message": str(e)[:240],
+            },
+        )
 
 
 def send_operator_alert(
@@ -146,10 +235,11 @@ def send_operator_alert(
         if len(subject) > 160:
             subject = subject[:157] + "..."
 
+        recipients = _resolve_alert_recipients()
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = SMTP_FROM
-        msg["To"] = ALERT_EMAIL
+        msg["To"] = ", ".join(recipients)
 
         ts = datetime.now(timezone.utc).isoformat()
         body_lines = [
@@ -191,7 +281,7 @@ def send_operator_alert(
         msg.attach(MIMEText(text_body, "plain"))
 
         ok = _send_smtp_with_retry(
-            msg, [ALERT_EMAIL],
+            msg, recipients,
             label=f"operator alert: {event_type}",
         )
         if not ok:

@@ -120,6 +120,47 @@ def test_subject_truncates_when_too_long(monkeypatch):
     assert captured["subject"].endswith("...")
 
 
+def test_alert_emails_dl_parsing(monkeypatch):
+    """Steve P3 follow-up: ALERT_EMAILS env (comma-separated) creates
+    a team DL so a single sleeping/departed admin doesn't drop alerts.
+    Falls back to ALERT_EMAIL when ALERT_EMAILS unset or empty."""
+    monkeypatch.setattr("email_alerts.SMTP_USER", "user")
+    monkeypatch.setattr("email_alerts.SMTP_PASSWORD", "pw")
+    monkeypatch.setattr("email_alerts.ALERT_EMAIL", "fallback@x.test")
+    captured = {}
+
+    def fake_send(msg, recipients, label, max_retries=3, partner_branding=None):
+        captured["recipients"] = recipients
+        captured["to_header"] = msg.get("To")
+        return True
+
+    monkeypatch.setattr("email_alerts._send_smtp_with_retry", fake_send)
+    from email_alerts import send_operator_alert
+
+    # Case 1: ALERT_EMAILS set with multiple addresses (whitespace-tolerant)
+    monkeypatch.setenv("ALERT_EMAILS", "a@x.test, b@x.test ,  c@x.test")
+    send_operator_alert(event_type="t", severity="P0", summary="s")
+    assert captured["recipients"] == ["a@x.test", "b@x.test", "c@x.test"]
+    assert "a@x.test" in captured["to_header"]
+    assert "c@x.test" in captured["to_header"]
+
+    # Case 2: ALERT_EMAILS unset → fall back to ALERT_EMAIL
+    monkeypatch.delenv("ALERT_EMAILS", raising=False)
+    send_operator_alert(event_type="t", severity="P0", summary="s")
+    assert captured["recipients"] == ["fallback@x.test"]
+
+    # Case 3: ALERT_EMAILS set but empty/whitespace → fall back
+    monkeypatch.setenv("ALERT_EMAILS", "   ")
+    send_operator_alert(event_type="t", severity="P0", summary="s")
+    assert captured["recipients"] == ["fallback@x.test"]
+
+    # Case 4: ALERT_EMAILS contains garbage tokens (no @) → filtered out,
+    # fall back to ALERT_EMAIL if all are filtered.
+    monkeypatch.setenv("ALERT_EMAILS", "not-an-email, also-bad")
+    send_operator_alert(event_type="t", severity="P0", summary="s")
+    assert captured["recipients"] == ["fallback@x.test"]
+
+
 def test_never_raises_on_unexpected_internal_error(monkeypatch):
     """Even if msg construction blows up, the helper must NOT raise.
     The cryptographic attestation already succeeded — email failure
