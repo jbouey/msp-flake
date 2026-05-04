@@ -5,6 +5,7 @@ Uses SMTP with TLS for secure email delivery.
 """
 
 import html
+import json
 import os
 import ssl
 import smtplib
@@ -12,7 +13,7 @@ import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,135 @@ def _send_smtp_with_retry(
                 logger.error(f"Failed to send {label} after {max_retries} attempts: {smtp_err}")
                 return False
     return False
+
+
+def send_operator_alert(
+    event_type: str,
+    severity: str,
+    summary: str,
+    details: Optional[dict] = None,
+    site_id: Optional[str] = None,
+    actor_email: Optional[str] = None,
+) -> bool:
+    """Operator-visibility email for cryptographically attested events.
+
+    The cryptographic chain (admin_audit_log + privileged_access_attestation
+    + Ed25519 signing + OTS anchoring) is the source of truth. This email
+    is the human-readable echo so an operator wakes up to the event in
+    real time instead of discovering it hours later via dashboard scan.
+
+    Wired into: kill-switch pause/resume, admin destructive billing
+    (cancel/refund), break-glass passphrase retrieval, partner-initiated
+    privileged-access requests, client-org user mutations (invite/remove/
+    role-change), site mutations (contact_email/partner_id/relocation),
+    org deprovision/reprovision. Each callsite invokes this helper AFTER
+    its existing audit-log + attestation succeed, never before.
+
+    PHI-free contract: site_id, actor_email, event_type, summary, and
+    details dict pass through as operational metadata only. Callers
+    MUST NOT include hostnames, device identifiers, or PHI in `details`.
+    Per CLAUDE.md, Central Command is PHI-free; site_ids are not PHI.
+
+    Returns True on send success; False on send failure (logged at
+    ERROR per the no-silent-write-failures rule). Never raises — the
+    cryptographic attestation already succeeded; email is best-effort
+    observability.
+
+    Severity strings are advisory and feed the subject-line tag:
+      P0 — fleet-wide or attested-trust-breaking events (kill-switch,
+           break-glass retrieval).
+      P1 — bounded customer-impact admin actions (billing destructive,
+           org deprovision, privileged-access request creation).
+      P2 — observability into customer-side mutations (user invites,
+           role changes, site config edits).
+      P3 — informational, low-frequency events.
+    """
+    if not is_email_configured():
+        logger.warning(
+            "operator_alert_skipped_email_not_configured",
+            extra={"event_type": event_type, "severity": severity},
+        )
+        return False
+
+    try:
+        # Operator-friendly subject: severity tag + event + site shortcut
+        subj_parts = [f"[OsirisCare {severity}]", event_type]
+        if site_id:
+            subj_parts.append(f"site={site_id}")
+        subject = " ".join(subj_parts) + ": " + summary
+        if len(subject) > 160:
+            subject = subject[:157] + "..."
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_FROM
+        msg["To"] = ALERT_EMAIL
+
+        ts = datetime.now(timezone.utc).isoformat()
+        body_lines = [
+            f"Event: {event_type}",
+            f"Severity: {severity}",
+            f"Time (UTC): {ts}",
+        ]
+        if site_id:
+            body_lines.append(f"Site: {site_id}")
+        if actor_email:
+            body_lines.append(f"Actor: {actor_email}")
+        body_lines.append("")
+        body_lines.append(f"Summary: {summary}")
+        if details:
+            body_lines.append("")
+            body_lines.append("Details:")
+            for k, v in details.items():
+                if isinstance(v, (dict, list)):
+                    v_str = json.dumps(v, default=str)
+                else:
+                    v_str = str(v)
+                # Cap each value to avoid runaway bodies + accidental PHI
+                # leakage from a caller passing a structured payload.
+                if len(v_str) > 480:
+                    v_str = v_str[:480] + "..."
+                body_lines.append(f"  {k}: {v_str}")
+        body_lines.extend([
+            "",
+            "---",
+            (
+                "This event was recorded in the cryptographic attestation "
+                "chain. The substrate audits this notification path; "
+                "delivery failures are logged at ERROR but do not affect "
+                "the chain. PHI is scrubbed at appliance egress; this "
+                "email contains operational metadata only."
+            ),
+        ])
+        text_body = "\n".join(body_lines)
+        msg.attach(MIMEText(text_body, "plain"))
+
+        ok = _send_smtp_with_retry(
+            msg, [ALERT_EMAIL],
+            label=f"operator alert: {event_type}",
+        )
+        if not ok:
+            logger.error(
+                "operator_alert_send_failed",
+                extra={
+                    "event_type": event_type,
+                    "severity": severity,
+                    "site_id": site_id,
+                    "actor_email": actor_email,
+                },
+            )
+        return ok
+    except Exception as e:
+        logger.error(
+            "operator_alert_unexpected_failure",
+            exc_info=True,
+            extra={
+                "event_type": event_type,
+                "severity": severity,
+                "exception_class": type(e).__name__,
+            },
+        )
+        return False
 
 
 async def get_partner_email_branding(partner_id: Optional[str]) -> Optional[dict]:

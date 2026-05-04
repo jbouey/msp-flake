@@ -442,6 +442,28 @@ async def update_site(
                 request=request,
             )
 
+    if diff:
+        try:
+            from .email_alerts import send_operator_alert
+            actor = (user.get("email") if isinstance(user, dict) else None) or (
+                user.get("username") if isinstance(user, dict) else "unknown"
+            )
+            # Identify whether sensitive ownership/contact fields changed —
+            # those upgrade the severity from P3 (informational tier change)
+            # to P2 (operator should know who's now reachable).
+            ownership_keys = {"contact_email", "partner_id"}
+            sev = "P2" if any(k in diff for k in ownership_keys) else "P3"
+            send_operator_alert(
+                event_type="site_updated",
+                severity=sev,
+                summary=f"Site {site_id} updated: {', '.join(sorted(diff.keys()))}",
+                details={"changes": diff},
+                site_id=site_id,
+                actor_email=actor,
+            )
+        except Exception:
+            logger.error("operator_alert_dispatch_failed_site_update", exc_info=True)
+
     return {
         "status": "updated",
         "site_id": result["site_id"],
@@ -2377,6 +2399,32 @@ async def relocate_appliance(
             f"{MIN_REPROVISION_VERSION} via update_daemon order to enable "
             "automatic relocate."
         )
+
+    try:
+        from .email_alerts import send_operator_alert
+        actor = (user.get("email") if isinstance(user, dict) else None) or (
+            user.get("username") if isinstance(user, dict) else "unknown"
+        )
+        send_operator_alert(
+            event_type="appliance_relocated",
+            severity="P1",
+            summary=(
+                f"Appliance {appliance_id} relocated "
+                f"{site_id} → {req.target_site_id}"
+            ),
+            details={
+                "source_site_id": site_id,
+                "target_site_id": req.target_site_id,
+                "appliance_id": appliance_id,
+                "reason": req.reason,
+                "fleet_order_issued": "fleet_order_id" in response,
+                "ssh_fallback_used": "ssh_snippet" in response,
+            },
+            site_id=req.target_site_id,
+            actor_email=actor,
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_relocate", exc_info=True)
 
     return response
 

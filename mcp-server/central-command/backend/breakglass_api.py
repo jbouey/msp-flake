@@ -329,6 +329,24 @@ async def retrieve_breakglass(
         actor, appliance_id, int(row["passphrase_version"]),
         attestation_bundle_id or "none", reason_clean[:60],
     )
+    try:
+        from .email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="break_glass_passphrase_retrieval",
+            severity="P0",
+            summary=f"Break-glass passphrase retrieved for appliance {appliance_id} by {actor}",
+            details={
+                "appliance_id": appliance_id,
+                "passphrase_version": int(row["passphrase_version"]),
+                "reason": reason_clean,
+                "attestation_bundle_id": attestation_bundle_id,
+                "retrieval_count_after": int(row["retrieval_count"]) + 1,
+            },
+            site_id=row["site_id"],
+            actor_email=actor,
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_breakglass", exc_info=True)
     return {
         "appliance_id": appliance_id,
         "site_id": row["site_id"],

@@ -207,6 +207,26 @@ async def initiate_request(
     })).fetchone()
     await db.commit()
 
+    try:
+        from .email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="privileged_access_request_created",
+            severity="P1",
+            summary=f"Partner-initiated privileged-access request: {body.event_type}",
+            details={
+                "request_id": row.id,
+                "status": row.status,
+                "duration_minutes": body.duration_minutes,
+                "client_approval_required": client_required,
+                "reason": body.reason,
+                "attestation_bundle_id": att["bundle_id"],
+            },
+            site_id=body.site_id,
+            actor_email=partner.get("email"),
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_priv_access_create", exc_info=True)
+
     return {
         "request_id": row.id,
         "status": row.status,

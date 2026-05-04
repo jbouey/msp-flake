@@ -1992,6 +1992,23 @@ async def invite_user(
             request=request,
         )
 
+    try:
+        from .email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="client_user_invited",
+            severity="P2",
+            summary=f"Client user invited to {user.get('org_name', 'org')}: {email} ({invite.role})",
+            details={
+                "invited_email": email,
+                "role": invite.role,
+                "invite_id": str(invite_id),
+                "org_id": str(user.get("org_id", "")),
+            },
+            actor_email=user.get("email"),
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_user_invited", exc_info=True)
+
     # Send invite email
     invite_link = f"{BASE_URL}/client/invite?token={invite_token}"
 
@@ -2074,6 +2091,22 @@ async def remove_user(
             request=request,
         )
 
+    try:
+        from .email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="client_user_removed",
+            severity="P2",
+            summary=f"Client user removed from {user.get('org_name', 'org')} (role={target['role']})",
+            details={
+                "removed_user_id": target_user_id,
+                "removed_role": target["role"],
+                "org_id": str(user.get("org_id", "")),
+            },
+            actor_email=user.get("email"),
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_user_removed", exc_info=True)
+
     return {"status": "removed"}
 
 
@@ -2108,6 +2141,22 @@ async def update_user_role(
             details={"new_role": body.role},
             request=request,
         )
+
+    try:
+        from .email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="client_user_role_changed",
+            severity="P2",
+            summary=f"Client user role changed in {user.get('org_name', 'org')} → {body.role}",
+            details={
+                "target_user_id": target_user_id,
+                "new_role": body.role,
+                "org_id": str(user.get("org_id", "")),
+            },
+            actor_email=user.get("email"),
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_user_role_changed", exc_info=True)
 
     return {"status": "updated", "role": body.role}
 

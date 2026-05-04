@@ -271,6 +271,25 @@ async def deprovision_org(
                 ip_address=request.client.host if request.client else None,
             )
 
+        try:
+            from .email_alerts import send_operator_alert
+            send_operator_alert(
+                event_type="org_deprovisioned",
+                severity="P1",
+                summary=f"Client org deprovisioned: {org['name']} (retention {req.retention_days}d)",
+                details={
+                    "org_id": org_id,
+                    "org_name": org["name"],
+                    "reason": req.reason,
+                    "retention_days": req.retention_days,
+                    "retention_until": retention_until.isoformat(),
+                    "notify_users": req.notify_users,
+                },
+                actor_email=user.get("email") or user.get("username"),
+            )
+        except Exception:
+            logger.error("operator_alert_dispatch_failed_deprovision", exc_info=True)
+
         return {
             "org_id": org_id,
             "name": org["name"],
@@ -338,6 +357,18 @@ async def reprovision_org(
                 user.get("username", "admin"), "admin",
                 ip_address=request.client.host if request.client else None,
             )
+
+        try:
+            from .email_alerts import send_operator_alert
+            send_operator_alert(
+                event_type="org_reprovisioned",
+                severity="P1",
+                summary=f"Client org reactivated: org_id={org_id}",
+                details={"org_id": org_id},
+                actor_email=user.get("email") or user.get("username"),
+            )
+        except Exception:
+            logger.error("operator_alert_dispatch_failed_reprovision", exc_info=True)
 
         return {"org_id": org_id, "status": "reactivated"}
 

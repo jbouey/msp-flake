@@ -2770,6 +2770,24 @@ async def admin_billing_cancel_subscription(
         logger.error("admin_billing_cancel_attestation_failed", exc_info=True,
             extra={"customer": stripe_customer_id, "error": str(e)})
 
+    try:
+        from dashboard_api.email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="billing_subscription_cancel",
+            severity="P1",
+            summary=f"Subscription cancel scheduled for customer {stripe_customer_id} by {actor}",
+            details={
+                "subscription_id": subscription_id,
+                "reason": request.reason,
+                "stripe_idempotency_key": idem_key,
+                "cancel_at_period_end": True,
+            },
+            site_id=target_site_id,
+            actor_email=actor,
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_billing_cancel", exc_info=True)
+
     return {
         "status": "canceling",
         "subscription_id": subscription_id,
@@ -2899,6 +2917,25 @@ async def admin_billing_refund_charge(
     except Exception as e:
         logger.error("admin_billing_refund_attestation_failed", exc_info=True,
             extra={"customer": stripe_customer_id, "error": str(e)})
+
+    try:
+        from dashboard_api.email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="billing_charge_refund",
+            severity="P1",
+            summary=f"Charge refund issued for customer {stripe_customer_id} by {actor}",
+            details={
+                "charge_id": request.charge_id,
+                "refund_id": rf.id if hasattr(rf, "id") else None,
+                "amount_cents": rf.amount if hasattr(rf, "amount") else request.amount_cents,
+                "reason": request.reason,
+                "stripe_idempotency_key": idem_key,
+            },
+            site_id=target_site_id,
+            actor_email=actor,
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_billing_refund", exc_info=True)
 
     return {
         "status": "refunded",
@@ -3092,6 +3129,21 @@ async def admin_healing_global_pause(
             "attestation_failed": pause_att_failed,
         },
     )
+    try:
+        from dashboard_api.email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="fleet_healing_global_pause",
+            severity="P0",
+            summary=f"Fleet-wide L2 healing PAUSED by {actor}",
+            details={
+                "reason": request.reason,
+                "attestation_count": pause_att_count,
+                "attestation_failed": pause_att_failed,
+            },
+            actor_email=actor,
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_pause", exc_info=True)
     return {
         "disabled": True,
         "actor": actor,
@@ -3183,6 +3235,21 @@ async def admin_healing_global_resume(
             "attestation_failed": resume_att_failed,
         },
     )
+    try:
+        from dashboard_api.email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="fleet_healing_global_resume",
+            severity="P0",
+            summary=f"Fleet-wide L2 healing RESUMED by {actor}",
+            details={
+                "reason": request.reason,
+                "attestation_count": resume_att_count,
+                "attestation_failed": resume_att_failed,
+            },
+            actor_email=actor,
+        )
+    except Exception:
+        logger.error("operator_alert_dispatch_failed_resume", exc_info=True)
     return {
         "disabled": False,
         "actor": actor,
