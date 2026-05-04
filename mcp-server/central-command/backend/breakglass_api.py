@@ -331,15 +331,26 @@ async def retrieve_breakglass(
     )
     try:
         from .email_alerts import send_operator_alert
+        # P1-3 (QA 2026-05-04): if attestation failed (bundle is None),
+        # the cryptographic chain has a gap. Bump severity + flag in
+        # the subject summary so the operator can disambiguate from
+        # a normal-flow break-glass retrieval.
+        chain_gap = attestation_bundle_id is None
+        op_severity = "P0-CHAIN-GAP" if chain_gap else "P0"
+        gap_tag = " [ATTESTATION-MISSING]" if chain_gap else ""
         send_operator_alert(
             event_type="break_glass_passphrase_retrieval",
-            severity="P0",
-            summary=f"Break-glass passphrase retrieved for appliance {appliance_id} by {actor}",
+            severity=op_severity,
+            summary=(
+                f"Break-glass passphrase retrieved for appliance "
+                f"{appliance_id} by {actor}{gap_tag}"
+            ),
             details={
                 "appliance_id": appliance_id,
                 "passphrase_version": int(row["passphrase_version"]),
                 "reason": reason_clean,
                 "attestation_bundle_id": attestation_bundle_id,
+                "attestation_failed": chain_gap,
                 "retrieval_count_after": int(row["retrieval_count"]) + 1,
             },
             site_id=row["site_id"],

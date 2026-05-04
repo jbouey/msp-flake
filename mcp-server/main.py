@@ -2749,7 +2749,11 @@ async def admin_billing_cancel_subscription(
                 "ip": http_request.client.host if http_request.client else None,
             })
 
-    # Ed25519 attestation (best-effort; doesn't block return)
+    # Ed25519 attestation (best-effort; doesn't block return).
+    # P1-2 (QA 2026-05-04): track success so the operator alert below
+    # can tell the truth about chain integrity. Pre-fix the email said
+    # "scheduled" with no signal that the attestation failed.
+    cancel_attestation_failed = False
     try:
         from dashboard_api.fleet import get_pool as _get_pool
         from dashboard_api.privileged_access_attestation import (
@@ -2767,20 +2771,26 @@ async def admin_billing_cancel_subscription(
                     origin_ip=http_request.client.host if http_request.client else None,
                 )
     except Exception as e:
+        cancel_attestation_failed = True
         logger.error("admin_billing_cancel_attestation_failed", exc_info=True,
             extra={"customer": stripe_customer_id, "error": str(e)})
 
     try:
         from dashboard_api.email_alerts import send_operator_alert
+        # Severity escalates to P0 if the attestation chain step failed —
+        # operator must know the email is reporting an action whose
+        # cryptographic record is incomplete.
+        op_severity = "P0" if cancel_attestation_failed else "P1"
         send_operator_alert(
             event_type="billing_subscription_cancel",
-            severity="P1",
+            severity=op_severity,
             summary=f"Subscription cancel scheduled for customer {stripe_customer_id} by {actor}",
             details={
                 "subscription_id": subscription_id,
                 "reason": request.reason,
                 "stripe_idempotency_key": idem_key,
                 "cancel_at_period_end": True,
+                "attestation_failed": cancel_attestation_failed,
             },
             site_id=target_site_id,
             actor_email=actor,
@@ -2898,6 +2908,8 @@ async def admin_billing_refund_charge(
                 "ip": http_request.client.host if http_request.client else None,
             })
 
+    # P1-2 (QA 2026-05-04): track attestation success.
+    refund_attestation_failed = False
     try:
         from dashboard_api.fleet import get_pool as _get_pool
         from dashboard_api.privileged_access_attestation import (
@@ -2915,14 +2927,16 @@ async def admin_billing_refund_charge(
                     origin_ip=http_request.client.host if http_request.client else None,
                 )
     except Exception as e:
+        refund_attestation_failed = True
         logger.error("admin_billing_refund_attestation_failed", exc_info=True,
             extra={"customer": stripe_customer_id, "error": str(e)})
 
     try:
         from dashboard_api.email_alerts import send_operator_alert
+        op_severity = "P0" if refund_attestation_failed else "P1"
         send_operator_alert(
             event_type="billing_charge_refund",
-            severity="P1",
+            severity=op_severity,
             summary=f"Charge refund issued for customer {stripe_customer_id} by {actor}",
             details={
                 "charge_id": request.charge_id,
@@ -2930,6 +2944,7 @@ async def admin_billing_refund_charge(
                 "amount_cents": rf.amount if hasattr(rf, "amount") else request.amount_cents,
                 "reason": request.reason,
                 "stripe_idempotency_key": idem_key,
+                "attestation_failed": refund_attestation_failed,
             },
             site_id=target_site_id,
             actor_email=actor,

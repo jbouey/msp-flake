@@ -2405,11 +2405,15 @@ async def relocate_appliance(
         actor = (user.get("email") if isinstance(user, dict) else None) or (
             user.get("username") if isinstance(user, dict) else "unknown"
         )
+        # P2-3 (QA 2026-05-04): include source_site_id in subject summary
+        # so operator forensic search hits both directions. Mig 245 emits
+        # an attestation to BOTH sites; the email previously only named
+        # the target, which obscured the source for inbox-search.
         send_operator_alert(
             event_type="appliance_relocated",
             severity="P1",
             summary=(
-                f"Appliance {appliance_id} relocated "
+                f"Appliance {appliance_id} relocated: "
                 f"{site_id} → {req.target_site_id}"
             ),
             details={

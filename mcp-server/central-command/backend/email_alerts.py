@@ -127,7 +127,11 @@ def send_operator_alert(
       P3 — informational, low-frequency events.
     """
     if not is_email_configured():
-        logger.warning(
+        # P1-1 (QA 2026-05-04): the visibility-gap class is exactly what
+        # gets missed if SMTP config is silently absent in prod. Per
+        # CLAUDE.md no-silent-write rule + Session 209/214 Block 3
+        # precedent, log at ERROR so the shipper alerts.
+        logger.error(
             "operator_alert_skipped_email_not_configured",
             extra={"event_type": event_type, "severity": severity},
         )
@@ -177,10 +181,10 @@ def send_operator_alert(
             "---",
             (
                 "This event was recorded in the cryptographic attestation "
-                "chain. The substrate audits this notification path; "
-                "delivery failures are logged at ERROR but do not affect "
-                "the chain. PHI is scrubbed at appliance egress; this "
-                "email contains operational metadata only."
+                "chain. Delivery failures of this email are logged at "
+                "ERROR; they do not affect the chain. PHI is scrubbed at "
+                "appliance egress; this email contains operational "
+                "metadata only."
             ),
         ])
         text_body = "\n".join(body_lines)
