@@ -1,30 +1,30 @@
 {
   "schema_version": "2.0",
-  "session": 214,
-  "updated": "2026-05-01T12:37:16.515223Z",
-  "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty.",
+  "session": 215,
+  "updated": "2026-05-04T17:30:00Z",
+  "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty. Refreshed 2026-05-04 post-Session-215: session/version/milestone fields had drifted (file said 214/0.4.6/v37 vs reality 215/0.4.13/v38).",
   "versions": {
-    "agent": "0.4.6",
-    "iso": "v37",
-    "disk_image": "v37",
+    "agent": "0.4.13",
+    "iso": "v38",
+    "disk_image": "v38",
     "daemon_fleet": {
-      "installer": "0.4.6",
-      "north-valley-branch-2": "0.4.6",
-      "osiriscare-3": "0.4.6"
+      "installer": "0.4.13",
+      "north-valley-branch-2": "0.4.13",
+      "osiriscare-3": "0.4.13"
     }
   },
   "system_health": [
     {
       "component": "vps_mcp_server",
       "status": "up",
-      "last_verified": "2026-04-18T15:10Z",
-      "notes": "deploy workflow auto-restarts on CI green"
+      "last_verified": "2026-05-04T17:30Z",
+      "notes": "verified 2026-05-04 via fork ssh+psql to mcp-postgres; CI deploy workflow auto-restarts on green"
     },
     {
       "component": "dashboard",
       "status": "up",
-      "last_verified": "2026-04-18T15:10Z",
-      "notes": "Session 200 DB scaling complete"
+      "last_verified": "2026-05-04T17:30Z",
+      "notes": "verified 2026-05-04 via fork psql; Session 200 DB scaling complete"
     },
     {
       "component": "vault_host",
@@ -41,8 +41,8 @@
     {
       "component": "evidence_chain",
       "status": "up",
-      "last_verified": "2026-04-18T15:10Z",
-      "notes": "131K+ anchored OTS proofs, migration 179 TRUNCATE hardening active"
+      "last_verified": "2026-05-04T17:30Z",
+      "notes": "verified 2026-05-04 via fork psql substrate_violations probe (0 sev1/sev2 open); 245K+ bundles per Session 214 score-zero closure"
     },
     {
       "component": "learning_flywheel",
@@ -81,7 +81,13 @@
       "due": "2026-05-05T17:11:00Z",
       "what": "task #169 closed early on user override 2026-04-28 22:51Z; substrate watch through window-end. Re-fire of sigauth_enforce_mode_rejections OR sigauth_post_fix_window_canary auto-reopens task and triggers pivot to MVCC / deleted_at / autovacuum hypothesis (NEW round-table required BEFORE any fix). After 2026-05-05 if both invariants stayed silent, REMOVE sigauth_post_fix_window_canary from ALL_ASSERTIONS.",
       "doc": "docs/security/sigauth-wrap-validation-2026-04-28.md (User-override early closure section)",
-      "owner": "session pickup engineer (any)"
+      "owner": "session pickup engineer (any)",
+      "pre_window_verification_2026_05_04": {
+        "verdict": "SILENT",
+        "fork": "a01cce6c8b2df10c8",
+        "evidence": "0 firings + 0 open rows for both invariants since 2026-04-28 17:11Z; sigauth_observations valid=false count = 0 in window",
+        "disposition": "On track for REMOVE post-2026-05-05T17:11Z. Removal blueprint captured in TaskCreate #4 with verbatim file:line refs (assertions.py 1010-1015 + 1375-1386 + 2413-2459, plus substrate_runbooks/sigauth_post_fix_window_canary.md). Re-run 3 prod queries post-window before deletion to confirm final-day silence."
+      }
     },
     {
       "due": "2026-05-15T15:14:00Z",
@@ -92,7 +98,7 @@
       "action_prompt": "Spawn a research fork: walk EXPECTED_INTERVAL_S in mcp-server/central-command/backend/bg_heartbeat.py + task_defs in mcp-server/main.py; for each entry, find the corresponding loop function and grep its inter-iteration asyncio.sleep(N); flag any drift > 50%. Also list loops in task_defs without EXPECTED_INTERVAL_S coverage. Recommend an AST-grep CI gate. Report under 600 words. Research-only \u2014 no code changes from the fork."
     },
     {
-      "due": "2026-05-04T13:43:00Z",
+      "due": "2026-05-11T13:43:00Z",
       "task": "Weekly scheduled_followups digest (re-schedule + run)",
       "why": "CronCreate scheduled cron e6242204 for Monday 8:43 AM local but the durable flag appears non-functional in this runtime build (response said Session-only despite durable=true). Without the cross-session pattern this entry, the digest stops the moment my session ends. Future-Claude on first invocation should: (1) run the digest fork itself, (2) re-schedule the cron with CronCreate(\"43 8 * * 1\", recurring=true, durable=true), (3) bump THIS scheduled_followups entry to next Monday to keep the self-healing chain alive.",
       "doc": "CLAUDE.md Session 214 entry on bg_heartbeat calibration (sibling pattern); CronCreate id e6242204 (in-session) \u2014 may have died",
@@ -181,8 +187,32 @@
   ],
   "recent_milestones": [
     {
+      "when": "2026-05-04",
+      "what": "CLAUDE.md extraction \u2014 75% reduction (117k \u2192 29k bytes). Sessions 200-215 prose moved to docs/lessons/sessions-{200-209,210-212,213-215}.md with YAML frontmatter; CLAUDE.md now under Anthropic's 40k attention-budget threshold by 11k. CI ratchet at .agent/scripts/test_claude_md_size.py (ceiling 31k). Knowledge Index extended with 3 lessons rows; brief one-line anchors added back for canonical_site_id() / rename_site() / deploy-verification. Commit b54c54de."
+    },
+    {
+      "when": "2026-05-02",
+      "what": "Session 215: kill-switch (POST /api/admin/healing/global-pause + Ed25519 attestation) + admin destructive billing (cancel-subscription + refund-charge with Charge.customer verify) + partition_maintainer_loop superuser fix (mig_db_url, bypass PgBouncer) + journal_upload_stale canonicalization fix (JOIN site_appliances + filter deleted_at IS NULL) + per-site coalesce on offline+recovery alerts + mark_stale_appliances_loop allow_multi_row escape + deploy-verification process rule (#77, runtime_sha == disk_sha == deployed before claiming shipped). Three-list lockstep promoted to TIER-1. ISO v38 deployed. Daemon fleet to 0.4.13. Substrate invariant count holds at 54."
+    },
+    {
+      "when": "2026-04-30",
+      "what": "Session 214: operative-holes audit (4 P0s + 5 P1s closed) \u2014 substrate_assertions_meta_silent (sev1, watcher-the-watcher) + bg_loop_silent (sev2, _supervised heartbeat for ~50 loops) + compliance_packets_stalled (sev1, HIPAA 6yr retention) + partition_maintainer_dry (sev1) added; admin_transaction adoption pass (4 sites); per-device savepoint pattern in /api/devices/sync (500 rate 26+ \u2192 0); ($N || ' unit')::INTERVAL lint repo-wide; F6 federation tier MVP (mig 261 + 262, default OFF); F7 operator endpoint /api/admin/sites/{id}/flywheel-diagnostic; VARCHAR(10) check-constraint outage + recovery (mig 264\u2192267); compliance_scores 0 \u2192 60% closure (mig 268, writer/reader column-mismatch fix). Substrate invariant count 50 \u2192 54."
+    },
+    {
+      "when": "2026-04-29",
+      "what": "Session 213: canonical_site_id() STABLE function (mig 256, NEVER for compliance_bundles) + rename_site() centralized SQL function (mig 257, ONLY sanctioned site-id rename path) + CI gate test_no_direct_site_id_update.py (ratchet 6) + canonical-aliasing read views (mig 258) + auditor-kit chain.json site_canonical_aliases array + rename_site_immutable_list_drift sev2 invariant (mig 259) + F7 flywheel-diagnostic endpoint + idx_execution_telemetry_site_created composite (mig 260). Three-layered flywheel bug closure: eligibility fragmentation (F1) + phantom void promotions (F2, PhantomSiteRolloutError) + recreation cycle (F3, flywheel_orphan_telemetry). Substrate invariant count 45 \u2192 50."
+    },
+    {
       "when": "2026-04-28",
-      "what": "Session 212: 19 commits closing 22 round-table findings + 3 P3 follow-ups + task #169 enterprise-approved early closure (Option C HYBRID with all 5 compensating controls). New helpers: admin_transaction (tenant_middleware), buildAuthedHeaders (utils/csrf). New endpoint: /api/version/drift. New invariants: sigauth_enforce_mode_rejections (sev2), promotion_audit_log_recovery_pending (sev1), sigauth_post_fix_window_canary (sev1, window-bounded \u2014 REMOVE after 2026-05-05). New migrations: 252 (orphan backfill), 253 (audit DLQ). New CI gates: tsc pre-push, filename-uniqueness, no-silent-write-warnings, PRE_PUSH_FULL stem-match. Substrate invariant count 42 \u2192 45."
+      "what": "Session 212: 19 commits closing 22 round-table findings + 3 P3 follow-ups + task #169 enterprise-approved early closure (Option C HYBRID with all 5 compensating controls). New helpers: admin_transaction (tenant_middleware), buildAuthedHeaders (utils/csrf). New endpoint: /api/version/drift. New invariants: sigauth_enforce_mode_rejections (sev2), promotion_audit_log_recovery_pending (sev1), sigauth_post_fix_window_canary (sev1, window-bounded \u2014 REMOVE after 2026-05-05; pre-window verified SILENT 2026-05-04). New migrations: 252 (orphan backfill), 253 (audit DLQ). New CI gates: tsc pre-push, filename-uniqueness, no-silent-write-warnings, PRE_PUSH_FULL stem-match. Substrate invariant count 42 \u2192 45."
+    },
+    {
+      "when": "2026-04-25",
+      "what": "Session 211: Daemon v0.4.13 \u2014 sigauth identity-vs-evidence key fix. Daemon now uploads agent_identity_public_key at every checkin (distinct from evidence-bundle pubkey). Server persists in site_appliances.agent_identity_public_key (mig 251) and signature_auth.py::_resolve_pubkey reads it ahead of legacy v_current_appliance_identity. Fleet rolled via fleet_order ffc754a7-d4db-4296-9aa3-3dd795f46c9a."
+    },
+    {
+      "when": "2026-04-25",
+      "what": "Session 210-B: Appliance relocation flow end-to-end \u2014 /api/sites/{id}/appliances/{aid}/relocate + relocations table (mig 245) + reprovision daemon order (v0.4.11+) + relocation_stalled sev2 invariant + same-org-only gate. Demoed live: 89s elapsed for orphan move. Daemon v0.4.11 (reprovision support) + v0.4.12 (reprovision in dangerousOrderTypes). Pydantic dup baseline = 0 (CI ratchet). Migration 244 (discovered_devices UNIQUE + GC funcs). Migration 247 (promoted_rules natural unique key fix). Frontend mutation CSRF rule + buildAuthedHeaders. Substrate invariant count 32 \u2192 33."
     },
     {
       "when": "2026-04-18",
@@ -255,5 +285,5 @@
   },
   "completed_this_session": [],
   "iso_version": "v38",
-  "latest_milestone": "Session 209: RLS P0 fix + flywheel recon JOIN + synth-pps cleanup + substrate Prom alerting wired"
+  "latest_milestone": "Session 215 + 2026-05-04 CLAUDE.md extraction: kill-switch P0, admin destructive billing, journal_upload_stale canonicalization, deploy-verification rule, ISO v38 / daemon 0.4.13 fleet-wide. Followed by 75% CLAUDE.md size reduction (commit b54c54de) — sessions 200-215 prose moved to docs/lessons/."
 }
