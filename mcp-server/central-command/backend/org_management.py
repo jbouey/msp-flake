@@ -227,6 +227,31 @@ async def deprovision_org(
             if org["deprovisioned_at"]:
                 raise HTTPException(status_code=409, detail="Org already deprovisioned")
 
+            # Steve P3 round-table 2026-05-04: refuse deprovision while a
+            # pending owner-transfer exists for this org. Otherwise an
+            # adversarial owner mid-transfer could race the practice's
+            # own deprovision intent. Block + surface the transfer_id so
+            # the operator/admin can resolve it (cancel or wait) first.
+            pending_xfer = await conn.fetchrow(
+                """
+                SELECT id::text FROM client_org_owner_transfer_requests
+                 WHERE client_org_id = $1::uuid
+                   AND status IN ('pending_current_ack',
+                                  'pending_target_accept')
+                """,
+                org_id,
+            )
+            if pending_xfer:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Cannot deprovision org while a pending owner-"
+                        f"transfer exists (id={pending_xfer['id']}). "
+                        f"Cancel the transfer first via "
+                        f"/api/client/users/owner-transfer/{pending_xfer['id']}/cancel"
+                    ),
+                )
+
             retention_until = (datetime.now(timezone.utc).date() +
                                timedelta(days=req.retention_days))
 

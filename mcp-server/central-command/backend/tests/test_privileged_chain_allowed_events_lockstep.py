@@ -75,6 +75,16 @@ def test_allowed_events_matches_expected_set():
         # (admin API call, NOT a fleet_order — asymmetry permitted)
         "customer_subscription_cancel",
         "customer_subscription_refund",
+        # Punch-list #8 closure 2026-05-04 — owner-transfer state machine
+        # (client_owner_transfer.py endpoints, NOT fleet_orders —
+        # admin-API class, asymmetry permitted). Six events: one per
+        # state transition. Round-table 2026-05-04 5/5 APPROVE_DESIGN.
+        "client_org_owner_transfer_initiated",
+        "client_org_owner_transfer_acked",
+        "client_org_owner_transfer_accepted",
+        "client_org_owner_transfer_completed",
+        "client_org_owner_transfer_canceled",
+        "client_org_owner_transfer_expired",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

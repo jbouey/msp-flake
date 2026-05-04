@@ -64,6 +64,7 @@ _LOOP_LOCATIONS: dict[str, Tuple[str, str]] = {
     "phantom_detector": ("background_tasks", "phantom_detector_loop"),
     "heartbeat_rollup": ("background_tasks", "heartbeat_rollup_loop"),
     "mark_stale_appliances": ("background_tasks", "mark_stale_appliances_loop"),
+    "owner_transfer_sweep": ("client_owner_transfer", "owner_transfer_sweep_loop"),
 }
 
 # Loops nested inside main.py's lifespan() — manually verified to call

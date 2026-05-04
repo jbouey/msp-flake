@@ -98,6 +98,21 @@ ALLOWED_EVENTS = {
     # attestation to the customer's site_id chain.
     "customer_subscription_cancel",
     "customer_subscription_refund",
+    # Punch-list item #8 closure 2026-05-04 — round-table-approved
+    # owner-transfer state machine. Two-step + 24h cooling-off + any-
+    # admin-cancel + 1-owner-min DB trigger. ALL six events are admin-
+    # API class (state machine endpoints in client_portal.py), NOT
+    # fleet_orders — kept out of PRIVILEGED_ORDER_TYPES + v_privileged_
+    # types per the asymmetry rule (lockstep checker permits ALLOWED_
+    # EVENTS ⊇ those two; reverse not required). Migration 273 ships
+    # the data layer + the 1-owner-min trigger that makes the org-
+    # locked-forever class impossible at the DB level.
+    "client_org_owner_transfer_initiated",
+    "client_org_owner_transfer_acked",
+    "client_org_owner_transfer_accepted",
+    "client_org_owner_transfer_completed",
+    "client_org_owner_transfer_canceled",
+    "client_org_owner_transfer_expired",
 }
 
 
