@@ -106,6 +106,7 @@ EXPECTED_INTERVAL_S: Dict[str, int] = {
     "go_agent_status_decay": 60,  # Session 214 fleet-edge liveness
     "mark_stale_appliances": 120,  # background_tasks.py:1676 APPLIANCE_OFFLINE_SCAN_SECONDS=120
     "owner_transfer_sweep": 60,  # client_owner_transfer.py:owner_transfer_sweep_loop sleeps 60s
+    "partner_admin_transfer_sweep": 60,  # partner_admin_transfer.py:partner_admin_transfer_sweep_loop sleeps 60s
 }
 
 

@@ -121,6 +121,14 @@ ALLOWED_EVENTS = {
     # didn't reflect the role change.
     "client_user_role_changed",
     "partner_user_created",
+    # Round-table 2026-05-04 item B — partner-admin transfer state
+    # machine (mig 274). Maya's simpler shape: 2-state (pending →
+    # completed/canceled/expired). 4 events vs client-side 6.
+    # Anchor namespace: partner_org:<partner_id>.
+    "partner_admin_transfer_initiated",
+    "partner_admin_transfer_completed",
+    "partner_admin_transfer_canceled",
+    "partner_admin_transfer_expired",
 }
 
 

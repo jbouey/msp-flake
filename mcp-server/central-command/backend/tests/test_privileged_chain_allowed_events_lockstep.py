@@ -91,6 +91,13 @@ def test_allowed_events_matches_expected_set():
         # NOT fleet_orders — admin-API class.
         "client_user_role_changed",
         "partner_user_created",
+        # Round-table 2026-05-04 item B — partner-admin transfer state
+        # machine (mig 274). Maya's simpler shape: 4 events vs the
+        # client-side owner-transfer's 6. NOT a fleet_order.
+        "partner_admin_transfer_initiated",
+        "partner_admin_transfer_completed",
+        "partner_admin_transfer_canceled",
+        "partner_admin_transfer_expired",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

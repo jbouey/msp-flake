@@ -2150,6 +2150,9 @@ async def lifespan(app: FastAPI):
     from dashboard_api.client_owner_transfer import (
         owner_transfer_sweep_loop as _owner_transfer_sweep_loop,
     )  # Punch-list #8 closure 2026-05-04
+    from dashboard_api.partner_admin_transfer import (
+        partner_admin_transfer_sweep_loop as _partner_admin_transfer_sweep_loop,
+    )  # Maya parity 2026-05-04 — partner analog
 
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
@@ -2202,6 +2205,7 @@ async def lifespan(app: FastAPI):
         ("flywheel_federation_snapshot", _flywheel_federation_snapshot_loop),  # F6 foundation
         ("go_agent_status_decay", _go_agent_status_decay_loop),  # Session 214 fleet-edge liveness
         ("owner_transfer_sweep", _owner_transfer_sweep_loop),  # Punch-list #8 closure 2026-05-04
+        ("partner_admin_transfer_sweep", _partner_admin_transfer_sweep_loop),  # Maya parity 2026-05-04
     ]
 
     for name, fn in task_defs:
@@ -2371,6 +2375,8 @@ from dashboard_api.org_management import router as org_management_router
 app.include_router(org_management_router)  # Org lifecycle + quotas + export (Session 203)
 from dashboard_api.client_owner_transfer import owner_transfer_router  # noqa
 app.include_router(owner_transfer_router)  # Owner-transfer state machine (punch-list #8, 2026-05-04)
+from dashboard_api.partner_admin_transfer import partner_admin_transfer_router  # noqa
+app.include_router(partner_admin_transfer_router)  # Maya parity 2026-05-04 — partner analog
 from dashboard_api.credential_rotation import router as credential_rotation_router
 app.include_router(credential_rotation_router)  # Credential encryption key rotation (Session 203)
 app.include_router(ops_health_router)  # Ops center health + traffic lights
