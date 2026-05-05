@@ -36,11 +36,21 @@ interface KPIs {
   // data so the UI can show "—" rather than a misleading 100%.
   compliance_score: number | null;
   score_status?: 'healthy' | 'partial' | 'no_data';
-  score_source?: 'blended' | 'bundles_only' | 'agents_only' | 'none';
+  // Stage 2: agent_compliance is a SIBLING signal, not blended.
+  // score_source is now 'bundles' | 'none' from the canonical helper.
+  score_source?: 'bundles' | 'none' | 'blended' | 'bundles_only' | 'agents_only';
   total_checks: number;
   passed: number;
   failed: number;
   warnings: number;
+  last_check_at?: string | null;
+  stale_check_count?: number;
+}
+
+interface AgentCompliance {
+  total_agents: number;
+  active_agents: number;
+  avg_compliance: number;
 }
 
 interface DashboardData {
@@ -53,6 +63,7 @@ interface DashboardData {
   };
   sites: Site[];
   kpis: KPIs;
+  agent_compliance: AgentCompliance | null;
   unread_notifications: number;
 }
 
@@ -375,12 +386,19 @@ export const ClientDashboard: React.FC = () => {
                     style={{ width: `${dashboard.kpis.compliance_score}%` }}
                   />
                 </div>
-                {dashboard.kpis.score_status === 'partial' && (
-                  <p className="mt-2 text-xs text-label-tertiary">
-                    Partial coverage —{' '}
-                    {dashboard.kpis.score_source === 'bundles_only'
-                      ? 'workstation agents not yet reporting'
-                      : 'drift bundles not yet reporting'}
+                {dashboard.kpis.score_status === 'partial' &&
+                  typeof dashboard.kpis.stale_check_count === 'number' &&
+                  dashboard.kpis.stale_check_count > 0 && (
+                    <p className="mt-2 text-xs text-label-tertiary">
+                      {dashboard.kpis.stale_check_count} check
+                      {dashboard.kpis.stale_check_count === 1 ? '' : 's'}{' '}
+                      haven't run in 7+ days
+                    </p>
+                  )}
+                {typeof dashboard.kpis.last_check_at === 'string' && (
+                  <p className="mt-1 text-xs text-label-tertiary">
+                    Last scan:{' '}
+                    {new Date(dashboard.kpis.last_check_at).toLocaleString()}
                   </p>
                 )}
               </>
@@ -442,6 +460,54 @@ export const ClientDashboard: React.FC = () => {
             </p>
           </div>
         </div>
+
+        {/* Workstation Agents — Stage 2 sibling signal (round-table 2026-05-05).
+            Pre-Stage-2 agent compliance was blended into the headline at 30%
+            weight, masking both signals. Now rendered separately so the
+            customer can tell which source is healthy. */}
+        {dashboard?.agent_compliance && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+            <div className="bg-white rounded-2xl shadow-sm border border-separator-light p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-ios-blue/10 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-ios-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <p className="text-sm font-medium text-label-tertiary">
+                  Workstation Agents
+                  <InfoTip text="Compliance reported by the lightweight agent installed on each workstation. A separate signal from drift bundles." />
+                </p>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className={`text-3xl font-bold tabular-nums ${getScoreStatus(dashboard.agent_compliance.avg_compliance).color}`}>
+                  {dashboard.agent_compliance.avg_compliance.toFixed(1)}%
+                </span>
+                <span className="text-sm text-label-tertiary">avg</span>
+              </div>
+              <p className="mt-2 text-sm text-label-tertiary">
+                {dashboard.agent_compliance.active_agents} of {dashboard.agent_compliance.total_agents} agents active
+              </p>
+            </div>
+
+            {typeof dashboard.kpis.last_check_at === 'string' && (
+              <div className="bg-white rounded-2xl shadow-sm border border-separator-light p-6">
+                <p className="text-sm font-medium text-label-tertiary mb-2">Data Freshness</p>
+                <p className="text-base font-semibold text-label-primary">
+                  Last scan {new Date(dashboard.kpis.last_check_at).toLocaleString()}
+                </p>
+                {typeof dashboard.kpis.stale_check_count === 'number' &&
+                  dashboard.kpis.stale_check_count > 0 && (
+                    <p className="mt-2 text-sm text-health-warning">
+                      {dashboard.kpis.stale_check_count} check
+                      {dashboard.kpis.stale_check_count === 1 ? '' : 's'}{' '}
+                      haven't run in 7+ days
+                    </p>
+                  )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Compliance Health Infographic */}
         {dashboard && dashboard.sites.length > 0 && (
