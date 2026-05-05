@@ -91,6 +91,10 @@ def test_allowed_events_matches_expected_set():
         # NOT fleet_orders — admin-API class.
         "client_user_role_changed",
         "partner_user_created",
+        # PartnerUsersScreen v2 — self-scoped role-change + deactivate
+        # (Session 217 follow-up). Total ALLOWED_EVENTS: 51.
+        "partner_user_role_changed",
+        "partner_user_deactivated",
         # Round-table 2026-05-04 item B — partner-admin transfer state
         # machine (mig 274). Maya's simpler shape: 4 events vs the
         # client-side owner-transfer's 6. NOT a fleet_order.

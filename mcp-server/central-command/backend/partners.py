@@ -21,7 +21,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Header, Depends, Response, Cookie, Request, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import uuid as _uuid
 
@@ -521,6 +521,367 @@ async def list_my_partner_users(
             for r in rows
         ],
         "count": len(rows),
+    }
+
+
+class PartnerUserRoleUpdate(BaseModel):
+    """PATCH /me/users/{id}/role body."""
+    role: str = Field(..., pattern="^(admin|tech|billing)$")
+    reason: str = Field(..., min_length=20)
+
+
+class PartnerUserDeactivate(BaseModel):
+    """DELETE /me/users/{id} body — DELETE with body is unusual but
+    needed to capture reason for audit."""
+    reason: str = Field(..., min_length=20)
+    confirm_phrase: str = Field(...,
+        description="Type the literal DEACTIVATE-PARTNER-USER")
+
+
+async def _emit_partner_user_attestation(
+    pool, partner_id: str, event_type: str,
+    actor_email: str, reason: str,
+    target_user_id: str, target_email: str,
+    new_role: Optional[str] = None,
+    request: Optional[Request] = None,
+) -> tuple[bool, Optional[str]]:
+    """Shared attestation helper for partner_user mutations. Returns
+    (failed, bundle_id). Mirrors the create_partner_user path's shape
+    so the chain is uniform across role-change / deactivate / create.
+    """
+    failed = False
+    bundle_id = None
+    try:
+        from .privileged_access_attestation import (
+            create_privileged_access_attestation,
+            PrivilegedAccessAttestationError,
+        )
+        anchor_site_id = f"partner_org:{partner_id}"
+        approvals = [{
+            "stage": "applied",
+            "actor": actor_email,
+            "target_user_id": target_user_id,
+            "target_email": target_email,
+        }]
+        if new_role is not None:
+            approvals[0]["new_role"] = new_role
+        async with admin_connection(pool) as att_conn:
+            try:
+                att = await create_privileged_access_attestation(
+                    att_conn,
+                    site_id=anchor_site_id,
+                    event_type=event_type,
+                    actor_email=actor_email or "unknown",
+                    reason=reason,
+                    origin_ip=(request.client.host
+                               if request and request.client else None),
+                    approvals=approvals,
+                )
+                bundle_id = att.get("bundle_id")
+            except PrivilegedAccessAttestationError:
+                failed = True
+                logger.error(
+                    f"{event_type}_attestation_failed",
+                    exc_info=True,
+                    extra={
+                        "partner_id": partner_id,
+                        "target_email": target_email,
+                    },
+                )
+    except Exception:
+        failed = True
+        logger.error(
+            f"{event_type}_attestation_unexpected", exc_info=True,
+            extra={"partner_id": partner_id},
+        )
+    return failed, bundle_id
+
+
+def _partner_user_op_alert(
+    event_type: str, severity: str, summary: str,
+    details: dict, actor_email: Optional[str],
+    site_id: str, attestation_failed: bool,
+):
+    """Chain-gap escalation pattern uniform with the rest of the
+    partner-side hooks shipped in session 216."""
+    try:
+        from .email_alerts import send_operator_alert
+        if attestation_failed:
+            severity = "P0-CHAIN-GAP"
+            summary = f"{summary} [ATTESTATION-MISSING]"
+        details = {**details, "attestation_failed": attestation_failed}
+        send_operator_alert(
+            event_type=event_type,
+            severity=severity,
+            summary=summary,
+            details=details,
+            site_id=site_id,
+            actor_email=actor_email,
+        )
+    except Exception:
+        logger.error(
+            f"operator_alert_dispatch_failed_{event_type}", exc_info=True,
+        )
+
+
+@router.post("/me/users")
+async def self_create_partner_user(
+    body: PartnerUserCreate,
+    request: Request,
+    partner: dict = require_partner_role("admin"),
+):
+    """Self-scoped partner_user creation — admin-only. Mirrors the
+    operator-class POST /{partner_id}/users but caller's partner_id is
+    the implicit target. Task #18 phase 3 follow-up (Session 217).
+    """
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    actor_email = (partner.get("email") or "").lower()
+
+    async with admin_connection(pool) as conn:
+        existing = await conn.fetchval(
+            """
+            SELECT 1 FROM partner_users
+             WHERE partner_id = $1::uuid AND email = $2
+            """,
+            partner_id, body.email.lower(),
+        )
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Email already exists for this partner",
+            )
+        magic_token = generate_magic_token()
+        magic_expires = datetime.now(timezone.utc) + timedelta(days=7)
+        row = await conn.fetchrow(
+            """
+            INSERT INTO partner_users (
+                partner_id, email, name, role,
+                magic_token, magic_token_expires_at
+            ) VALUES ($1::uuid, $2, $3, $4, $5, $6)
+            RETURNING id::text, email, name, role
+            """,
+            partner_id,
+            body.email.lower(),
+            body.name,
+            body.role,
+            magic_token,
+            magic_expires,
+        )
+
+    failed, bundle_id = await _emit_partner_user_attestation(
+        pool, partner_id, "partner_user_created",
+        actor_email,
+        f"Self-service partner_user {row['email']} created with role={row['role']}",
+        row["id"], row["email"], new_role=row["role"], request=request,
+    )
+    _partner_user_op_alert(
+        "partner_user_created", "P2",
+        f"Partner-admin self-service created partner_user {row['email']} (role={row['role']})",
+        {
+            "partner_id": partner_id,
+            "new_user_id": row["id"],
+            "new_user_email": row["email"],
+            "new_user_role": row["role"],
+            "attestation_bundle_id": bundle_id,
+        },
+        actor_email, f"partner_org:{partner_id}", failed,
+    )
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "attestation_bundle_id": bundle_id,
+    }
+
+
+@router.patch("/me/users/{user_id}/role")
+async def self_change_partner_user_role(
+    user_id: str,
+    body: PartnerUserRoleUpdate,
+    request: Request,
+    partner: dict = require_partner_role("admin"),
+):
+    """Self-scoped role change. The 1-admin-min DB trigger from mig 274
+    (trg_enforce_min_one_admin_per_partner) catches the
+    last-admin-demote case at the schema level."""
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    actor_email = (partner.get("email") or "").lower()
+    actor_user_id = str(partner.get("partner_user_id") or "")
+
+    if user_id == actor_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot change your own role — use the admin transfer flow instead",
+        )
+
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            target = await conn.fetchrow(
+                """
+                SELECT id::text, email, role FROM partner_users
+                 WHERE id = $1::uuid AND partner_id = $2::uuid
+                 FOR UPDATE
+                """,
+                user_id, partner_id,
+            )
+            if not target:
+                raise HTTPException(status_code=404,
+                    detail="Partner user not found in your partner_org")
+            if target["role"] == body.role:
+                raise HTTPException(status_code=400,
+                    detail=f"User already has role {body.role}")
+            old_role = target["role"]
+            try:
+                await conn.execute(
+                    """
+                    UPDATE partner_users
+                       SET role = $1, updated_at = NOW()
+                     WHERE id = $2::uuid
+                    """,
+                    body.role, user_id,
+                )
+            except Exception as e:
+                # The 1-admin-min trigger raises; surface as a
+                # user-readable 409 not a 500.
+                msg = str(e)
+                if "min_one_admin" in msg or "admin" in msg.lower():
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Demoting this user would leave the "
+                            "partner_org with zero admins. Promote "
+                            "another user to admin first, or use the "
+                            "admin transfer flow."
+                        ),
+                    )
+                raise
+
+    failed, bundle_id = await _emit_partner_user_attestation(
+        pool, partner_id, "partner_user_role_changed",
+        actor_email, body.reason, user_id, target["email"],
+        new_role=body.role, request=request,
+    )
+    severity = "P1" if old_role == "admin" or body.role == "admin" else "P2"
+    _partner_user_op_alert(
+        "partner_user_role_changed", severity,
+        f"Partner-admin changed partner_user role: {target['email']} ({old_role}→{body.role})",
+        {
+            "partner_id": partner_id,
+            "target_user_id": user_id,
+            "target_email": target["email"],
+            "old_role": old_role,
+            "new_role": body.role,
+            "attestation_bundle_id": bundle_id,
+        },
+        actor_email, f"partner_org:{partner_id}", failed,
+    )
+    return {
+        "id": user_id,
+        "email": target["email"],
+        "old_role": old_role,
+        "new_role": body.role,
+        "attestation_bundle_id": bundle_id,
+    }
+
+
+@router.delete("/me/users/{user_id}")
+async def self_deactivate_partner_user(
+    user_id: str,
+    request: Request,
+    body: PartnerUserDeactivate,
+    partner: dict = require_partner_role("admin"),
+):
+    """Self-scoped deactivation (sets status='inactive'). Same
+    1-admin-min trigger gate as role-change. Hard-delete is NOT
+    available — partner_users carries audit/FK references."""
+    if body.confirm_phrase != "DEACTIVATE-PARTNER-USER":
+        raise HTTPException(
+            status_code=400,
+            detail="confirm_phrase must be exactly 'DEACTIVATE-PARTNER-USER'",
+        )
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    actor_email = (partner.get("email") or "").lower()
+    actor_user_id = str(partner.get("partner_user_id") or "")
+
+    if user_id == actor_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot deactivate your own account",
+        )
+
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            target = await conn.fetchrow(
+                """
+                SELECT id::text, email, role, status FROM partner_users
+                 WHERE id = $1::uuid AND partner_id = $2::uuid
+                 FOR UPDATE
+                """,
+                user_id, partner_id,
+            )
+            if not target:
+                raise HTTPException(status_code=404,
+                    detail="Partner user not found in your partner_org")
+            if target["status"] == "inactive":
+                raise HTTPException(status_code=400,
+                    detail="User already inactive")
+            try:
+                await conn.execute(
+                    """
+                    UPDATE partner_users
+                       SET status = 'inactive', updated_at = NOW()
+                     WHERE id = $1::uuid
+                    """,
+                    user_id,
+                )
+            except Exception as e:
+                msg = str(e)
+                if "min_one_admin" in msg or "admin" in msg.lower():
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Deactivating this user would leave the "
+                            "partner_org with zero admins. Promote "
+                            "another user to admin first."
+                        ),
+                    )
+                raise
+            # Kill any active sessions for that user.
+            await conn.execute(
+                """
+                DELETE FROM partner_sessions
+                 WHERE partner_user_id = $1::uuid
+                """,
+                user_id,
+            )
+
+    failed, bundle_id = await _emit_partner_user_attestation(
+        pool, partner_id, "partner_user_deactivated",
+        actor_email, body.reason, user_id, target["email"],
+        new_role=None, request=request,
+    )
+    severity = "P1" if target["role"] == "admin" else "P2"
+    _partner_user_op_alert(
+        "partner_user_deactivated", severity,
+        f"Partner-admin deactivated partner_user {target['email']} (was {target['role']})",
+        {
+            "partner_id": partner_id,
+            "target_user_id": user_id,
+            "target_email": target["email"],
+            "former_role": target["role"],
+            "attestation_bundle_id": bundle_id,
+        },
+        actor_email, f"partner_org:{partner_id}", failed,
+    )
+    return {
+        "id": user_id,
+        "email": target["email"],
+        "status": "inactive",
+        "attestation_bundle_id": bundle_id,
     }
 
 

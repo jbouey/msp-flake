@@ -17,6 +17,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { usePartner } from './PartnerContext';
+import { csrfHeaders } from '../utils/csrf';
 import { PartnerAdminTransferModal } from './PartnerAdminTransferModal';
 
 interface PartnerUser {
@@ -56,6 +57,13 @@ export const PartnerUsersScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAdminTransfer, setShowAdminTransfer] = useState(false);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+
+  // Invite form state
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteName, setInviteName] = useState('');
+  const [inviteRole, setInviteRole] = useState<'tech' | 'billing'>('tech');
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -89,6 +97,116 @@ export const PartnerUsersScreen: React.FC = () => {
     }
   };
 
+  const surfaceError = async (res: Response): Promise<never> => {
+    const detail = await res.text().catch(() => '');
+    let parsed: { detail?: string } | undefined;
+    try {
+      parsed = JSON.parse(detail);
+    } catch {
+      // not JSON
+    }
+    throw new Error(parsed?.detail || `${res.status} ${detail || res.statusText}`);
+  };
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setActionBusy('invite');
+    try {
+      const res = await fetch('/api/partners/me/users', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+        body: JSON.stringify({
+          email: inviteEmail,
+          name: inviteName || null,
+          role: inviteRole,
+        }),
+      });
+      if (!res.ok) await surfaceError(res);
+      setInviteOpen(false);
+      setInviteEmail('');
+      setInviteName('');
+      setInviteRole('tech');
+      await fetchUsers();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Invite failed');
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const handleRoleChange = async (u: PartnerUser, nextRole: string) => {
+    if (nextRole === u.role) return;
+    const reason = window.prompt(
+      `Reason for changing ${u.email} from ${u.role} to ${nextRole} (≥20 chars, audit ledger):`,
+      '',
+    );
+    if (reason === null) return;
+    if (reason.length < 20) {
+      setError('Reason must be at least 20 characters.');
+      return;
+    }
+    setError(null);
+    setActionBusy(u.id);
+    try {
+      const res = await fetch(
+        `/api/partners/me/users/${encodeURIComponent(u.id)}/role`,
+        {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+          body: JSON.stringify({ role: nextRole, reason }),
+        },
+      );
+      if (!res.ok) await surfaceError(res);
+      await fetchUsers();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Role change failed');
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const handleDeactivate = async (u: PartnerUser) => {
+    const reason = window.prompt(
+      `Reason for deactivating ${u.email} (≥20 chars, audit ledger):`,
+      '',
+    );
+    if (reason === null) return;
+    if (reason.length < 20) {
+      setError('Reason must be at least 20 characters.');
+      return;
+    }
+    const phrase = window.prompt(
+      `Type DEACTIVATE-PARTNER-USER to confirm:`,
+      '',
+    );
+    if (phrase !== 'DEACTIVATE-PARTNER-USER') {
+      setError('Confirmation phrase did not match.');
+      return;
+    }
+    setError(null);
+    setActionBusy(u.id);
+    try {
+      const res = await fetch(
+        `/api/partners/me/users/${encodeURIComponent(u.id)}`,
+        {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+          body: JSON.stringify({ reason, confirm_phrase: phrase }),
+        },
+      );
+      if (!res.ok) await surfaceError(res);
+      await fetchUsers();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Deactivation failed');
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-50/80 flex items-center justify-center">
@@ -114,12 +232,21 @@ export const PartnerUsersScreen: React.FC = () => {
               <p className="text-xs text-slate-500">{partner.name}</p>
             </div>
           </div>
-          <button
-            onClick={() => setShowAdminTransfer(true)}
-            className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
-          >
-            Manage admin transfer
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setInviteOpen(true)}
+              className="px-4 py-2 text-sm rounded-lg text-white hover:brightness-110"
+              style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}
+            >
+              Invite user
+            </button>
+            <button
+              onClick={() => setShowAdminTransfer(true)}
+              className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
+            >
+              Manage admin transfer
+            </button>
+          </div>
         </div>
       </header>
 
@@ -176,13 +303,36 @@ export const PartnerUsersScreen: React.FC = () => {
                         {u.status}
                       </span>
                     )}
-                    <span
-                      className={`px-3 py-1 text-xs font-semibold rounded-full ${
-                        ROLE_BADGES[u.role] || 'bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      {ROLE_LABELS[u.role] || u.role}
-                    </span>
+                    {u.status === 'active' && u.role !== 'admin' ? (
+                      <select
+                        value={u.role}
+                        disabled={actionBusy === u.id}
+                        onChange={(e) => void handleRoleChange(u, e.target.value)}
+                        className="px-2 py-1 text-xs border border-slate-300 rounded"
+                      >
+                        <option value="tech">Tech</option>
+                        <option value="billing">Billing</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    ) : (
+                      <span
+                        className={`px-3 py-1 text-xs font-semibold rounded-full ${
+                          ROLE_BADGES[u.role] || 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {ROLE_LABELS[u.role] || u.role}
+                      </span>
+                    )}
+                    {u.status === 'active' && (
+                      <button
+                        onClick={() => void handleDeactivate(u)}
+                        disabled={actionBusy === u.id}
+                        className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                        title="Deactivate this user (sets status=inactive; not a hard delete)"
+                      >
+                        Deactivate
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -191,12 +341,88 @@ export const PartnerUsersScreen: React.FC = () => {
         </div>
 
         <p className="mt-6 text-xs text-slate-500">
-          Invite, role-change, and deactivate flows ship in a follow-up
-          once the corresponding self-scoped backend endpoints exist.
-          Operators with admin-class access can use the operator
-          dashboard for those actions in the meantime.
+          Each role-change and deactivate writes a cryptographically
+          attested entry to your auditor kit. The 1-admin-min database
+          trigger blocks the last-admin demote/deactivate; promote
+          another user first, or use the admin-transfer flow.
         </p>
       </main>
+
+      {/* Invite modal */}
+      {inviteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-start justify-between mb-4">
+              <h3 className="text-lg font-semibold text-slate-900">Invite partner user</h3>
+              <button
+                onClick={() => setInviteOpen(false)}
+                className="text-slate-400 hover:text-slate-600"
+                aria-label="Close"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <form onSubmit={handleInvite} className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/40"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Name (optional)
+                </label>
+                <input
+                  type="text"
+                  value={inviteName}
+                  onChange={(e) => setInviteName(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/40"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Role</label>
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as 'tech' | 'billing')}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/40"
+                >
+                  <option value="tech">Tech</option>
+                  <option value="billing">Billing</option>
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Admin role is reserved for the admin-transfer flow —
+                  prevents accidental zero-admin and click-jacking
+                  attempts on a single endpoint.
+                </p>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setInviteOpen(false)}
+                  className="flex-1 px-4 py-2 text-sm rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={actionBusy === 'invite'}
+                  className="flex-1 px-4 py-2 text-sm rounded-lg text-white hover:brightness-110 disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}
+                >
+                  {actionBusy === 'invite' ? 'Inviting…' : 'Invite'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <PartnerAdminTransferModal
         isOpen={showAdminTransfer}
