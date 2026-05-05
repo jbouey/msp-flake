@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
-  "session": 215,
-  "updated": "2026-05-04T17:30:00Z",
+  "session": 216,
+  "updated": "2026-05-05T00:00:00Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty. Refreshed 2026-05-04 post-Session-215: session/version/milestone fields had drifted (file said 214/0.4.6/v37 vs reality 215/0.4.13/v38).",
   "versions": {
     "agent": "0.4.13",
@@ -187,8 +187,24 @@
   ],
   "recent_milestones": [
     {
+      "when": "2026-05-05",
+      "what": "Session 216 followup batch \u2014 task #20 closure + 3 round-table design docs. Per-org configurable cooling-off / expiry shipped via mig 275 (b5f2b9ac); client_orgs.transfer_cooling_off_hours DEFAULT 24, partners DEFAULT 0 (Maya operator-class), expiry DEFAULT 7 both. 2 new ALLOWED_EVENTS (client_org_transfer_prefs_changed + partner_transfer_prefs_changed; total 35). Three-tier severity escalation on prefs change (P0-CHAIN-GAP / P1-FRICTION-WEAKENED / P2). Partner cooling_off field schema-stored but unhonored at runtime (informational-only, surfaced in endpoint response). Plus 3 round-table design docs in .agent/plans/: 12-smtp-consolidation, 19-mfa-admin-overrides, 21-cross-org-site-relocate (1d2016f0). Each doc has Maya 2nd-eye verdicts + implementation checklist + outstanding pre-work. ALLOWED_EVENTS post all 3 future commits: 49."
+    },
+    {
       "when": "2026-05-04",
-      "what": "CLAUDE.md extraction \u2014 75% reduction (117k \u2192 29k bytes). Sessions 200-215 prose moved to docs/lessons/sessions-{200-209,210-212,213-215}.md with YAML frontmatter; CLAUDE.md now under Anthropic's 40k attention-budget threshold by 11k. CI ratchet at .agent/scripts/test_claude_md_size.py (ceiling 31k). Knowledge Index extended with 3 lessons rows; brief one-line anchors added back for canonical_site_id() / rename_site() / deploy-verification. Commit b54c54de."
+      "what": "Session 216 final-pass closure \u2014 Maya P1-1+P2-1 adversarial review + email_dlq_growing invariant. 4 of 16 operator-alert hooks claimed 'cryptographically attested' but had NO Ed25519 chain (org_deprovisioned/org_reprovisioned/partner_api_key_regenerated/partner_org_deleted); promoted to full chain via f76c7e0e (ALLOWED_EVENTS 29\u219233). P2-1 renamed appliance_relocated operator-email event_type to appliance_relocation_acknowledged for forensic correlation with attestation chain. 5c1ef579 added email_dlq_growing sev2 substrate invariant (>5 unresolved/24h/label) with canonical 7-section runbook. Maya re-verified PASS with 9 verification points clean across 9 commits. Substrate invariant count 54 \u2192 55."
+    },
+    {
+      "when": "2026-05-04",
+      "what": "Session 216 portal-parity batch \u2014 partner+client portal consistency hardening. PM-led adversarial round-table on partner-vs-client gap matrix; Maya 2nd-eye coach VETOED 4 cargo-culted parity items (execute_with_retry, magic-link login, notify_users on partner deprovision, 24h cooling-off on partner role change) per feedback_non_operator_partner_posture.md. SHIP_NOW batch 1c9cbe9b: operator-alert hooks on 3 high-signal partner mutations (partner_user_created, partner_api_key_regenerated, partner_org_deleted) + Ed25519 attestation on partner_user_created + Ed25519 on client_user_role_changed (Maya cross-cutting parity finding). SHIP batch 51c6d313: partner_admin_transfer state machine (mig 274) \u2014 Maya's simpler operator-class shape (2-step, no cooling-off, no magic-link, no target-creation) + 1-admin-min DB trigger. ALLOWED_EVENTS 23\u219229."
+    },
+    {
+      "when": "2026-05-04",
+      "what": "Session 216 client-portal hardening \u2014 operator-visibility hooks + state machines + email infrastructure. f1d3e9f0: 13 operator-visibility hooks across kill-switch / billing-destructive / break-glass / privileged-access / client-user mutations / site mutations / org-deprovision (each backed by Ed25519 attestation). 0c710d3b: QA P1+P2 fixes \u2014 chain-gap escalation pattern (severity \u2192 P0-CHAIN-GAP if attestation failed) + AST-based hook callsite test + footer wording cleanup. 3cd0a208: ALERT_EMAILS DL parsing (multi-recipient operator alerts) + Email DLQ table mig 272 + notify_users wiring on org deprovision (per-recipient try/except, post-txn-commit ordering). ed8382c5: client_org_owner_transfer state machine (mig 273) \u2014 6 events, 24h cooling-off, magic-link target accept, 1-owner-min DB trigger (Brian non-negotiable). 22 ALLOWED_EVENTS \u2192 23."
+    },
+    {
+      "when": "2026-05-04",
+      "what": "Session 216 opening \u2014 CLAUDE.md extraction + progress.json refresh + sigauth canary verdict. b54c54de: CLAUDE.md 117k \u2192 29k bytes (75% reduction). Sessions 200-215 prose extracted to docs/lessons/sessions-{200-209,210-212,213-215}.md with YAML frontmatter; under Anthropic 40k attention-budget threshold + 31k CI ratchet. ffc947ce: progress.json bumped session 214 \u2192 215, agent 0.4.6 \u2192 0.4.13, ISO v37 \u2192 v38; sigauth pre-window verification (fork a01cce6c) returned SILENT (0 firings, 0 open rows for both invariants since 2026-04-28 17:11Z); 5/4 weekly digest written to .agent/digests/."
     },
     {
       "when": "2026-05-02",
@@ -285,5 +301,5 @@
   },
   "completed_this_session": [],
   "iso_version": "v38",
-  "latest_milestone": "Session 215 + 2026-05-04 CLAUDE.md extraction: kill-switch P0, admin destructive billing, journal_upload_stale canonicalization, deploy-verification rule, ISO v38 / daemon 0.4.13 fleet-wide. Followed by 75% CLAUDE.md size reduction (commit b54c54de) — sessions 200-215 prose moved to docs/lessons/."
+  "latest_milestone": "Session 216 (2026-05-04 / 2026-05-05): 13 commits at runtime-SHA-verified enterprise-grade bar. 4 migrations (272 Email DLQ, 273 client owner-transfer + 1-owner trigger, 274 partner admin-transfer + 1-admin trigger, 275 per-org transfer prefs). 2 state machines (client owner-transfer 6-event with cooling-off+magic-link, partner admin-transfer 4-event with immediate-completion — Maya operator-class). 13 new ALLOWED_EVENTS (22 → 35). 3 adversarial code reviews + 4 round-tables with Maya 2nd-eye gating cargo-culted parity 8 times. 1 new substrate invariant (email_dlq_growing sev2). 3 round-table design docs in .agent/plans/ ready for next-session implementation: SMTP consolidation (#12 SHIP), MFA admin overrides (#19 SHIP +mig 276 +8 events), Cross-org site relocate (#21 SHIP behind feature flag pending outside-counsel BAA review +mig 277/278 +6 events)."
 }
