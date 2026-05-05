@@ -829,6 +829,49 @@ async def update_partner_transfer_prefs(
     }
 
 
+@partner_admin_transfer_router.get("/active")
+async def get_active_partner_admin_transfer(
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+) -> Dict[str, Any]:
+    """In-flight (pending_target_accept) admin transfer for this
+    partner_org, or 404 if none. Task #18 phase 2 (2026-05-05) —
+    frontend modal polls this on open. Mig 274 partial unique index
+    `idx_partner_admin_transfer_one_pending` enforces at-most-one
+    pending row per partner_org.
+
+    Read access: any authenticated partner user (admin/tech/billing)
+    can see whether a transfer is in flight; only admin can initiate
+    or accept (enforced at those endpoints).
+    """
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id::text, status, target_email, reason,
+                   initiated_by_user_id::text AS initiator_id,
+                   target_user_id::text AS target_id,
+                   completed_at, canceled_at, canceled_by,
+                   cancel_reason, expires_at,
+                   created_at AS initiated_at,
+                   jsonb_array_length(attestation_bundle_ids)
+                       AS attestation_count
+              FROM partner_admin_transfer_requests
+             WHERE partner_id = $1::uuid
+               AND status = 'pending_target_accept'
+             ORDER BY created_at DESC LIMIT 1
+            """,
+            partner_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="No active transfer")
+    out = dict(row)
+    for k in ("completed_at", "canceled_at", "expires_at", "initiated_at"):
+        if out.get(k) is not None:
+            out[k] = out[k].isoformat()
+    return out
+
+
 @partner_admin_transfer_router.get("/{transfer_id}")
 async def get_partner_admin_transfer(
     transfer_id: str,

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { usePartner } from './PartnerContext';
 import { csrfHeaders } from '../utils/csrf';
+import { PartnerAdminTransferModal } from './PartnerAdminTransferModal';
 
 type Step = 'status' | 'setup' | 'verify' | 'disable';
 
@@ -18,6 +19,8 @@ export const PartnerSecurity: React.FC = () => {
   const [totpEnabled, setTotpEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState<Step>('status');
+  // Task #18 phase 2 — partner_admin_transfer modal (mig 274)
+  const [showAdminTransfer, setShowAdminTransfer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -507,7 +510,34 @@ export const PartnerSecurity: React.FC = () => {
             </li>
           </ul>
         </div>
+
+        {/* Task #18 phase 2 — partner admin-role transfer entry point.
+            Server-side enforces role gating (admin-only); the modal
+            surfaces 403 detail if a non-admin tries to initiate. */}
+        <div className="mt-6 bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Admin Role Transfer</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Transfer the partner admin role to another existing
+                user in your partner organization. Each transition is
+                cryptographically attested in your auditor kit.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAdminTransfer(true)}
+              className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+            >
+              Manage admin transfer
+            </button>
+          </div>
+        </div>
       </main>
+
+      <PartnerAdminTransferModal
+        isOpen={showAdminTransfer}
+        onClose={() => setShowAdminTransfer(false)}
+      />
     </div>
   );
 };
