@@ -212,5 +212,23 @@ if [ "$FRONTEND_CHANGED" -eq 1 ]; then
         exit 1
     fi
     echo "[pre-push] ✓ frontend tsc clean"
+
+    # ESLint gate (Session 217 closure of CI deploy 25384660361 lint
+    # failure, 2026-05-05). Pre-push tsc had been catching type errors
+    # but not lint — `score == null` (eqeqeq) tripped CI after passing
+    # local pre-push. Now lint runs in the same gate as tsc. Scoped to
+    # the touched portal directories where the deploys actually fail
+    # (full-repo lint takes ~45s; this is ~6s).
+    echo "[pre-push] frontend eslint ..."
+    if ! npx eslint src/client src/partner src/components > /tmp/eslint-prepush.log 2>&1; then
+        echo "[pre-push] ❌ eslint failed — push blocked"
+        echo ""
+        tail -30 /tmp/eslint-prepush.log
+        echo ""
+        echo "[pre-push] Fix the lint error, then re-push."
+        echo "[pre-push] Bypass (emergency only): git push --no-verify"
+        exit 1
+    fi
+    echo "[pre-push] ✓ frontend eslint clean"
     cd "$REPO_ROOT"
 fi
