@@ -294,15 +294,24 @@ This is an automated notification from OsirisCare Compliance Platform.
             )
             return {"status": "skipped", "reason": "SMTP not configured"}
 
-        def _send_smtp(message):
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                server.starttls(context=ctx)
-                server.login(SMTP_USER, SMTP_PASS)
-                server.send_message(message)
+        # Task #12 SMTP consolidation 2026-05-05: route through central
+        # _send_smtp_with_retry so escalation failures land in the
+        # Email DLQ + email_dlq_growing invariant catches outages.
+        # Operator-class email — display From: stays alerts@.
+        from .email_alerts import _send_smtp_with_retry
+        smtp_from = os.environ.get("SMTP_FROM", "alerts@osiriscare.net")
+        title_short = (payload.get('title', 'unknown') or 'unknown')[:60]
 
-        await asyncio.get_event_loop().run_in_executor(None, partial(_send_smtp, msg))
-
+        ok = await asyncio.get_event_loop().run_in_executor(
+            None,
+            partial(
+                _send_smtp_with_retry, msg, list(recipients),
+                f"escalation_alert: {title_short}",
+                3, None, smtp_from,
+            ),
+        )
+        if not ok:
+            return {"status": "error", "error": "SMTP send failed (see logs + DLQ)"}
         return {"status": "sent", "channel": "email", "recipients": len(recipients)}
     except Exception as e:
         return {"status": "error", "error": str(e)}

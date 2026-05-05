@@ -3,30 +3,30 @@
 Sends emails for:
 - User invitations
 - Password resets
+
+Task #12 (SMTP consolidation 2026-05-05): all SMTP sends go through
+email_alerts._send_smtp_with_retry now. Module-local SMTP_FROM
+preserved as the display-From-address override (noreply@ for
+transactional client/admin email, vs alerts@ for operator-class).
+The canonical retry+DLQ+branding code path is in email_alerts.py;
+this module just builds MIME messages and forwards them.
 """
 
 import os
-import ssl
-import smtplib
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional
 
+from .email_alerts import _send_smtp_with_retry, is_email_configured
+
 logger = logging.getLogger(__name__)
 
-# SMTP Configuration from environment
-SMTP_HOST = os.getenv("SMTP_HOST", "mail.privateemail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+# Display-From-address for transactional client/admin email. NOT the
+# envelope sender (envelope stays SMTP_FROM in email_alerts.py for
+# DKIM alignment); this is the From: header recipients see.
 SMTP_FROM = os.getenv("SMTP_FROM", "noreply@osiriscare.net")
 DASHBOARD_URL = os.getenv("FRONTEND_URL", os.getenv("DASHBOARD_URL", "https://www.osiriscare.net"))
-
-
-def is_email_configured() -> bool:
-    """Check if email is properly configured."""
-    return bool(SMTP_USER and SMTP_PASSWORD)
 
 
 def send_invite_email(
@@ -149,18 +149,16 @@ OsirisCare Central Command
         msg.attach(MIMEText(text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
 
-        # Send email
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls(context=context)
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM, to_email, msg.as_string())
-
-        logger.info(f"Invite email sent to {to_email}")
-        return True
+        # Task #12 SMTP consolidation: route through central helper
+        # (retry + DLQ + chain-gap visibility) instead of raw smtplib.
+        return _send_smtp_with_retry(
+            msg, [to_email],
+            label=f"client_invite to {to_email}",
+            from_address=SMTP_FROM,
+        )
 
     except Exception as e:
-        logger.error(f"Failed to send invite email to {to_email}: {e}")
+        logger.error(f"Failed to build invite email for {to_email}: {e}")
         return False
 
 
@@ -180,22 +178,22 @@ async def send_email(to_email: str, subject: str, body: str) -> bool:
         return False
 
     try:
-        msg = MIMEText(body, "plain")
+        # Task #12 SMTP consolidation: build a MIMEMultipart wrapper
+        # so _send_smtp_with_retry's signature-typed msg parameter
+        # accepts it (the helper expects MIMEMultipart).
+        msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = SMTP_FROM
         msg["To"] = to_email
-
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls(context=context)
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM, to_email, msg.as_string())
-
-        logger.info(f"Email sent to {to_email}: {subject}")
-        return True
+        msg.attach(MIMEText(body, "plain"))
+        return _send_smtp_with_retry(
+            msg, [to_email],
+            label=f"client_email to {to_email}",
+            from_address=SMTP_FROM,
+        )
 
     except Exception as e:
-        logger.error(f"Failed to send email to {to_email}: {e}")
+        logger.error(f"Failed to build email for {to_email}: {e}")
         return False
 
 
@@ -286,15 +284,13 @@ OsirisCare Central Command
         msg.attach(MIMEText(text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
 
-        context = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls(context=context)
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM, to_email, msg.as_string())
-
-        logger.info(f"Password reset email sent to {to_email}")
-        return True
+        # Task #12 SMTP consolidation: route through central helper.
+        return _send_smtp_with_retry(
+            msg, [to_email],
+            label=f"admin_password_reset to {to_email}",
+            from_address=SMTP_FROM,
+        )
 
     except Exception as e:
-        logger.error(f"Failed to send password reset email to {to_email}: {e}")
+        logger.error(f"Failed to build password reset email for {to_email}: {e}")
         return False

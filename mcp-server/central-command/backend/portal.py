@@ -175,15 +175,20 @@ async def send_magic_link_email(to_email: str, site_name: str, magic_link: str) 
 
 
 def _send_magic_link_smtp(to_email: str, site_name: str, magic_link: str,
-                          smtp_user: str, smtp_pass: str) -> bool:
-    """SMTP fallback for magic link delivery when SendGrid is not configured."""
-    import ssl
-    import smtplib
+                          smtp_user: str = None, smtp_pass: str = None) -> bool:
+    """SMTP fallback for magic link delivery when SendGrid is not configured.
+
+    Task #12 SMTP consolidation 2026-05-05: routed through
+    email_alerts._send_smtp_with_retry so failures land in the Email
+    DLQ + the email_dlq_growing substrate invariant catches outages.
+    smtp_user / smtp_pass kwargs preserved for backward compat (callers
+    still pass them); they're now ignored — the central helper reads
+    SMTP_USER / SMTP_PASSWORD from env.
+    """
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
+    from .email_alerts import _send_smtp_with_retry
 
-    smtp_host = os.environ.get("SMTP_HOST", "mail.privateemail.com")
-    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
     from_addr = os.environ.get("SMTP_FROM", "noreply@osiriscare.net")
 
     msg = MIMEMultipart("alternative")
@@ -206,24 +211,11 @@ def _send_magic_link_smtp(to_email: str, site_name: str, magic_link: str,
     msg.attach(MIMEText(text, "plain"))
     msg.attach(MIMEText(html, "html"))
 
-    for attempt in range(2):
-        try:
-            context = ssl.create_default_context()
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
-                server.starttls(context=context)
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(from_addr, to_email, msg.as_string())
-            logger.info(f"Magic link email sent via SMTP to {redact_email(to_email)}")
-            return True
-        except (smtplib.SMTPException, OSError) as e:
-            if attempt == 0:
-                logger.warning(f"SMTP attempt 1 failed for magic link: {e}")
-                import time
-                time.sleep(2)
-            else:
-                logger.error(f"SMTP magic link delivery failed after 2 attempts: {e}")
-                return False
-    return False
+    return _send_smtp_with_retry(
+        msg, [to_email],
+        label=f"client_portal_magic_link to {to_email}",
+        from_address=from_addr,
+    )
 
 
 # =============================================================================
@@ -740,18 +732,15 @@ async def request_magic_link(site_id: str, request: MagicLinkRequest):
     if not email_sent:
         # Fall back to SMTP if SendGrid unavailable
         try:
-            from .email_alerts import is_email_configured, send_critical_alert
+            from .email_alerts import is_email_configured, _send_smtp_with_retry
             if is_email_configured():
-                import smtplib
-                import ssl
+                # Task #12 SMTP consolidation 2026-05-05: build the
+                # MIME message + delegate to central helper. Display
+                # From: stays noreply@ for client-class email.
                 from email.mime.text import MIMEText
                 from email.mime.multipart import MIMEMultipart
 
-                smtp_host = os.getenv("SMTP_HOST", "mail.privateemail.com")
-                smtp_port = int(os.getenv("SMTP_PORT", "587"))
-                smtp_user = os.getenv("SMTP_USER", "")
-                smtp_password = os.getenv("SMTP_PASSWORD", "")
-                smtp_from = os.getenv("SMTP_FROM", "alerts@osiriscare.net")
+                smtp_from = os.getenv("SMTP_FROM", "noreply@osiriscare.net")
 
                 msg = MIMEMultipart("alternative")
                 msg["Subject"] = f"Your {site_name} Compliance Dashboard Access"
@@ -779,15 +768,15 @@ async def request_magic_link(site_id: str, request: MagicLinkRequest):
                 """
                 msg.attach(MIMEText(html_content, "html"))
 
-                context = ssl.create_default_context()
-                with smtplib.SMTP(smtp_host, smtp_port) as server:
-                    server.starttls(context=context)
-                    server.login(smtp_user, smtp_password)
-                    server.sendmail(smtp_from, request.email, msg.as_string())
-                email_sent = True
-                logger.info(f"Magic link sent via SMTP fallback to {redact_email(request.email)}")
+                email_sent = _send_smtp_with_retry(
+                    msg, [request.email],
+                    label=f"client_portal_magic_link_inline to {request.email}",
+                    from_address=smtp_from,
+                )
+                if email_sent:
+                    logger.info(f"Magic link sent via SMTP to {redact_email(request.email)}")
         except Exception as e:
-            logger.error(f"SMTP fallback failed for magic link: {e}")
+            logger.error(f"Magic link send failed: {e}")
 
     return MagicLinkResponse(
         message="If this email is registered, you will receive a link shortly.",

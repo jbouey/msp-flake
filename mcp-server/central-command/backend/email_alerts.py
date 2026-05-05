@@ -59,6 +59,7 @@ def _send_smtp_with_retry(
     label: str = "email",
     max_retries: int = 3,
     partner_branding: Optional[dict] = None,
+    from_address: Optional[str] = None,
 ) -> bool:
     """Send an email via SMTP with exponential backoff retry.
 
@@ -70,8 +71,24 @@ def _send_smtp_with_retry(
         so the email appears to come from the MSP to the recipient, while
         the DKIM-signing envelope sender remains OsirisCare's. SPF/DKIM
         alignment preserved — we don't allow envelope From spoofing.
+
+    from_address (optional, task #12 SMTP consolidation): rewrites the
+        msg["From"] DISPLAY header. Envelope sender (passed to
+        server.sendmail) stays SMTP_FROM for DKIM alignment. Lets a
+        callsite that's NOT operator-class (e.g. client invite, partner
+        digest) display a different From: than the alerts@ default
+        without breaking SPF. Mutually exclusive in practice with
+        partner_branding (both rewrite the From header) — partner_branding
+        wins if both set.
     """
     import time as _time
+
+    if from_address and not partner_branding:
+        # Simple rewrite: callsite explicitly chose a display From.
+        # Skip when partner_branding is set — partner_branding's
+        # display_name takes precedence per the docstring contract.
+        del msg["From"]
+        msg["From"] = from_address
 
     if partner_branding:
         display = partner_branding.get("display_name")
