@@ -129,6 +129,17 @@ ALLOWED_EVENTS = {
     "partner_admin_transfer_completed",
     "partner_admin_transfer_canceled",
     "partner_admin_transfer_expired",
+    # Maya P1-1 closure 2026-05-04 — final-pass adversarial review
+    # found 4 operator-alert hooks claiming "cryptographically
+    # attested" semantics without an Ed25519 chain. Promoted to full
+    # chain per the enterprise-grade default. Anchor: client-org
+    # events use org's primary site_id; partner-org events use
+    # partner_org:<id> synthetic namespace. NOT in
+    # PRIVILEGED_ORDER_TYPES — admin-API class.
+    "org_deprovisioned",
+    "org_reprovisioned",
+    "partner_api_key_regenerated",
+    "partner_org_deleted",
 }
 
 

@@ -85,7 +85,9 @@ EXPECTED_HOOKS = [
     (_BACKEND / "client_portal.py", "client_user_removed"),
     (_BACKEND / "client_portal.py", "client_user_role_changed"),
     (_BACKEND / "sites.py", "site_updated"),
-    (_BACKEND / "sites.py", "appliance_relocated"),
+    # Maya P2-1 closure 2026-05-04 — renamed from "appliance_relocated"
+    # to match the attestation chain event_type for forensic linkage.
+    (_BACKEND / "sites.py", "appliance_relocation_acknowledged"),
     (_BACKEND / "org_management.py", "org_deprovisioned"),
     (_BACKEND / "org_management.py", "org_reprovisioned"),
     # Maya parity finding 2026-05-04 — partner-side mutations were

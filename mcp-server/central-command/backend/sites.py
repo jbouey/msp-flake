@@ -2409,8 +2409,15 @@ async def relocate_appliance(
         # so operator forensic search hits both directions. Mig 245 emits
         # an attestation to BOTH sites; the email previously only named
         # the target, which obscured the source for inbox-search.
+        # Maya P2-1 closure 2026-05-04 (final-pass review): event_type
+        # MUST match the attestation chain entry — both halves of the
+        # admin-relocate flow now use `appliance_relocation_acknowledged`
+        # so an operator's inbox grep finds the same string the auditor
+        # kit walks. Pre-fix: operator email said "appliance_relocated"
+        # while the attestation chain wrote "appliance_relocation_
+        # acknowledged" — disjoint forensic search results.
         send_operator_alert(
-            event_type="appliance_relocated",
+            event_type="appliance_relocation_acknowledged",
             severity="P1",
             summary=(
                 f"Appliance {appliance_id} relocated: "

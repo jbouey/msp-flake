@@ -154,6 +154,95 @@ def test_partner_attestation_uses_partner_org_namespace():
 # ─── digest-prefs audit gap (item D) ─────────────────────────────
 
 
+# ─── Maya P1-1 closure (2026-05-04): 4 events promoted to chain ──
+
+
+def test_org_deprovisioned_writes_attestation():
+    """Maya P1-1 finding: pre-2026-05-04 fix, org_deprovisioned hook
+    fired the operator alert with chain-gap-escalation pattern but
+    NEVER wrote an Ed25519 bundle. Now writes via
+    create_privileged_access_attestation. Anchor: org's primary site_id."""
+    src = _read(_BACKEND / "org_management.py")
+    fn_src = _find_function(src, "deprovision_org")
+    assert fn_src, "deprovision_org function not found"
+    assert "create_privileged_access_attestation" in fn_src, (
+        "deprovision_org no longer writes Ed25519 attestation — "
+        "Maya P1-1 reopened."
+    )
+    assert 'event_type="org_deprovisioned"' in fn_src, (
+        "deprovision attestation uses wrong event_type."
+    )
+    assert "deprovision_attestation_failed" in fn_src, (
+        "chain-gap escalation flag missing — operator can't see when "
+        "the chain breaks."
+    )
+
+
+def test_org_reprovisioned_writes_attestation():
+    src = _read(_BACKEND / "org_management.py")
+    fn_src = _find_function(src, "reprovision_org")
+    assert fn_src, "reprovision_org function not found"
+    assert "create_privileged_access_attestation" in fn_src
+    assert 'event_type="org_reprovisioned"' in fn_src
+    assert "reprovision_attestation_failed" in fn_src
+
+
+def test_partner_api_key_regen_writes_attestation():
+    src = _read(_BACKEND / "partners.py")
+    fn_src = _find_function(src, "regenerate_api_key")
+    assert fn_src, "regenerate_api_key not found"
+    assert "create_privileged_access_attestation" in fn_src, (
+        "API key regen no longer writes attestation — Maya P1-1 "
+        "reopened. Bearer of regenerated key has 365-day partner-API "
+        "access; this is privileged-action-class."
+    )
+    assert 'event_type="partner_api_key_regenerated"' in fn_src
+    assert "api_key_attestation_failed" in fn_src
+
+
+def test_partner_org_delete_writes_attestation():
+    src = _read(_BACKEND / "partners.py")
+    fn_src = _find_function(src, "delete_partner")
+    assert fn_src, "delete_partner not found"
+    assert "create_privileged_access_attestation" in fn_src, (
+        "Partner-org delete no longer writes attestation. Most "
+        "destructive partner-portal action — auditor kit MUST capture."
+    )
+    assert 'event_type="partner_org_deleted"' in fn_src
+    assert "delete_attestation_failed" in fn_src
+
+
+def test_p11_events_in_allowed_events():
+    src = _read(_BACKEND / "privileged_access_attestation.py")
+    for ev in [
+        "org_deprovisioned",
+        "org_reprovisioned",
+        "partner_api_key_regenerated",
+        "partner_org_deleted",
+    ]:
+        assert f'"{ev}"' in src, (
+            f"Maya P1-1 event `{ev}` not in ALLOWED_EVENTS — "
+            f"create_privileged_access_attestation will reject at runtime."
+        )
+
+
+def test_p21_appliance_relocate_event_matches_attestation():
+    """Maya P2-1: operator-email event_type MUST match attestation
+    chain event_type for forensic correlation across inbox + auditor
+    kit. Pre-fix the email said `appliance_relocated` while the chain
+    wrote `appliance_relocation_acknowledged` — disjoint search."""
+    src = _read(_BACKEND / "sites.py")
+    fn_src = _find_function(src, "relocate_appliance")
+    assert fn_src, "relocate_appliance not found"
+    assert 'event_type="appliance_relocation_acknowledged"' in fn_src, (
+        "operator-email event_type does not match the attestation "
+        "chain entry — forensic search returns disjoint result sets."
+    )
+    assert 'event_type="appliance_relocated"' not in fn_src, (
+        "old past-tense event_type still present — rename incomplete."
+    )
+
+
 def test_digest_prefs_audit_call_present():
     """Pre-2026-05-04: PUT /me/digest-prefs mutated partners.digest_
     enabled with NO audit row. Maya P3 parity finding."""

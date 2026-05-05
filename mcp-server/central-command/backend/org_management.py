@@ -314,20 +314,87 @@ async def deprovision_org(
                 ip_address=request.client.host if request.client else None,
             )
 
+        # Maya P1-1 closure: org_deprovisioned promoted to full Ed25519
+        # chain. Anchor at the org's primary site_id (deterministic, by
+        # earliest-created site). Best-effort — chain failure does NOT
+        # block the deprovision (already committed). Severity escalates
+        # to P0-CHAIN-GAP if attestation fails.
+        deprovision_attestation_failed = False
+        deprovision_bundle_id = None
+        try:
+            from .privileged_access_attestation import (
+                create_privileged_access_attestation,
+                PrivilegedAccessAttestationError,
+            )
+            site_row = await conn.fetchrow(
+                """
+                SELECT site_id FROM sites
+                 WHERE client_org_id = $1::uuid
+                 ORDER BY created_at ASC LIMIT 1
+                """,
+                org_id,
+            )
+            anchor_site_id = (
+                site_row["site_id"] if site_row
+                else f"client_org:{org_id}"
+            )
+            try:
+                att = await create_privileged_access_attestation(
+                    conn,
+                    site_id=anchor_site_id,
+                    event_type="org_deprovisioned",
+                    actor_email=(user.get("email")
+                                 or user.get("username") or "unknown"),
+                    reason=req.reason,
+                    origin_ip=(request.client.host
+                               if request.client else None),
+                    approvals=[{
+                        "stage": "applied",
+                        "actor": user.get("email") or user.get("username"),
+                        "org_id": str(org_id),
+                        "org_name": org["name"],
+                        "retention_until": retention_until.isoformat(),
+                    }],
+                )
+                deprovision_bundle_id = att.get("bundle_id")
+            except PrivilegedAccessAttestationError as e:
+                deprovision_attestation_failed = True
+                logger.error(
+                    "org_deprovisioned_attestation_failed",
+                    exc_info=True,
+                    extra={"org_id": str(org_id)},
+                )
+        except Exception:
+            deprovision_attestation_failed = True
+            logger.error(
+                "org_deprovisioned_attestation_unexpected",
+                exc_info=True,
+                extra={"org_id": str(org_id)},
+            )
+
         try:
             from .email_alerts import send_operator_alert
+            op_severity = ("P0-CHAIN-GAP"
+                           if deprovision_attestation_failed else "P1")
+            op_suffix = (" [ATTESTATION-MISSING]"
+                         if deprovision_attestation_failed else "")
             send_operator_alert(
                 event_type="org_deprovisioned",
-                severity="P1",
-                summary=f"Client org deprovisioned: {org['name']} (retention {req.retention_days}d)",
+                severity=op_severity,
+                summary=(
+                    f"Client org deprovisioned: {org['name']} "
+                    f"(retention {req.retention_days}d){op_suffix}"
+                ),
                 details={
-                    "org_id": org_id,
+                    "org_id": str(org_id),
                     "org_name": org["name"],
                     "reason": req.reason,
                     "retention_days": req.retention_days,
                     "retention_until": retention_until.isoformat(),
                     "notify_users": req.notify_users,
                     "notify_recipient_count": len(notify_recipients),
+                    "attestation_bundle_id": deprovision_bundle_id,
+                    "attestation_failed": deprovision_attestation_failed,
                 },
                 actor_email=user.get("email") or user.get("username"),
             )
@@ -484,13 +551,77 @@ async def reprovision_org(
                 ip_address=request.client.host if request.client else None,
             )
 
+        # Maya P1-1 closure: org_reprovisioned promoted to full Ed25519
+        # chain. Same anchor strategy as org_deprovisioned.
+        reprovision_attestation_failed = False
+        reprovision_bundle_id = None
+        try:
+            from .privileged_access_attestation import (
+                create_privileged_access_attestation,
+                PrivilegedAccessAttestationError,
+            )
+            site_row = await conn.fetchrow(
+                """
+                SELECT site_id FROM sites
+                 WHERE client_org_id = $1::uuid
+                 ORDER BY created_at ASC LIMIT 1
+                """,
+                org_id,
+            )
+            anchor_site_id = (
+                site_row["site_id"] if site_row
+                else f"client_org:{org_id}"
+            )
+            try:
+                att = await create_privileged_access_attestation(
+                    conn,
+                    site_id=anchor_site_id,
+                    event_type="org_reprovisioned",
+                    actor_email=(user.get("email")
+                                 or user.get("username") or "unknown"),
+                    reason=(
+                        f"client_org {org_id} reactivated by "
+                        f"{user.get('email') or user.get('username')}"
+                    ),
+                    origin_ip=(request.client.host
+                               if request.client else None),
+                    approvals=[{
+                        "stage": "applied",
+                        "actor": user.get("email") or user.get("username"),
+                        "org_id": str(org_id),
+                    }],
+                )
+                reprovision_bundle_id = att.get("bundle_id")
+            except PrivilegedAccessAttestationError:
+                reprovision_attestation_failed = True
+                logger.error(
+                    "org_reprovisioned_attestation_failed",
+                    exc_info=True,
+                    extra={"org_id": str(org_id)},
+                )
+        except Exception:
+            reprovision_attestation_failed = True
+            logger.error(
+                "org_reprovisioned_attestation_unexpected",
+                exc_info=True,
+                extra={"org_id": str(org_id)},
+            )
+
         try:
             from .email_alerts import send_operator_alert
+            op_severity = ("P0-CHAIN-GAP"
+                           if reprovision_attestation_failed else "P1")
+            op_suffix = (" [ATTESTATION-MISSING]"
+                         if reprovision_attestation_failed else "")
             send_operator_alert(
                 event_type="org_reprovisioned",
-                severity="P1",
-                summary=f"Client org reactivated: org_id={org_id}",
-                details={"org_id": org_id},
+                severity=op_severity,
+                summary=f"Client org reactivated: org_id={org_id}{op_suffix}",
+                details={
+                    "org_id": str(org_id),
+                    "attestation_bundle_id": reprovision_bundle_id,
+                    "attestation_failed": reprovision_attestation_failed,
+                },
                 actor_email=user.get("email") or user.get("username"),
             )
         except Exception:

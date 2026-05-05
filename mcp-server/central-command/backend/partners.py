@@ -3214,22 +3214,74 @@ async def regenerate_api_key(request: Request, partner_id: str, admin: dict = De
         request_method=request.method,
     )
 
-    # Operator-visibility (Maya parity finding 2026-05-04 — partner
-    # mutations were operator-blind; same gap class as the client-side
-    # batch in commit f1d3e9f0).
+    # Maya P1-1 closure 2026-05-04: api_key_regenerated promoted to
+    # full Ed25519 chain. API key regeneration grants the bearer
+    # full partner-API access for 365 days — privileged action.
+    api_key_attestation_failed = False
+    api_key_bundle_id = None
+    try:
+        from .privileged_access_attestation import (
+            create_privileged_access_attestation,
+            PrivilegedAccessAttestationError,
+        )
+        async with admin_connection(pool) as att_conn:
+            try:
+                att = await create_privileged_access_attestation(
+                    att_conn,
+                    site_id=f"partner_org:{partner_id}",
+                    event_type="partner_api_key_regenerated",
+                    actor_email=(
+                        admin.get("email") or admin.get("username")
+                        or "unknown"
+                    ),
+                    reason=(
+                        f"partner API key regenerated for "
+                        f"{result['name']}"
+                    ),
+                    origin_ip=(request.client.host
+                               if request.client else None),
+                    approvals=[{
+                        "stage": "applied",
+                        "actor": admin.get("email") or admin.get("sub"),
+                        "partner_id": str(partner_id),
+                        "expires_at": api_key_expires.isoformat(),
+                    }],
+                )
+                api_key_bundle_id = att.get("bundle_id")
+            except PrivilegedAccessAttestationError:
+                api_key_attestation_failed = True
+                logger.error(
+                    "partner_api_key_attestation_failed",
+                    exc_info=True,
+                    extra={"partner_id": str(partner_id)},
+                )
+    except Exception:
+        api_key_attestation_failed = True
+        logger.error(
+            "partner_api_key_attestation_unexpected",
+            exc_info=True,
+            extra={"partner_id": str(partner_id)},
+        )
+
     try:
         from .email_alerts import send_operator_alert
+        op_severity = ("P0-CHAIN-GAP"
+                       if api_key_attestation_failed else "P1")
+        op_suffix = (" [ATTESTATION-MISSING]"
+                     if api_key_attestation_failed else "")
         send_operator_alert(
             event_type="partner_api_key_regenerated",
-            severity="P1",
+            severity=op_severity,
             summary=(
                 f"Partner API key regenerated: {result['name']} "
-                f"(partner_id={partner_id})"
+                f"(partner_id={partner_id}){op_suffix}"
             ),
             details={
                 "partner_id": str(partner_id),
                 "partner_name": result["name"],
                 "expires_at": api_key_expires.isoformat(),
+                "attestation_bundle_id": api_key_bundle_id,
+                "attestation_failed": api_key_attestation_failed,
             },
             site_id=f"partner_org:{partner_id}",
             actor_email=admin.get("email") or admin.get("username"),
@@ -3244,6 +3296,7 @@ async def regenerate_api_key(request: Request, partner_id: str, admin: dict = De
         "status": "regenerated",
         "api_key": api_key,
         "expires_at": api_key_expires.isoformat(),
+        "attestation_bundle_id": api_key_bundle_id,
         "message": "Save this API key - it cannot be retrieved later. Expires in 1 year."
     }
 
@@ -3288,22 +3341,80 @@ async def delete_partner(request: Request, partner_id: str, admin: dict = Depend
         request_method=request.method,
     )
 
-    # Operator-visibility (Maya parity 2026-05-04). Partner deletion
-    # is destructive + cascades — operator should learn in real time.
+    # Maya P1-1 closure 2026-05-04: partner_org_deleted promoted to
+    # full Ed25519 chain. Destructive cascade — every downstream
+    # client_org loses its partner relationship + all sessions /
+    # provisions purged. Highest-friction privileged action on the
+    # partner-portal surface; absolutely needs the cryptographic
+    # record for incident-response.
+    delete_attestation_failed = False
+    delete_bundle_id = None
+    try:
+        from .privileged_access_attestation import (
+            create_privileged_access_attestation,
+            PrivilegedAccessAttestationError,
+        )
+        pool_for_att = await get_pool()
+        async with admin_connection(pool_for_att) as att_conn:
+            try:
+                att = await create_privileged_access_attestation(
+                    att_conn,
+                    site_id=f"partner_org:{partner_id}",
+                    event_type="partner_org_deleted",
+                    actor_email=(
+                        admin.get("email") or admin.get("username")
+                        or admin.get("sub") or "unknown"
+                    ),
+                    reason=(
+                        f"partner_org {partner['name']} "
+                        f"(slug={partner['slug']}) deleted"
+                    ),
+                    origin_ip=(request.client.host
+                               if request.client else None),
+                    approvals=[{
+                        "stage": "applied",
+                        "actor": admin.get("email") or admin.get("sub"),
+                        "partner_id": str(partner_id),
+                        "partner_name": partner["name"],
+                        "partner_slug": partner["slug"],
+                    }],
+                )
+                delete_bundle_id = att.get("bundle_id")
+            except PrivilegedAccessAttestationError:
+                delete_attestation_failed = True
+                logger.error(
+                    "partner_org_deleted_attestation_failed",
+                    exc_info=True,
+                    extra={"partner_id": str(partner_id)},
+                )
+    except Exception:
+        delete_attestation_failed = True
+        logger.error(
+            "partner_org_deleted_attestation_unexpected",
+            exc_info=True,
+            extra={"partner_id": str(partner_id)},
+        )
+
     try:
         from .email_alerts import send_operator_alert
+        op_severity = ("P0-CHAIN-GAP"
+                       if delete_attestation_failed else "P1")
+        op_suffix = (" [ATTESTATION-MISSING]"
+                     if delete_attestation_failed else "")
         send_operator_alert(
             event_type="partner_org_deleted",
-            severity="P1",
+            severity=op_severity,
             summary=(
                 f"Partner org DELETED: {partner['name']} "
-                f"(slug={partner['slug']}, id={partner_id})"
+                f"(slug={partner['slug']}, id={partner_id}){op_suffix}"
             ),
             details={
                 "partner_id": str(partner_id),
                 "partner_name": partner["name"],
                 "partner_slug": partner["slug"],
                 "actor": admin.get("email") or admin.get("sub"),
+                "attestation_bundle_id": delete_bundle_id,
+                "attestation_failed": delete_attestation_failed,
             },
             site_id=f"partner_org:{partner_id}",
             actor_email=admin.get("email") or admin.get("sub"),
@@ -3314,7 +3425,12 @@ async def delete_partner(request: Request, partner_id: str, admin: dict = Depend
             exc_info=True,
         )
 
-    return {"status": "deleted", "id": str(partner_id), "name": partner["name"]}
+    return {
+        "status": "deleted",
+        "id": str(partner_id),
+        "name": partner["name"],
+        "attestation_bundle_id": delete_bundle_id,
+    }
 
 
 @router.get("/{partner_id}/activity")
