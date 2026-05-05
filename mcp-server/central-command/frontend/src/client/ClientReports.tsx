@@ -231,7 +231,7 @@ export const ClientReports: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider">Current Compliance Score</h2>
-                    {snapshot.overall_score == null ? (
+                    {typeof snapshot.overall_score !== 'number' ? (
                       <>
                         <p className="text-5xl font-bold mt-2 tabular-nums text-slate-400">—</p>
                         <p className="text-sm text-slate-500 mt-1">
@@ -298,7 +298,7 @@ export const ClientReports: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-6">
                           <span className="text-sm text-slate-600">{site.passed}/{site.total} passed</span>
-                          {site.score == null ? (
+                          {typeof site.score !== 'number' ? (
                             <span className="px-3 py-1 text-sm font-semibold rounded-full tabular-nums bg-slate-100 text-slate-400">
                               —
                             </span>

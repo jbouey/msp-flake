@@ -357,7 +357,7 @@ export const ClientDashboard: React.FC = () => {
               </div>
               <p className="text-sm font-medium text-label-tertiary">Compliance Score<InfoTip text="Percentage of automated security checks passing. A high score means your systems are configured as expected." /></p>
             </div>
-            {dashboard?.kpis.compliance_score == null ? (
+            {typeof dashboard?.kpis.compliance_score !== 'number' ? (
               <>
                 <span className="text-4xl font-bold tabular-nums text-label-tertiary">—</span>
                 <p className="mt-2 text-sm text-label-tertiary">
