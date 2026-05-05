@@ -74,9 +74,34 @@ def test_migration_276_reason_min_40():
 
 
 def test_migration_276_one_pending_per_user_unique_index():
+    """Partial unique index gates pending revocations.
+
+    NOTE: Postgres index predicates require IMMUTABLE functions.
+    NOW() is STABLE → cannot be in WHERE on CREATE INDEX. Index
+    covers restored_at IS NULL only; application + sweep loop
+    filter on expires_at > NOW() at query time. CI-discovered
+    on prod deploy 2026-05-05 (commit 069a8da3); fix amended
+    here forward-only.
+    """
     src = _read(_MIG_DIR / "276_mfa_admin_overrides.sql")
     assert "idx_mfa_revocation_one_pending_per_user" in src
-    assert "WHERE restored_at IS NULL AND expires_at > NOW()" in src
+    # Must be a partial index on restored_at IS NULL (without NOW()).
+    assert "WHERE restored_at IS NULL" in src
+    # Negative: NOW() must NOT appear inside any CREATE INDEX block
+    # (PG would reject the migration with InvalidObjectDefinitionError).
+    # Strip `-- comment` lines before the scan so documentary explanations
+    # of why-NOW-is-banned don't false-positive.
+    stripped = "\n".join(
+        line for line in src.splitlines() if not line.lstrip().startswith("--")
+    )
+    create_index_blocks = stripped.split("CREATE")
+    for block in create_index_blocks:
+        if block.lstrip().startswith(("INDEX", "UNIQUE INDEX")):
+            assert "NOW()" not in block, (
+                "CREATE INDEX block contains NOW() in predicate — "
+                "PG rejects (functions in index predicate must be "
+                "marked IMMUTABLE). Use restored_at IS NULL only."
+            )
 
 
 def test_migration_276_append_only():
@@ -222,11 +247,27 @@ def test_restore_token_hashed_not_stored_plaintext():
     assert "reversal_token_hash = ''" in src or "reversal_token_hash = NULL" in src
 
 
-def test_restore_validates_target_email():
-    """Restore endpoint must check actor's email matches the target_email
-    on the revocation row — otherwise a leaked token grants takeover."""
+def test_restore_is_token_only_auth():
+    """Maya P0-2 (round-table 2026-05-05): restore endpoints MUST be
+    token-only — no Depends(require_client_user) / Depends(require_partner).
+    A Depends-gated restore is unreachable on `mfa_required=true` orgs
+    because the target's MFA was just cleared. The 256-bit token (delivered
+    to target_email at revoke-time) IS the authentication primitive.
+    """
     src = _read(_BACKEND / "mfa_admin.py")
-    assert "Token bound to a different user" in src
+    client_restore = _find_function(src, "client_user_mfa_restore")
+    partner_restore = _find_function(src, "partner_user_mfa_restore")
+    assert client_restore and partner_restore
+    for fn_src, name in [(client_restore, "client"), (partner_restore, "partner")]:
+        assert "Depends(require_client_user)" not in fn_src, (
+            f"{name} restore is Depends-gated — see Maya P0-2"
+        )
+        assert "Depends(require_partner)" not in fn_src, (
+            f"{name} restore is Depends-gated — see Maya P0-2"
+        )
+        assert "TOKEN-ONLY" in fn_src, (
+            f"{name} restore must document its token-only contract"
+        )
 
 
 def test_restore_validates_window():

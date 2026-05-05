@@ -112,9 +112,12 @@ def test_allowed_events_matches_expected_set():
         "client_org_transfer_prefs_changed",
         "partner_transfer_prefs_changed",
         # Task #19 closure 2026-05-05 — MFA admin overrides (mig 276).
-        # 3 sub-features × 2 portals = 6 events + 2 reversal events
-        # for Steve mit B (24h reversible-link revoke). Total
-        # ALLOWED_EVENTS: 43.
+        # 3 sub-features × 2 portals = 6 events + 2 reversal events for
+        # Steve mit B (24h reversible-link revoke) + 2 expiration events
+        # the sweep loop emits per-row when the 24h window passes
+        # without restoration (Maya P0-3 round-table 2026-05-05 — sweep
+        # silently expiring without an attestation row was a chain-of-
+        # custody gap auditors would flag). Total ALLOWED_EVENTS: 45.
         "client_org_mfa_policy_changed",
         "partner_mfa_policy_changed",
         "client_user_mfa_reset",
@@ -123,6 +126,8 @@ def test_allowed_events_matches_expected_set():
         "partner_user_mfa_revoked",
         "client_user_mfa_revocation_reversed",
         "partner_user_mfa_revocation_reversed",
+        "client_user_mfa_revocation_expired",
+        "partner_user_mfa_revocation_expired",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

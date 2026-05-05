@@ -203,7 +203,18 @@ async def _send_revoke_email_to_target(
     """Send the 24h-reversible-link email to the user whose MFA was
     revoked. Best-effort. Per Steve P3 mit B: if MFA revocation was
     the attack vector itself (compromised admin), the target needs
-    a path back."""
+    a path back.
+
+    Maya P1-2 (round-table 2026-05-05): the body MUST NOT name the
+    revoking actor's email. Inline disclosure of `revoking_admin_email`
+    validates an attacker's social-engineering claim ("hey, this is
+    Joe in IT — I just rotated your MFA, click this to confirm…")
+    and shifts the target's risk model toward trusting the claim. The
+    actor identity stays in admin_audit_log + the auditor kit so the
+    customer's own forensics path can recover it; we just don't put
+    it inline in the email body. The `revoking_admin_email` parameter
+    is retained for log correlation only.
+    """
     try:
         from .email_service import send_email
         kind_label = ("OsirisCare" if user_kind == "client_user"
@@ -216,20 +227,27 @@ async def _send_revoke_email_to_target(
         )
         body = (
             f"Your multi-factor authentication for {kind_label} has "
-            f"been revoked by {revoking_admin_email}.\n"
+            f"been revoked by an administrator.\n"
             f"\n"
-            f"If this was NOT expected (e.g. your admin's account "
-            f"may be compromised), you can restore your MFA within "
-            f"24 hours by clicking:\n"
+            f"If this was NOT expected (e.g. your administrator's "
+            f"account may be compromised, or you did not request a "
+            f"reset), you can restore your MFA within 24 hours by "
+            f"clicking:\n"
             f"\n"
             f"  {restore_url}\n"
             f"\n"
             f"Link expires: {expires_at.isoformat()}\n"
             f"\n"
-            f"After restoration, the substrate records a "
-            f"`mfa_revocation_reversed` attestation visible in your "
-            f"auditor kit. The revoking actor's identity is also "
-            f"recorded in admin_audit_log.\n"
+            f"The revoking actor's identity and reason are recorded "
+            f"in your organization's admin_audit_log and in the "
+            f"OsirisCare auditor kit (cryptographically chained). "
+            f"After you restore, retrieving the actor's email is a "
+            f"single SQL query against admin_audit_log filtered to "
+            f"`action='MFA_REVOCATION'`.\n"
+            f"\n"
+            f"For your safety we do not name the actor inline in this "
+            f"email — a phishing attempt could otherwise quote the "
+            f"actor email back to you to lend credibility.\n"
             f"\n"
             f"If your MFA was revoked at your own request (lost "
             f"device, etc.), ignore this email. After 24 hours the "
@@ -245,7 +263,14 @@ async def _send_revoke_email_to_target(
             body,
         )
     except Exception:
-        logger.error("mfa_revoke_email_failed", exc_info=True)
+        logger.error(
+            "mfa_revoke_email_failed",
+            exc_info=True,
+            extra={
+                "target_email": target_email,
+                "revoking_admin_email": revoking_admin_email,
+            },
+        )
 
 
 # ─── Owner-transfer interlock predicate ───────────────────────────
@@ -590,18 +615,27 @@ async def client_user_mfa_revoke(
 async def client_user_mfa_restore(
     request: Request,
     token: str,
-    user: dict = Depends(require_client_user),
 ) -> Dict[str, Any]:
     """Target user clicks the 24h restoration link. Restores MFA
-    state (well, lets them re-enroll on next login — we just clear
-    the revocation row + write the reversal attestation).
+    state (lets them re-enroll on next login — we clear the revocation
+    row + write the reversal attestation).
 
-    Auth: any logged-in client_user; endpoint validates token
-    matches AND token's target_email matches the actor's session.
+    Auth: TOKEN-ONLY. The 256-bit cryptographic token (secrets.token_urlsafe(32))
+    is delivered only to the target's email at revoke-time. Possession of
+    the token IS the authentication — same magic-link pattern as the
+    client owner-transfer accept flow.
+
+    Maya P0-2 (round-table 2026-05-05): a Depends-gated restore was
+    unreachable on `mfa_required=true` orgs because the target's MFA
+    was just cleared and they cannot complete login. The 24h primitive
+    must work in the recommended deployment posture, so the token has
+    to stand alone as the auth proof. target_email is recorded as
+    `restored_by_email` for the audit trail; we do not need a separate
+    session to identify the actor.
     """
     token_hash = _hash_token(token)
     pool = await get_pool()
-    actor_email = (user.get("email") or "").lower()
+    origin_ip = (request.client.host if request.client else None)
 
     async with admin_connection(pool) as conn:
         async with conn.transaction():
@@ -624,10 +658,8 @@ async def client_user_mfa_restore(
             if row["expires_at"] < datetime.now(timezone.utc):
                 raise HTTPException(status_code=410,
                     detail="Restoration window expired")
-            if (row["target_email"] or "").lower() != actor_email:
-                raise HTTPException(status_code=403,
-                    detail="Token bound to a different user")
 
+            actor_email = (row["target_email"] or "").lower()
             await conn.execute(
                 """
                 UPDATE mfa_revocation_pending
@@ -648,7 +680,7 @@ async def client_user_mfa_restore(
                 actor_email=actor_email,
                 reason=f"User self-restored revocation: {row['reason']}",
                 target_user_id=row["target_user_id"],
-                origin_ip=(request.client.host if request.client else None),
+                origin_ip=origin_ip,
             )
             if bundle_id:
                 await conn.execute(
@@ -660,11 +692,20 @@ async def client_user_mfa_restore(
                     """,
                     row["id"], bundle_id,
                 )
+            # Synthetic actor dict — token possession identifies the
+            # target_user as the acting party. Keeps HIPAA disclosure
+            # accounting (client_audit_log) populated even though we
+            # have no session.
             await _audit_client_action(
-                conn, user,
+                conn,
+                {
+                    "user_id": row["target_user_id"],
+                    "org_id": row["scope_id"],
+                    "email": actor_email,
+                },
                 action="MFA_REVOCATION_REVERSED",
                 target=row["target_user_id"],
-                details={"revocation_id": row["id"]},
+                details={"revocation_id": row["id"], "auth": "token-only"},
                 request=request,
             )
 
@@ -883,7 +924,7 @@ async def partner_user_mfa_revoke(
     if str(partner["id"]) != partner_id:
         raise HTTPException(status_code=403,
             detail="Cannot revoke MFA in a different partner_org")
-    if user_id == str(partner.get("user_id", "")):
+    if user_id == str(partner.get("partner_user_id", "")):
         raise HTTPException(status_code=400,
             detail="Cannot revoke your own MFA")
 
@@ -1023,13 +1064,19 @@ async def partner_user_mfa_revoke(
 async def partner_user_mfa_restore(
     request: Request,
     token: str,
-    partner: dict = Depends(require_partner),
 ) -> Dict[str, Any]:
-    """Partner user clicks the 24h reversal link."""
+    """Partner user clicks the 24h reversal link.
+
+    Auth: TOKEN-ONLY. Same magic-link primitive as the client-side
+    restore endpoint — possession of the 256-bit token (delivered to
+    target_email) IS the auth proof. Maya P0-2 (round-table 2026-05-05)
+    rejected the prior Depends-gated shape because the target's MFA was
+    just cleared and they cannot complete login on `mfa_required=true`
+    partner orgs. The 24h primitive must work in that posture.
+    """
     token_hash = _hash_token(token)
     pool = await get_pool()
-    actor_email = (partner.get("email") or "").lower()
-    partner_id = str(partner["id"])
+    origin_ip = (request.client.host if request.client else None)
 
     async with admin_connection(pool) as conn:
         async with conn.transaction():
@@ -1052,12 +1099,9 @@ async def partner_user_mfa_restore(
             if row["expires_at"] < datetime.now(timezone.utc):
                 raise HTTPException(status_code=410,
                     detail="Restoration window expired")
-            if (row["target_email"] or "").lower() != actor_email:
-                raise HTTPException(status_code=403,
-                    detail="Token bound to a different user")
-            if row["scope_id"] != partner_id:
-                raise HTTPException(status_code=403,
-                    detail="Token bound to a different partner_org")
+
+            actor_email = (row["target_email"] or "").lower()
+            partner_id = row["scope_id"]
 
             await conn.execute(
                 """
@@ -1136,9 +1180,18 @@ async def partner_user_mfa_restore(
 
 async def mfa_revocation_expiry_sweep_loop():
     """60s cadence; marks pending revocations expired when their
-    24h window passes without restoration. No state mutation on
-    user_users table needed (the MFA was already cleared at revoke
-    time); this just closes the audit row."""
+    24h window passes without restoration.
+
+    Maya P0-3 (round-table 2026-05-05): each expired row writes a
+    cryptographically chained attestation event (`client_user_mfa_
+    revocation_expired` / `partner_user_mfa_revocation_expired`) +
+    fires an operator-visibility alert. Pre-fix the sweep silently
+    closed audit rows, leaving auditor kits with revoke-without-
+    closure entries.
+
+    The MFA state on the user row was already cleared at revoke
+    time; the sweep just closes the audit row.
+    """
     import asyncio
     from .bg_heartbeat import record_heartbeat
     while True:
@@ -1154,16 +1207,75 @@ async def mfa_revocation_expiry_sweep_loop():
                        AND expires_at <= NOW()
                        AND reversal_token_hash <> ''
                     RETURNING id::text, user_kind, scope_id::text,
-                              target_email
+                              target_email, target_user_id::text,
+                              revoked_by_email, reason
                     """,
                 )
                 for row in expired:
+                    user_kind = row["user_kind"]
+                    event_type = (
+                        "client_user_mfa_revocation_expired"
+                        if user_kind == "client_user"
+                        else "partner_user_mfa_revocation_expired"
+                    )
+                    if user_kind == "client_user":
+                        anchor_site_id = await _resolve_client_anchor_site_id(
+                            conn, row["scope_id"],
+                        )
+                    else:
+                        anchor_site_id = f"partner_org:{row['scope_id']}"
+
+                    bundle_id = await _emit_attestation(
+                        conn, anchor_site_id,
+                        event_type=event_type,
+                        # Sweep is a system actor — but the chain-of-custody
+                        # rule requires a named human email. Use the
+                        # original revoking admin's email so the auditor
+                        # can trace expired→revoke chain by actor.
+                        actor_email=(row["revoked_by_email"] or "system@osiriscare.net"),
+                        reason=(
+                            f"24h reversal window expired without "
+                            f"restoration: {row['reason']}"
+                        ),
+                        target_user_id=row["target_user_id"],
+                        origin_ip=None,
+                    )
+                    if bundle_id:
+                        await conn.execute(
+                            """
+                            UPDATE mfa_revocation_pending
+                               SET attestation_bundle_ids =
+                                   attestation_bundle_ids || to_jsonb($2::text)
+                             WHERE id = $1::uuid
+                            """,
+                            row["id"], bundle_id,
+                        )
+
+                    _send_operator_visibility(
+                        event_type=event_type,
+                        severity="P1",
+                        summary=(
+                            f"MFA revocation expired without restoration: "
+                            f"{row['target_email']} ({user_kind})"
+                        ),
+                        details={
+                            "revocation_id": row["id"],
+                            "target_email": row["target_email"],
+                            "revoked_by_email": row["revoked_by_email"],
+                            "attestation_bundle_id": bundle_id,
+                        },
+                        actor_email=(row["revoked_by_email"] or "system"),
+                        site_id=anchor_site_id,
+                        attestation_failed=(bundle_id is None),
+                    )
+
                     logger.info(
                         "mfa_revocation_expired",
                         extra={
                             "revocation_id": row["id"],
-                            "user_kind": row["user_kind"],
+                            "user_kind": user_kind,
                             "target_email": row["target_email"],
+                            "attestation_bundle_id": bundle_id,
                         },
                     )
         except Exception:

@@ -74,15 +74,24 @@ CREATE TABLE IF NOT EXISTS mfa_revocation_pending (
 -- One pending revocation per user. If admin re-revokes after the
 -- target restored, that's a fresh row (restored_at on prior is NOT
 -- NULL so this partial index doesn't catch it).
+--
+-- Postgres index predicates require IMMUTABLE functions. NOW() is
+-- STABLE, not IMMUTABLE, so cannot appear in WHERE clauses on a
+-- CREATE INDEX. This means we accept a slightly larger index that
+-- includes already-expired-but-not-restored rows; the application
+-- + sweep loop both filter on `expires_at > NOW()` at query time.
+-- Trade-off: ~24h of stale rows max (sweep cadence is 60s, runs to
+-- completion well within the window) vs index bloat. Acceptable.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mfa_revocation_one_pending_per_user
     ON mfa_revocation_pending (target_user_id)
-    WHERE restored_at IS NULL AND expires_at > NOW();
+    WHERE restored_at IS NULL;
 
--- Interlock query support: scope_id-keyed lookup with
--- "still actionable" filter (not restored, not expired).
+-- Interlock query support: scope_id-keyed lookup. Application filters
+-- on expires_at + restored_at; index covers restored_at predicate
+-- only (NOW() can't be in index predicate per above).
 CREATE INDEX IF NOT EXISTS idx_mfa_revocation_scope_active
     ON mfa_revocation_pending (scope_id, user_kind)
-    WHERE restored_at IS NULL AND expires_at > NOW();
+    WHERE restored_at IS NULL;
 
 -- Sweep loop support: order-by-expires_at within the active window.
 CREATE INDEX IF NOT EXISTS idx_mfa_revocation_sweep

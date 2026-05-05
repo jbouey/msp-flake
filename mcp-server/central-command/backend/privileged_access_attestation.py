@@ -162,6 +162,13 @@ ALLOWED_EVENTS = {
     "partner_user_mfa_revoked",
     "client_user_mfa_revocation_reversed",
     "partner_user_mfa_revocation_reversed",
+    # Maya P0-3 (round-table 2026-05-05): the sweep loop silently
+    # expiring a revocation without an attestation row is a chain-of-
+    # custody gap — auditor downloading the kit would see the revoke
+    # event with no closure event when the user didn't restore in 24h.
+    # Sweep emits these per-row.
+    "client_user_mfa_revocation_expired",
+    "partner_user_mfa_revocation_expired",
 }
 
 
