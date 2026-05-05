@@ -45,6 +45,9 @@ interface KPIs {
   warnings: number;
   last_check_at?: string | null;
   stale_check_count?: number;
+  // Round-table 30 (2026-05-05): compute_compliance_score now bounds
+  // at 90 days by default. The exact window comes from the server.
+  window_description?: string;
 }
 
 interface AgentCompliance {

@@ -47,15 +47,36 @@ def test_compliance_score_module_present():
 
 
 def test_compute_compliance_score_signature_stable():
-    """The contract: `compute_compliance_score(conn, site_ids, *, include_incidents=False)`.
+    """The contract: `compute_compliance_score(conn, site_ids, *, include_incidents=False, window_days=90)`.
     Changing this signature requires updating ALL three call sites
     in lockstep — pin via this gate."""
     src = _read(_BACKEND / "compliance_score.py")
     assert "async def compute_compliance_score(" in src
-    # Must accept a list of site_ids and an include_incidents kwarg
-    # (used by the per-site endpoint to fold open incidents in).
+    # Must accept a list of site_ids + the keyword args
     assert "site_ids: List[str]" in src
     assert "include_incidents: bool = False" in src
+    # Round-table 30 (2026-05-05): canonical query now bounds at
+    # 90 days by default to keep dashboard-load p95 under 1s on
+    # 100K+-bundle orgs. None overrides for auditor-export contexts.
+    assert "window_days: Optional[int]" in src
+
+
+def test_compute_compliance_score_default_window_is_30_days():
+    """Round-table 30 (2026-05-05) ratchet — pinning the 30-day default
+    after empirical profiling (90d=3.7s, 30d=2.6s, 7d=632ms on the
+    155K-bundle North Valley org). 30 days keeps weekly-cadence checks
+    in scope (≥4 runs in window) while staying under the 3s wall-clock
+    target for cold dashboard loads. Auditor-kit + evidence archive
+    pass `window_days=None` to read the full chain."""
+    src = _read(_BACKEND / "compliance_score.py")
+    assert "DEFAULT_WINDOW_DAYS = 30" in src, (
+        "Round-table 30 default-window contract changed. If lowering "
+        "the default further, document why in the round-table doc and "
+        "update this test. If raising it, profile the canonical query "
+        "for an org with 100K+ bundles first — the unbounded version "
+        "took 4.7s on North Valley with 155K bundles."
+    )
+    assert "window_days: Optional[int] = DEFAULT_WINDOW_DAYS" in src
 
 
 def test_canonical_helper_returns_structured_result():

@@ -809,6 +809,7 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
                     if score_result.last_check_at else None
                 ),
                 "stale_check_count": score_result.stale_check_count,
+                "window_description": score_result.window_description,
             },
             "agent_compliance": agent_compliance,
             "unread_notifications": unread_count,
@@ -1804,6 +1805,7 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "overall_score": score_result.overall_score,
             "score_status": score_result.status,
+            "window_description": score_result.window_description,
             "sites": site_results,
             "controls": score_result.counts,
             "healing": {

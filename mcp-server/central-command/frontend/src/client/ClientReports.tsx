@@ -37,8 +37,12 @@ interface ComplianceCheck {
 interface Snapshot {
   generated_at: string;
   overall_score: number | null;
-  score_status?: 'healthy' | 'no_data';
+  score_status?: 'healthy' | 'no_data' | 'partial';
   score_reason?: string;
+  // Round-table 30: canonical compute now bounds at 90 days by
+  // default; this string surfaces the exact window so the UI can
+  // show "Snapshot: last 90 days" hover/tip copy.
+  window_description?: string;
   sites: SiteScore[];
   controls: { passed: number; failed: number; warnings: number; total: number };
   healing: { total: number; auto_healed: number; pending: number };
@@ -234,7 +238,13 @@ export const ClientReports: React.FC = () => {
                   </div>
                   <div className="divide-y divide-slate-100">
                     {snapshot.sites.map((site) => {
-                      const downloadUrl = `/api/client/sites/${encodeURIComponent(site.site_id)}/auditor-kit`;
+                      // The kit endpoint lives under /api/evidence/.
+                      // Auth gate (require_evidence_view_access) accepts
+                      // the new client portal session via the
+                      // osiris_client_session cookie (Stage 3, cfa24659).
+                      // The /api/client/... mistake on first ship caused
+                      // the 404 reported in round-table 30.
+                      const downloadUrl = `/api/evidence/sites/${encodeURIComponent(site.site_id)}/auditor-kit`;
                       const isDownloading = downloadingKit === site.site_id;
                       return (
                         <div key={site.site_id} className="p-4 flex items-center justify-between hover:bg-teal-50/30">

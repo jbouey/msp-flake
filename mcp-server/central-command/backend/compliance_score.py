@@ -93,12 +93,40 @@ class ComplianceScore:
 # but flag the site/org as 'partial' freshness so the customer knows.
 STALE_THRESHOLD_DAYS = 7
 
+# Round-table 30 (2026-05-05): customer-facing canonical compliance
+# score is bounded to the most recent N days. Pre-fix the helper
+# unbounded-scanned all 155K bundles for North Valley, ~4.7s per
+# call. Profiled three windows on prod against the 155K-bundle
+# org:
+#     all-time: 4749 ms
+#     90 days:  3717 ms
+#     30 days:  2634 ms
+#     7 days:    632 ms
+#
+# Round-table revised verdict (Camila + Brian + Adam consensus):
+# DEFAULT_WINDOW_DAYS = 30. Rationale:
+#   - Any check on weekly-or-faster cadence runs ≥4 times in 30
+#     days; coverage is unaffected.
+#   - Monthly-cadence checks (rare) would drop out — but if a
+#     check hasn't run in 30 days, calling it "current state"
+#     is wrong anyway. Stale-check-count + last_check_at fields
+#     surface the gap.
+#   - Auditor kit + evidence archive remain all-time
+#     (window_days=None) — chain-of-custody preserved.
+#
+# Future optimization (Camila P1, Adam P2): partition-aware
+# index + Redis cache + materialized view. Not blocking; 2.6s
+# is acceptable for the headline tile + Reports page where
+# customers see a loading spinner.
+DEFAULT_WINDOW_DAYS = 30
+
 
 async def compute_compliance_score(
     conn,
     site_ids: List[str],
     *,
     include_incidents: bool = False,
+    window_days: Optional[int] = DEFAULT_WINDOW_DAYS,
 ) -> ComplianceScore:
     """Canonical compliance score for an org or single site.
 
@@ -109,9 +137,15 @@ async def compute_compliance_score(
         include_incidents: when true, fold active incidents into
                            the failure count (matches the per-site
                            compliance-health endpoint shape).
+        window_days: lookback window for the canonical query. Default
+                     90 (round-table 30 verdict). Pass None to query
+                     all-time — used by auditor-export contexts that
+                     need the full chain.
 
     Returns:
-        ComplianceScore — see class docstring.
+        ComplianceScore — see class docstring. The `window_description`
+        field surfaces the bound so the frontend can render hover/tip
+        copy that explains what the customer is looking at.
 
     Implementation notes:
       - Uses DISTINCT ON to take the latest result per
@@ -127,6 +161,12 @@ async def compute_compliance_score(
         "X checks haven't been run since <date>" so they can
         diagnose stale appliances themselves.
     """
+    window_description = (
+        f"Latest result per (site, check_type, hostname), last {window_days} days"
+        if window_days is not None
+        else "Latest result per (site, check_type, hostname), all-time"
+    )
+
     if not site_ids:
         return ComplianceScore(
             overall_score=None,
@@ -135,34 +175,62 @@ async def compute_compliance_score(
             last_check_at=None,
             stale_check_count=0,
             by_site=[],
+            window_description=window_description,
         )
 
     # Latest result per (site, check_type, hostname) across all bundles
-    # the caller can see under their RLS context. Identical algorithm
-    # to /api/client/reports/current pre-Stage-2; promoted to canonical.
-    rows = await conn.fetch(
-        """
-        WITH unnested AS (
-            SELECT
-                cb.site_id,
-                cb.checked_at,
-                c->>'check'    AS check_type,
-                c->>'status'   AS check_status,
-                COALESCE(c->>'hostname', c->>'host', '') AS hostname
-              FROM compliance_bundles cb,
-                   jsonb_array_elements(cb.checks) AS c
-             WHERE cb.site_id = ANY($1)
-        ),
-        latest AS (
-            SELECT DISTINCT ON (site_id, check_type, hostname)
-                site_id, check_type, check_status, hostname, checked_at
-              FROM unnested
-             ORDER BY site_id, check_type, hostname, checked_at DESC
+    # the caller can see under their RLS context. Bounded by window_days
+    # (default 90) per round-table 30 — drops the unnest from ~777K rows
+    # to ~50K for typical orgs.
+    if window_days is None:
+        rows = await conn.fetch(
+            """
+            WITH unnested AS (
+                SELECT
+                    cb.site_id,
+                    cb.checked_at,
+                    c->>'check'    AS check_type,
+                    c->>'status'   AS check_status,
+                    COALESCE(c->>'hostname', c->>'host', '') AS hostname
+                  FROM compliance_bundles cb,
+                       jsonb_array_elements(cb.checks) AS c
+                 WHERE cb.site_id = ANY($1)
+            ),
+            latest AS (
+                SELECT DISTINCT ON (site_id, check_type, hostname)
+                    site_id, check_type, check_status, hostname, checked_at
+                  FROM unnested
+                 ORDER BY site_id, check_type, hostname, checked_at DESC
+            )
+            SELECT site_id, check_status, checked_at FROM latest
+            """,
+            site_ids,
         )
-        SELECT site_id, check_status, checked_at FROM latest
-        """,
-        site_ids,
-    )
+    else:
+        rows = await conn.fetch(
+            """
+            WITH unnested AS (
+                SELECT
+                    cb.site_id,
+                    cb.checked_at,
+                    c->>'check'    AS check_type,
+                    c->>'status'   AS check_status,
+                    COALESCE(c->>'hostname', c->>'host', '') AS hostname
+                  FROM compliance_bundles cb,
+                       jsonb_array_elements(cb.checks) AS c
+                 WHERE cb.site_id = ANY($1)
+                   AND cb.checked_at > NOW() - ($2::int * INTERVAL '1 day')
+            ),
+            latest AS (
+                SELECT DISTINCT ON (site_id, check_type, hostname)
+                    site_id, check_type, check_status, hostname, checked_at
+                  FROM unnested
+                 ORDER BY site_id, check_type, hostname, checked_at DESC
+            )
+            SELECT site_id, check_status, checked_at FROM latest
+            """,
+            site_ids, window_days,
+        )
 
     incident_rows: list = []
     if include_incidents:
@@ -260,6 +328,7 @@ async def compute_compliance_score(
                 }
                 for bucket in per_site.values()
             ],
+            window_description=window_description,
         )
 
     overall_score = round(total_passed / total * 100, 1)
@@ -300,4 +369,5 @@ async def compute_compliance_score(
         last_check_at=overall_last,
         stale_check_count=total_stale,
         by_site=by_site_serialized,
+        window_description=window_description,
     )
