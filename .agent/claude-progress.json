@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
   "session": 216,
-  "updated": "2026-05-05T00:00:00Z",
+  "updated": "2026-05-05T10:08:00Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty. Refreshed 2026-05-04 post-Session-215: session/version/milestone fields had drifted (file said 214/0.4.6/v37 vs reality 215/0.4.13/v38).",
   "versions": {
     "agent": "0.4.13",
@@ -186,6 +186,10 @@
     }
   ],
   "recent_milestones": [
+    {
+      "when": "2026-05-05",
+      "what": "Task #19 MFA admin overrides \u2014 SHIPPED on 16505d5b (Maya P0/P1 rework on top of 069a8da3 deploy failure). 069a8da3 failed CI deploy with InvalidObjectDefinitionError: NOW() not IMMUTABLE in mig 276 partial-index predicates AND failed Maya 2nd-eye review NEEDS_REWORK with 3 P0s + 4 P1s. Rework 16505d5b: P0-1 keyname (partner.get partner_user_id, was dead-code user_id); P0-2 token-only restore (removed Depends-gated auth on both portal restore endpoints \u2014 unreachable on mfa_required=true orgs because target's MFA was just cleared); P0-3 sweep emits attestation (added client_user_mfa_revocation_expired + partner_user_mfa_revocation_expired to ALLOWED_EVENTS, sweep writes Ed25519 + P1 op-alert per row); P1-2 redacted revoking-admin-email from user-facing email body (anti-phishing-quotation); P1-4 added test_mfa_revocation_reason_check_constraint.py (blocks future drops/weakens of LENGTH(reason)>=40 friction gate). Mig 276 NOW-fix: removed expires_at>NOW() from 2 partial-index WHERE predicates; documentary trade-off comment inline; test gate strips SQL comments before scanning. ALLOWED_EVENTS 43 \u2192 45. Memory: feedback_restore_endpoint_auth_deadlock.md codifies the lesson. CI green; runtime_sha == disk_sha == 16505d5b verified via /api/version."
+    },
     {
       "when": "2026-05-05",
       "what": "Session 216 followup batch \u2014 task #20 closure + 3 round-table design docs. Per-org configurable cooling-off / expiry shipped via mig 275 (b5f2b9ac); client_orgs.transfer_cooling_off_hours DEFAULT 24, partners DEFAULT 0 (Maya operator-class), expiry DEFAULT 7 both. 2 new ALLOWED_EVENTS (client_org_transfer_prefs_changed + partner_transfer_prefs_changed; total 35). Three-tier severity escalation on prefs change (P0-CHAIN-GAP / P1-FRICTION-WEAKENED / P2). Partner cooling_off field schema-stored but unhonored at runtime (informational-only, surfaced in endpoint response). Plus 3 round-table design docs in .agent/plans/: 12-smtp-consolidation, 19-mfa-admin-overrides, 21-cross-org-site-relocate (1d2016f0). Each doc has Maya 2nd-eye verdicts + implementation checklist + outstanding pre-work. ALLOWED_EVENTS post all 3 future commits: 49."
