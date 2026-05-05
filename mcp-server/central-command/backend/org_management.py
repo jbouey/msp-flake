@@ -419,6 +419,7 @@ async def deprovision_org(
             "deprovisioned_at": datetime.now(timezone.utc).isoformat(),
             "data_retention_until": retention_until.isoformat(),
             "notified_user_count": len(notify_recipients),
+            "attestation_bundle_id": deprovision_bundle_id,
             "message": (
                 f"Org deprovisioned. Data retained until {retention_until}. "
                 f"All sites archived, client sessions invalidated."
@@ -627,7 +628,11 @@ async def reprovision_org(
         except Exception:
             logger.error("operator_alert_dispatch_failed_reprovision", exc_info=True)
 
-        return {"org_id": org_id, "status": "reactivated"}
+        return {
+            "org_id": org_id,
+            "status": "reactivated",
+            "attestation_bundle_id": reprovision_bundle_id,
+        }
 
 
 # ============================================================================

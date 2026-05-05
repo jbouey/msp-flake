@@ -499,6 +499,60 @@ async def _check_compliance_packets_stalled(conn: asyncpg.Connection) -> List[Vi
     ]
 
 
+async def _check_email_dlq_growing(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev2 — outbound email infrastructure failing silently.
+
+    Maya note 2026-05-04 from the partner-portal consistency audit.
+    `email_send_failures` (mig 272) is the DLQ written by
+    `_record_email_dlq_failure` when `_send_smtp_with_retry` exhausts
+    its 3-retry budget. Pre-fix: final-failure email sends were only
+    visible in stdout — operators learned about SMTP outages or auth
+    breaks via "users complaining no email arrived".
+
+    Threshold: > 5 unresolved rows in 24h fires sev2. Conservative
+    initial calibration; tune after the table populates with real
+    traffic patterns. Same shape as flywheel-related sev2 invariants
+    (rolling-window count + GROUP BY label so the operator sees
+    which send-class is failing).
+
+    The invariant is label-grouped so a healthy alert-digest path
+    doesn't get masked by a stuck operator-alert path; operator
+    sees per-pipeline counts.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT label, COUNT(*) AS n, MAX(failed_at) AS last_failed
+          FROM email_send_failures
+         WHERE resolved_at IS NULL
+           AND failed_at > NOW() - INTERVAL '24 hours'
+         GROUP BY label
+        HAVING COUNT(*) > 5
+         ORDER BY n DESC
+         LIMIT 10
+        """
+    )
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "label": r["label"],
+                "unresolved_count_24h": int(r["n"]),
+                "last_failed_at": r["last_failed"].isoformat()
+                                  if r["last_failed"] else None,
+                "interpretation": (
+                    f"{int(r['n'])} email-send failures in the last 24h "
+                    f"on the `{r['label']}` pipeline have not been "
+                    f"resolved. SMTP outage / auth break / recipient "
+                    f"bounce class. Check SMTP_USER + SMTP_PASSWORD env, "
+                    f"verify mail.privateemail.com TLS handshake, then "
+                    f"manually resolve rows once root cause is fixed."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
 async def _check_partition_maintainer_dry(conn: asyncpg.Connection) -> List[Violation]:
     """Sev1 — next month's partition missing on a critical partitioned
     table (Block 4 P1).
@@ -1252,6 +1306,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_partition_maintainer_dry(c),
     ),
     Assertion(
+        name="email_dlq_growing",
+        severity="sev2",
+        description="More than 5 unresolved rows in email_send_failures (mig 272 DLQ) within the last 24h on a single label. SMTP outage, auth break, or recipient-bounce class. Maya 2026-05-04 substrate observability follow-up — Email DLQ shipped in commit 3cd0a208 with no invariant attached because the table was empty; this fills the gap. Threshold conservative; tune after first month of real traffic.",
+        check=lambda c: _check_email_dlq_growing(c),
+    ),
+    Assertion(
         name="schema_fixture_drift",
         severity="sev3",
         description="The deployed code's tests/fixtures/schema/prod_columns.json differs from prod's information_schema. Catches the 'forgot to update fixture' deploy class — bit Session 214 audit cycle TWICE (mig 271 forward-merge required manual fixture edits). Sev3 because the test_sql_columns_match_schema CI gate already prevents new deploys with drift; this invariant catches the case where prod has drifted from the fixture in the CURRENTLY DEPLOYED code (rare, but happens via manual SQL or partial migration). Round-table 2026-05-02 Diana adversarial recommendation. Followup #49.",
@@ -1707,6 +1767,27 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "unblock. (3) `docker compose restart mcp-server` to rearm "
             "the loop. Sev1 because the evidence chain depends on "
             "compliance_bundles partition health.",
+    },
+    "email_dlq_growing": {
+        "display_name": "Email DLQ growing — outbound email pipeline failing",
+        "recommended_action": "More than 5 unresolved rows in "
+            "email_send_failures (mig 272 DLQ) within the last 24h on a "
+            "single label. Class candidates: SMTP outage at "
+            "mail.privateemail.com, SMTP_USER/SMTP_PASSWORD env break, "
+            "DKIM/SPF DNS misalignment, recipient-side bounce. Steps: "
+            "(1) `SELECT label, error_class, error_message, retry_count "
+            "FROM email_send_failures WHERE resolved_at IS NULL ORDER BY "
+            "failed_at DESC LIMIT 20` — distinguishes SMTP-class from "
+            "auth-class from per-recipient bounces. (2) If SMTPException "
+            "+ TimeoutError → check mail.privateemail.com from VPS via "
+            "`telnet mail.privateemail.com 587`. (3) If "
+            "SMTPAuthenticationError → rotate SMTP_PASSWORD. (4) Once "
+            "root cause is fixed, mark resolved via `UPDATE "
+            "email_send_failures SET resolved_at = NOW(), "
+            "resolution_note = '...' WHERE id = ANY($1::bigint[])` for "
+            "the affected rows. The cryptographic chain is unaffected "
+            "by email failures (audit row + Ed25519 already committed); "
+            "only the operator-visibility echo is delayed.",
     },
     "schema_fixture_drift": {
         "display_name": "Prod schema differs from deployed code's fixture",
