@@ -651,6 +651,18 @@
     "user_agent",
     "user_id"
   ],
+  "client_user_email_change_log": [
+    "attestation_bundle_id",
+    "changed_at",
+    "changed_by_email",
+    "changed_by_kind",
+    "client_org_id",
+    "client_user_id",
+    "id",
+    "new_email",
+    "old_email",
+    "reason"
+  ],
   "client_users": [
     "client_org_id",
     "created_at",
@@ -3372,6 +3384,7 @@
     "approved_by",
     "auth_provider",
     "auto_approved_domain",
+    "auto_provision_owner_on_signup",
     "billing_email",
     "brand_name",
     "contact_email",

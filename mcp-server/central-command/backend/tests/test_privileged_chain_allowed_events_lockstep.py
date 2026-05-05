@@ -128,6 +128,14 @@ def test_allowed_events_matches_expected_set():
         "partner_user_mfa_revocation_reversed",
         "client_user_mfa_revocation_expired",
         "partner_user_mfa_revocation_expired",
+        # Task #23 closure 2026-05-05 — client_user email rename (mig 277).
+        # Round-table .agent/plans/22-client-user-email-rename-roundtable-2026-05-05.md.
+        # Three actor classes (self/partner/substrate) + reversal placeholder.
+        # Total ALLOWED_EVENTS: 49.
+        "client_user_email_changed_by_self",
+        "client_user_email_changed_by_partner",
+        "client_user_email_changed_by_substrate",
+        "client_user_email_change_reversed",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

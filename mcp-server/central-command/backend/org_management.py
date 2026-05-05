@@ -181,6 +181,36 @@ async def provision_org(
                 ip_address=request.client.host if request.client else None,
             )
 
+            # Task #23 (round-table 2026-05-05): close the "org-created-but-
+            # nobody-can-log-in" gap that stranded North Valley. When the
+            # partner has `auto_provision_owner_on_signup=true` (default),
+            # mint a client_users(role=owner) row with a 72h magic-link so
+            # the customer can sign in immediately. Honors per-partner
+            # toggle. Same txn so partial-org-creation isn't possible.
+            if req.primary_email:
+                try:
+                    from .client_user_email_rename import (
+                        auto_provision_owner_on_signup,
+                    )
+                    await auto_provision_owner_on_signup(
+                        conn,
+                        client_org_id=str(row["id"]),
+                        signup_email=req.primary_email,
+                        partner_id=req.partner_id,
+                    )
+                except Exception:
+                    logger.error(
+                        "auto_provision_owner_failed",
+                        exc_info=True,
+                        extra={
+                            "client_org_id": str(row["id"]),
+                            "primary_email": req.primary_email,
+                        },
+                    )
+                    # Best-effort: org-creation still succeeds even if
+                    # the auto-provision blew up. Operator can recover
+                    # via the substrate email-rename endpoint.
+
         return {
             "org_id": str(row["id"]),
             "name": row["name"],

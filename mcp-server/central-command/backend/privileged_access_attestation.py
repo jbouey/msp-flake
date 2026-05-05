@@ -169,6 +169,17 @@ ALLOWED_EVENTS = {
     # Sweep emits these per-row.
     "client_user_mfa_revocation_expired",
     "partner_user_mfa_revocation_expired",
+    # Task #23 closure 2026-05-05 — client_user email rename (mig 277).
+    # Three actor classes converge to email rename: self-service (with
+    # magic-link confirm to NEW), partner-admin (operator class, ≥20ch
+    # reason), substrate (admin_users, ≥40ch reason, P0 partner-alert).
+    # Reversed event reserved for future reversal-flow; v1 ships
+    # without a reversal window per Maya P1 round-table verdict —
+    # re-running rename IS the undo path. ALLOWED_EVENTS: 49.
+    "client_user_email_changed_by_self",
+    "client_user_email_changed_by_partner",
+    "client_user_email_changed_by_substrate",
+    "client_user_email_change_reversed",
 }
 
 

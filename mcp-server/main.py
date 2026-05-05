@@ -2386,6 +2386,14 @@ from dashboard_api.mfa_admin import (  # noqa
 )
 app.include_router(mfa_admin_client_router)  # Task #19 MFA admin overrides — client side
 app.include_router(mfa_admin_partner_router)  # Task #19 MFA admin overrides — partner side
+from dashboard_api.client_user_email_rename import (  # noqa
+    email_rename_self_router,
+    email_rename_partner_router,
+    email_rename_substrate_router,
+)
+app.include_router(email_rename_self_router)        # Task #23 — self-service email rename
+app.include_router(email_rename_partner_router)     # Task #23 — partner email rename
+app.include_router(email_rename_substrate_router)   # Task #23 — substrate email rename
 from dashboard_api.credential_rotation import router as credential_rotation_router
 app.include_router(credential_rotation_router)  # Credential encryption key rotation (Session 203)
 app.include_router(ops_health_router)  # Ops center health + traffic lights
