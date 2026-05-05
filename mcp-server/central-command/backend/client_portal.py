@@ -733,28 +733,14 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
             ORDER BY s.clinic_name
         """, org_id)
 
-        # Calculate compliance KPIs across all sites
+        # Stage 2 unified score — compute_compliance_score() is the
+        # canonical algorithm shared by /api/client/dashboard +
+        # /api/client/reports/current + /api/client/sites/{id}/compliance-health.
+        # Pre-Stage-2 each endpoint had its own formula and the three
+        # surfaces showed contradictory numbers for the same org.
         site_ids = [s["site_id"] for s in sites]
-        if site_ids:
-            kpis = await conn.fetchrow("""
-                WITH expanded AS (
-                    SELECT
-                        c->>'status' as check_status
-                    FROM compliance_bundles cb,
-                         jsonb_array_elements(cb.checks) as c
-                    WHERE cb.site_id = ANY($1)
-                      AND cb.checked_at > NOW() - INTERVAL '24 hours'
-                      AND jsonb_array_length(cb.checks) > 0
-                )
-                SELECT
-                    COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant', 'fail', 'non_compliant', 'warning')) as total_checks,
-                    COUNT(*) FILTER (WHERE check_status IN ('pass', 'compliant')) as passed,
-                    COUNT(*) FILTER (WHERE check_status IN ('fail', 'non_compliant')) as failed,
-                    COUNT(*) FILTER (WHERE check_status = 'warning') as warnings
-                FROM expanded
-            """, site_ids)
-        else:
-            kpis = {"total_checks": 0, "passed": 0, "failed": 0, "warnings": 0}
+        from .compliance_score import compute_compliance_score
+        score_result = await compute_compliance_score(conn, site_ids)
 
         # Get recent notifications (unread)
         unread_count = await conn.fetchval("""
@@ -762,7 +748,10 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
             WHERE client_org_id = $1 AND NOT is_read
         """, org_id)
 
-        # Get Go agent compliance data across org sites
+        # Go agent compliance — distinct sibling metric, no longer
+        # blended with bundle score (pre-Stage-2 the 70/30 blend masked
+        # both signals into a meaningless aggregate). Frontend renders
+        # it as its own tile with its own context.
         agent_compliance = None
         if site_ids:
             agent_row = await conn.fetchrow("""
@@ -782,36 +771,11 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
                     'avg_compliance': float(agent_row['avg_compliance']) if agent_row['avg_compliance'] is not None else 0.0,
                 }
 
-        # Compliance score — blend bundle + agent compliance.
-        # Round-table 2026-05-05 (Stage 1 honest-defaults): never lie
-        # by returning 100% when source set is empty. Distinguishes
-        # 'no_data' / 'partial' / 'healthy' so the frontend can show
-        # "—" / "Awaiting first scan" instead of a misleading 100%.
-        total = kpis["total_checks"] or 0
-        passed = kpis["passed"] or 0
-        bundle_score = round((passed / total) * 100, 1) if total > 0 else None
-
-        if bundle_score is not None and agent_compliance:
-            compliance_score = round(
-                bundle_score * 0.7
-                + agent_compliance['avg_compliance'] * 0.3,
-                1,
-            )
-            score_status = "healthy"
-            score_source = "blended"
-        elif bundle_score is not None:
-            compliance_score = bundle_score
-            score_status = "partial"  # only one source available
-            score_source = "bundles_only"
-        elif agent_compliance:
-            compliance_score = agent_compliance['avg_compliance']
-            score_status = "partial"
-            score_source = "agents_only"
-        else:
-            # No data at all from either source — be honest.
-            compliance_score = None
-            score_status = "no_data"
-            score_source = "none"
+        compliance_score = score_result.overall_score
+        score_status = score_result.status
+        # Maintain `score_source` for backward-compat with Stage 1
+        # frontend handling. Now reflects the unified canonical source.
+        score_source = "bundles" if score_result.counts["total"] > 0 else "none"
 
         return {
             "org": {
@@ -836,10 +800,15 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
                 "compliance_score": compliance_score,
                 "score_status": score_status,
                 "score_source": score_source,
-                "total_checks": kpis["total_checks"],
-                "passed": kpis["passed"],
-                "failed": kpis["failed"],
-                "warnings": kpis["warnings"],
+                "total_checks": score_result.counts["total"],
+                "passed": score_result.counts["passed"],
+                "failed": score_result.counts["failed"],
+                "warnings": score_result.counts["warnings"],
+                "last_check_at": (
+                    score_result.last_check_at.isoformat()
+                    if score_result.last_check_at else None
+                ),
+                "stale_check_count": score_result.stale_check_count,
             },
             "agent_compliance": agent_compliance,
             "unread_notifications": unread_count,
@@ -1100,17 +1069,29 @@ async def get_site_compliance_health(
               AND created_at > NOW() - INTERVAL '30 days'
         """, site_id)
 
+        # Stage 2 unified canonical score (incidents folded in to match
+        # the per-site historical shape). Pre-Stage-2 the headline number
+        # was a per-category mean; that's now demoted to supplementary
+        # `breakdown` while the headline matches the dashboard + reports.
+        from .compliance_score import compute_compliance_score
+        canonical = await compute_compliance_score(
+            conn, [site_id], include_incidents=True,
+        )
+
         return {
             "site_id": site_id,
             "clinic_name": site["clinic_name"],
-            "overall_score": overall,
+            # Headline number — matches /api/client/dashboard +
+            # /api/client/reports/current for this same site.
+            "overall_score": canonical.overall_score,
+            "score_status": canonical.status,
+            # Pre-Stage-2 the headline was the per-category-average
+            # `overall`. Kept as `category_average_score` for backward-
+            # compat callers while the canonical headline is what UI
+            # surfaces.
+            "category_average_score": overall,
             "breakdown": breakdown,
-            "counts": {
-                "passed": total_passed,
-                "failed": total_failed,
-                "warnings": total_warnings,
-                "total": total_passed + total_failed + total_warnings,
-            },
+            "counts": canonical.counts,
             "trend": trend,
             "healing": {
                 "total": healing["total"] if healing else 0,
@@ -1747,9 +1728,14 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
                 "checks": [],
             }
 
-        # Latest check result per (check_type, hostname) per site.
-        # compliance_bundles stores individual checks in a JSONB array;
-        # unnest them so we can report per-check granularity.
+        # Stage 2 unified canonical score. Same algorithm + same numbers
+        # as the dashboard top tile and the per-site infographic.
+        from .compliance_score import compute_compliance_score
+        score_result = await compute_compliance_score(conn, site_ids)
+
+        # The Reports page also shows per-check details (audit-grade
+        # listing). Pull the latest-per-check separately so we can
+        # surface them in the response.
         checks = await conn.fetch("""
             WITH unnested AS (
                 SELECT
@@ -1773,14 +1759,6 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
             SELECT * FROM latest ORDER BY site_id, check_type
         """, site_ids)
 
-        total = len(checks)
-        passed = sum(1 for c in checks if c["check_status"] == "pass")
-        failed = sum(1 for c in checks if c["check_status"] == "fail")
-        warnings = sum(1 for c in checks if c["check_status"] in ("warn", "warning"))
-        # Stage 1 honest-defaults: null + status, never 100% when 0/0.
-        score = round((passed / total) * 100, 1) if total > 0 else None
-        score_status = "healthy" if total > 0 else "no_data"
-
         # Recent healing activity (last 30 days)
         healing = await conn.fetchrow("""
             SELECT
@@ -1792,21 +1770,22 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
               AND created_at > NOW() - INTERVAL '30 days'
         """, site_ids)
 
-        # Per-site breakdown
-        site_results = []
-        for site in sites:
-            site_checks = [c for c in checks if c["site_id"] == site["site_id"]]
-            st = len(site_checks)
-            sp = sum(1 for c in site_checks if c["check_status"] == "pass")
-            site_results.append({
-                "site_id": site["site_id"],
-                "clinic_name": site["clinic_name"],
-                "score": round((sp / st) * 100, 1) if st > 0 else None,
-                "score_status": "healthy" if st > 0 else "no_data",
-                "passed": sp,
-                "failed": sum(1 for c in site_checks if c["check_status"] == "fail"),
-                "total": st,
-            })
+        # Per-site breakdown — pulled from the canonical compute path
+        # so per-site numbers ALSO agree with the dashboard. Site name
+        # joined from the original `sites` query.
+        site_name_by_id = {s["site_id"]: s["clinic_name"] for s in sites}
+        site_results = [
+            {
+                "site_id": s["site_id"],
+                "clinic_name": site_name_by_id.get(s["site_id"], s["site_id"]),
+                "score": s["score"],
+                "score_status": s["status"],
+                "passed": s["passed"],
+                "failed": s["failed"],
+                "total": s["total"],
+            }
+            for s in score_result.by_site
+        ]
 
         # Individual check details for the report
         check_details = [
@@ -1823,15 +1802,10 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
 
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "overall_score": score,
-            "score_status": score_status,
+            "overall_score": score_result.overall_score,
+            "score_status": score_result.status,
             "sites": site_results,
-            "controls": {
-                "passed": passed,
-                "failed": failed,
-                "warnings": warnings,
-                "total": total,
-            },
+            "controls": score_result.counts,
             "healing": {
                 "total": healing["total"] if healing else 0,
                 "auto_healed": healing["auto_healed"] if healing else 0,
