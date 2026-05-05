@@ -855,6 +855,57 @@ async def partner_change_client_email(
 # ─── Substrate endpoint ──────────────────────────────────────────
 
 
+@email_rename_substrate_router.get(
+    "/orgs/{org_id}/client-users"
+)
+async def admin_list_client_users(
+    org_id: str,
+    user: dict = Depends(auth_module.require_auth),
+) -> Dict[str, Any]:
+    """Operator-side list of client_users in an org. Task #18 phase 4
+    (2026-05-05) — backs the substrate email-rename UI on the operator
+    org-dashboard.
+
+    Read-access: any authenticated admin_user (substrate operator).
+    Returns minimal identity fields needed to populate the rename
+    modal's target picker.
+    """
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id::text, email, name, role, is_active,
+                   email_verified, last_login_at, created_at
+              FROM client_users
+             WHERE client_org_id = $1::uuid
+             ORDER BY created_at ASC
+            """,
+            org_id,
+        )
+    return {
+        "users": [
+            {
+                "id": r["id"],
+                "email": r["email"],
+                "name": r["name"],
+                "role": r["role"],
+                "is_active": bool(r["is_active"]),
+                "email_verified": bool(r["email_verified"]),
+                "last_login_at": (
+                    r["last_login_at"].isoformat()
+                    if r["last_login_at"] else None
+                ),
+                "created_at": (
+                    r["created_at"].isoformat()
+                    if r["created_at"] else None
+                ),
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
 @email_rename_substrate_router.post(
     "/client-users/{user_id}/change-email"
 )

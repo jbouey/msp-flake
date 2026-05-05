@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassCard, Spinner, Badge } from '../components/shared';
@@ -6,6 +6,7 @@ import { organizationsApi } from '../utils/api';
 import type { OrgSite, OrgCredential, OrgHealth } from '../utils/api';
 import { formatTimeAgo, getStatusConfig } from '../constants';
 import { scoreToBadgeVariant, scoreToBarColor, getScoreStatus } from '../constants/status';
+import { AdminClientUserEmailRenameModal } from './AdminClientUserEmailRenameModal';
 
 const formatRelativeTime = formatTimeAgo;
 
@@ -433,6 +434,12 @@ export const OrgDashboard: React.FC = () => {
       {/* Shared Credentials */}
       <OrgCredentialsSection orgId={orgId!} />
 
+      {/* Task #18 phase 4 — substrate-side client_users surface with
+          email-rename action (round-table 22 closure). Only renders
+          when an org_id is present. */}
+      <OrgClientUsersSection orgId={orgId!} orgName={org.name} />
+
+
       {/* Contact Info */}
       <GlassCard>
         <h2 className="text-lg font-semibold text-label-primary mb-3">Organization Details</h2>
@@ -646,6 +653,151 @@ const OrgCredentialsSection: React.FC<{ orgId: string }> = ({ orgId }) => {
             ))}
           </tbody>
         </table>
+      )}
+    </GlassCard>
+  );
+};
+
+// ─── Task #18 phase 4: substrate-side client_users section ─────────
+//
+// Renders inside OrgDashboard. Lists client_users in the org with
+// minimal identity fields + a substrate email-rename button per row.
+// The rename is a substrate-class action with a P0 partner alert if
+// the target is owner-role; the modal carries the friction (≥40ch
+// reason + confirm phrase) that the backend enforces.
+
+interface AdminClientUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  is_active: boolean;
+  email_verified: boolean;
+  last_login_at: string | null;
+  created_at: string | null;
+}
+
+const OrgClientUsersSection: React.FC<{ orgId: string; orgName: string }> = ({
+  orgId,
+  orgName,
+}) => {
+  const [users, setUsers] = useState<AdminClientUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<AdminClientUser | null>(null);
+
+  const fetchUsers = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/orgs/${encodeURIComponent(orgId)}/client-users`,
+        { credentials: 'include' },
+      );
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        throw new Error(`${res.status} ${detail || res.statusText}`);
+      }
+      const data = await res.json();
+      setUsers(data.users || []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load users');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchUsers();
+  }, [orgId]);
+
+  return (
+    <GlassCard>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-semibold text-label-primary">
+          Client Users
+        </h2>
+        <span className="text-sm text-label-tertiary">{users.length} total</span>
+      </div>
+
+      {error && (
+        <div className="mb-3 px-3 py-2 rounded-ios bg-health-critical/10 text-health-critical text-sm">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="py-6 text-center">
+          <Spinner />
+        </div>
+      ) : users.length === 0 ? (
+        <p className="text-sm text-label-tertiary">No users in this org.</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-separator-light text-left text-xs text-label-tertiary uppercase tracking-wider">
+              <th className="px-2 py-2">Email</th>
+              <th className="px-2 py-2">Role</th>
+              <th className="px-2 py-2">Status</th>
+              <th className="px-2 py-2">Last login</th>
+              <th className="px-2 py-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id} className="border-b border-separator-light hover:bg-fill-quaternary">
+                <td className="px-2 py-2">
+                  <div className="font-medium text-label-primary">{u.email}</div>
+                  {u.name && <div className="text-xs text-label-tertiary">{u.name}</div>}
+                </td>
+                <td className="px-2 py-2">
+                  <Badge variant={u.role === 'owner' ? 'success' : 'default'}>
+                    {u.role}
+                  </Badge>
+                </td>
+                <td className="px-2 py-2 text-xs">
+                  {u.is_active ? (
+                    <span className="text-health-healthy">active</span>
+                  ) : (
+                    <span className="text-label-tertiary">inactive</span>
+                  )}
+                  {u.email_verified ? null : (
+                    <span className="ml-2 text-amber-600">unverified</span>
+                  )}
+                </td>
+                <td className="px-2 py-2 text-xs text-label-tertiary">
+                  {u.last_login_at
+                    ? formatRelativeTime(u.last_login_at)
+                    : '—'}
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <button
+                    onClick={() => setRenameTarget(u)}
+                    className="text-xs text-red-600 hover:underline"
+                    title="Substrate email rename (substrate-class action — partner alerted)"
+                  >
+                    Substrate rename email
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {renameTarget && (
+        <AdminClientUserEmailRenameModal
+          isOpen={true}
+          onClose={() => setRenameTarget(null)}
+          userId={renameTarget.id}
+          currentEmail={renameTarget.email}
+          role={renameTarget.role}
+          orgName={orgName}
+          onResolved={() => {
+            setRenameTarget(null);
+            void fetchUsers();
+          }}
+        />
       )}
     </GlassCard>
   );
