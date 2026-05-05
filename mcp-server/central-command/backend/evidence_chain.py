@@ -60,19 +60,26 @@ async def require_evidence_view_access(
     site_id: str,
     request: Request,
     portal_session: Optional[str] = Cookie(None),
+    osiris_client_session: Optional[str] = Cookie(None),
     token: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     """Gate read-only per-site evidence endpoints.
 
     Accepts any of:
       1. An authenticated admin dashboard session (cookie `session` → admin)
-      2. A client portal session cookie (`portal_session`) bound to this site
-      3. A legacy portal token query param (`?token=…`) bound to this site
+      2. The NEW client portal session cookie (`osiris_client_session`)
+         where the client_user's org owns the site_id (Stage 3 closure
+         of round-table 25, 2026-05-05 — pre-Stage-3 customers logged
+         into the new portal could see compliance data on the dashboard
+         but couldn't download the auditor kit because this gate only
+         knew about the legacy `portal_session` cookie shape).
+      3. The LEGACY per-site portal session cookie (`portal_session`)
+         bound to this site (Session 203 shared-link shape; still
+         supported for auditor magic links).
+      4. A legacy portal token query param (`?token=…`) bound to this site.
 
-    The fallback ordering matches the rest of the portal: admin paths get
-    in first, then client session, then shared-link token. On failure we
-    raise HTTPException(403) with a single generic message so auditors
-    can't enumerate which path failed.
+    On failure raises HTTPException(403) with a single generic message
+    so auditors can't enumerate which path failed.
     """
     # 1. Admin session — reuse the existing admin auth (expects session cookie).
     if require_auth is not None:
@@ -82,7 +89,46 @@ async def require_evidence_view_access(
         except HTTPException:
             pass  # fall through — not an admin, try portal paths
 
-    # 2/3. Client portal session cookie OR legacy token query param.
+    # 2. NEW client portal session — verify the client_user's org owns
+    # this site_id. Lazy import to avoid the client_portal ↔ evidence_chain
+    # cycle at module-load.
+    if osiris_client_session:
+        try:
+            from .client_portal import get_client_user_from_session
+            from .fleet import get_pool as _get_pool
+            from .tenant_middleware import org_connection as _org_connection
+
+            pool = await _get_pool()
+            client_user = await get_client_user_from_session(
+                osiris_client_session, pool,
+            )
+            if client_user:
+                async with _org_connection(
+                    pool, org_id=client_user["org_id"],
+                ) as conn:
+                    owns = await conn.fetchval(
+                        """
+                        SELECT 1 FROM sites
+                         WHERE site_id = $1 AND client_org_id = $2
+                         LIMIT 1
+                        """,
+                        site_id, client_user["org_id"],
+                    )
+                if owns:
+                    return {
+                        "method": "client_portal",
+                        "user_id": str(client_user["user_id"]),
+                        "org_id": str(client_user["org_id"]),
+                        "email": client_user.get("email"),
+                    }
+        except Exception:
+            # Best-effort — fall through to legacy paths on any error.
+            logger.warning(
+                "client_portal session evaluation failed in evidence gate",
+                exc_info=True,
+            )
+
+    # 3/4. LEGACY portal session cookie OR legacy token query param.
     try:
         from .portal import validate_session as _validate_portal_session
         portal_ctx = await _validate_portal_session(site_id, portal_session, token)

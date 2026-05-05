@@ -3,42 +3,6 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { getScoreStatus } from '../constants';
 import { DisclaimerFooter } from '../components/composed';
-import { CHECK_TYPE_LABELS } from '../types';
-
-/** Client-friendly labels for check types (falls back to humanized raw string) */
-function humanCheckType(raw: string): string {
-  if (CHECK_TYPE_LABELS[raw]) {
-    const expansions: Record<string, string> = {
-      'Patch': 'Software Updates',
-      'AV': 'Antivirus Protection',
-      'Backup': 'Data Backup',
-      'Logging': 'Activity Logging',
-      'Firewall': 'Firewall Protection',
-      'Encryption': 'Data Encryption',
-      'Network': 'Network Security',
-      'NTP': 'Time Sync',
-      'Disk': 'Disk Space',
-      'Services': 'Service Health',
-      'Defender': 'Windows Defender',
-      'Memory': 'Memory Usage',
-      'Cert': 'Certificate Expiry',
-      'Database': 'Database Integrity',
-      'Port': 'Prohibited Port',
-      'Updates': 'Software Updates',
-      'Audit Log': 'Audit Logging',
-      'BitLocker': 'Disk Encryption',
-      'Screen Lock': 'Screen Lock Policy',
-      'FileVault': 'Disk Encryption (Mac)',
-      'Gatekeeper': 'App Security (Mac)',
-      'SIP': 'System Protection (Mac)',
-      'Service Down': 'Service Stopped',
-      'Unreachable': 'Device Unreachable',
-      'Stale Creds': 'Credentials Need Update',
-    };
-    return expansions[CHECK_TYPE_LABELS[raw]] || CHECK_TYPE_LABELS[raw];
-  }
-  return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
 
 interface MonthlyReport {
   id: string;
@@ -85,12 +49,17 @@ export const ClientReports: React.FC = () => {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading } = useClient();
 
-  const [activeTab, setActiveTab] = useState<'current' | 'monthly'>('current');
+  // Stage 3 (round-table 25): "Current Compliance" tab was a poorly-
+  // defined duplicate of the dashboard with worse defaults. Replaced
+  // with "Auditor Kit" — the per-site signed-ZIP entry point auditors
+  // actually need. Monthly Reports tab unchanged.
+  const [activeTab, setActiveTab] = useState<'auditor' | 'monthly'>('auditor');
   const [reports, setReports] = useState<MonthlyReport[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingKit, setDownloadingKit] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -160,12 +129,6 @@ export const ClientReports: React.FC = () => {
   };
 
 
-  const getResultBadge = (result: string) => {
-    if (result === 'pass') return 'bg-green-100 text-green-700';
-    if (result === 'fail') return 'bg-red-100 text-red-700';
-    return 'bg-yellow-100 text-yellow-700';
-  };
-
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -196,11 +159,11 @@ export const ClientReports: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
         <div className="flex gap-2">
           <button
-            onClick={() => setActiveTab('current')}
-            className={`px-4 py-2 text-sm font-medium rounded-xl transition-all ${activeTab === 'current' ? 'text-white shadow-sm' : 'text-slate-600 bg-white border border-slate-200 hover:bg-slate-50'}`}
-            style={activeTab === 'current' ? { background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' } : {}}
+            onClick={() => setActiveTab('auditor')}
+            className={`px-4 py-2 text-sm font-medium rounded-xl transition-all ${activeTab === 'auditor' ? 'text-white shadow-sm' : 'text-slate-600 bg-white border border-slate-200 hover:bg-slate-50'}`}
+            style={activeTab === 'auditor' ? { background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' } : {}}
           >
-            Current Compliance
+            Auditor Kit
           </button>
           <button
             onClick={() => setActiveTab('monthly')}
@@ -214,144 +177,120 @@ export const ClientReports: React.FC = () => {
 
       {/* Main */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {activeTab === 'current' ? (
-          /* Current Compliance Snapshot */
+        {activeTab === 'auditor' ? (
+          /* Stage 3: Auditor Kit (round-table 25, 2026-05-05).
+             Replaces the pre-Stage-3 "Current Compliance" tab which
+             duplicated the dashboard with worse defaults. The auditor
+             kit is the actual compliance-product-defining artifact:
+             a self-contained signed ZIP an auditor can verify offline.
+             Per-site so an auditor handling a multi-site practice can
+             pick which sites are in scope. */
           snapshotLoading ? (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 text-center">
               <div className="w-8 h-8 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto" />
             </div>
           ) : !snapshot ? (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 text-center text-slate-500">
-              Unable to load compliance data
+              Unable to load site list
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Score Banner */}
+              {/* Header card explaining the kit */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider">Current Compliance Score</h2>
-                    {typeof snapshot.overall_score !== 'number' ? (
-                      <>
-                        <p className="text-5xl font-bold mt-2 tabular-nums text-slate-400">—</p>
-                        <p className="text-sm text-slate-500 mt-1">
-                          {snapshot.score_reason === 'no_sites_provisioned'
-                            ? 'No sites provisioned yet'
-                            : 'Awaiting first scan'}
-                          {' — '}snapshot as of {new Date(snapshot.generated_at).toLocaleString()}
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <p className={`text-5xl font-bold mt-2 tabular-nums ${getScoreStatus(snapshot.overall_score).color}`}>
-                          {snapshot.overall_score.toFixed(1)}%
-                        </p>
-                        <p className="text-sm text-slate-500 mt-1">
-                          Real-time snapshot as of {new Date(snapshot.generated_at).toLocaleString()}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  <div className="flex gap-6">
-                    <div className="text-center">
-                      <p className="text-2xl font-bold text-green-600 tabular-nums">{snapshot.controls.passed}</p>
-                      <p className="text-xs text-slate-500">Passed</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-2xl font-bold text-red-600 tabular-nums">{snapshot.controls.failed}</p>
-                      <p className="text-xs text-slate-500">Failed</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-2xl font-bold text-yellow-600 tabular-nums">{snapshot.controls.warnings}</p>
-                      <p className="text-xs text-slate-500">Warnings</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-2xl font-bold text-teal-600 tabular-nums">{snapshot.healing.auto_healed}</p>
-                      <p className="text-xs text-slate-500">Auto-Fixed</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={fetchSnapshot}
-                    className="px-4 py-2 text-white rounded-xl hover:brightness-110 transition-all flex items-center gap-2"
-                    style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-teal-50 flex items-center justify-center flex-shrink-0">
+                    <svg className="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    Refresh
-                  </button>
+                  </div>
+                  <div className="flex-1">
+                    <h2 className="text-lg font-semibold text-slate-900">Auditor Kit</h2>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Download a self-contained, cryptographically signed ZIP per site
+                      that an auditor can verify offline. The kit contains: signed
+                      compliance bundles, the Ed25519 public-key registry, the hash
+                      chain, OpenTimestamps proofs, and a verify.sh script. Hand it to
+                      your auditor and tell them: "verify this on your laptop, no vendor
+                      network required."
+                    </p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Rate-limited: 10 downloads per site per hour to prevent
+                      bulk-export pressure.
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              {/* Per-Site Scores */}
-              {snapshot.sites.length > 0 && (
+              {/* Per-site download list */}
+              {snapshot.sites.length === 0 ? (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 text-center text-slate-500">
+                  No sites yet — auditor kit becomes available after the first
+                  evidence bundle is captured.
+                </div>
+              ) : (
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                   <div className="p-4 border-b border-slate-100">
-                    <h3 className="font-semibold text-slate-900">Site Breakdown</h3>
+                    <h3 className="font-semibold text-slate-900">Sites</h3>
                   </div>
                   <div className="divide-y divide-slate-100">
-                    {snapshot.sites.map((site) => (
-                      <div key={site.site_id} className="p-4 flex items-center justify-between hover:bg-teal-50/30">
-                        <div>
-                          <p className="font-medium text-slate-900">{site.clinic_name}</p>
-                          <p className="text-xs text-slate-500">{site.site_id}</p>
+                    {snapshot.sites.map((site) => {
+                      const downloadUrl = `/api/client/sites/${encodeURIComponent(site.site_id)}/auditor-kit`;
+                      const isDownloading = downloadingKit === site.site_id;
+                      return (
+                        <div key={site.site_id} className="p-4 flex items-center justify-between hover:bg-teal-50/30">
+                          <div>
+                            <p className="font-medium text-slate-900">{site.clinic_name}</p>
+                            <p className="text-xs text-slate-500 font-mono">{site.site_id}</p>
+                            <p className="text-xs text-slate-500 mt-1">
+                              {site.total > 0
+                                ? `${site.passed}/${site.total} checks passing`
+                                : 'No checks yet'}
+                            </p>
+                          </div>
+                          <a
+                            href={downloadUrl}
+                            onClick={() => setDownloadingKit(site.site_id)}
+                            className="px-4 py-2 text-sm font-medium text-white rounded-xl hover:brightness-110 transition-all flex items-center gap-2"
+                            style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            {isDownloading ? 'Preparing…' : 'Download Auditor Kit'}
+                          </a>
                         </div>
-                        <div className="flex items-center gap-6">
-                          <span className="text-sm text-slate-600">{site.passed}/{site.total} passed</span>
-                          {typeof site.score !== 'number' ? (
-                            <span className="px-3 py-1 text-sm font-semibold rounded-full tabular-nums bg-slate-100 text-slate-400">
-                              —
-                            </span>
-                          ) : (
-                            <span className={`px-3 py-1 text-sm font-semibold rounded-full tabular-nums ${getScoreStatus(site.score).bgColor} ${getScoreStatus(site.score).color}`}>
-                              {site.score.toFixed(1)}%
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
 
-              {/* Check Details */}
-              {snapshot.checks.length > 0 && (
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-                  <div className="p-4 border-b border-slate-100">
-                    <h3 className="font-semibold text-slate-900">All Compliance Checks ({snapshot.checks.length})</h3>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-slate-50 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                          <th className="px-4 py-3">Check</th>
-                          <th className="px-4 py-3">Regulation</th>
-                          <th className="px-4 py-3">Device</th>
-                          <th className="px-4 py-3">Result</th>
-                          <th className="px-4 py-3">Last Checked</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {snapshot.checks.map((check, i) => (
-                          <tr key={i} className="hover:bg-slate-50/50">
-                            <td className="px-4 py-3 font-medium text-slate-900">{humanCheckType(check.check_type)}</td>
-                            <td className="px-4 py-3 text-slate-600">{check.hipaa_control || '-'}</td>
-                            <td className="px-4 py-3 text-slate-600 font-mono text-xs">{check.hostname || '-'}</td>
-                            <td className="px-4 py-3">
-                              <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getResultBadge(check.result)}`}>
-                                {check.result === 'pass' ? 'Passed' : check.result === 'fail' ? 'Failed' : check.result === 'warning' ? 'Warning' : check.result}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-slate-500">
-                              {check.checked_at ? new Date(check.checked_at).toLocaleString() : '-'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+              {/* What's inside (auditor-facing checklist) */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+                <h3 className="font-semibold text-slate-900 mb-3">What's inside the kit</h3>
+                <ul className="space-y-2 text-sm text-slate-600">
+                  <li className="flex gap-2">
+                    <span className="text-teal-600">•</span>
+                    <span><span className="font-mono text-xs">bundles.jsonl</span> — every signed compliance bundle for the site (paginated; default 1000 per kit)</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-teal-600">•</span>
+                    <span><span className="font-mono text-xs">pubkeys.json</span> — Ed25519 public keys used to sign the bundles</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-teal-600">•</span>
+                    <span><span className="font-mono text-xs">chain.json</span> — hash-chain tying bundles together (drift + remediation + privileged events unified)</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-teal-600">•</span>
+                    <span><span className="font-mono text-xs">ots/*.ots</span> — OpenTimestamps proofs anchoring to the Bitcoin blockchain (independent timestamp evidence)</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-teal-600">•</span>
+                    <span><span className="font-mono text-xs">verify.sh</span> + <span className="font-mono text-xs">README.md</span> — open-source verifier and instructions</span>
+                  </li>
+                </ul>
+              </div>
             </div>
           )
         ) : (
