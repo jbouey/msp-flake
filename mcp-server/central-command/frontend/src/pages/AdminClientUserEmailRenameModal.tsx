@@ -18,6 +18,7 @@
  * was renamed via raw SQL because no UI existed; this closes that gap.
  */
 import React, { useState } from 'react';
+import { csrfHeaders } from '../utils/csrf';
 
 interface Props {
   isOpen: boolean;
@@ -82,7 +83,7 @@ export const AdminClientUserEmailRenameModal: React.FC<Props> = ({
         {
           method: 'POST',
           credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
           body: JSON.stringify({
             new_email: newEmail,
             reason,
