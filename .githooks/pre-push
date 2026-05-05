@@ -104,6 +104,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_no_same_origin_credentials.py"
     "tests/test_no_stdlib_logger_kwargs.py"
     "tests/test_loop_records_heartbeat.py"
+    "tests/test_smtp_consolidation_lockstep.py"
     "tests/test_per_control_lockstep.py"
     "tests/test_no_inline_score_thresholds.py"
     "tests/test_expected_interval_calibration.py"
