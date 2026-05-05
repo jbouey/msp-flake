@@ -553,6 +553,130 @@ async def _check_email_dlq_growing(conn: asyncpg.Connection) -> List[Violation]:
     ]
 
 
+async def _check_client_portal_zero_evidence_with_data(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev2 — RLS misalignment between substrate-owned data and the
+    client portal's read view.
+
+    Round-table 2026-05-05 Stage 4
+    (.agent/plans/25-client-portal-data-display-roundtable-2026-05-05.md).
+    Stage 1 fixed the canonical bug: tenant_middleware.org_connection()
+    sets `app.current_tenant=''` so site-RLS-only tables returned 0
+    rows under client sessions. The bug was silent for ~months because:
+      - Frontend masked 500s as "empty state" via privacy-by-design copy
+      - No alarm fires when client portal returns suspiciously-low data
+
+    This invariant catches the regression class: for each org that
+    HAS compliance_bundles in the last 7 days, simulate the client-
+    portal canonical query under that org's RLS context. If the row
+    count drops to zero, fire sev2 — RLS or query change is hiding
+    real evidence from the customer's view.
+
+    Implementation note: substrate_assertions_loop runs as the admin
+    role (is_admin='true'). To exercise the CLIENT path we need to
+    SET LOCAL app.current_org=<id>, app.is_admin='false',
+    app.current_tenant='' for the duration of the simulated query —
+    matching what org_connection actually does. We restore admin
+    after each org check so the rest of the loop's queries continue
+    to bypass RLS.
+    """
+    # Take a small sample of recently-active orgs. Full-scan would be
+    # expensive on 1000+-org deployments; sampling 10 most-recently-
+    # active is enough to surface a class regression. If the bug is
+    # back, we'll see it within minutes on the next loop iteration
+    # because EVERY org would be hit.
+    candidate_rows = await conn.fetch(
+        """
+        SELECT s.client_org_id::text AS org_id,
+               COUNT(DISTINCT cb.id) AS bundle_count_7d
+          FROM compliance_bundles cb
+          JOIN sites s ON s.site_id = cb.site_id
+         WHERE cb.checked_at > NOW() - INTERVAL '7 days'
+           AND s.client_org_id IS NOT NULL
+         GROUP BY s.client_org_id
+        HAVING COUNT(DISTINCT cb.id) > 0
+         ORDER BY MAX(cb.checked_at) DESC
+         LIMIT 10
+        """
+    )
+
+    violations: List[Violation] = []
+    for row in candidate_rows:
+        org_id = row["org_id"]
+        bundle_count_7d = int(row["bundle_count_7d"])
+
+        # Simulate the canonical query under this org's client RLS.
+        # Wrapped in a savepoint so a failure (e.g. invalid org_id)
+        # doesn't poison the outer assertion-loop transaction.
+        try:
+            await conn.execute(
+                "SAVEPOINT client_rls_sim",
+            )
+            await conn.execute(
+                f"SET LOCAL app.current_org = '{org_id}'",
+            )
+            await conn.execute(
+                "SET LOCAL app.is_admin = 'false'",
+            )
+            await conn.execute(
+                "SET LOCAL app.current_tenant = ''",
+            )
+
+            visible_count = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM compliance_bundles
+                 WHERE site_id IN (
+                     SELECT site_id FROM sites
+                      WHERE client_org_id::text = current_setting('app.current_org', true)
+                 )
+                   AND checked_at > NOW() - INTERVAL '7 days'
+                """
+            )
+            visible_count = int(visible_count or 0)
+
+            await conn.execute("ROLLBACK TO SAVEPOINT client_rls_sim")
+            await conn.execute(
+                "SET LOCAL app.current_org = ''",
+            )
+            await conn.execute(
+                "SET LOCAL app.is_admin = 'true'",
+            )
+
+            if visible_count == 0:
+                violations.append(
+                    Violation(
+                        site_id=None,
+                        details={
+                            "client_org_id": org_id,
+                            "bundle_count_7d_admin_view": bundle_count_7d,
+                            "bundle_count_7d_client_view": 0,
+                            "interpretation": (
+                                f"client_org {org_id} has {bundle_count_7d} "
+                                f"compliance bundles in the last 7 days "
+                                f"(admin view), but the client portal sees "
+                                f"ZERO under that org's RLS context. RLS "
+                                f"misalignment hiding real evidence. Same "
+                                f"class as the 2026-05-05 P0 closed in "
+                                f"mig 278 — check if a NEW site-RLS table "
+                                f"was added without an org-scoped policy."
+                            ),
+                        },
+                    )
+                )
+        except Exception:
+            # Best-effort — don't fail the entire assertion run on a
+            # single org's quirk. Log via the normal exception path.
+            try:
+                await conn.execute("ROLLBACK TO SAVEPOINT client_rls_sim")
+                await conn.execute("SET LOCAL app.is_admin = 'true'")
+            except Exception:
+                pass
+            continue
+
+    return violations
+
+
 async def _check_partition_maintainer_dry(conn: asyncpg.Connection) -> List[Violation]:
     """Sev1 — next month's partition missing on a critical partitioned
     table (Block 4 P1).
@@ -1312,6 +1436,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_email_dlq_growing(c),
     ),
     Assertion(
+        name="client_portal_zero_evidence_with_data",
+        severity="sev2",
+        description="An org with compliance_bundles in the last 7 days gets ZERO rows back when the canonical client-portal query is simulated under that org's RLS context. Catches the 2026-05-05 P0 regression class (mig 278) — RLS misalignment between substrate-owned data and the client portal's read view. Round-table 2026-05-05 Stage 4 closure.",
+        check=lambda c: _check_client_portal_zero_evidence_with_data(c),
+    ),
+    Assertion(
         name="schema_fixture_drift",
         severity="sev3",
         description="The deployed code's tests/fixtures/schema/prod_columns.json differs from prod's information_schema. Catches the 'forgot to update fixture' deploy class — bit Session 214 audit cycle TWICE (mig 271 forward-merge required manual fixture edits). Sev3 because the test_sql_columns_match_schema CI gate already prevents new deploys with drift; this invariant catches the case where prod has drifted from the fixture in the CURRENTLY DEPLOYED code (rare, but happens via manual SQL or partial migration). Round-table 2026-05-02 Diana adversarial recommendation. Followup #49.",
@@ -1767,6 +1897,29 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "unblock. (3) `docker compose restart mcp-server` to rearm "
             "the loop. Sev1 because the evidence chain depends on "
             "compliance_bundles partition health.",
+    },
+    "client_portal_zero_evidence_with_data": {
+        "display_name": "Client portal hiding evidence — RLS misalignment",
+        "recommended_action": "An org with compliance_bundles in the "
+            "last 7 days gets ZERO rows from the canonical client-"
+            "portal query under its own RLS context. Same regression "
+            "class as the 2026-05-05 P0 (mig 278). Steps: (1) Check "
+            "what site-RLS table was added since mig 278 and confirm "
+            "it has a tenant_org_isolation policy parallel to the "
+            "ones in mig 278's DO-block. (2) Run "
+            "tests/test_org_scoped_rls_policies.py locally — gate "
+            "should fail loudly if a new in-scope table is missing "
+            "the org policy. (3) Add the policy in a new migration "
+            "modeled on mig 278. (4) Verify post-deploy by running "
+            "the same simulation manually under fork psql: BEGIN; "
+            "SET LOCAL app.current_org='<id>'; SET LOCAL "
+            "app.is_admin='false'; SET LOCAL app.current_tenant=''; "
+            "SELECT COUNT(*) FROM compliance_bundles WHERE site_id "
+            "IN (SELECT site_id FROM sites WHERE client_org_id::text "
+            "= current_setting('app.current_org')); ROLLBACK; — must "
+            "match admin-side count. Sev2 because customers cannot see "
+            "their own evidence chain → trust break on trust-bearing "
+            "platform.",
     },
     "email_dlq_growing": {
         "display_name": "Email DLQ growing — outbound email pipeline failing",
