@@ -298,3 +298,73 @@ def create_rate_limiter(
         burst_limit=burst_limit,
     )
     return RateLimitMiddleware(None, limiter)
+
+
+# ─── Module-level helper for in-handler rate-limit checks ─────────
+#
+# Restored 2026-05-05 (Session 217) — broken since 2026-04-09 commit
+# d83bc2cce introduced two `from .rate_limiter import check_rate_limit`
+# import sites in client_portal.py without ever adding a module-level
+# function with that name. The result: client portal magic-link login
+# AND password login both 500'd silently in prod for 26 days, masked
+# by the privacy-by-design "if email exists you'll receive a link"
+# response. SMTP itself was healthy the entire time.
+#
+# This helper bridges the call shape used at:
+#   - client_portal.py:348 (request_magic_link)
+#   - client_portal.py:531 (login_with_password)
+#
+# Both expect: `(client_key, category) -> (allowed, retry_after_s)`.
+#
+# Belt-and-suspenders: AUTH_PATHS in RateLimitMiddleware ALREADY
+# gates these endpoints at the middleware layer. The in-handler check
+# is intentional defense-in-depth so a future middleware misconfig
+# (or the AUTH_PATHS set drifting out of sync with route additions)
+# can't silently drop the gate. Both layers use the same Redis
+# backend; counts are shared.
+async def check_rate_limit(
+    client_key: str, category: str,
+) -> Tuple[bool, Optional[int]]:
+    """Module-level rate-limit gate for explicit in-handler checks.
+
+    Args:
+        client_key: per-source identifier (typically `f"<scope>:{ip}"`)
+        category: scope tag — `"client_login"`, `"client_magic_link"`,
+                  etc. Auth-class categories use the stricter limit
+                  bucket; everything else falls back to general bucket.
+
+    Returns:
+        (allowed, retry_after_seconds_or_None)
+
+    Failure-mode posture: Redis-down returns (True, None) — fail-open
+    is consistent with RedisRateLimiter.check_rate_limit, and the
+    middleware-layer gate provides backup coverage. Failing closed
+    here would lock out every login attempt during a Redis outage,
+    which is a worse outcome than degraded rate-limiting.
+    """
+    auth_categories = {
+        "client_login",
+        "client_magic_link",
+        "partner_login",
+        "partner_magic_link",
+        "admin_login",
+    }
+    is_auth = category in auth_categories
+
+    # Lazy-init the Redis limiter via the existing path. The
+    # RateLimitMiddleware._ensure_redis populates the module globals;
+    # if the middleware hasn't booted yet (e.g. a synthetic test
+    # context), fall through to fail-open.
+    if _redis_limiter is None:
+        return True, None
+
+    try:
+        allowed, retry_after, _info = await _redis_limiter.check_rate_limit(
+            client_key, is_auth=is_auth,
+        )
+        return allowed, retry_after
+    except Exception as e:
+        logger.warning(
+            "check_rate_limit Redis call failed (fail-open): %s", e,
+        )
+        return True, None

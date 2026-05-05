@@ -108,6 +108,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_mfa_admin_overrides.py"
     "tests/test_mfa_revocation_reason_check_constraint.py"
     "tests/test_client_user_email_rename.py"
+    "tests/test_lazy_import_resolution.py"
     "tests/test_per_control_lockstep.py"
     "tests/test_no_inline_score_thresholds.py"
     "tests/test_expected_interval_calibration.py"

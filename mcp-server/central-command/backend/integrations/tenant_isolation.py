@@ -297,8 +297,15 @@ def require_site_access(func: Callable) -> Callable:
     """
     @wraps(func)
     async def wrapper(*args, **kwargs):
-        # Import here to avoid circular imports
-        from .api import get_db, get_current_user
+        # Local imports to avoid circular dependencies during package
+        # init. `get_current_user` was previously imported from .api
+        # but that module never exported the name — the decorator would
+        # crash at first call (caught 2026-05-05 by test_lazy_import_resolution
+        # gate; dead code path so blast radius was zero, but the
+        # decorator advertised a contract it could not honor).
+        # Use the actual auth helper from the parent package.
+        from .api import get_db  # noqa: F401  (kept for symmetry with original contract)
+        from ..auth import require_auth as get_current_user  # noqa: F401
 
         # Extract parameters
         site_id = kwargs.get("site_id")
