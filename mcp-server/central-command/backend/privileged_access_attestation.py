@@ -113,6 +113,14 @@ ALLOWED_EVENTS = {
     "client_org_owner_transfer_completed",
     "client_org_owner_transfer_canceled",
     "client_org_owner_transfer_expired",
+    # Round-table 2026-05-04 (Maya cross-cutting parity finding —
+    # partner-portal consistency audit). User role changes are
+    # privileged actions; both portals attest. NOT in
+    # PRIVILEGED_ORDER_TYPES (admin-API class). Closes the gap where
+    # _audit_*_action wrote audit_log but the cryptographic chain
+    # didn't reflect the role change.
+    "client_user_role_changed",
+    "partner_user_created",
 }
 
 

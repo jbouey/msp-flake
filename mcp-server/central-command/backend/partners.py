@@ -1304,6 +1304,7 @@ async def get_partner_digest_prefs(
 @router.put("/me/digest-prefs")
 async def set_partner_digest_prefs(
     body: dict,
+    request: Request,
     partner: dict = require_partner_role("admin", "tech", "billing"),
 ):
     """Toggle the weekly digest on/off for this partner."""
@@ -1315,6 +1316,28 @@ async def set_partner_digest_prefs(
                 "UPDATE partners SET digest_enabled = $1 WHERE id = $2",
                 enabled, partner["id"],
             )
+    # Maya parity finding 2026-05-04 — digest-prefs mutation was
+    # previously inert on the audit trail. log_partner_activity is
+    # fire-and-forget per the helper contract.
+    try:
+        from .partner_activity_logger import (
+            log_partner_activity, PartnerEventType,
+        )
+        await log_partner_activity(
+            partner_id=str(partner["id"]),
+            event_type=PartnerEventType.PARTNER_UPDATED,
+            target_type="partner",
+            target_id=str(partner["id"]),
+            event_data={"field": "digest_enabled",
+                        "new_value": enabled,
+                        "actor_email": partner.get("email") or "unknown"},
+            ip_address=(request.client.host if request.client else None),
+            user_agent=request.headers.get("user-agent"),
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+    except Exception:
+        logger.error("partner_digest_prefs_audit_failed", exc_info=True)
     return {"ok": True, "digest_enabled": enabled}
 
 
@@ -3191,6 +3214,32 @@ async def regenerate_api_key(request: Request, partner_id: str, admin: dict = De
         request_method=request.method,
     )
 
+    # Operator-visibility (Maya parity finding 2026-05-04 — partner
+    # mutations were operator-blind; same gap class as the client-side
+    # batch in commit f1d3e9f0).
+    try:
+        from .email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="partner_api_key_regenerated",
+            severity="P1",
+            summary=(
+                f"Partner API key regenerated: {result['name']} "
+                f"(partner_id={partner_id})"
+            ),
+            details={
+                "partner_id": str(partner_id),
+                "partner_name": result["name"],
+                "expires_at": api_key_expires.isoformat(),
+            },
+            site_id=f"partner_org:{partner_id}",
+            actor_email=admin.get("email") or admin.get("username"),
+        )
+    except Exception:
+        logger.error(
+            "operator_alert_dispatch_failed_partner_api_key",
+            exc_info=True,
+        )
+
     return {
         "status": "regenerated",
         "api_key": api_key,
@@ -3239,6 +3288,32 @@ async def delete_partner(request: Request, partner_id: str, admin: dict = Depend
         request_method=request.method,
     )
 
+    # Operator-visibility (Maya parity 2026-05-04). Partner deletion
+    # is destructive + cascades — operator should learn in real time.
+    try:
+        from .email_alerts import send_operator_alert
+        send_operator_alert(
+            event_type="partner_org_deleted",
+            severity="P1",
+            summary=(
+                f"Partner org DELETED: {partner['name']} "
+                f"(slug={partner['slug']}, id={partner_id})"
+            ),
+            details={
+                "partner_id": str(partner_id),
+                "partner_name": partner["name"],
+                "partner_slug": partner["slug"],
+                "actor": admin.get("email") or admin.get("sub"),
+            },
+            site_id=f"partner_org:{partner_id}",
+            actor_email=admin.get("email") or admin.get("sub"),
+        )
+    except Exception:
+        logger.error(
+            "operator_alert_dispatch_failed_partner_delete",
+            exc_info=True,
+        )
+
     return {"status": "deleted", "id": str(partner_id), "name": partner["name"]}
 
 
@@ -3262,8 +3337,21 @@ async def get_partner_activity_log(
 
 
 @router.post("/{partner_id}/users")
-async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: dict = Depends(require_admin)):
-    """Create a user for a partner (admin only)."""
+async def create_partner_user(
+    partner_id: str,
+    user: PartnerUserCreate,
+    request: Request,
+    admin: dict = Depends(require_admin),
+):
+    """Create a user for a partner (admin only).
+
+    Maya parity finding 2026-05-04 (round-table verdict E):
+    partner_user creation is a privileged action — sets the new
+    user's role + magic-link path. Pre-fix: NO audit, NO Ed25519
+    attestation, NO operator alert. Now: audit + cryptographic chain
+    + operator visibility, matching the client_user role-change
+    treatment in client_portal.py.
+    """
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
@@ -3298,6 +3386,114 @@ async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: d
             magic_expires
         )
 
+    # Audit row — log_partner_activity is fire-and-forget
+    try:
+        from .partner_activity_logger import (
+            log_partner_activity, PartnerEventType,
+        )
+        await log_partner_activity(
+            partner_id=str(partner_id),
+            event_type=PartnerEventType.PARTNER_UPDATED,
+            target_type="partner_user",
+            target_id=str(row["id"]),
+            event_data={
+                "action": "partner_user_created",
+                "new_user_email": row["email"],
+                "new_user_role": row["role"],
+                "actor_email": admin.get("email") or admin.get("username"),
+            },
+            ip_address=(request.client.host if request.client else None),
+            user_agent=request.headers.get("user-agent"),
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+    except Exception:
+        logger.error("partner_user_create_audit_failed", exc_info=True)
+
+    # Ed25519 attestation — privileged-action chain.
+    create_attestation_failed = False
+    create_bundle_id = None
+    try:
+        from .privileged_access_attestation import (
+            create_privileged_access_attestation,
+            PrivilegedAccessAttestationError,
+        )
+        # Anchor the chain to a synthetic site_id keyed on partner_id;
+        # partner-org events don't have an obvious site to anchor at,
+        # so we use a stable namespace prefix. Auditor kit walks
+        # partner-event chains by this namespace.
+        anchor_site_id = f"partner_org:{partner_id}"
+        async with admin_connection(pool) as att_conn:
+            try:
+                att = await create_privileged_access_attestation(
+                    att_conn,
+                    site_id=anchor_site_id,
+                    event_type="partner_user_created",
+                    actor_email=(
+                        admin.get("email") or admin.get("username")
+                        or "unknown"
+                    ),
+                    reason=(
+                        f"partner_user {row['email']} created with "
+                        f"role={row['role']}"
+                    ),
+                    origin_ip=(request.client.host
+                               if request.client else None),
+                    approvals=[{
+                        "stage": "applied",
+                        "actor": admin.get("email") or admin.get("username"),
+                        "new_user_id": str(row["id"]),
+                        "new_user_email": row["email"],
+                        "new_user_role": row["role"],
+                    }],
+                )
+                create_bundle_id = att.get("bundle_id")
+            except PrivilegedAccessAttestationError as e:
+                create_attestation_failed = True
+                logger.error(
+                    "partner_user_create_attestation_failed",
+                    exc_info=True,
+                    extra={"partner_id": partner_id, "new_user_email": row["email"]},
+                )
+    except Exception:
+        create_attestation_failed = True
+        logger.error(
+            "partner_user_create_attestation_unexpected",
+            exc_info=True,
+            extra={"partner_id": partner_id},
+        )
+
+    # Operator-visibility alert (chain-gap escalation pattern)
+    try:
+        from .email_alerts import send_operator_alert
+        op_severity = ("P0-CHAIN-GAP" if create_attestation_failed
+                       else "P2")
+        op_suffix = (" [ATTESTATION-MISSING]"
+                     if create_attestation_failed else "")
+        send_operator_alert(
+            event_type="partner_user_created",
+            severity=op_severity,
+            summary=(
+                f"Partner user created: {row['email']} (role={row['role']})"
+                f" in partner_id={partner_id}{op_suffix}"
+            ),
+            details={
+                "partner_id": str(partner_id),
+                "new_user_id": str(row["id"]),
+                "new_user_email": row["email"],
+                "new_user_role": row["role"],
+                "attestation_bundle_id": create_bundle_id,
+                "attestation_failed": create_attestation_failed,
+            },
+            site_id=f"partner_org:{partner_id}",
+            actor_email=admin.get("email") or admin.get("username"),
+        )
+    except Exception:
+        logger.error(
+            "operator_alert_dispatch_failed_partner_user_create",
+            exc_info=True,
+        )
+
     return {
         "id": str(row['id']),
         "email": row['email'],
@@ -3305,6 +3501,7 @@ async def create_partner_user(partner_id: str, user: PartnerUserCreate, admin: d
         "role": row['role'],
         "magic_link": f"{os.getenv('FRONTEND_URL', 'https://www.osiriscare.net')}/partner/login?token={magic_token}",
         "expires": magic_expires.isoformat(),
+        "attestation_bundle_id": create_bundle_id,
     }
 
 

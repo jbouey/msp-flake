@@ -88,6 +88,11 @@ EXPECTED_HOOKS = [
     (_BACKEND / "sites.py", "appliance_relocated"),
     (_BACKEND / "org_management.py", "org_deprovisioned"),
     (_BACKEND / "org_management.py", "org_reprovisioned"),
+    # Maya parity finding 2026-05-04 — partner-side mutations were
+    # operator-blind. Three high-signal partner events now hooked.
+    (_BACKEND / "partners.py", "partner_user_created"),
+    (_BACKEND / "partners.py", "partner_api_key_regenerated"),
+    (_BACKEND / "partners.py", "partner_org_deleted"),
 ]
 
 

@@ -85,6 +85,12 @@ def test_allowed_events_matches_expected_set():
         "client_org_owner_transfer_completed",
         "client_org_owner_transfer_canceled",
         "client_org_owner_transfer_expired",
+        # Maya cross-cutting parity finding 2026-05-04 — partner-portal
+        # consistency audit. User role changes (client + partner) are
+        # privileged actions; both portals attest via Ed25519 chain.
+        # NOT fleet_orders — admin-API class.
+        "client_user_role_changed",
+        "partner_user_created",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

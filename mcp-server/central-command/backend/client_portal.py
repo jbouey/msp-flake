@@ -2142,23 +2142,100 @@ async def update_user_role(
             request=request,
         )
 
+    # Maya cross-cutting parity finding 2026-05-04: user role changes
+    # ARE privileged actions. The audit_log + operator_alert capture
+    # the event, but the cryptographic chain didn't reflect it. Now:
+    # Ed25519 attestation bundle anchors to the org's primary site_id
+    # so the auditor kit walks role changes alongside other privileged
+    # events. Best-effort — a chain-write failure does not block the
+    # role update (already committed); chain-gap escalation pattern
+    # below bumps severity if attestation fails.
+    role_change_attestation_failed = False
+    role_change_bundle_id = None
+    try:
+        from .privileged_access_attestation import (
+            create_privileged_access_attestation,
+            PrivilegedAccessAttestationError,
+        )
+        # Resolve org's primary site_id deterministically
+        async with admin_connection(pool) as att_conn:
+            site_row = await att_conn.fetchrow(
+                """
+                SELECT site_id FROM sites
+                 WHERE client_org_id = $1::uuid
+                 ORDER BY created_at ASC LIMIT 1
+                """,
+                str(org_id),
+            )
+            anchor_site_id = (
+                site_row["site_id"] if site_row
+                else f"client_org:{org_id}"
+            )
+            try:
+                att = await create_privileged_access_attestation(
+                    att_conn,
+                    site_id=anchor_site_id,
+                    event_type="client_user_role_changed",
+                    actor_email=user.get("email") or "unknown",
+                    reason=(
+                        f"role of user {target_user_id} changed to "
+                        f"{body.role}"
+                    ),
+                    origin_ip=(request.client.host
+                               if request.client else None),
+                    approvals=[{
+                        "stage": "applied",
+                        "actor": user.get("email"),
+                        "target_user_id": target_user_id,
+                        "new_role": body.role,
+                    }],
+                )
+                role_change_bundle_id = att.get("bundle_id")
+            except PrivilegedAccessAttestationError as e:
+                role_change_attestation_failed = True
+                logger.error(
+                    "client_user_role_changed_attestation_failed",
+                    exc_info=True,
+                    extra={"target_user_id": target_user_id},
+                )
+    except Exception:
+        role_change_attestation_failed = True
+        logger.error(
+            "client_user_role_changed_attestation_unexpected",
+            exc_info=True,
+            extra={"target_user_id": target_user_id},
+        )
+
     try:
         from .email_alerts import send_operator_alert
+        op_severity = ("P0-CHAIN-GAP" if role_change_attestation_failed
+                       else "P2")
+        op_suffix = (" [ATTESTATION-MISSING]"
+                     if role_change_attestation_failed else "")
         send_operator_alert(
             event_type="client_user_role_changed",
-            severity="P2",
-            summary=f"Client user role changed in {user.get('org_name', 'org')} → {body.role}",
+            severity=op_severity,
+            summary=(
+                f"Client user role changed in "
+                f"{user.get('org_name', 'org')} → {body.role}{op_suffix}"
+            ),
             details={
                 "target_user_id": target_user_id,
                 "new_role": body.role,
                 "org_id": str(user.get("org_id", "")),
+                "attestation_bundle_id": role_change_bundle_id,
+                "attestation_failed": role_change_attestation_failed,
             },
             actor_email=user.get("email"),
         )
     except Exception:
         logger.error("operator_alert_dispatch_failed_user_role_changed", exc_info=True)
 
-    return {"status": "updated", "role": body.role}
+    return {
+        "status": "updated",
+        "role": body.role,
+        "attestation_bundle_id": role_change_bundle_id,
+    }
 
 
 # =============================================================================
