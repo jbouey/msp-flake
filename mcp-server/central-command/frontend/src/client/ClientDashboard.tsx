@@ -404,6 +404,15 @@ export const ClientDashboard: React.FC = () => {
                     {new Date(dashboard.kpis.last_check_at).toLocaleString()}
                   </p>
                 )}
+                {/* Round-table 31 C4 (2026-05-05): surface
+                    window_description so customers understand "Snapshot:
+                    last 30 days" framing — pre-fix the field shipped as
+                    dead data. */}
+                {typeof dashboard.kpis.window_description === 'string' && (
+                  <p className="mt-1 text-[11px] text-label-tertiary">
+                    {dashboard.kpis.window_description}
+                  </p>
+                )}
               </>
             )}
           </div>

@@ -141,7 +141,7 @@ export const CredentialEntryModal: React.FC<CredentialEntryModalProps> = ({
     try {
       const res = await fetch('/api/client/credentials', {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           ...csrfHeaders(),

@@ -304,11 +304,15 @@ async def deprovision_org(
                 org_id,
             )
 
-            # Invalidate client user sessions
+            # Invalidate client user sessions. Round-table 31 (2026-05-05)
+            # caught: column was named `client_user_id` here but the
+            # actual schema is `client_sessions.user_id` — would have
+            # crashed first call to org-archive with UndefinedColumnError.
+            # Pinned by tests/test_no_wrong_column_in_session_delete.py.
             await conn.execute(
                 """
                 DELETE FROM client_sessions
-                WHERE client_user_id IN (
+                WHERE user_id IN (
                     SELECT id FROM client_users WHERE client_org_id = $1::uuid
                 )
                 """,

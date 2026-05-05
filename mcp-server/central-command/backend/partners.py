@@ -638,51 +638,115 @@ async def self_create_partner_user(
     partner_id = str(partner["id"])
     actor_email = (partner.get("email") or "").lower()
 
+    # Round-table 31 P1 reactivate-path (2026-05-05): pre-fix any
+    # existing row (active OR inactive) returned 400, leaving deactivated
+    # users with no self-service path back. Inactive rows now reactivate
+    # via UPDATE; active rows still 400 (duplicate). Idempotent +
+    # audited the same way as fresh-create.
     async with admin_connection(pool) as conn:
-        existing = await conn.fetchval(
+        existing = await conn.fetchrow(
             """
-            SELECT 1 FROM partner_users
+            SELECT id::text, status, role FROM partner_users
              WHERE partner_id = $1::uuid AND email = $2
             """,
             partner_id, body.email.lower(),
         )
-        if existing:
+        if existing and existing["status"] == "active":
             raise HTTPException(
                 status_code=400,
-                detail="Email already exists for this partner",
+                detail="Email already exists as active partner_user",
             )
+
         magic_token = generate_magic_token()
         magic_expires = datetime.now(timezone.utc) + timedelta(days=7)
-        row = await conn.fetchrow(
-            """
-            INSERT INTO partner_users (
-                partner_id, email, name, role,
-                magic_token, magic_token_expires_at
-            ) VALUES ($1::uuid, $2, $3, $4, $5, $6)
-            RETURNING id::text, email, name, role
-            """,
-            partner_id,
-            body.email.lower(),
-            body.name,
-            body.role,
-            magic_token,
-            magic_expires,
-        )
+        is_reactivation = bool(existing)
 
+        if is_reactivation:
+            row = await conn.fetchrow(
+                """
+                UPDATE partner_users
+                   SET status = 'active',
+                       role = $2,
+                       name = COALESCE($3, name),
+                       magic_token = $4,
+                       magic_token_expires_at = $5,
+                       updated_at = NOW()
+                 WHERE id = $1::uuid
+                 RETURNING id::text, email, name, role
+                """,
+                existing["id"], body.role, body.name,
+                magic_token, magic_expires,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO partner_users (
+                    partner_id, email, name, role,
+                    magic_token, magic_token_expires_at
+                ) VALUES ($1::uuid, $2, $3, $4, $5, $6)
+                RETURNING id::text, email, name, role
+                """,
+                partner_id,
+                body.email.lower(),
+                body.name,
+                body.role,
+                magic_token,
+                magic_expires,
+            )
+
+    event_type = "partner_user_created"
+    reason = (
+        f"Self-service partner_user {row['email']} "
+        f"{'reactivated' if is_reactivation else 'created'} "
+        f"with role={row['role']}"
+    )
     failed, bundle_id = await _emit_partner_user_attestation(
-        pool, partner_id, "partner_user_created",
-        actor_email,
-        f"Self-service partner_user {row['email']} created with role={row['role']}",
+        pool, partner_id, event_type,
+        actor_email, reason,
         row["id"], row["email"], new_role=row["role"], request=request,
     )
+
+    # Round-table 31 P2 (Maya parity gap): operator-class POST
+    # /{partner_id}/users calls log_partner_activity but the new
+    # self-scoped endpoints didn't. Closing the parity gap so the
+    # human-readable PartnerAuditLog reflects these mutations.
+    try:
+        from .partner_activity_logger import (
+            log_partner_activity, PartnerEventType,
+        )
+        await log_partner_activity(
+            partner_id=partner_id,
+            event_type=PartnerEventType.PARTNER_UPDATED,
+            target_type="partner_user",
+            target_id=row["id"],
+            event_data={
+                "action": (
+                    "partner_user_reactivated" if is_reactivation
+                    else "partner_user_self_created"
+                ),
+                "new_user_email": row["email"],
+                "new_user_role": row["role"],
+                "actor_email": actor_email,
+            },
+            ip_address=(request.client.host if request.client else None),
+            user_agent=request.headers.get("user-agent"),
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+    except Exception:
+        logger.error("partner_user_self_create_audit_failed", exc_info=True)
+
+    summary_verb = "reactivated" if is_reactivation else "created"
     _partner_user_op_alert(
-        "partner_user_created", "P2",
-        f"Partner-admin self-service created partner_user {row['email']} (role={row['role']})",
+        event_type, "P2",
+        f"Partner-admin self-service {summary_verb} partner_user "
+        f"{row['email']} (role={row['role']})",
         {
             "partner_id": partner_id,
             "new_user_id": row["id"],
             "new_user_email": row["email"],
             "new_user_role": row["role"],
+            "is_reactivation": is_reactivation,
             "attestation_bundle_id": bundle_id,
         },
         actor_email, f"partner_org:{partner_id}", failed,
@@ -692,6 +756,7 @@ async def self_create_partner_user(
         "email": row["email"],
         "name": row["name"],
         "role": row["role"],
+        "is_reactivation": is_reactivation,
         "attestation_bundle_id": bundle_id,
     }
 
@@ -764,6 +829,32 @@ async def self_change_partner_user_role(
         actor_email, body.reason, user_id, target["email"],
         new_role=body.role, request=request,
     )
+    # Round-table 31 P2 — log_partner_activity parity gap closure.
+    try:
+        from .partner_activity_logger import (
+            log_partner_activity, PartnerEventType,
+        )
+        await log_partner_activity(
+            partner_id=partner_id,
+            event_type=PartnerEventType.PARTNER_UPDATED,
+            target_type="partner_user",
+            target_id=user_id,
+            event_data={
+                "action": "partner_user_role_changed",
+                "target_email": target["email"],
+                "old_role": old_role,
+                "new_role": body.role,
+                "reason": body.reason,
+                "actor_email": actor_email,
+            },
+            ip_address=(request.client.host if request.client else None),
+            user_agent=request.headers.get("user-agent"),
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+    except Exception:
+        logger.error("partner_user_role_change_audit_failed", exc_info=True)
+
     severity = "P1" if old_role == "admin" or body.role == "admin" else "P2"
     _partner_user_op_alert(
         "partner_user_role_changed", severity,
@@ -829,6 +920,32 @@ async def self_deactivate_partner_user(
             if target["status"] == "inactive":
                 raise HTTPException(status_code=400,
                     detail="User already inactive")
+            # Round-table 31 P1 race-guard (2026-05-05): if this user
+            # is the initiator OR target of a pending admin-transfer,
+            # the partial unique index `idx_partner_admin_transfer_one_pending`
+            # would be permanently locked because the deactivate kills
+            # the user's session but doesn't expire the transfer row.
+            # Refuse 409 with operator-actionable detail.
+            pending = await conn.fetchval(
+                """
+                SELECT 1 FROM partner_admin_transfer_requests
+                 WHERE partner_id = $1::uuid
+                   AND status = 'pending_target_accept'
+                   AND (initiated_by_user_id = $2::uuid
+                        OR target_user_id = $2::uuid)
+                 LIMIT 1
+                """,
+                partner_id, user_id,
+            )
+            if pending:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Cannot deactivate: a pending admin-transfer "
+                        "request involves this user. Cancel or accept "
+                        "the transfer first."
+                    ),
+                )
             try:
                 await conn.execute(
                     """
@@ -864,6 +981,31 @@ async def self_deactivate_partner_user(
         actor_email, body.reason, user_id, target["email"],
         new_role=None, request=request,
     )
+    # Round-table 31 P2 — log_partner_activity parity gap closure.
+    try:
+        from .partner_activity_logger import (
+            log_partner_activity, PartnerEventType,
+        )
+        await log_partner_activity(
+            partner_id=partner_id,
+            event_type=PartnerEventType.PARTNER_UPDATED,
+            target_type="partner_user",
+            target_id=user_id,
+            event_data={
+                "action": "partner_user_deactivated",
+                "target_email": target["email"],
+                "former_role": target["role"],
+                "reason": body.reason,
+                "actor_email": actor_email,
+            },
+            ip_address=(request.client.host if request.client else None),
+            user_agent=request.headers.get("user-agent"),
+            request_path=str(request.url.path),
+            request_method=request.method,
+        )
+    except Exception:
+        logger.error("partner_user_deactivate_audit_failed", exc_info=True)
+
     severity = "P1" if target["role"] == "admin" else "P2"
     _partner_user_op_alert(
         "partner_user_deactivated", severity,
@@ -4273,7 +4415,7 @@ async def add_site_credentials(
     request: Request,
     site_id: str,
     credential: PartnerCredentialCreate,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin", "tech")
 ):
     """Add credentials for a site."""
     pool = await get_pool()
@@ -4341,7 +4483,7 @@ async def validate_credential(
     request: Request,
     site_id: str,
     credential_id: str,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin", "tech")
 ):
     """Validate a credential by testing connectivity."""
     pool = await get_pool()
@@ -4458,7 +4600,7 @@ async def delete_credential(
     request: Request,
     site_id: str,
     credential_id: str,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin", "tech")
 ):
     """Delete a site credential."""
     pool = await get_pool()
@@ -4587,7 +4729,7 @@ async def set_partner_maintenance(
     site_id: str,
     body: PartnerMaintenanceRequest,
     request: Request,
-    partner=Depends(require_partner),
+    partner: dict = require_partner_role("admin", "tech"),
 ):
     """Set a maintenance window for a partner-managed site."""
     if not body.reason or not body.reason.strip():
@@ -4642,7 +4784,7 @@ async def set_partner_maintenance(
 async def cancel_partner_maintenance(
     site_id: str,
     request: Request,
-    partner=Depends(require_partner),
+    partner: dict = require_partner_role("admin", "tech"),
 ):
     """Cancel an active maintenance window for a partner-managed site."""
     pool = await get_pool()
@@ -4781,7 +4923,7 @@ async def get_partner_onboarding(request: Request, partner=Depends(require_partn
 async def trigger_site_checkin(
     request: Request,
     site_id: str,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin", "tech")
 ):
     """Request immediate checkin from site's appliance (creates force_checkin order)."""
     pool = await get_pool()
@@ -4882,7 +5024,7 @@ async def update_asset(
     site_id: str,
     asset_id: str,
     update: DiscoveredAssetUpdate,
-    partner=Depends(require_partner)
+    partner: dict = require_partner_role("admin", "tech")
 ):
     """Update a discovered asset (e.g., set monitoring status)."""
     pool = await get_pool()

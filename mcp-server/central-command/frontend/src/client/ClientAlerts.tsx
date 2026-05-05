@@ -77,7 +77,7 @@ export const ClientAlerts: React.FC = () => {
   const fetchAlerts = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/client/alerts', { credentials: 'same-origin' });
+      const response = await fetch('/api/client/alerts', { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
         setAlerts(data.alerts || []);
@@ -98,7 +98,7 @@ export const ClientAlerts: React.FC = () => {
           'Content-Type': 'application/json',
           ...csrfHeaders(),
         },
-        credentials: 'same-origin',
+        credentials: 'include',
         body: JSON.stringify({ action }),
       });
       if (response.ok) {

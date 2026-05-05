@@ -46,7 +46,7 @@ FRONTEND_SRC = (
 # Ratchet baseline. Decrement as the followup sweep removes sites.
 # CI fails if found_count > BASELINE_MAX (regression — new same-origin
 # added) OR if found_count < BASELINE_MAX (forgot to update baseline).
-BASELINE_MAX = 63
+BASELINE_MAX = 60
 
 # Per-line opt-out marker (matches rename-site-gate convention)
 _NOQA_MARKER = re.compile(r"#\s*noqa:\s*same-origin-allowed", re.IGNORECASE)

@@ -111,6 +111,63 @@ export const ClientReports: React.FC = () => {
     }
   };
 
+  // Round-table 31 P1 (2026-05-05): the kit download was a plain
+  // <a href> which produced an opaque JSON error blob in a new tab on
+  // 401 (session expired) / 429 (rate-limited). Customer in a meeting
+  // would see "Not Found"-shaped output and think the product is
+  // broken. Fetch-as-blob lets us surface actionable copy on every
+  // error class.
+  const handleAuditorKitDownload = async (siteId: string, clinicName: string) => {
+    setDownloadingKit(siteId);
+    setError(null);
+    try {
+      const url = `/api/evidence/sites/${encodeURIComponent(siteId)}/auditor-kit`;
+      const res = await fetch(url, { credentials: 'include' });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          setError(
+            'Your session expired. Please log in again to download the kit.',
+          );
+          return;
+        }
+        if (res.status === 429) {
+          const retry = res.headers.get('Retry-After');
+          const minutes = retry ? Math.ceil(parseInt(retry, 10) / 60) : 60;
+          setError(
+            `Rate limit reached for this site (10 downloads per hour). Try again in ~${minutes} minutes.`,
+          );
+          return;
+        }
+        const detail = await res.text().catch(() => '');
+        let parsed: { detail?: string } | undefined;
+        try { parsed = JSON.parse(detail); } catch { /* not JSON */ }
+        setError(
+          parsed?.detail ||
+          `Auditor kit download failed (${res.status}). Try again or contact support.`,
+        );
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.download = `${clinicName.replace(/[^a-zA-Z0-9-]/g, '_')}-auditor-kit-${stamp}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? `Auditor kit download failed: ${e.message}`
+          : 'Auditor kit download failed (network error).',
+      );
+    } finally {
+      setDownloadingKit(null);
+    }
+  };
+
   const handleDownload = async (month: string) => {
     try {
       const response = await fetch(`/api/client/reports/monthly/${month}`, {
@@ -181,6 +238,23 @@ export const ClientReports: React.FC = () => {
 
       {/* Main */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Round-table 31 P1: surface error banner on both tabs (was
+            previously rendered only inside the Monthly Reports tab,
+            so an Auditor Kit download error was invisible). */}
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm flex items-start justify-between gap-4">
+            <span>{error}</span>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-500 hover:text-red-700 flex-shrink-0"
+              aria-label="Dismiss"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
         {activeTab === 'auditor' ? (
           /* Stage 3: Auditor Kit (round-table 25, 2026-05-05).
              Replaces the pre-Stage-3 "Current Compliance" tab which
@@ -221,6 +295,12 @@ export const ClientReports: React.FC = () => {
                       Rate-limited: 10 downloads per site per hour to prevent
                       bulk-export pressure.
                     </p>
+                    {snapshot.window_description && (
+                      <p className="mt-2 text-xs text-slate-500 italic">
+                        Score window: {snapshot.window_description}. Auditor
+                        kit ZIPs include the full all-time chain regardless.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -238,13 +318,6 @@ export const ClientReports: React.FC = () => {
                   </div>
                   <div className="divide-y divide-slate-100">
                     {snapshot.sites.map((site) => {
-                      // The kit endpoint lives under /api/evidence/.
-                      // Auth gate (require_evidence_view_access) accepts
-                      // the new client portal session via the
-                      // osiris_client_session cookie (Stage 3, cfa24659).
-                      // The /api/client/... mistake on first ship caused
-                      // the 404 reported in round-table 30.
-                      const downloadUrl = `/api/evidence/sites/${encodeURIComponent(site.site_id)}/auditor-kit`;
                       const isDownloading = downloadingKit === site.site_id;
                       return (
                         <div key={site.site_id} className="p-4 flex items-center justify-between hover:bg-teal-50/30">
@@ -257,17 +330,18 @@ export const ClientReports: React.FC = () => {
                                 : 'No checks yet'}
                             </p>
                           </div>
-                          <a
-                            href={downloadUrl}
-                            onClick={() => setDownloadingKit(site.site_id)}
-                            className="px-4 py-2 text-sm font-medium text-white rounded-xl hover:brightness-110 transition-all flex items-center gap-2"
+                          <button
+                            type="button"
+                            disabled={isDownloading}
+                            onClick={() => void handleAuditorKitDownload(site.site_id, site.clinic_name)}
+                            className="px-4 py-2 text-sm font-medium text-white rounded-xl hover:brightness-110 transition-all flex items-center gap-2 disabled:opacity-50"
                             style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                             </svg>
                             {isDownloading ? 'Preparing…' : 'Download Auditor Kit'}
-                          </a>
+                          </button>
                         </div>
                       );
                     })}
