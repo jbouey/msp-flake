@@ -403,6 +403,23 @@ async def initiate_owner_transfer(
 
     async with admin_connection(pool) as conn:
         async with conn.transaction():
+            # Steve P3 mit D (task #19): refuse owner-transfer initiate
+            # while ANY pending MFA revocation exists for ANY in-org
+            # user. Race scenario this closes: A revokes B's MFA,
+            # then immediately initiates owner-transfer to attacker
+            # before B can click the 24h reversal link.
+            from .mfa_admin import has_active_mfa_revocation
+            if await has_active_mfa_revocation(conn, "client_user", org_id):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Cannot initiate owner-transfer while a pending "
+                        "MFA revocation exists in this org. Wait for "
+                        "the user to self-restore (or for the 24h "
+                        "window to expire), then re-initiate."
+                    ),
+                )
+
             # Mig 275 (task #20): read per-org cooling-off + expiry
             # config. Captured at initiate time so a mid-transfer
             # config change doesn't shift the lifecycle of an

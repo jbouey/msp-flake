@@ -58,6 +58,7 @@ _LOOP_LOCATIONS: dict[str, Tuple[str, str]] = {
     "mark_stale_appliances": ("background_tasks", "mark_stale_appliances_loop"),
     "owner_transfer_sweep": ("client_owner_transfer", "owner_transfer_sweep_loop"),
     "partner_admin_transfer_sweep": ("partner_admin_transfer", "partner_admin_transfer_sweep_loop"),
+    "mfa_revocation_expiry_sweep": ("mfa_admin", "mfa_revocation_expiry_sweep_loop"),
 }
 
 # Loops registered in EXPECTED_INTERVAL_S but whose definitions live

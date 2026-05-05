@@ -2985,6 +2985,21 @@
     "target_type",
     "ttl_seconds"
   ],
+  "mfa_revocation_pending": [
+    "attestation_bundle_ids",
+    "expires_at",
+    "id",
+    "reason",
+    "restored_at",
+    "restored_by_email",
+    "revoked_at",
+    "revoked_by_email",
+    "reversal_token_hash",
+    "scope_id",
+    "target_email",
+    "target_user_id",
+    "user_kind"
+  ],
   "nonces": [
     "created_at",
     "nonce"

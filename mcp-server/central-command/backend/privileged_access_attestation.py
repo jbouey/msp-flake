@@ -148,6 +148,20 @@ ALLOWED_EVENTS = {
     # Same chain pattern as the underlying transfer events.
     "client_org_transfer_prefs_changed",
     "partner_transfer_prefs_changed",
+    # Task #19 closure 2026-05-05 — MFA admin overrides (mig 276).
+    # 3 sub-features × 2 portals = 6 events; plus 2 reversal events
+    # for Steve P3 mitigation B (24h reversible-link revoke). Each
+    # is admin-API class, NOT a fleet_order. Anchor: client-side
+    # events use org's primary site_id; partner-side use
+    # partner_org:<id>.
+    "client_org_mfa_policy_changed",
+    "partner_mfa_policy_changed",
+    "client_user_mfa_reset",
+    "partner_user_mfa_reset",
+    "client_user_mfa_revoked",
+    "partner_user_mfa_revoked",
+    "client_user_mfa_revocation_reversed",
+    "partner_user_mfa_revocation_reversed",
 }
 
 

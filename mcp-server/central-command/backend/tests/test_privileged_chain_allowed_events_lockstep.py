@@ -108,10 +108,21 @@ def test_allowed_events_matches_expected_set():
         "partner_org_deleted",
         # Followup task #20 closure 2026-05-04 — per-org configurable
         # cooling-off / expiry on transfers (mig 275). Changes to
-        # friction-level config are themselves privileged. Total
-        # ALLOWED_EVENTS: 35.
+        # friction-level config are themselves privileged.
         "client_org_transfer_prefs_changed",
         "partner_transfer_prefs_changed",
+        # Task #19 closure 2026-05-05 — MFA admin overrides (mig 276).
+        # 3 sub-features × 2 portals = 6 events + 2 reversal events
+        # for Steve mit B (24h reversible-link revoke). Total
+        # ALLOWED_EVENTS: 43.
+        "client_org_mfa_policy_changed",
+        "partner_mfa_policy_changed",
+        "client_user_mfa_reset",
+        "partner_user_mfa_reset",
+        "client_user_mfa_revoked",
+        "partner_user_mfa_revoked",
+        "client_user_mfa_revocation_reversed",
+        "partner_user_mfa_revocation_reversed",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

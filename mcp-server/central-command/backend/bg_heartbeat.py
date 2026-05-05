@@ -107,6 +107,7 @@ EXPECTED_INTERVAL_S: Dict[str, int] = {
     "mark_stale_appliances": 120,  # background_tasks.py:1676 APPLIANCE_OFFLINE_SCAN_SECONDS=120
     "owner_transfer_sweep": 60,  # client_owner_transfer.py:owner_transfer_sweep_loop sleeps 60s
     "partner_admin_transfer_sweep": 60,  # partner_admin_transfer.py:partner_admin_transfer_sweep_loop sleeps 60s
+    "mfa_revocation_expiry_sweep": 60,  # mfa_admin.py:mfa_revocation_expiry_sweep_loop sleeps 60s
 }
 
 

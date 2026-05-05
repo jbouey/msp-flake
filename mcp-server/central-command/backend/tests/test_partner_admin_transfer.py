@@ -277,7 +277,10 @@ def test_log_partner_activity_on_each_endpoint():
     ]:
         fn_start = src.find(f"async def {fn_name}(")
         assert fn_start >= 0, f"{fn_name} not found"
-        fn_body = src[fn_start:fn_start + 5000]
+        # Window bumped to 8000 to accommodate MFA interlock + per-org
+        # config additions in subsequent commits — log_partner_activity
+        # call is later in the function now.
+        fn_body = src[fn_start:fn_start + 8000]
         assert "log_partner_activity(" in fn_body, (
             f"{fn_name} missing log_partner_activity call — partner "
             f"audit trail will be incomplete for this state transition."

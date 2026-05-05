@@ -2153,6 +2153,9 @@ async def lifespan(app: FastAPI):
     from dashboard_api.partner_admin_transfer import (
         partner_admin_transfer_sweep_loop as _partner_admin_transfer_sweep_loop,
     )  # Maya parity 2026-05-04 — partner analog
+    from dashboard_api.mfa_admin import (
+        mfa_revocation_expiry_sweep_loop as _mfa_revocation_expiry_sweep_loop,
+    )  # Task #19 MFA admin overrides 2026-05-05
 
     task_defs = [
         ("ots_upgrade", _ots_upgrade_loop),
@@ -2206,6 +2209,7 @@ async def lifespan(app: FastAPI):
         ("go_agent_status_decay", _go_agent_status_decay_loop),  # Session 214 fleet-edge liveness
         ("owner_transfer_sweep", _owner_transfer_sweep_loop),  # Punch-list #8 closure 2026-05-04
         ("partner_admin_transfer_sweep", _partner_admin_transfer_sweep_loop),  # Maya parity 2026-05-04
+        ("mfa_revocation_expiry_sweep", _mfa_revocation_expiry_sweep_loop),  # Task #19 2026-05-05
     ]
 
     for name, fn in task_defs:
@@ -2377,6 +2381,11 @@ from dashboard_api.client_owner_transfer import owner_transfer_router  # noqa
 app.include_router(owner_transfer_router)  # Owner-transfer state machine (punch-list #8, 2026-05-04)
 from dashboard_api.partner_admin_transfer import partner_admin_transfer_router  # noqa
 app.include_router(partner_admin_transfer_router)  # Maya parity 2026-05-04 — partner analog
+from dashboard_api.mfa_admin import (  # noqa
+    mfa_admin_client_router, mfa_admin_partner_router,
+)
+app.include_router(mfa_admin_client_router)  # Task #19 MFA admin overrides — client side
+app.include_router(mfa_admin_partner_router)  # Task #19 MFA admin overrides — partner side
 from dashboard_api.credential_rotation import router as credential_rotation_router
 app.include_router(credential_rotation_router)  # Credential encryption key rotation (Session 203)
 app.include_router(ops_health_router)  # Ops center health + traffic lights

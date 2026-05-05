@@ -277,6 +277,23 @@ async def initiate_partner_admin_transfer(
 
     async with admin_connection(pool) as conn:
         async with conn.transaction():
+            # Steve P3 mit D (task #19): refuse admin-transfer
+            # initiate while ANY pending MFA revocation exists for
+            # ANY in-org user. Same anti-race posture as the
+            # client-side interlock.
+            from .mfa_admin import has_active_mfa_revocation
+            if await has_active_mfa_revocation(conn, "partner_user", partner_id):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Cannot initiate admin-transfer while a "
+                        "pending MFA revocation exists in this "
+                        "partner_org. Wait for the user to self-"
+                        "restore (or for the 24h window to expire), "
+                        "then re-initiate."
+                    ),
+                )
+
             # Mig 275 (task #20): read per-partner expiry config.
             expiry_days = await _resolve_partner_expiry_days(
                 conn, partner_id,
