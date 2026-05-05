@@ -1185,12 +1185,13 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="Tightened gate for enforce-mode appliances: ANY invalid sigauth observation in 6h fires this. The umbrella (1h/5-sample/5%) is structurally blind to low-rate jitter, but enforce mode by definition is a 0%-fail contract. One rejection means a key-state coherence smell that must be investigated before it becomes 100% (Session 211 Phase 2 QA, 2026-04-28).",
         check=lambda c: _check_sigauth_enforce_mode_rejections(c),
     ),
-    Assertion(
-        name="sigauth_post_fix_window_canary",
-        severity="sev1",
-        description="Tighter detection floor for the 2026-04-28 sigauth wrap-fix (commit 303421cc) acceptance window. Closes the detection-window-asymmetry gap that the rolling-6h sigauth_enforce_mode_rejections cannot see: fires sev1 on ANY invalid sigauth observation across any appliance from 2026-04-28 17:11Z (deploy + clear) through 2026-05-05 17:11Z (7d window close). Auto-disables after the window — the SQL filter on observed_at evaluates to no rows after that date and the invariant goes silent. Round-table 2026-04-28 P1 close-out for task #169 user-override early-close.",
-        check=lambda c: _check_sigauth_post_fix_window_canary(c),
-    ),
+    # Removed 2026-05-05 17:23Z (Session 217 close of task #4): the
+    # sigauth_post_fix_window_canary invariant covered the 7-day
+    # acceptance window 2026-04-28 17:11Z → 2026-05-05 17:11Z that
+    # bracketed the sigauth wrap-fix deploy. Verified silent (0
+    # firings, 0 violations) across the entire window via fork
+    # psql query before removal. The umbrella sigauth_enforce_mode_rejections
+    # invariant remains as the steady-state detector.
     Assertion(
         name="flywheel_orphan_telemetry",
         severity="sev1",
@@ -1562,18 +1563,10 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "fix the root cause first. Do NOT mark recovered=true manually without successfully "
             "INSERTing the audit row first — that creates a phantom recovery and breaks the chain.",
     },
-    "sigauth_post_fix_window_canary": {
-        "display_name": "Sigauth wrap-fix post-deploy canary tripped",
-        "recommended_action": "The wrap-in-transaction speculative fix shipped in commit "
-            "303421cc (2026-04-28) was accepted on a 7d empirical-clean acceptance "
-            "window with EXPLICIT pivot criterion. ANY fail across the post-deploy "
-            "window means the routing hypothesis is empirically refuted — pivot to "
-            "MVCC / deleted_at flicker / autovacuum investigation per "
-            "docs/security/sigauth-wrap-validation-2026-04-28.md. Reopen task #169, "
-            "trigger a new round-table BEFORE any fix. The forensic "
-            "logger.error('sigauth_unknown_pubkey', ...) carries the diagnostic "
-            "context — query mcp-server logs for that token at the rejection time.",
-    },
+    # Removed 2026-05-05 17:23Z (Session 217 close of task #4): the
+    # sigauth_post_fix_window_canary acceptance window closed silent
+    # at 2026-05-05 17:11Z. Display-metadata entry retired alongside
+    # the Assertion + check function.
     "flywheel_orphan_telemetry": {
         "display_name": "Flywheel telemetry under a dead site_id",
         "recommended_action": "execution_telemetry has rows whose site_id has NO matching "
@@ -2644,53 +2637,14 @@ async def _check_flywheel_federation_misconfigured(conn: asyncpg.Connection) -> 
     ]
 
 
-async def _check_sigauth_post_fix_window_canary(conn: asyncpg.Connection) -> List[Violation]:
-    """Time-bounded canary for the 2026-04-28 sigauth wrap-fix
-    acceptance window. Closes the rolling-6h detection floor gap by
-    firing sev1 on ANY invalid sigauth observation across any
-    appliance during the 7d post-deploy window
-    (2026-04-28 17:11Z → 2026-05-05 17:11Z UTC).
-
-    Auto-disables after the window: the date filter evaluates to zero
-    rows once observed_at moves past the upper bound + the invariant
-    goes silent. Designed to be removed in the next session after
-    2026-05-05 if the substrate stays clean.
-
-    Round-table 2026-04-28 P1 close-out — preserves the empirical
-    bar the validation doc set even when the formal task #169 is
-    closed early on user override."""
-    rows = await conn.fetch(
-        """
-        SELECT site_id, mac_address,
-               COUNT(*) FILTER (WHERE NOT valid) AS failures,
-               array_agg(DISTINCT reason) FILTER (WHERE NOT valid) AS reasons,
-               MAX(observed_at) FILTER (WHERE NOT valid) AS last_failure
-          FROM sigauth_observations
-         WHERE observed_at >= '2026-04-28 17:11:00+00'::timestamptz
-           AND observed_at <  '2026-05-05 17:11:00+00'::timestamptz
-      GROUP BY site_id, mac_address
-        HAVING COUNT(*) FILTER (WHERE NOT valid) >= 1
-        """
-    )
-    return [
-        Violation(
-            site_id=r["site_id"],
-            details={
-                "mac_address": r["mac_address"],
-                "failures_in_window": r["failures"],
-                "reasons": list(r["reasons"] or []),
-                "last_failure_at": r["last_failure"].isoformat() if r["last_failure"] else None,
-                "window_end": "2026-05-05T17:11:00Z",
-                "remediation": (
-                    "ANY fail in the post-fix window refutes the routing hypothesis. "
-                    "Reopen task #169, pivot to MVCC / deleted_at / autovacuum, "
-                    "trigger new round-table BEFORE any fix. See "
-                    "docs/security/sigauth-wrap-validation-2026-04-28.md."
-                ),
-            },
-        )
-        for r in rows
-    ]
+# Removed 2026-05-05 (Session 217, task #4 close): the function
+# `_check_sigauth_post_fix_window_canary` covered the 7-day window
+# 2026-04-28 17:11Z → 2026-05-05 17:11Z bracketing the sigauth
+# wrap-fix deploy (commit 303421cc). Verified zero firings over the
+# entire window via fork psql before removal. The steady-state
+# detector `sigauth_enforce_mode_rejections` (sev2, rolling 6h)
+# remains. Validation doc:
+# docs/security/sigauth-wrap-validation-2026-04-28.md.
 
 
 async def _check_sigauth_enforce_mode_rejections(conn: asyncpg.Connection) -> List[Violation]:
