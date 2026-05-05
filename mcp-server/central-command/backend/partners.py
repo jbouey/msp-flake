@@ -471,6 +471,59 @@ async def claim_provision_code(claim: ProvisionClaim):
 # These must come BEFORE /{partner_id} routes!
 # =============================================================================
 
+@router.get("/me/users")
+async def list_my_partner_users(
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """List partner_users in the caller's partner_org. Task #18 phase 3
+    (2026-05-05) — backs the new PartnerUsersScreen frontend.
+
+    Read-access: any authenticated partner user (admin/tech/billing).
+    Write paths (invite / role-change / remove) live elsewhere and
+    enforce admin-only at their own gate; this endpoint is read-only.
+
+    Returns an array of users sorted by created_at ASC so the
+    org-creating admin appears first by default.
+    """
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id::text, email, name, role, status,
+                   mfa_enabled, mfa_required,
+                   last_login_at, created_at
+              FROM partner_users
+             WHERE partner_id = $1::uuid
+             ORDER BY created_at ASC
+            """,
+            partner_id,
+        )
+    return {
+        "users": [
+            {
+                "id": r["id"],
+                "email": r["email"],
+                "name": r["name"],
+                "role": r["role"],
+                "status": r["status"],
+                "mfa_enabled": bool(r["mfa_enabled"]),
+                "mfa_required": bool(r["mfa_required"]),
+                "last_login_at": (
+                    r["last_login_at"].isoformat()
+                    if r["last_login_at"] else None
+                ),
+                "created_at": (
+                    r["created_at"].isoformat()
+                    if r["created_at"] else None
+                ),
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
 @router.get("/me")
 async def get_my_partner(request: Request, partner: dict = require_partner_role("admin", "tech", "billing")):
     """Get current partner's info (self-service)."""
