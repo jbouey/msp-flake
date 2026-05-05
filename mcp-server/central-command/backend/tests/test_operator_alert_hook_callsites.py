@@ -95,6 +95,11 @@ EXPECTED_HOOKS = [
     (_BACKEND / "partners.py", "partner_user_created"),
     (_BACKEND / "partners.py", "partner_api_key_regenerated"),
     (_BACKEND / "partners.py", "partner_org_deleted"),
+    # Followup task #20 closure 2026-05-04 — per-org configurable
+    # cooling-off / expiry. Both portals get a transfer-prefs
+    # endpoint with chain-gap escalation.
+    (_BACKEND / "client_owner_transfer.py", "client_org_transfer_prefs_changed"),
+    (_BACKEND / "partner_admin_transfer.py", "partner_transfer_prefs_changed"),
 ]
 
 

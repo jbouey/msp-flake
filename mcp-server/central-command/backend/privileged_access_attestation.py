@@ -140,6 +140,14 @@ ALLOWED_EVENTS = {
     "org_reprovisioned",
     "partner_api_key_regenerated",
     "partner_org_deleted",
+    # Followup task #20 closure 2026-05-04 — per-org configurable
+    # cooling-off / expiry on owner+admin transfers (mig 275).
+    # Changes to friction-level configuration are themselves privileged
+    # actions: weakening cooling-off from 24h to 0h reduces the attack
+    # window operators have to notice + cancel a malicious transfer.
+    # Same chain pattern as the underlying transfer events.
+    "client_org_transfer_prefs_changed",
+    "partner_transfer_prefs_changed",
 }
 
 

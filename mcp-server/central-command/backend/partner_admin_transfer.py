@@ -70,6 +70,26 @@ DEFAULT_EXPIRY_DAYS = 7
 MIN_REASON_CHARS = 20
 
 
+async def _resolve_partner_expiry_days(conn, partner_id: str) -> int:
+    """Read per-partner expiry_days from partners (mig 275). Falls
+    back to DEFAULT_EXPIRY_DAYS if row missing or column NULL.
+
+    NOTE: partners.transfer_cooling_off_hours is also a column from
+    mig 275 but is NOT honored at runtime — the partner-admin state
+    machine has no delayed-completion intermediate state. Future task
+    can wire it; until then, setting >0 is silently ignored.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT transfer_expiry_days FROM partners WHERE id = $1::uuid
+        """,
+        partner_id,
+    )
+    if not row or row["transfer_expiry_days"] is None:
+        return DEFAULT_EXPIRY_DAYS
+    return int(row["transfer_expiry_days"])
+
+
 class InitiatePartnerAdminTransferRequest(BaseModel):
     target_email: EmailStr
     reason: str = Field(..., min_length=MIN_REASON_CHARS)
@@ -84,6 +104,24 @@ class AcceptPartnerAdminTransferRequest(BaseModel):
 
 class CancelPartnerAdminTransferRequest(BaseModel):
     cancel_reason: str = Field(..., min_length=MIN_REASON_CHARS)
+
+
+class PartnerTransferPrefsUpdate(BaseModel):
+    """Per-partner config for admin-transfer friction levels (mig 275).
+
+    cooling_off_hours: 0..168 — schema-stored but currently
+        UNHONORED at runtime. The partner-admin state machine has
+        no delayed-completion intermediate state (Maya operator-class
+        design — completion is immediate at accept). Setting >0 here
+        will be ignored until a future task adds the state transition.
+        Documented as a known gap rather than enforced via CHECK so
+        the schema is forward-compatible with the future enhancement.
+    expiry_days: 1..30 — fully honored.
+    reason: ≥20 chars (changes to friction levels are privileged).
+    """
+    cooling_off_hours: int = Field(..., ge=0, le=168)
+    expiry_days: int = Field(..., ge=1, le=30)
+    reason: str = Field(..., min_length=MIN_REASON_CHARS)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────
@@ -236,10 +274,15 @@ async def initiate_partner_admin_transfer(
     partner_id = str(partner["id"])
     initiator_user_id = str(partner["user_id"])
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(days=DEFAULT_EXPIRY_DAYS)
 
     async with admin_connection(pool) as conn:
         async with conn.transaction():
+            # Mig 275 (task #20): read per-partner expiry config.
+            expiry_days = await _resolve_partner_expiry_days(
+                conn, partner_id,
+            )
+            expires_at = now + timedelta(days=expiry_days)
+
             await _expire_stale_transfers(conn, partner_id)
 
             existing = await conn.fetchrow(
@@ -600,6 +643,171 @@ async def cancel_partner_admin_transfer(
         "transfer_id": transfer_id,
         "status": "canceled",
         "canceled_by": actor_email,
+        "attestation_bundle_id": bundle_id,
+    }
+
+
+@partner_admin_transfer_router.put("/prefs")
+async def update_partner_transfer_prefs(
+    body: PartnerTransferPrefsUpdate,
+    request: Request,
+    partner: dict = require_partner_role("admin"),
+) -> Dict[str, Any]:
+    """Configure per-partner cooling-off and expiry on admin-transfers.
+
+    Auth: partner-admin only (same role that initiates transfers).
+    cooling_off_hours is currently INFORMATIONAL — the partner-admin
+    state machine completes immediately at accept regardless. Setting
+    a non-zero value here surfaces a P2 operator alert flagging the
+    informational-only nature.
+
+    Privileged action: weakening expiry from 7d to 1d reduces the
+    window operators have to notice + cancel a malicious transfer
+    before it auto-expires (the operator-cancel path is the same
+    whether the transfer expires naturally or stays pending).
+    """
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    actor_email = (partner.get("email") or "").lower()
+    new_cooling = body.cooling_off_hours
+    new_expiry = body.expiry_days
+
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            prior = await conn.fetchrow(
+                """
+                SELECT transfer_cooling_off_hours, transfer_expiry_days
+                  FROM partners
+                 WHERE id = $1::uuid
+                """,
+                partner_id,
+            )
+            if not prior:
+                raise HTTPException(
+                    status_code=404, detail="Partner not found",
+                )
+            prior_cooling = int(prior["transfer_cooling_off_hours"])
+            prior_expiry = int(prior["transfer_expiry_days"])
+
+            await conn.execute(
+                """
+                UPDATE partners
+                   SET transfer_cooling_off_hours = $2,
+                       transfer_expiry_days = $3
+                 WHERE id = $1::uuid
+                """,
+                partner_id, new_cooling, new_expiry,
+            )
+
+            try:
+                att = await create_privileged_access_attestation(
+                    conn,
+                    site_id=f"partner_org:{partner_id}",
+                    event_type="partner_transfer_prefs_changed",
+                    actor_email=actor_email,
+                    reason=body.reason,
+                    origin_ip=(request.client.host
+                               if request.client else None),
+                    approvals=[{
+                        "stage": "applied",
+                        "actor": actor_email,
+                        "prior_cooling_off_hours": prior_cooling,
+                        "new_cooling_off_hours": new_cooling,
+                        "prior_expiry_days": prior_expiry,
+                        "new_expiry_days": new_expiry,
+                    }],
+                )
+                bundle_id = att.get("bundle_id")
+                attestation_failed = False
+            except PrivilegedAccessAttestationError:
+                bundle_id = None
+                attestation_failed = True
+                logger.error(
+                    "partner_transfer_prefs_attestation_failed",
+                    exc_info=True,
+                    extra={"partner_id": partner_id},
+                )
+
+    # Audit (outside txn — log_partner_activity uses its own conn)
+    try:
+        await log_partner_activity(
+            partner_id=partner_id,
+            event_type=PartnerEventType.PARTNER_UPDATED,
+            target_type="partner",
+            target_id=partner_id,
+            event_data={
+                "action": "transfer_prefs_changed",
+                "prior_cooling_off_hours": prior_cooling,
+                "new_cooling_off_hours": new_cooling,
+                "prior_expiry_days": prior_expiry,
+                "new_expiry_days": new_expiry,
+                "reason": body.reason,
+                "actor_email": actor_email,
+            },
+            **_audit_request_metadata(request),
+        )
+    except Exception:
+        logger.error(
+            "partner_transfer_prefs_audit_failed",
+            exc_info=True,
+        )
+
+    # Operator alert. Three-tier severity:
+    #   P0-CHAIN-GAP if attestation broke
+    #   P1 if expiry weakened (operators care about reduced cancel window)
+    #   P2 cooling_off informational-only marker (set, but unhonored
+    #      at runtime today — surfaced so the operator notices the
+    #      partner is requesting a feature not yet wired).
+    weakening_expiry = new_expiry < prior_expiry
+    cooling_set_but_ignored = new_cooling > 0
+    try:
+        from .email_alerts import send_operator_alert
+        if attestation_failed:
+            op_severity = "P0-CHAIN-GAP"
+            op_suffix = " [ATTESTATION-MISSING]"
+        elif weakening_expiry:
+            op_severity = "P1"
+            op_suffix = " [EXPIRY-WEAKENED]"
+        elif cooling_set_but_ignored:
+            op_severity = "P2"
+            op_suffix = " [COOLING-OFF-INFORMATIONAL-ONLY]"
+        else:
+            op_severity = "P2"
+            op_suffix = ""
+        send_operator_alert(
+            event_type="partner_transfer_prefs_changed",
+            severity=op_severity,
+            summary=(
+                f"Partner transfer-prefs changed by {actor_email}: "
+                f"cooling_off {prior_cooling}h→{new_cooling}h, "
+                f"expiry {prior_expiry}d→{new_expiry}d{op_suffix}"
+            ),
+            details={
+                "partner_id": partner_id,
+                "prior_cooling_off_hours": prior_cooling,
+                "new_cooling_off_hours": new_cooling,
+                "prior_expiry_days": prior_expiry,
+                "new_expiry_days": new_expiry,
+                "reason": body.reason,
+                "weakening_expiry": weakening_expiry,
+                "cooling_set_but_ignored": cooling_set_but_ignored,
+                "attestation_bundle_id": bundle_id,
+                "attestation_failed": attestation_failed,
+            },
+            site_id=f"partner_org:{partner_id}",
+            actor_email=actor_email,
+        )
+    except Exception:
+        logger.error(
+            "operator_alert_dispatch_failed_partner_transfer_prefs",
+            exc_info=True,
+        )
+
+    return {
+        "status": "updated",
+        "cooling_off_hours": new_cooling,
+        "cooling_off_honored_at_runtime": False,  # explicit informational
+        "expiry_days": new_expiry,
         "attestation_bundle_id": bundle_id,
     }
 

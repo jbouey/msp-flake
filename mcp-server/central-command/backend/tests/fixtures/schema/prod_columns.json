@@ -622,6 +622,8 @@
     "subscription_plan",
     "subscription_status",
     "tax_id",
+    "transfer_cooling_off_hours",
+    "transfer_expiry_days",
     "updated_at",
     "welcome_email_sent_at"
   ],
@@ -3403,6 +3405,8 @@
     "stripe_subscription_id",
     "subscription_current_period_end",
     "subscription_plan",
+    "transfer_cooling_off_hours",
+    "transfer_expiry_days",
     "subscription_status",
     "support_email",
     "support_phone",

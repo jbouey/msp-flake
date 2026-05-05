@@ -101,11 +101,17 @@ def test_allowed_events_matches_expected_set():
         # Maya P1-1 closure 2026-05-04 — final-pass adversarial review.
         # Operator-alert hooks for these 4 admin events were claiming
         # "cryptographically attested" without writing an Ed25519
-        # bundle. Promoted to full chain. Total ALLOWED_EVENTS: 33.
+        # bundle. Promoted to full chain.
         "org_deprovisioned",
         "org_reprovisioned",
         "partner_api_key_regenerated",
         "partner_org_deleted",
+        # Followup task #20 closure 2026-05-04 — per-org configurable
+        # cooling-off / expiry on transfers (mig 275). Changes to
+        # friction-level config are themselves privileged. Total
+        # ALLOWED_EVENTS: 35.
+        "client_org_transfer_prefs_changed",
+        "partner_transfer_prefs_changed",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

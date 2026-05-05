@@ -58,10 +58,37 @@ owner_transfer_router = APIRouter(
 )
 
 
-# Cooling-off + expiry defaults. Steve P3 round-table: 24h is the
-# default; configurable per-org is a future enhancement.
+# Cooling-off + expiry defaults. Per-org overrides land via
+# PUT /api/client/users/transfer-prefs (mig 275, task #20). The
+# constants below are the fallback when no per-org row sets them
+# AND match the historic behavior shipped in mig 273.
 DEFAULT_COOLING_OFF_HOURS = 24
 DEFAULT_EXPIRY_DAYS = 7
+
+
+async def _resolve_org_transfer_prefs(conn, org_id: str) -> tuple[int, int]:
+    """Read per-org cooling_off_hours + expiry_days from client_orgs
+    (mig 275). Returns (cooling_off_hours, expiry_days). Falls back
+    to the module DEFAULT_* constants if the row is missing OR the
+    columns are NULL (defensive — mig 275 sets NOT NULL but a
+    pre-275 deploy snapshot would lack them entirely)."""
+    row = await conn.fetchrow(
+        """
+        SELECT transfer_cooling_off_hours, transfer_expiry_days
+          FROM client_orgs
+         WHERE id = $1::uuid
+        """,
+        org_id,
+    )
+    if not row:
+        return (DEFAULT_COOLING_OFF_HOURS, DEFAULT_EXPIRY_DAYS)
+    cooling = (row["transfer_cooling_off_hours"]
+               if row["transfer_cooling_off_hours"] is not None
+               else DEFAULT_COOLING_OFF_HOURS)
+    expiry = (row["transfer_expiry_days"]
+              if row["transfer_expiry_days"] is not None
+              else DEFAULT_EXPIRY_DAYS)
+    return (int(cooling), int(expiry))
 
 # Frontend URL for the accept link. Mirrors client_portal.BASE_URL but
 # we keep an independent default so this module is self-contained.
@@ -93,6 +120,18 @@ class AcceptOwnerTransferRequest(BaseModel):
 
 class CancelOwnerTransferRequest(BaseModel):
     cancel_reason: str = Field(..., min_length=MIN_REASON_CHARS)
+
+
+class TransferPrefsUpdate(BaseModel):
+    """Per-org config for owner-transfer friction levels (mig 275).
+
+    cooling_off_hours: 0..168 (max 1 week)
+    expiry_days: 1..30 (max 30 days)
+    reason: ≥20 chars (changes to friction levels are privileged)
+    """
+    cooling_off_hours: int = Field(..., ge=0, le=168)
+    expiry_days: int = Field(..., ge=1, le=30)
+    reason: str = Field(..., min_length=MIN_REASON_CHARS)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────
@@ -361,14 +400,21 @@ async def initiate_owner_transfer(
     accept_token = secrets.token_urlsafe(32)
     accept_token_hash = _hash_token(accept_token)
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(days=DEFAULT_EXPIRY_DAYS)
-    cooling_off_until = now + timedelta(
-        days=DEFAULT_EXPIRY_DAYS,
-        hours=DEFAULT_COOLING_OFF_HOURS,
-    )  # cooling-off starts AFTER target accepts; this is a hard cap.
 
     async with admin_connection(pool) as conn:
         async with conn.transaction():
+            # Mig 275 (task #20): read per-org cooling-off + expiry
+            # config. Captured at initiate time so a mid-transfer
+            # config change doesn't shift the lifecycle of an
+            # in-flight transfer.
+            cooling_hours, expiry_days = await _resolve_org_transfer_prefs(
+                conn, org_id,
+            )
+            expires_at = now + timedelta(days=expiry_days)
+            cooling_off_until = now + timedelta(
+                days=expiry_days, hours=cooling_hours,
+            )  # cooling-off starts AFTER target accepts; this is a hard cap.
+
             # Sweep stale rows so the unique partial index doesn't block
             await _expire_stale_transfers(conn, org_id)
 
@@ -672,12 +718,21 @@ async def accept_owner_transfer(
                     ),
                 )
 
-            # Cooling-off begins NOW. Cap at expires_at if expires_at is
-            # earlier than now+cooling_off (edge case if initiator sat
-            # on it for 6.9 days then target accepted with 2h to expiry).
+            # Mig 275 (task #20): read the per-org cooling-off config
+            # (NOT the value captured at initiate time — if the org
+            # admin tightened the friction post-initiate, the tighter
+            # value applies; if they relaxed it post-initiate, the
+            # original cooling_off_until on the row caps it).
+            cooling_hours, _ = await _resolve_org_transfer_prefs(
+                conn, row["client_org_id"],
+            )
+            # Cooling-off begins NOW. Cap at expires_at if expires_at
+            # is earlier than now+cooling_off (edge case if initiator
+            # sat on it for 6.9 days then target accepted with 2h to
+            # expiry).
             cooling_off_target = (
                 datetime.now(timezone.utc)
-                + timedelta(hours=DEFAULT_COOLING_OFF_HOURS)
+                + timedelta(hours=cooling_hours)
             )
             if cooling_off_target > row["expires_at"]:
                 cooling_off_target = row["expires_at"]
@@ -1031,6 +1086,167 @@ async def owner_transfer_sweep_loop():
             logger.error("owner_transfer_sweep_iteration_failed",
                          exc_info=True)
         await asyncio.sleep(60)
+
+
+@owner_transfer_router.put("/transfer-prefs")
+async def update_transfer_prefs(
+    body: TransferPrefsUpdate,
+    request: Request,
+    user: dict = Depends(require_client_owner),
+) -> Dict[str, Any]:
+    """Configure per-org cooling-off and expiry on owner-transfers.
+
+    Privileged action: changes to friction levels are themselves
+    attested. Weakening cooling-off from 24h to 0h reduces the attack
+    window operators have to notice + cancel a malicious transfer —
+    so the change MUST land in the cryptographic chain alongside the
+    underlying transfer events.
+
+    Auth: owner-only (requires the same role that initiates transfers).
+    Audit: client_audit_log row + Ed25519 attestation + operator alert.
+    Friction: reason ≥20ch + CHECK constraints (mig 275) bound ranges.
+    """
+    pool = await get_pool()
+    org_id = str(user["org_id"])
+    actor_email = user.get("email") or "unknown"
+    new_cooling = body.cooling_off_hours
+    new_expiry = body.expiry_days
+
+    async with admin_connection(pool) as conn:
+        async with conn.transaction():
+            # Snapshot prior values for the audit diff
+            prior = await conn.fetchrow(
+                """
+                SELECT transfer_cooling_off_hours, transfer_expiry_days
+                  FROM client_orgs
+                 WHERE id = $1::uuid
+                """,
+                org_id,
+            )
+            if not prior:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Client org not found",
+                )
+            prior_cooling = int(prior["transfer_cooling_off_hours"])
+            prior_expiry = int(prior["transfer_expiry_days"])
+
+            await conn.execute(
+                """
+                UPDATE client_orgs
+                   SET transfer_cooling_off_hours = $2,
+                       transfer_expiry_days = $3
+                 WHERE id = $1::uuid
+                """,
+                org_id, new_cooling, new_expiry,
+            )
+
+            await _audit_client_action(
+                conn, user,
+                action="TRANSFER_PREFS_CHANGED",
+                target=org_id,
+                details={
+                    "prior_cooling_off_hours": prior_cooling,
+                    "new_cooling_off_hours": new_cooling,
+                    "prior_expiry_days": prior_expiry,
+                    "new_expiry_days": new_expiry,
+                    "reason": body.reason,
+                },
+                request=request,
+            )
+
+            # Ed25519 attestation — anchor at org's primary site_id
+            # (matches client_user_role_changed precedent).
+            site_row = await conn.fetchrow(
+                """
+                SELECT site_id FROM sites
+                 WHERE client_org_id = $1::uuid
+                 ORDER BY created_at ASC LIMIT 1
+                """,
+                org_id,
+            )
+            anchor_site_id = (
+                site_row["site_id"] if site_row
+                else f"client_org:{org_id}"
+            )
+            try:
+                att = await create_privileged_access_attestation(
+                    conn,
+                    site_id=anchor_site_id,
+                    event_type="client_org_transfer_prefs_changed",
+                    actor_email=actor_email,
+                    reason=body.reason,
+                    origin_ip=(request.client.host
+                               if request.client else None),
+                    approvals=[{
+                        "stage": "applied",
+                        "actor": actor_email,
+                        "prior_cooling_off_hours": prior_cooling,
+                        "new_cooling_off_hours": new_cooling,
+                        "prior_expiry_days": prior_expiry,
+                        "new_expiry_days": new_expiry,
+                    }],
+                )
+                bundle_id = att.get("bundle_id")
+                attestation_failed = False
+            except PrivilegedAccessAttestationError:
+                bundle_id = None
+                attestation_failed = True
+                logger.error(
+                    "client_org_transfer_prefs_attestation_failed",
+                    exc_info=True,
+                    extra={"org_id": org_id},
+                )
+
+    # Operator-visibility outside txn. Severity escalates whenever
+    # cooling_off is being weakened OR attestation failed — both are
+    # signals an operator should see in real time.
+    weakening = new_cooling < prior_cooling
+    try:
+        from .email_alerts import send_operator_alert
+        if attestation_failed:
+            op_severity = "P0-CHAIN-GAP"
+            op_suffix = " [ATTESTATION-MISSING]"
+        elif weakening:
+            op_severity = "P1"  # weakening is operator-watch-class
+            op_suffix = " [FRICTION-WEAKENED]"
+        else:
+            op_severity = "P2"
+            op_suffix = ""
+        send_operator_alert(
+            event_type="client_org_transfer_prefs_changed",
+            severity=op_severity,
+            summary=(
+                f"Client org transfer-prefs changed by {actor_email}: "
+                f"cooling_off {prior_cooling}h→{new_cooling}h, "
+                f"expiry {prior_expiry}d→{new_expiry}d{op_suffix}"
+            ),
+            details={
+                "org_id": org_id,
+                "prior_cooling_off_hours": prior_cooling,
+                "new_cooling_off_hours": new_cooling,
+                "prior_expiry_days": prior_expiry,
+                "new_expiry_days": new_expiry,
+                "reason": body.reason,
+                "weakening": weakening,
+                "attestation_bundle_id": bundle_id,
+                "attestation_failed": attestation_failed,
+            },
+            site_id=f"client_org:{org_id}",
+            actor_email=actor_email,
+        )
+    except Exception:
+        logger.error(
+            "operator_alert_dispatch_failed_client_transfer_prefs",
+            exc_info=True,
+        )
+
+    return {
+        "status": "updated",
+        "cooling_off_hours": new_cooling,
+        "expiry_days": new_expiry,
+        "attestation_bundle_id": bundle_id,
+    }
 
 
 @owner_transfer_router.get("/{transfer_id}")
