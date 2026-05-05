@@ -1266,6 +1266,53 @@ async def update_transfer_prefs(
     }
 
 
+@owner_transfer_router.get("/active")
+async def get_active_owner_transfer(
+    user: dict = Depends(require_client_user),
+) -> Dict[str, Any]:
+    """Return the in-flight (non-terminal) owner-transfer for this org,
+    or 404 if none. Task #18 phase 1 (2026-05-05) — frontend modal
+    polls this on open to render the right step in the state machine.
+
+    Mig 273 enforces at-most-one-pending per org via the partial unique
+    index `idx_owner_transfer_one_pending` so this query returns at
+    most one row.
+    """
+    pool = await get_pool()
+    org_id = str(user["org_id"])
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id::text, status, target_email, reason,
+                   initiated_by_user_id::text AS initiator_id,
+                   target_user_id::text AS target_id,
+                   current_ack_at, target_accept_at,
+                   completed_at, canceled_at, canceled_by,
+                   cancel_reason, expires_at, cooling_off_until,
+                   created_at AS initiated_at,
+                   jsonb_array_length(attestation_bundle_ids)
+                       AS attestation_count
+              FROM client_org_owner_transfer_requests
+             WHERE client_org_id = $1::uuid
+               AND status IN ('pending_current_ack', 'pending_target_accept')
+             ORDER BY created_at DESC LIMIT 1
+            """,
+            org_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="No active transfer")
+    out = dict(row)
+    for k in ("current_ack_at", "target_accept_at", "completed_at",
+              "canceled_at", "expires_at", "cooling_off_until",
+              "initiated_at"):
+        if out.get(k) is not None:
+            out[k] = out[k].isoformat()
+    # Frontend modal expects an `ack_at` alias for current_ack_at.
+    if out.get("current_ack_at"):
+        out["ack_at"] = out["current_ack_at"]
+    return out
+
+
 @owner_transfer_router.get("/{transfer_id}")
 async def get_owner_transfer(
     transfer_id: str,

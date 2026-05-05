@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { DisclaimerFooter } from '../components/composed';
 import { csrfHeaders } from '../utils/csrf';
+import { ClientOwnerTransferModal } from './ClientOwnerTransferModal';
 
 interface OrgUser {
   id: string;
@@ -61,6 +62,8 @@ export const ClientSettings: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'users' | 'password' | 'transfer' | 'billing'>('users');
   const [users, setUsers] = useState<OrgUser[]>([]);
+  // Task #18 phase 1 — owner-role transfer modal (mig 273 state machine)
+  const [showOwnerTransfer, setShowOwnerTransfer] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -483,6 +486,31 @@ export const ClientSettings: React.FC = () => {
         {/* Users Tab */}
         {activeTab === 'users' && (
           <div className="space-y-6">
+            {/* Owner-role transfer entry point — owner-only, mig 273
+                state machine. Pre-task-#18 the entire backend shipped
+                with no UI. */}
+            {user?.role === 'owner' && (
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-medium">Owner Role</h2>
+                    <p className="mt-1 text-sm text-slate-600">
+                      You currently hold the owner role for this organization.
+                      Transferring it requires the new owner to confirm
+                      via emailed magic link, with a cooling-off window
+                      and full cryptographic attestation.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowOwnerTransfer(true)}
+                    className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+                  >
+                    Transfer Owner Role
+                  </button>
+                </div>
+              </div>
+            )}
+
             {canManageUsers && (
               <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                 <h2 className="text-lg font-medium mb-4">Invite User</h2>
@@ -832,6 +860,13 @@ export const ClientSettings: React.FC = () => {
         </div>
         <DisclaimerFooter />
       </main>
+
+      {/* Task #18 phase 1 — owner-role transfer modal (mig 273) */}
+      <ClientOwnerTransferModal
+        isOpen={showOwnerTransfer}
+        onClose={() => setShowOwnerTransfer(false)}
+        onResolved={() => fetchUsers()}
+      />
     </div>
   );
 };
