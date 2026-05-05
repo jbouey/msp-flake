@@ -54,7 +54,8 @@ interface MonthlyReport {
 interface SiteScore {
   site_id: string;
   clinic_name: string;
-  score: number;
+  score: number | null;
+  score_status?: 'healthy' | 'no_data';
   passed: number;
   failed: number;
   total: number;
@@ -71,7 +72,9 @@ interface ComplianceCheck {
 
 interface Snapshot {
   generated_at: string;
-  overall_score: number;
+  overall_score: number | null;
+  score_status?: 'healthy' | 'no_data';
+  score_reason?: string;
   sites: SiteScore[];
   controls: { passed: number; failed: number; warnings: number; total: number };
   healing: { total: number; auto_healed: number; pending: number };
@@ -228,12 +231,26 @@ export const ClientReports: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider">Current Compliance Score</h2>
-                    <p className={`text-5xl font-bold mt-2 tabular-nums ${getScoreStatus(snapshot.overall_score).color}`}>
-                      {snapshot.overall_score.toFixed(1)}%
-                    </p>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Real-time snapshot as of {new Date(snapshot.generated_at).toLocaleString()}
-                    </p>
+                    {snapshot.overall_score == null ? (
+                      <>
+                        <p className="text-5xl font-bold mt-2 tabular-nums text-slate-400">—</p>
+                        <p className="text-sm text-slate-500 mt-1">
+                          {snapshot.score_reason === 'no_sites_provisioned'
+                            ? 'No sites provisioned yet'
+                            : 'Awaiting first scan'}
+                          {' — '}snapshot as of {new Date(snapshot.generated_at).toLocaleString()}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className={`text-5xl font-bold mt-2 tabular-nums ${getScoreStatus(snapshot.overall_score).color}`}>
+                          {snapshot.overall_score.toFixed(1)}%
+                        </p>
+                        <p className="text-sm text-slate-500 mt-1">
+                          Real-time snapshot as of {new Date(snapshot.generated_at).toLocaleString()}
+                        </p>
+                      </>
+                    )}
                   </div>
                   <div className="flex gap-6">
                     <div className="text-center">
@@ -281,9 +298,15 @@ export const ClientReports: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-6">
                           <span className="text-sm text-slate-600">{site.passed}/{site.total} passed</span>
-                          <span className={`px-3 py-1 text-sm font-semibold rounded-full tabular-nums ${getScoreStatus(site.score).bgColor} ${getScoreStatus(site.score).color}`}>
-                            {site.score.toFixed(1)}%
-                          </span>
+                          {site.score == null ? (
+                            <span className="px-3 py-1 text-sm font-semibold rounded-full tabular-nums bg-slate-100 text-slate-400">
+                              —
+                            </span>
+                          ) : (
+                            <span className={`px-3 py-1 text-sm font-semibold rounded-full tabular-nums ${getScoreStatus(site.score).bgColor} ${getScoreStatus(site.score).color}`}>
+                              {site.score.toFixed(1)}%
+                            </span>
+                          )}
                         </div>
                       </div>
                     ))}

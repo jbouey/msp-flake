@@ -32,7 +32,11 @@ interface AgentInstallInfo {
 }
 
 interface KPIs {
-  compliance_score: number;
+  // Stage 1 honest-defaults (round-table 2026-05-05): null when no
+  // data so the UI can show "—" rather than a misleading 100%.
+  compliance_score: number | null;
+  score_status?: 'healthy' | 'partial' | 'no_data';
+  score_source?: 'blended' | 'bundles_only' | 'agents_only' | 'none';
   total_checks: number;
   passed: number;
   failed: number;
@@ -353,15 +357,34 @@ export const ClientDashboard: React.FC = () => {
               </div>
               <p className="text-sm font-medium text-label-tertiary">Compliance Score<InfoTip text="Percentage of automated security checks passing. A high score means your systems are configured as expected." /></p>
             </div>
-            <span className={`text-4xl font-bold tabular-nums ${getScoreStatus(dashboard?.kpis.compliance_score || 0).color}`}>
-              {(dashboard?.kpis.compliance_score ?? 0).toFixed(1)}%
-            </span>
-            <div className={`mt-4 h-2 rounded-full ${getScoreStatus(dashboard?.kpis.compliance_score || 0).bgColor}`}>
-              <div
-                className={`h-full rounded-full transition-all ${getScoreStatus(dashboard?.kpis.compliance_score || 0).dotColor}`}
-                style={{ width: `${dashboard?.kpis.compliance_score || 0}%` }}
-              />
-            </div>
+            {dashboard?.kpis.compliance_score == null ? (
+              <>
+                <span className="text-4xl font-bold tabular-nums text-label-tertiary">—</span>
+                <p className="mt-2 text-sm text-label-tertiary">
+                  Awaiting first scan
+                </p>
+              </>
+            ) : (
+              <>
+                <span className={`text-4xl font-bold tabular-nums ${getScoreStatus(dashboard.kpis.compliance_score).color}`}>
+                  {dashboard.kpis.compliance_score.toFixed(1)}%
+                </span>
+                <div className={`mt-4 h-2 rounded-full ${getScoreStatus(dashboard.kpis.compliance_score).bgColor}`}>
+                  <div
+                    className={`h-full rounded-full transition-all ${getScoreStatus(dashboard.kpis.compliance_score).dotColor}`}
+                    style={{ width: `${dashboard.kpis.compliance_score}%` }}
+                  />
+                </div>
+                {dashboard.kpis.score_status === 'partial' && (
+                  <p className="mt-2 text-xs text-label-tertiary">
+                    Partial coverage —{' '}
+                    {dashboard.kpis.score_source === 'bundles_only'
+                      ? 'workstation agents not yet reporting'
+                      : 'drift bundles not yet reporting'}
+                  </p>
+                )}
+              </>
+            )}
           </div>
 
           {/* Checks Passed */}

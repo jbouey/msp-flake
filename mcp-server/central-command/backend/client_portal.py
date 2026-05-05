@@ -782,20 +782,36 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
                     'avg_compliance': float(agent_row['avg_compliance']) if agent_row['avg_compliance'] is not None else 0.0,
                 }
 
-        # Get compliance score - blend bundle and agent compliance
+        # Compliance score — blend bundle + agent compliance.
+        # Round-table 2026-05-05 (Stage 1 honest-defaults): never lie
+        # by returning 100% when source set is empty. Distinguishes
+        # 'no_data' / 'partial' / 'healthy' so the frontend can show
+        # "—" / "Awaiting first scan" instead of a misleading 100%.
         total = kpis["total_checks"] or 0
         passed = kpis["passed"] or 0
         bundle_score = round((passed / total) * 100, 1) if total > 0 else None
 
         if bundle_score is not None and agent_compliance:
-            # Both sources available: weighted average (70% bundle, 30% agent)
-            compliance_score = round(bundle_score * 0.7 + agent_compliance['avg_compliance'] * 0.3, 1)
+            compliance_score = round(
+                bundle_score * 0.7
+                + agent_compliance['avg_compliance'] * 0.3,
+                1,
+            )
+            score_status = "healthy"
+            score_source = "blended"
         elif bundle_score is not None:
             compliance_score = bundle_score
+            score_status = "partial"  # only one source available
+            score_source = "bundles_only"
         elif agent_compliance:
             compliance_score = agent_compliance['avg_compliance']
+            score_status = "partial"
+            score_source = "agents_only"
         else:
-            compliance_score = 100.0
+            # No data at all from either source — be honest.
+            compliance_score = None
+            score_status = "no_data"
+            score_source = "none"
 
         return {
             "org": {
@@ -818,6 +834,8 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
             ],
             "kpis": {
                 "compliance_score": compliance_score,
+                "score_status": score_status,
+                "score_source": score_source,
                 "total_checks": kpis["total_checks"],
                 "passed": kpis["passed"],
                 "failed": kpis["failed"],
@@ -1062,7 +1080,11 @@ async def get_site_compliance_health(
         trend = [
             {
                 "date": r["date"].isoformat(),
-                "score": round((r["passed"] / r["total"]) * 100, 1) if r["total"] > 0 else 100.0
+                "score": (
+                    round((r["passed"] / r["total"]) * 100, 1)
+                    if r["total"] > 0
+                    else None
+                )
             }
             for r in trend_rows
         ]
@@ -1272,7 +1294,10 @@ async def get_site_history(
                     "total": h["total"],
                     "passed": h["passed"],
                     "failed": h["failed"],
-                    "score": round((h["passed"] / h["total"]) * 100, 1) if h["total"] > 0 else 100.0,
+                    "score": (
+                        round((h["passed"] / h["total"]) * 100, 1)
+                        if h["total"] > 0 else None
+                    ),
                 }
                 for h in history
             ],
@@ -1713,7 +1738,9 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
         if not site_ids:
             return {
                 "generated_at": datetime.now(timezone.utc).isoformat(),
-                "overall_score": 100.0,
+                "overall_score": None,
+                "score_status": "no_data",
+                "score_reason": "no_sites_provisioned",
                 "sites": [],
                 "controls": {"passed": 0, "failed": 0, "warnings": 0, "total": 0},
                 "healing": {"total": 0, "auto_healed": 0, "pending": 0},
@@ -1750,7 +1777,9 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
         passed = sum(1 for c in checks if c["check_status"] == "pass")
         failed = sum(1 for c in checks if c["check_status"] == "fail")
         warnings = sum(1 for c in checks if c["check_status"] in ("warn", "warning"))
-        score = round((passed / total) * 100, 1) if total > 0 else 100.0
+        # Stage 1 honest-defaults: null + status, never 100% when 0/0.
+        score = round((passed / total) * 100, 1) if total > 0 else None
+        score_status = "healthy" if total > 0 else "no_data"
 
         # Recent healing activity (last 30 days)
         healing = await conn.fetchrow("""
@@ -1772,7 +1801,8 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
             site_results.append({
                 "site_id": site["site_id"],
                 "clinic_name": site["clinic_name"],
-                "score": round((sp / st) * 100, 1) if st > 0 else 100.0,
+                "score": round((sp / st) * 100, 1) if st > 0 else None,
+                "score_status": "healthy" if st > 0 else "no_data",
                 "passed": sp,
                 "failed": sum(1 for c in site_checks if c["check_status"] == "fail"),
                 "total": st,
@@ -1794,6 +1824,7 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "overall_score": score,
+            "score_status": score_status,
             "sites": site_results,
             "controls": {
                 "passed": passed,
