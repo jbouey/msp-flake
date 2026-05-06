@@ -236,6 +236,7 @@ async def check_rate_limit(
     action: str = "default",
     window_seconds: Optional[int] = None,
     max_requests: Optional[int] = None,
+    caller_key: Optional[str] = None,
 ) -> tuple:
     """
     Check if request is rate limited.
@@ -244,6 +245,15 @@ async def check_rate_limit(
     Optional overrides (used by sensitive endpoints like break-glass):
       window_seconds — custom TTL (default: RATE_LIMIT_WINDOW = 300s)
       max_requests   — custom cap (default: RATE_LIMIT_OVERRIDES[action] or RATE_LIMIT_REQUESTS)
+      caller_key     — Steve P2 round-table 2026-05-06: per-caller
+                       isolation so admin + client + partner +
+                       auditor each have independent buckets on
+                       endpoints where the per-site cap would
+                       otherwise let one caller starve another. Pass
+                       a stable identity-derived key (e.g.
+                       "client:<user_id>"). When None, behavior is
+                       unchanged from prior versions: a single
+                       per-(site, action) bucket. Backwards compat.
     """
     if redis_client is None:
         return True, 0  # No Redis = no rate limiting (test/dev mode)
@@ -255,7 +265,10 @@ async def check_rate_limit(
         else RATE_LIMIT_OVERRIDES.get(action, RATE_LIMIT_REQUESTS)
     )
 
-    key = f"rate:{site_id}:{action}"
+    if caller_key:
+        key = f"rate:{site_id}:{action}:{caller_key}"
+    else:
+        key = f"rate:{site_id}:{action}"
 
     count = await redis_client.incr(key)
 

@@ -18,6 +18,7 @@ import json
 import hashlib
 import hmac
 import base64
+import binascii
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any, Tuple
@@ -196,6 +197,23 @@ async def require_evidence_view_access(
             )
 
     # 4/5. LEGACY portal session cookie OR legacy token query param.
+    # Maya P2 (round-table 2026-05-06): ?token= leaks to nginx access
+    # logs, browser history, Referer headers. Emit a structured
+    # deprecation warning every time this path resolves so we can
+    # measure remaining traffic before flipping the switch.
+    if token:
+        logger.warning(
+            "auditor_kit_legacy_token_query_param_in_use",
+            extra={
+                "site_id": site_id,
+                "deprecation_class": "token_in_url",
+                "remediation": (
+                    "Migrate caller to a session-cookie or "
+                    "Authorization-header path; ?token= is "
+                    "scheduled for removal."
+                ),
+            },
+        )
     try:
         from .portal import validate_session as _validate_portal_session
         portal_ctx = await _validate_portal_session(site_id, portal_session, token)
@@ -4768,17 +4786,36 @@ async def download_auditor_kit(
     db: AsyncSession = Depends(get_db),
     _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
-    # Per-site rate limit: legitimate auditor use is a handful of kit downloads
-    # per day, not bulk-export pressure. Cap at 10 per hour per site to make
-    # it hard to use this endpoint as a memory-pressure vector against the
-    # process (each call materializes up to 5,000 bundles into an in-memory
-    # ZIP). Honors the authenticated caller's auth context — this is abuse
-    # prevention, NOT an auth gate.
+    # Per-(site, caller) rate limit: 10 downloads per hour per caller
+    # identity. Steve P2 (round-table 2026-05-06): the prior bucket
+    # was keyed only on site_id, so an admin's investigation, a
+    # legitimate auditor pull, and a partner-side download all
+    # competed for the same 10/hr cap. Per-caller isolation means
+    # each bucket is independent: a noisy auditor can't lock out
+    # the admin investigating the same site. caller_key is stable
+    # per identity (admin user, client_user, partner_user, or the
+    # legacy portal token's site identity).
+    auth_method = (_auth or {}).get("method", "unknown")
+    if auth_method == "admin":
+        admin_user_id = (_auth or {}).get("user", {}).get("id") or "unknown"
+        caller_key = f"admin:{admin_user_id}"
+    elif auth_method == "client_portal":
+        caller_key = f"client:{(_auth or {}).get('user_id', 'unknown')}"
+    elif auth_method == "partner_portal":
+        caller_key = (
+            f"partner:{(_auth or {}).get('user_id') or (_auth or {}).get('partner_id', 'unknown')}"
+        )
+    else:
+        # Legacy portal magic-link / ?token=. No user identity to
+        # isolate by; falls back to per-site cap (matches prior
+        # behavior for these flows).
+        caller_key = None
     allowed, retry_after_s = await check_rate_limit(
         site_id=site_id,
         action="auditor_kit_download",
         window_seconds=3600,
         max_requests=10,
+        caller_key=caller_key,
     )
     if not allowed:
         logger.warning(
@@ -4814,8 +4851,15 @@ async def download_auditor_kit(
     import zipfile
     from fastapi.responses import StreamingResponse
 
-    if limit < 1 or limit > 5000:
-        raise HTTPException(400, "limit must be between 1 and 5000")
+    # Steve P2 (round-table 2026-05-06): ceiling lowered 5000 → 2000.
+    # At 5000 bundles × ~50KB OTS each = ~250MB upstream RAM before
+    # SpooledTemporaryFile spilling helps. 2000 caps that at ~100MB
+    # while preserving headroom for the largest legitimate auditor
+    # pull (default per-call is 1000; auditors paginate via offset
+    # for the full chain). Hard limit is enforced; soft limit at
+    # 1000 stays the default.
+    if limit < 1 or limit > 2000:
+        raise HTTPException(400, "limit must be between 1 and 2000")
     if offset < 0:
         raise HTTPException(400, "offset must be >= 0")
 
@@ -5086,8 +5130,26 @@ async def download_auditor_kit(
                     "calendar_url": r.calendar_url,
                     "anchored_at": r.anchored_at.isoformat() if r.anchored_at else None,
                 }
-            except Exception:
-                pass
+            except (binascii.Error, ValueError) as decode_err:
+                # Steve P2 + Maya P3 (round-table 2026-05-06):
+                # silently dropping a corrupted OTS proof from the
+                # kit was indistinguishable from "no proof yet"
+                # downstream, masking either DB corruption or an
+                # adversarial proof_data write. Log loud + emit a
+                # Prometheus-shaped structured event so the
+                # operator sees corrupted-OTS as a P1 alert. The
+                # bundle still ships in bundles.jsonl with
+                # ots=None — the auditor sees its absence
+                # explicitly rather than the kit silently lying.
+                logger.warning(
+                    "auditor_kit_ots_decode_failed",
+                    extra={
+                        "bundle_id": str(r.bundle_id),
+                        "site_id": site_row.site_id,
+                        "error_class": type(decode_err).__name__,
+                        "error_msg": str(decode_err)[:200],
+                    },
+                )
         bundles_jsonl_lines.append(_json.dumps(bundle_obj, sort_keys=True))
 
     # 6. Build the ZIP in memory
