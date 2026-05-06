@@ -23,3 +23,8 @@ export {
   cleanAttentionTitle,
 } from './status';
 export type { StatusType, StatusConfig } from './status';
+
+export {
+  POLL_INTERVAL_CLIENT_MS,
+  POLL_INTERVAL_PARTNER_MS,
+} from './polling';

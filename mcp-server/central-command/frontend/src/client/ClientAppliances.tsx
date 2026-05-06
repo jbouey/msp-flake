@@ -13,7 +13,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getJson } from '../utils/portalFetch';
 import { StatusBadge } from '../components/composed';
-import { formatTimeAgo } from '../constants';
+import { formatTimeAgo, POLL_INTERVAL_CLIENT_MS } from '../constants';
 
 interface ApplianceRow {
   appliance_id: string;
@@ -32,7 +32,7 @@ interface AppliancesResponse {
   limit: number;
 }
 
-const POLL_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = POLL_INTERVAL_CLIENT_MS;
 
 interface SummaryProps {
   rows: ApplianceRow[];

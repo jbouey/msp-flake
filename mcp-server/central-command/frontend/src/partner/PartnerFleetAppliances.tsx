@@ -10,7 +10,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { getJson } from '../utils/portalFetch';
 import { StatusBadge } from '../components/composed';
-import { formatTimeAgo } from '../constants';
+import { formatTimeAgo, POLL_INTERVAL_PARTNER_MS } from '../constants';
 
 interface ApplianceRow {
   appliance_id: string;
@@ -38,7 +38,7 @@ interface FleetResponse {
   limit: number;
 }
 
-const POLL_INTERVAL_MS = 15_000;
+const POLL_INTERVAL_MS = POLL_INTERVAL_PARTNER_MS;
 type StatusFilter = '' | 'online' | 'stale' | 'offline';
 
 export const PartnerFleetAppliances: React.FC = () => {
