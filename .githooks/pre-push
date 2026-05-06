@@ -221,6 +221,37 @@ if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     cd "$REPO_ROOT"
 fi
 
+# Full-CI-parity backend test sweep (Session 218 round-table 2026-05-06).
+#
+# The SOURCE_LEVEL_TESTS list above is a CURATED fast lane (~45s).
+# On 2026-05-06 deploy 18af959c failed at CI on
+# test_auditor_kit_endpoint.py — that test was NOT in the curated
+# list but WAS in CI. Local pre-push said clean; CI failed.
+#
+# Helper script .githooks/full-test-sweep.sh mirrors CI's exact
+# behavior: walks every tests/test_*.py, runs each in its own
+# subprocess (matches CI's stub-isolation), parallel `-P 6` for
+# ~92s wall on a fully-equipped dev box. Collection errors caused
+# by missing backend deps (asyncpg, pynacl, pydantic_core, nacl,
+# sqlalchemy.ext.asyncio, aiohttp, cryptography, google.auth) are
+# treated as SKIPPED — those run server-side. Real assertion
+# failures are FATAL.
+#
+# Opt-out: PRE_PUSH_SKIP_FULL=1 git push (use sparingly).
+# Tune parallelism: PRE_PUSH_PARALLEL=N (default 6).
+if [ "$BACKEND_CHANGED" -eq 1 ] && [ "${PRE_PUSH_SKIP_FULL:-0}" != "1" ]; then
+    echo "[pre-push] full backend test sweep (CI parity)..."
+    if ! bash "$REPO_ROOT/.githooks/full-test-sweep.sh" \
+            "$REPO_ROOT/mcp-server/central-command/backend"; then
+        echo ""
+        echo "[pre-push] ❌ full backend sweep failed — push blocked"
+        echo "[pre-push] Real test failures above. Fix or use"
+        echo "[pre-push]   PRE_PUSH_SKIP_FULL=1 git push (emergency only)"
+        echo "[pre-push] Bypass entirely: git push --no-verify"
+        exit 1
+    fi
+fi
+
 # Stem-matched targeted backend pytest (Session 212 round-table angle 4 P1).
 # Opt-in via PRE_PUSH_FULL=1 so dev pushes that lack asyncpg/pynacl
 # don't get blocked. When enabled, walks the changed-source filenames
