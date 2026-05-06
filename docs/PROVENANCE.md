@@ -1,5 +1,34 @@
 # Software Provenance & Time Framework
 
+> **Last verified:** 2025-12-03. **Stale on Vault posture +
+> chain anchoring details.**
+>
+> What's accurate: core principle of cryptographic provability +
+> temporal ordering; OTS-anchoring concept; Ed25519 signatures.
+>
+> What's stale or incomplete:
+> - **Vault Transit:** documented here as a future state. Now
+>   live in shadow-mode at Hetzner host `89.167.76.203` /
+>   WG `10.100.0.3`. 1Password owns unseal shares; root token
+>   revoked. Dual-write mode (file-key + Vault-key produce
+>   byte-identical signatures); hot-cutover pending.
+> - **Per-appliance signing keys (Session 196):** each appliance
+>   has its own Ed25519 keypair stored in
+>   `site_appliances.agent_public_key` (NEVER `sites.agent_public_key`).
+>   Multi-appliance sites do NOT share signing material.
+> - **Compliance bundle volume:** ~245K bundles in production,
+>   partitioned monthly per migration 138.
+> - **Site canonical mapping (mig 256-258):** site renames flow
+>   through `rename_site()` SQL function only; never use
+>   `canonical_site_id()` for compliance_bundles (the chain
+>   binds to original site_id forever — CI-gated).
+> - **Chain crossing the org boundary** (RT21 cross-org relocate,
+>   2026-05-06): chain stays anchored at original site_id;
+>   `sites.prior_client_org_id` provides the lookup pointer.
+>
+> **Canonical current authority:** `~/Downloads/OsirisCare_Owners_
+> Manual_and_Auditor_Packet.pdf` Part 2 §2.2 (cryptographic chain).
+
 ## Overview
 
 **Core Principle:** Every action, every build, every log entry must be cryptographically provable as authentic and temporally ordered.

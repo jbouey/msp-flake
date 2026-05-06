@@ -1,7 +1,76 @@
 # API Contracts & Type Definitions
 
 **Last Updated:** 2026-01-27
-**Last Verified:** 2026-01-27
+**Last Verified:** 2026-01-27 (header) — but **substantial new
+contracts shipped between 2026-01-27 and 2026-05-06** that are NOT
+documented in this file. See addendum below + the consolidated
+packet for current authority.
+
+> ## 2026-05-06 contracts addendum (read first)
+>
+> The following endpoint contracts shipped after this doc's last
+> verification. They are CI-pinned and authoritative as of
+> 2026-05-06.
+>
+> **Cross-org relocate state machine** (RT21, behind feature flag):
+> - `POST /api/admin/cross-org-relocate/initiate`
+> - `POST /api/admin/cross-org-relocate/source-release`
+> - `POST /api/admin/cross-org-relocate/target-accept`
+> - `POST /api/admin/cross-org-relocate/{id}/execute`
+> - `POST /api/admin/cross-org-relocate/{id}/cancel`
+> - `GET  /api/admin/cross-org-relocate/{id}`
+> - `POST /api/admin/cross-org-relocate/propose-enable` (admin #1)
+> - `POST /api/admin/cross-org-relocate/approve-enable` (admin #2,
+>   approver != proposer at DB CHECK)
+>
+> **Contracts-team admin endpoints** (counsel approval condition #2):
+> - `POST /api/dashboard/admin/orgs/{org_id}/baa-receipt-authorize`
+>   (records BAA receipt-authorization signature_id for cross-org
+>   relocate target eligibility)
+> - `GET /api/dashboard/admin/orgs/cross-org-relocate-readiness`
+>   (pre-flight inspection)
+>
+> **Owner / admin transfer state machines** (mig 273+274):
+> - `POST /api/client/users/owner-transfer/initiate`
+> - `POST /api/client/users/owner-transfer/{id}/ack`
+> - `POST /api/client/users/owner-transfer/accept?token=…`
+> - `POST /api/client/users/owner-transfer/{id}/cancel`
+> - `GET  /api/client/users/owner-transfer/{id}`
+> - parallel `partner-admin-transfer` set under `/api/partners/me/`
+>
+> **MFA admin overrides** (mig 276):
+> - `POST /api/{client/users,partners/me}/mfa/{user_id}/reset`
+> - `POST /api/{client/users,partners/me}/mfa/{user_id}/revoke`
+> - `POST /api/{client/users,partners/me}/mfa/{user_id}/restore`
+>   (24h reversible-link path)
+>
+> **Email rename** (mig 277): `POST /api/client/users/{id}/email-
+> rename` with three actor classes (self / partner / substrate).
+>
+> **Client-portal appliance fleet** (RT33 P2):
+> - `GET /api/client/appliances` — RLS-protected; opaque field set
+>   (no MAC, no IP, no daemon_health per Carol's Layer-2 leakage veto)
+>
+> **Partner-portal appliance fleet** (RT33 P3):
+> - `GET /api/partners/me/appliances` — cross-site fleet view;
+>   single-query CTE shape; cursor pagination cap 100; status filter
+>
+> **Auditor kit streaming** (RT33 P4): existing
+> `GET /api/evidence/sites/{id}/auditor-kit` now uses
+> `StreamingResponse` + `SpooledTemporaryFile` + `asyncio.to_thread`;
+> ~10× time-to-first-byte improvement.
+>
+> **Order completion path** (RT-DM mig 286): `POST /api/agent/orders/
+> complete` — primary completion path. Idempotent; failure-path-
+> aware; appliance-bearer-auth-gated.
+>
+> **Per-org transfer prefs** (mig 275): `PUT /api/{client/users,
+> partners/me}/owner-transfer/transfer-prefs` (cooling-off hours +
+> expiry days).
+>
+> **Canonical current authority:** `~/Downloads/OsirisCare_Owners_
+> Manual_and_Auditor_Packet.pdf` Part 1 §1.3 (operational tasks).
+
 
 This document defines the type contracts between Python backend and TypeScript frontend.
 

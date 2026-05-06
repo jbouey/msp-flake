@@ -1,5 +1,40 @@
 # HIPAA Compliance Framework
 
+> **Last verified:** 2026-01-14. **Stale on multiple fronts; read
+> the consolidated packet first.**
+>
+> This doc captures architectural posture (PHI-free, metadata-only,
+> scrubbers-at-edge) accurately at a foundational level. It does
+> NOT reflect substantial 2026 changes:
+>
+> - **§164.504(e) framing:** counsel adversarial review
+>   (2026-05-06) retired any "same-BA inapplicability" framing.
+>   Current framing: permitted-use scope under EACH BAA, regardless
+>   of vendor identity. See packet §2.5.
+> - **§164.528 framing:** the standard is substantive completeness
+>   + retrievability, NOT cryptographic immutability. Crypto chain
+>   is integrity hardening; the substantive record lives in audit-
+>   log + request rows. See packet §2.6.
+> - **Cryptographic chain:** Ed25519 + hash-chain + OTS
+>   (OpenTimestamps), ~245K bundles partitioned monthly. See
+>   packet §2.2.
+> - **Privileged-Access Chain of Custody (Session 205):** every
+>   privileged action has a 4-element chain (`client identity →
+>   policy approval → execution → attestation`) enforced at CLI +
+>   API + DB-trigger. Three-list lockstep CI-gated. See packet §2.3.
+> - **Substrate Integrity Engine:** 14+ invariants every 60s catch
+>   drift (RLS misalignment, chain gaps, partition misses, etc.).
+>   See packet §2.4.
+> - **Cross-org site relocate:** new feature class counsel-approved
+>   2026-05-06; behind dual-admin governance flag. See packet §2.9.
+> - **Idle-session timeout (§164.312(a)(2)(iii)):** 15-min wired in
+>   both portal contexts; CI-pinned.
+> - **PHI scrubbing technical detail:** appliance/internal/phiscrub
+>   has 14 patterns + 21 tests; runs at egress before TLS upload.
+>
+> **Canonical current authority:** `~/Downloads/OsirisCare_Owners_
+> Manual_and_Auditor_Packet.pdf` (Part 2 — Auditor's Need-to-Know).
+
 ## Legal Positioning
 
 **You are a Business Associate (BA)** - but only for *operations*, not for *treatment or records*.

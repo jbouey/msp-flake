@@ -1,5 +1,15 @@
 # Data Model Documentation
 
+> **Last verified:** 2026-05-06 (RT-DM data-model audit cycle).
+> **Three CRITICAL issues this doc previously called out have all
+> been resolved in commit `4619bb07`** (migrations 284, 285, 286 +
+> 3 substrate invariants + 16-check CI gate). See the resolved-
+> with-context blocks below.
+>
+> **Canonical current-state authority:** `OsirisCare_Owners_Manual_
+> and_Auditor_Packet.pdf` (in `~/Downloads/`, generated 2026-05-06).
+> Where this doc and the packet disagree, the packet wins.
+
 ## Overview
 
 This document describes the central database schema, data flows, and naming conventions to prevent future mismatches between components.
@@ -36,19 +46,34 @@ This document describes the central database schema, data flows, and naming conv
 
 ## ID Naming Conventions
 
-### CRITICAL: Runbook ID Mismatch
+### Runbook ID Mismatch — RESOLVED 2026-05-06 (mig 284)
 
-**Current State (BROKEN):**
+> **Historical context (from 2026-01-31 capture):** at the time
+> this doc was written, `execution_telemetry.runbook_id` (L1-*
+> form) and `runbooks.runbook_id` (RB-*/LIN-* form) did not
+> match. JOINs failed; per-runbook execution counts showed 0.
+
+**Resolution shipped 2026-05-06 (RT-DM Issue #1):** migration 284
+adds `runbooks.agent_runbook_id TEXT UNIQUE` bridge column +
+backfills the mapping for known L1-* IDs + INSERTs placeholder
+runbook rows for orphan L1-* IDs so EVERY agent-emitted
+`runbook_id` matches a row via the bridge column. Dashboard
+queries JOIN on either column. Substrate invariant
+`unbridged_telemetry_runbook_ids` (sev2) catches future drift.
+
+```sql
+-- Current per-runbook execution count (works as of mig 284):
+SELECT r.runbook_id,
+       r.agent_runbook_id,
+       COUNT(*) AS executions_7d
+  FROM execution_telemetry et
+  JOIN runbooks r
+    ON r.agent_runbook_id = et.runbook_id
+    OR r.runbook_id = et.runbook_id
+ WHERE et.created_at > NOW() - INTERVAL '7 days'
+ GROUP BY r.runbook_id, r.agent_runbook_id
+ ORDER BY executions_7d DESC;
 ```
-execution_telemetry.runbook_id: L1-FIREWALL-001, L1-AUDIT-001, L1-LIN-SSH-001
-runbooks.runbook_id:           RB-WIN-SVC-001, RB-WIN-SEC-001, RB-LIN-ACCT-001
-```
-
-These DO NOT match. Joins fail silently, causing 0 execution counts per runbook.
-
-**Root Cause:** Agent uses L1 rule IDs from its local rule engine, but runbooks table uses a different naming scheme.
-
-**Recommended Fix:** Create a mapping table or update agent to log the canonical runbook_id.
 
 ### Naming Conventions by Table
 
@@ -63,28 +88,31 @@ These DO NOT match. Joins fail silently, causing 0 execution counts per runbook.
 
 ## Resolution Tier Tracking
 
-### CRITICAL: L2 Decisions Split Across Tables
+### L2 Decisions Tracking — RESOLVED 2026-05-06 (mig 285)
 
-**Data Distribution:**
+> **Historical context (2026-01-31):** the original finding was
+> that `incidents.resolution_tier` showed 0 L2 records while
+> `execution_telemetry.resolution_level` showed 911. The framing
+> ("missing L2 values") was incomplete: L2 was actually allowed
+> in the CHECK constraint (mig 106) and `agent_api.py` writes
+> tier='L2' on the resolution path. The real gap was: no
+> canonical SQL view JOINing `l2_decisions` to `incidents`, so
+> dashboards consuming one table without the other saw partial
+> truth.
+
+**Resolution shipped 2026-05-06 (RT-DM Issue #2):** migration 285
+ships `v_l2_outcomes` view (LEFT JOIN `l2_decisions` to
+`incidents`) + `compute_l2_success_rate(window_days)` SQL
+function. Dashboards consume the canonical view. Underlying
+tables stay intact. Substrate invariant
+`l2_resolution_without_decision_record` (sev2) catches gaps
+where an incident has tier='L2' but no `l2_decisions` row
+references it.
+
 ```sql
--- incidents.resolution_tier
-L1: 1,089 records
-L3: 442 records
-L2: 0 records (!)
-
--- execution_telemetry.resolution_level
-L1: 6,555 records
-L2: 911 records
-L3: 1 record
+-- Current canonical L2 success rate (works as of mig 285):
+SELECT * FROM compute_l2_success_rate(window_days := 30);
 ```
-
-**Finding:** L2 decisions are ONLY recorded in `execution_telemetry`, not in `incidents`.
-
-**Canonical Source:** `execution_telemetry.resolution_level` for all resolution tier metrics.
-
-**Recommended Fix:** Either:
-1. Update agent to also set `incidents.resolution_tier` when L2 is used
-2. Always query `execution_telemetry` for resolution metrics (current workaround)
 
 ---
 
@@ -237,84 +265,116 @@ CREATE TABLE runbooks (
 
 ---
 
-## Known Issues & Workarounds
+## Known Issues & Workarounds — ALL THREE RESOLVED 2026-05-06
 
-### Issue 1: Runbook ID Mismatch
+> **Note (2026-05-06):** the three issues catalogued below were
+> reported by an outside auditor and ALL THREE shipped fixes in
+> commit 4619bb07. This section is preserved for historical
+> reference; the current state has each issue closed at the
+> schema layer + application layer + substrate-invariant layer
+> + CI-gate layer. See `docs/lessons/sessions-218.md` and
+> `.agent/plans/RT-DM-data-model-audit-2026-05-06.md` (when
+> written) for the full round-table + Maya 2nd-eye record.
+
+### Issue 1: Runbook ID Mismatch — RESOLVED (mig 284)
 - **Tables:** `execution_telemetry` vs `runbooks`
-- **Impact:** Per-runbook execution counts show 0
-- **Workaround:** Dashboard shows total telemetry stats, not per-runbook
-- **Fix Needed:** Create `runbook_id_mapping` table or update agent
+- **Resolution:** `runbooks.agent_runbook_id` bridge column +
+  backfilled mapping for L1-* → LIN-*/RB-* + placeholder rows
+  for orphan L1-* IDs (so EVERY agent-emitted runbook_id matches
+  a row via the bridge).
+- **Drift catcher:** `unbridged_telemetry_runbook_ids` substrate
+  invariant (sev2).
+- **CI gate:** `tests/test_data_model_audit_contract.py`
+  asserts the bridge column + mappings + placeholders exist.
 
-### Issue 2: L2 Decisions Not in incidents
-- **Tables:** `incidents.resolution_tier` missing L2 values
-- **Impact:** Dashboard L2 count was 0
-- **Workaround:** UNION query on both tables
-- **Fix Needed:** Agent should set `incidents.resolution_tier` for all resolutions
+### Issue 2: L2 Decisions Tracking — RESOLVED (mig 285)
+- **Tables:** `l2_decisions` + `incidents.resolution_tier`
+- **Resolution:** `v_l2_outcomes` view JOINs the two;
+  `compute_l2_success_rate(window_days)` SQL function is THE
+  canonical L2 metric source. Dashboards consume the view.
+- **Drift catcher:** `l2_resolution_without_decision_record`
+  substrate invariant (sev2).
+- **CI gate:** asserts the view + function + JOIN-correctness.
 
-### Issue 3: Orders Stay Pending
-- **Tables:** `orders.status` never updated to completed
-- **Impact:** Order-based metrics show 0% completion
-- **Workaround:** Use `execution_telemetry` for execution metrics
-- **Fix Needed:** Agent should update order status after execution
-
----
-
-## Recommended Schema Changes
-
-### 1. Add Runbook ID Mapping Table
-
-```sql
-CREATE TABLE runbook_id_mapping (
-    l1_rule_id VARCHAR(100) PRIMARY KEY,     -- L1-FIREWALL-001
-    runbook_id VARCHAR(100) NOT NULL,        -- RB-WIN-SEC-001
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    FOREIGN KEY (runbook_id) REFERENCES runbooks(runbook_id)
-);
-```
-
-### 2. Add Trigger to Sync incidents.resolution_tier
-
-```sql
-CREATE OR REPLACE FUNCTION sync_incident_resolution_tier()
-RETURNS TRIGGER AS $$
-BEGIN
-    UPDATE incidents
-    SET resolution_tier = NEW.resolution_level
-    WHERE id::text = NEW.incident_id;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER sync_resolution_tier
-AFTER INSERT ON execution_telemetry
-FOR EACH ROW EXECUTE FUNCTION sync_incident_resolution_tier();
-```
+### Issue 3: Orders Stay Pending — RESOLVED (mig 286)
+- **Tables:** `orders.status`
+- **Resolution:** initial round-table proposed a DB trigger reading
+  `execution_telemetry.metadata->>'order_id'`; **Maya 2nd-eye on
+  the SHIPPED fix found `execution_telemetry` has NO metadata
+  column** → trigger would silently no-op forever. Redesigned:
+  - **Explicit `/api/agent/orders/complete` endpoint** as primary
+    completion path. Idempotent; failure-path-aware (success=false
+    → status='failed' with error_message).
+  - **`sweep_stuck_orders()` SQL function** as backstop for orders
+    that ack'd but never complete.
+  - **`execution_telemetry.order_id` column** added forward-compat
+    for when the agent emits it.
+- **Drift catcher:** `orders_stuck_acknowledged` substrate
+  invariant (sev2).
+- **CI gate:** asserts the endpoint exists + is auth-gated +
+  idempotent + handles BOTH success and failure paths.
 
 ---
 
-## Query Patterns
+## Schema changes that landed (2026-05-06 RT-DM cycle)
 
-### Get L2 Decisions (Correct Way)
+The "Recommended Schema Changes" section that previously lived
+here proposed a `runbook_id_mapping` table + a sync trigger. The
+final shipped fixes diverged from those recommendations after
+the round-table:
+
+- **Instead of a separate `runbook_id_mapping` table** (mig 284):
+  added `runbooks.agent_runbook_id TEXT UNIQUE` column +
+  backfilled mapping. One canonical table, one bridge column,
+  no separate JOIN object.
+- **Instead of a `sync_incident_resolution_tier` trigger**
+  (mig 285): exposed the canonical SQL through a `v_l2_outcomes`
+  view + `compute_l2_success_rate()` function. The L2 truth was
+  never actually missing from `incidents` — it was already
+  written by `agent_api.py`. The actual gap was the lack of a
+  canonical JOIN-aware metric source. The view ships that;
+  underlying tables stay intact.
+- **The orders.status fix** (mig 286) used neither approach —
+  Maya's post-fix 2nd-eye rejected the trigger-based design
+  because `execution_telemetry` has no `metadata` column to
+  correlate on. Replaced with explicit
+  `/api/agent/orders/complete` endpoint + `sweep_stuck_orders()`
+  function backstop.
+
+---
+
+## Query Patterns (current — post-2026-05-06)
+
+### Get L2 success rate (canonical)
 ```sql
--- Query BOTH tables with UNION
-SELECT tier, COUNT(*) FROM (
-    SELECT resolution_tier as tier FROM incidents
-    WHERE resolution_tier IS NOT NULL
-    UNION ALL
-    SELECT resolution_level as tier FROM execution_telemetry
-    WHERE resolution_level IS NOT NULL
-) combined
-GROUP BY tier;
+SELECT * FROM compute_l2_success_rate(window_days := 30);
+-- Returns: decision_count, success_count, success_rate
 ```
 
-### Get Runbook Executions (Workaround)
+### Get runbook execution count by canonical runbook
 ```sql
--- Until ID mapping is fixed, get totals from telemetry
-SELECT
-    COUNT(*) as total_executions,
-    COUNT(*) FILTER (WHERE success = true) as successful,
-    AVG(duration_seconds) as avg_duration
-FROM execution_telemetry;
+SELECT r.runbook_id,
+       r.agent_runbook_id,
+       r.name,
+       COUNT(*) AS executions_7d
+  FROM execution_telemetry et
+  JOIN runbooks r
+    ON r.agent_runbook_id = et.runbook_id
+    OR r.runbook_id = et.runbook_id
+ WHERE et.created_at > NOW() - INTERVAL '7 days'
+ GROUP BY r.runbook_id, r.agent_runbook_id, r.name
+ ORDER BY executions_7d DESC;
+```
+
+### Get order completion stats
+```sql
+SELECT status, COUNT(*) AS count
+  FROM orders
+ WHERE created_at > NOW() - INTERVAL '7 days'
+ GROUP BY status
+ ORDER BY count DESC;
+-- Pre-mig-286 this was always 100% 'pending' or 'acknowledged'.
+-- Post-mig-286 + agent calling /orders/complete: completed/failed appear.
 ```
 
 ---
@@ -330,5 +390,6 @@ FROM execution_telemetry;
 
 ---
 
-*Last Updated: 2026-01-31*
-*Session: 80 - Technical Debt Cleanup*
+*Last Updated: 2026-05-06 (RT-DM data-model audit cycle close)*
+*Original: Session 80 - Technical Debt Cleanup; refreshed Session 218 RT-DM*
+*Companion: `~/Downloads/OsirisCare_Owners_Manual_and_Auditor_Packet.pdf`*
