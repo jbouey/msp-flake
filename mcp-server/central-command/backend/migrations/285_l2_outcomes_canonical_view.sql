@@ -37,10 +37,13 @@ SELECT
     ld.created_at      AS decided_at,
 
     -- Outcome side (incidents)
+    -- Note (deploy fix 2026-05-06): incidents.host_id does NOT exist
+    -- in the production schema (verified vs prod_columns.json fixture).
+    -- Original draft of this view referenced it; removed from SELECT.
+    -- The hostname-class field that DOES exist is appliance_id.
     i.id               AS incident_pk,
     i.site_id,
     i.appliance_id,
-    i.host_id,
     i.incident_type,
     i.severity,
     i.status           AS incident_status,
