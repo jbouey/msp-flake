@@ -19,7 +19,7 @@ coach + Linda PM close-out.
 | C0 | Dashboard latency 17s in prod | **Reject as P0.** All 5 sample timestamps (19:13-19:21Z) are PRE-RT30 (deploy 21:26Z). Profile under live RLS context confirms 2.4s post-fix. Real but already addressed. **Status: confirmed via fork psql.** |
 | C1 | `org_management.py` DELETE references nonexistent column `client_user_id` (should be `user_id`) | **CONFIRMED.** Will crash any org-archive flow on first call. **Fix: rename column reference. P1.** |
 | C2 | Auditor-kit `<a href>` produces opaque 403/429 errors | **CONFIRMED.** `<a href>` bypasses fetch error handling; user sees raw JSON in new tab on session-expiry or rate-limit. **Fix: convert to fetch + blob URL + toast UX. P1.** |
-| C3 | No idle session warning UI (15-min HIPAA timeout silent) | **CONFIRMED but DEFERRED.** Real UX gap, but adding a countdown banner is a multi-component change spanning ClientContext + idle-detection hook + warning modal. **Fix: P2 follow-up commit, not blocking enterprise-ready.** |
+| C3 | No idle session warning UI (15-min HIPAA timeout silent) | **FALSE POSITIVE — already implemented.** Both `ClientContext.tsx:88-110` and `PartnerContext.tsx:160-181` wire `useIdleTimeout` (`src/hooks/useIdleTimeout.ts`, 15-min timeout / 2-min warning) + render `<IdleTimeoutWarning />` (`src/components/shared/IdleTimeoutWarning.tsx`, countdown modal). Audit didn't trace import chain. **Closed: 9c63d74d added `tests/test_idle_session_warning_wired.py` to pin the wiring against future regression.** |
 | C4 | `window_description` dead data on frontend | **CONFIRMED.** Backend returns the string post-RT30 but frontend never renders it. **Fix: add hover tip / info row on score tiles. P2 (one-line each).** |
 | C5 | `credentials: 'same-origin'` in ClientAlerts + CredentialEntryModal | **CONFIRMED.** CI gate `test_no_same_origin_credentials.py` exists; either grandfathered or about to fail. **Fix: change to `'include'` for consistency. P2.** |
 | C6 | RLS depends on app-level GUC discipline (`mcp` role bypasses RLS) | **CONFIRMED but BY DESIGN.** mcp role needs `BYPASSRLS` for admin operations + sweep loops. Single-layer defense at the GUC discipline level is the established posture. **Fix: NONE. Documented. P3 awareness item.** |
@@ -174,7 +174,7 @@ P5 (CSRF gap on API-key path) — verify by exercising the API-key flow against 
 11. New: `test_no_wrong_column_in_session_delete.py` — greps for `client_sessions.client_user_id` (wrong) — fails if found.
 
 ### Deferred follow-ups
-- C3 idle-session-warning UI (P2 polish commit)
+- ~~C3 idle-session-warning UI~~ — closed 9c63d74d (was already wired; gate added)
 - P0-evidence synthetic monitor for partner chain
 - P6 partner_user email rename (separate round-table)
 - P7 frontend tests on PartnerUsersScreen / modals
@@ -210,7 +210,7 @@ NO_REGRESSION verified by:
 - test_partner_mutations_role_gated passes 0 violations on the swept code
 
 VETOED items (deferred to follow-ups):
-- C3 idle-session-warning UI — needs ClientContext refactor + countdown banner
+- ~~C3 idle-session-warning UI~~ — CLOSED 9c63d74d. Audit was a false positive: ClientContext.tsx:88-110 + PartnerContext.tsx:160-181 already wire useIdleTimeout + IdleTimeoutWarning. Gate `tests/test_idle_session_warning_wired.py` pins the wiring.
 - C6 RLS-on-mcp-role posture awareness — documented in lessons doc; no code change
 - P0-evidence synthetic monitor — task #30 follow-up
 - P6 partner_user_email rename — separate round-table required
