@@ -77,7 +77,10 @@ def test_portal_files_standalone_site_appliances_select_filters_soft_deletes():
                 continue
             if "deleted_at IS NULL" in block:
                 continue
-            bad.append(f"{portal_file.name}: {re.sub(r'\\s+', ' ', block)[:180]}")
+            # Python 3.11 doesn't allow backslashes inside f-string
+            # expressions — extract the regex sub to a variable.
+            collapsed = re.sub(r"\s+", " ", block)[:180]
+            bad.append(f"{portal_file.name}: {collapsed}")
     assert not bad, (
         "`FROM site_appliances WHERE …` (no JOIN) query missing "
         "`deleted_at IS NULL` filter — RT33 ghost-data class.\n\n"

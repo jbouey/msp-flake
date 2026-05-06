@@ -50,6 +50,29 @@ if [ "$BACKEND_CHANGED" -eq 1 ]; then
     fi
     echo "[pre-push] ✓ import main clean"
     cd "$REPO_ROOT"
+
+    # CI Python parity check (RT33 deploy outage, 2026-05-05). CI runs
+    # Python 3.11; local devs may be on 3.13/3.14 which accepts more
+    # syntax (e.g. backslashes in f-string expressions). Three RT33
+    # deploys failed because a test file used 3.12+ syntax that 3.11
+    # rejects at collection time. Pre-push compiles every backend .py
+    # file with python3.11 if available — fast, catches the exact class.
+    if command -v python3.11 >/dev/null 2>&1; then
+        echo "[pre-push] CI Python 3.11 syntax check..."
+        BACKEND_DIR="$REPO_ROOT/mcp-server/central-command/backend"
+        if ! find "$BACKEND_DIR" -name "*.py" \
+            -not -path "*/venv/*" -not -path "*/.venv/*" \
+            -print0 | xargs -0 python3.11 -m py_compile 2>/tmp/py311-prepush.log; then
+            echo "[pre-push] ❌ Python 3.11 syntax check failed — push blocked"
+            echo ""
+            tail -20 /tmp/py311-prepush.log
+            echo ""
+            echo "[pre-push] CI runs Python 3.11. Fix the syntax (e.g."
+            echo "[pre-push] backslash in f-string expr), then re-push."
+            exit 1
+        fi
+        echo "[pre-push] ✓ Python 3.11 syntax clean"
+    fi
 fi
 
 # Source-level governance pytests (v40.5 round-table post-audit,
