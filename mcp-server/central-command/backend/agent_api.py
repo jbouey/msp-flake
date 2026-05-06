@@ -239,6 +239,24 @@ class _AgentApiOrderAcknowledgement(BaseModel):
     order_id: str
 
 
+class _AgentApiOrderCompletion(BaseModel):
+    """Order completion report from appliance.
+
+    RT-DM Issue #3 (2026-05-06): pre-fix, `orders.status` had no code
+    path past 'acknowledged'. Order-completion dashboards counted 0%.
+    This endpoint is the primary completion path; the appliance calls
+    it after executing an order's intended action. The
+    `sweep_stuck_orders()` SQL function (mig 286) is the backstop for
+    orders that ack'd but never complete'd.
+    """
+    site_id: str
+    order_id: str
+    success: bool
+    error_message: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+    duration_seconds: Optional[float] = None
+
+
 class _AgentApiEvidenceSubmission(BaseModel):
     """Evidence bundle submission."""
     bundle_id: str
@@ -586,6 +604,100 @@ async def acknowledge_order(
     logger.info("Order acknowledged", site_id=req.site_id, order_id=req.order_id)
 
     return {"status": "acknowledged", "order_id": req.order_id, "timestamp": now.isoformat()}
+
+
+@router.post("/orders/complete")
+async def complete_order(
+    req: _AgentApiOrderCompletion,
+    db: AsyncSession = Depends(get_db),
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Report execution result for an order — primary completion path.
+
+    RT-DM Issue #3 (2026-05-06, Maya 2nd-eye redesign): pre-fix,
+    `orders.status` never transitioned past 'acknowledged'. The
+    initial round-table consensus was a DB trigger reading
+    `execution_telemetry.metadata->>'order_id'`, but Maya's 2nd-eye
+    on the fix found `execution_telemetry` has NO metadata column —
+    trigger would silently no-op. Redesigned to this explicit
+    endpoint: appliance calls after executing the order, endpoint
+    transitions `acknowledged → completed` (success) or
+    `acknowledged → failed` (with error_message). Idempotent: WHERE
+    clause filters status IN ('acknowledged', 'executing'); duplicate
+    completion reports are no-ops.
+
+    The `sweep_stuck_orders()` SQL function is the backstop for
+    orders that ack'd but never reach this endpoint (agent crash,
+    network gap).
+    """
+    now = datetime.now(timezone.utc)
+    if req.site_id != auth_site_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="site_id mismatch with bearer token",
+        )
+
+    new_status = "completed" if req.success else "failed"
+    err_msg = None if req.success else (req.error_message or "Appliance reported failure (no message)")
+
+    result_json = {
+        "success": req.success,
+        "recorded_at": now.isoformat(),
+    }
+    if req.duration_seconds is not None:
+        result_json["duration_seconds"] = req.duration_seconds
+    if req.result:
+        result_json["result"] = req.result
+
+    update = await db.execute(
+        text("""
+            UPDATE orders SET
+                status = :new_status,
+                completed_at = :completed_at,
+                error_message = :error_message,
+                result = :result_json::jsonb
+            WHERE order_id = :order_id
+              AND status IN ('acknowledged', 'executing', 'pending')
+            RETURNING id
+        """),
+        {
+            "order_id": req.order_id,
+            "new_status": new_status,
+            "completed_at": now,
+            "error_message": err_msg,
+            "result_json": json.dumps(result_json),
+        },
+    )
+
+    if update.rowcount == 0:
+        # Either order doesn't exist OR already in a terminal state.
+        # Idempotent — return 200 with a "no-op" status so the agent
+        # can stop retrying without burning the order.
+        await db.commit()
+        logger.info(
+            "Order completion no-op (already terminal or missing)",
+            site_id=req.site_id, order_id=req.order_id,
+        )
+        return {
+            "status": "no-op",
+            "order_id": req.order_id,
+            "reason": "order not found or already in terminal state",
+            "timestamp": now.isoformat(),
+        }
+
+    await db.commit()
+    logger.info(
+        "Order completed",
+        site_id=req.site_id,
+        order_id=req.order_id,
+        success=req.success,
+    )
+
+    return {
+        "status": new_status,
+        "order_id": req.order_id,
+        "timestamp": now.isoformat(),
+    }
 
 
 @router.post("/incidents")

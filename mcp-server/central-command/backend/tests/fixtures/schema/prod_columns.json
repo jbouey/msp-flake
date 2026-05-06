@@ -2180,6 +2180,7 @@
     "incident_type",
     "input_tokens",
     "manual_intervention_needed",
+    "order_id",
     "output_tokens",
     "pattern_signature",
     "platform",
@@ -3078,6 +3079,7 @@
     "appliance_id",
     "completed_at",
     "created_at",
+    "error_message",
     "expires_at",
     "id",
     "issued_at",
@@ -4170,6 +4172,7 @@
     "version"
   ],
   "runbooks": [
+    "agent_runbook_id",
     "category",
     "check_type",
     "created_at",

@@ -680,6 +680,153 @@ async def _check_cross_org_relocate_baa_receipt_unauthorized(
     return violations
 
 
+async def _check_unbridged_telemetry_runbook_ids(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev2 — execution_telemetry rows whose runbook_id has no
+    corresponding agent_runbook_id in the runbooks table.
+
+    RT-DM Issue #1 (2026-05-06). Migration 284 backfilled the bridge
+    for known L1-* IDs; this invariant catches new agent rules that
+    ship without a corresponding runbooks row. Without it, the
+    bridge silently drifts and per-runbook execution counts go to
+    0 again.
+
+    The check is read-only: distinct unbridged runbook_ids in
+    execution_telemetry from the last 7 days. 7-day window keeps
+    the violation list bounded for a long-running drift; once a
+    new bridge row is added the violation clears.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT et.runbook_id
+          FROM execution_telemetry et
+         WHERE et.runbook_id IS NOT NULL
+           AND et.runbook_id <> ''
+           AND et.created_at > NOW() - INTERVAL '7 days'
+           AND NOT EXISTS (
+               SELECT 1 FROM runbooks r
+                WHERE r.agent_runbook_id = et.runbook_id
+                   OR r.runbook_id = et.runbook_id
+           )
+         LIMIT 50
+        """
+    )
+    violations: List[Violation] = []
+    for row in rows:
+        violations.append(
+            Violation(
+                site_id=None,
+                detail=(
+                    f"execution_telemetry.runbook_id={row['runbook_id']!r} "
+                    f"has no matching runbooks.agent_runbook_id (or "
+                    f"runbook_id). Add a bridge row in a migration."
+                ),
+            )
+        )
+    return violations
+
+
+async def _check_l2_resolution_without_decision_record(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev2 — incident with resolution_tier='L2' but no l2_decisions
+    row referencing it.
+
+    RT-DM Issue #2 non-consensus hardening (2026-05-06). Every L2
+    resolution should be traceable to either a fresh LLM decision
+    or a cache-hit reference; an L2-tier resolution with no
+    corresponding l2_decisions row is an integrity gap that
+    auditors would flag (decision-without-record OR record-without-
+    decision both classes are bad).
+
+    The check looks at incidents resolved in the last 7 days with
+    tier=L2 — a manageable window for drift detection without
+    growing the violation set unboundedly.
+    """
+    # Maya 2nd-eye fix (2026-05-06): incidents.incident_id is NOT a
+    # column (verified — the only references in the codebase were in
+    # the original draft of this query + mig 285's view). Single JOIN
+    # on `i.id::text = ld.incident_id`.
+    rows = await conn.fetch(
+        """
+        SELECT i.id::text AS incident_pk,
+               i.site_id,
+               i.resolved_at
+          FROM incidents i
+         WHERE i.resolution_tier = 'L2'
+           AND i.status = 'resolved'
+           AND i.resolved_at > NOW() - INTERVAL '7 days'
+           AND NOT EXISTS (
+               SELECT 1 FROM l2_decisions ld
+                WHERE ld.incident_id = i.id::text
+           )
+         LIMIT 50
+        """
+    )
+    violations: List[Violation] = []
+    for row in rows:
+        violations.append(
+            Violation(
+                site_id=row.get("site_id"),
+                detail=(
+                    f"incident id={row['incident_pk']} "
+                    f"resolved_at={row['resolved_at']} carries "
+                    f"resolution_tier='L2' but no l2_decisions row "
+                    f"references it — L2 resolution without LLM record"
+                ),
+            )
+        )
+    return violations
+
+
+async def _check_orders_stuck_acknowledged(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev2 — orders.status stuck in 'acknowledged' (>30 min) or
+    'executing' (>1 hour) without ever reaching a terminal state.
+
+    RT-DM Issue #3 non-consensus hardening (2026-05-06). The
+    auto_complete_order_on_telemetry trigger (mig 286) handles the
+    nominal happy path; this invariant catches the case where the
+    agent's telemetry never reaches the backend (network gap,
+    crash, missing order_id metadata) so the dashboard doesn't
+    silently show orders as 'in flight' indefinitely.
+
+    The sweep_stuck_orders() function in mig 286 is the auto-fix
+    for these; this invariant pages when the sweeper itself is
+    not running OR the volume is high enough to indicate a system-
+    level issue (not just one-off appliance crashes).
+    """
+    rows = await conn.fetch(
+        """
+        SELECT order_id,
+               status,
+               acknowledged_at,
+               appliance_id,
+               site_id
+          FROM orders
+         WHERE (status = 'acknowledged' AND acknowledged_at < NOW() - INTERVAL '30 minutes')
+            OR (status = 'executing' AND acknowledged_at < NOW() - INTERVAL '1 hour')
+         LIMIT 50
+        """
+    )
+    violations: List[Violation] = []
+    for row in rows:
+        violations.append(
+            Violation(
+                site_id=row.get("site_id"),
+                detail=(
+                    f"order order_id={row['order_id']} "
+                    f"status={row['status']} "
+                    f"acknowledged_at={row['acknowledged_at']} — "
+                    f"appliance never reported completion telemetry"
+                ),
+            )
+        )
+    return violations
+
+
 async def _check_client_portal_zero_evidence_with_data(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -1522,6 +1669,24 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_l2_decisions_stalled(c),
     ),
     Assertion(
+        name="unbridged_telemetry_runbook_ids",
+        severity="sev2",
+        description="Detects execution_telemetry rows whose runbook_id has no corresponding agent_runbook_id in the runbooks table — drift between agent rule shipments and the canonical runbook table. RT-DM Issue #1 (2026-05-06): the agent's L1-* IDs and the backend's LIN-* / RB-* IDs were unbridged for months, breaking per-runbook execution counts. Migration 284 added agent_runbook_id + backfill; this invariant catches new agent rules that ship without a corresponding runbooks row.",
+        check=lambda c: _check_unbridged_telemetry_runbook_ids(c),
+    ),
+    Assertion(
+        name="l2_resolution_without_decision_record",
+        severity="sev2",
+        description="An incident with resolution_tier='L2' has no corresponding row in l2_decisions — integrity gap between the resolution tier and the LLM decision record. RT-DM Issue #2 hardening (non-consensus): every L2 resolution should be traceable to either a fresh LLM decision OR a cache-hit reference. Surfaces incidents where the L2 path resolved but the audit trail is missing.",
+        check=lambda c: _check_l2_resolution_without_decision_record(c),
+    ),
+    Assertion(
+        name="orders_stuck_acknowledged",
+        severity="sev2",
+        description="orders.status has been 'acknowledged' or 'executing' for >30 minutes (acknowledged) or >1 hour (executing) — agent ack'd the order but never reported execution telemetry. RT-DM Issue #3 hardening (non-consensus): without this, dashboards show stuck orders as 'in flight' indefinitely. The sweep_stuck_orders() function (mig 286) addresses these but should not be needed often; firing this invariant means the agent → telemetry path is broken or the order_id metadata isn't reaching telemetry.",
+        check=lambda c: _check_orders_stuck_acknowledged(c),
+    ),
+    Assertion(
         name="frontend_field_undefined_spike",
         severity="sev2",
         description="Browser-side apiFieldGuard has seen >10 FIELD_UNDEFINED events from >=2 distinct sessions for the same (endpoint, field) pair in the last 5 min. Frontend code is reading a field the backend is no longer returning, and real users are hitting it. This invariant is Layer 3 of the Session 210 enterprise API reliability plan: even with Pydantic contract checks (Layer 6) and OpenAPI codegen (Layer 1) there's still a semantic-drift class (JSONB sub-fields, enum values, format changes) this catches at runtime. Auto-resolves when the spike passes (field populated again OR frontend updated to stop reading it).",
@@ -2168,6 +2333,54 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "GROUP BY 1,2 HAVING COUNT(*) >= 2` — these pairs are paused until next UTC midnight; "
             "(5) if L2 is meant to be disabled, set L2_ENABLED=false in docker-compose.yml and "
             "restart mcp-server — this invariant goes silent automatically.",
+    },
+    "unbridged_telemetry_runbook_ids": {
+        "display_name": "Telemetry runbook_ids unbridged to runbooks table",
+        "recommended_action": (
+            "execution_telemetry has runbook_ids that don't match any "
+            "runbooks.agent_runbook_id (or runbook_id). Pre-mig-284, the "
+            "agent's L1-* IDs and the backend's RB-*/LIN-* IDs were "
+            "unbridged for months. To clear: (a) for each unbridged ID "
+            "shown, decide whether it corresponds to an existing runbook "
+            "(then UPDATE runbooks SET agent_runbook_id = '<id>' WHERE "
+            "runbook_id = '<canonical>') OR a new agent rule (then "
+            "INSERT a new row with runbook_id='AGENT-<id>' and "
+            "agent_runbook_id='<id>'). Ship the change as a numbered "
+            "migration. RT-DM Issue #1 (2026-05-06)."
+        ),
+    },
+    "l2_resolution_without_decision_record": {
+        "display_name": "L2 resolution without LLM decision record",
+        "recommended_action": (
+            "An incident has resolution_tier='L2' but no l2_decisions "
+            "row references it. Either (a) the agent_api code path "
+            "that wrote tier='L2' did not call record_l2_decision() — "
+            "regression — find the offending code path, OR (b) the "
+            "incident was tier-set manually for ops reasons; document "
+            "by inserting an l2_decisions row with reasoning='manual "
+            "tier override per <ticket>'. RT-DM Issue #2 hardening "
+            "(non-consensus, 2026-05-06). Pinned by "
+            "tests/test_l2_canonical_view_used.py."
+        ),
+    },
+    "orders_stuck_acknowledged": {
+        "display_name": "Orders stuck in acknowledged/executing past timeout",
+        "recommended_action": (
+            "Order ack'd by appliance but no completion telemetry "
+            "received within the timeout window (30 min for "
+            "acknowledged, 1 hour for executing). Check: (a) is "
+            "background_tasks.sweep_stuck_orders_loop running? "
+            "`docker logs mcp-server | grep sweep_stuck_orders` — if "
+            "absent, the sweeper is offline; (b) is the agent's "
+            "telemetry path reaching the backend? "
+            "execution_telemetry rows for the affected appliance in "
+            "the last hour count > 0? (c) is the agent emitting "
+            "order_id in telemetry metadata? `SELECT metadata->>'order_id' "
+            "FROM execution_telemetry WHERE created_at > NOW() - "
+            "INTERVAL '1 hour' AND metadata ? 'order_id'`. If volume is "
+            "high, run `SELECT * FROM sweep_stuck_orders()` manually "
+            "to clear the backlog. RT-DM Issue #3 (2026-05-06)."
+        ),
     },
 }
 

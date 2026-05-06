@@ -192,6 +192,11 @@ SOURCE_LEVEL_TESTS=(
     # pinned email attribution, race-guard on execute, owner-transfer
     # interlock, BAA precondition, no plaintext token leak, mig CHECKs.
     "tests/test_cross_org_relocate_contract.py"
+    # RT-DM data-model audit (2026-05-06) — outside-audit found three
+    # foundational telemetry-truth bugs distorting dashboards (runbook
+    # ID namespace mismatch, L2 truth split, orders.status stuck). Mig
+    # 284/285/286 fix each + 3 substrate invariants catch drift.
+    "tests/test_data_model_audit_contract.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
