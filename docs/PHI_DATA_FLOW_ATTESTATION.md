@@ -1,16 +1,37 @@
 # PHI Data Flow Attestation — OsirisCare Platform
 
-**Document Version:** 1.0
-**Date:** 2026-03-23
+**Document Version:** 1.1
+**Date:** 2026-05-06 (originally 2026-03-23)
 **Author:** OsirisCare Engineering
 **Review Schedule:** Annually or upon architectural change
 
+> **Framing update (2026-05-06).** Earlier revisions of this document
+> used absolute language ("PHI-free infrastructure", "NO PHI stored",
+> "ensures", "all 18 Safe Harbor identifiers"). That framing was
+> retired after the cross-org-relocate counsel review (2026-05-06)
+> and per the project's legal-language rules in CLAUDE.md.
+>
+> Current posture: the substrate is **PHI-free by design** — it
+> handles compliance metadata, not PHI — and treats that metadata
+> conservatively as **PHI-adjacent**. Appliance-side scrubbing is
+> defense-in-depth at the egress boundary, not a guarantee that PHI
+> can never appear in any byte that ever transits. Incidental PHI
+> exposure is treated as a security incident under the breach-
+> notification flow.
+>
+> **Canonical current authority:** `~/Downloads/OsirisCare_Owners_
+> Manual_and_Auditor_Packet.pdf` (Part 2 — Auditor's Need-to-Know,
+> §2.7 PHI boundary). Read first.
+
 ## Executive Summary
 
-OsirisCare is designed as a **PHI-free infrastructure**. Protected Health
-Information is scrubbed at the appliance boundary before any data transits
-to Central Command. This document formally attests to the data flow
-architecture and scrubbing controls that support this claim.
+OsirisCare is **designed to be PHI-free** — the substrate operates on
+compliance metadata, not on PHI. Outbound data is scrubbed at the
+appliance boundary before transiting to Central Command, with
+defense-in-depth at the portal layer. This document attests to the
+data-flow architecture and scrubbing controls that support that
+posture; it does not claim cryptographic certainty that no PHI byte
+can ever leak.
 
 ## Data Flow Diagram
 
@@ -41,7 +62,7 @@ architecture and scrubbing controls that support this claim.
 │  │(portals) │  │(postgres)│  │ (WORM)   │           │
 │  └─────────┘  └──────────┘  └──────────┘           │
 │                                                     │
-│  NO PHI stored. All data pre-scrubbed by appliance. │
+│  Designed PHI-free. Metadata pre-scrubbed at appliance. │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -81,8 +102,12 @@ before transmission. The following patterns are detected and replaced with
 
 ## What is NOT Scrubbed (By Design)
 
-These infrastructure identifiers are intentionally preserved per HIPAA
-Safe Harbor (45 CFR 164.514(b)(2)):
+These infrastructure identifiers are intentionally preserved. They
+are not PHI — they identify devices, software, and compliance state,
+not patients. Safe Harbor (45 CFR §164.514(b)(2)) is a
+de-identification standard for patient-record data sets and is **not**
+the rationale here; the rationale is that infrastructure identifiers
+fall outside the §164.501 PHI definition entirely:
 
 - IP addresses (needed for network topology)
 - MAC addresses (device identification)
@@ -91,6 +116,12 @@ Safe Harbor (45 CFR 164.514(b)(2)):
 - Check types (compliance categorization)
 - HIPAA control references (framework mapping)
 - WireGuard public keys (cryptographic identity)
+
+> **Caveat.** An IP address can become PHI in combination with
+> patient context (e.g. a workstation IP tied by other records to a
+> specific patient encounter). On the OsirisCare substrate the IP is
+> never combined with patient context — there is no patient context
+> on this side of the boundary.
 
 ## Portal-Layer Defense in Depth
 
@@ -107,16 +138,33 @@ provides additional protection:
 
 This document attests that:
 
-1. PHI scrubbing is applied at every data egress point on the appliance
-2. Central Command infrastructure is designed to be PHI-free
-3. No Business Associate Agreement (BAA) is required for the Central
-   Command infrastructure because no PHI is stored or processed there
-4. Scrubbing patterns cover all 18 HIPAA Safe Harbor identifiers
-5. The scrubbing code (`phiscrub` package) has 21 unit tests verifying
-   pattern detection and false-positive prevention
+1. PHI scrubbing is applied at every customer-data egress point on the
+   appliance enumerated in the table above (incident_reporter.go,
+   submitter.go, shipper.go, phonehome.go, daemon.go, netscan.go,
+   phi_scrubber.go).
+2. Central Command is **designed to be PHI-free** — the substrate
+   operates on compliance metadata, treated conservatively as
+   PHI-adjacent. The portal `phi_boundary.py` strips raw_output,
+   stdout, stderr, hostname, ip_address, username, file_path from
+   client/partner-facing responses as defense-in-depth.
+3. The customer–OsirisCare relationship is governed by a
+   per-customer e-signed BAA (OsirisCare as Business Associate to
+   the customer Covered Entity); see `docs/legal/billing-phi-
+   boundary.md` and the `baa_signatures` append-only table.
+4. The scrubbing patterns enumerated above target the categories
+   most likely to appear in operational telemetry. They do **not**
+   constitute a complete §164.514(b)(2) Safe Harbor de-identification
+   pipeline (which is a different control for a different purpose).
+5. The scrubbing code (`appliance/internal/phiscrub` package) has 14
+   patterns and 21 unit tests verifying pattern detection and
+   false-positive behavior.
+6. Incidental PHI exposure that bypasses scrubbing is treated as a
+   **security incident** under the breach-notification flow per 45
+   CFR §164.404 and the customer's BAA — not as expected behavior.
 
-**This attestation should be reviewed by qualified legal counsel before
-reliance in regulatory proceedings.**
+**This attestation is engineering documentation. It is not a legal
+opinion. Customers and auditors relying on the attestation in a
+regulatory matter should obtain independent counsel review.**
 
 ---
 

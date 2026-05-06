@@ -59,7 +59,7 @@ Your MCP + LLM system *supports* compliance (**HIPAA §164.308(a)(1)(ii)(D)**: "
 - Deterministic flake with guardrails
 - Backups/monitoring/VPN as default
 - Credible 5-week MVP with metrics
-- Metadata-only scanning - no PHI processing
+- Designed metadata-only scanning — substrate is PHI-free by design and treats metadata conservatively as PHI-adjacent (incidental exposure → §164.404 breach-notification flow, not normal operation)
 
 ## Data Boundary Zones
 
@@ -67,7 +67,7 @@ Your MCP + LLM system *supports* compliance (**HIPAA §164.308(a)(1)(ii)(D)**: "
 |------|-------------|-----------|-----------|
 | **System** | syslog, SSH attempts, package hashes, backup status | Very low | Mask usernames/paths |
 | **Application** | EHR audit logs, access events | Moderate | Tokenize IDs, redact payload |
-| **Data** | PHI (lab results, notes, demographics) | High | **Never ingest** |
+| **Data** | PHI (lab results, notes, demographics) | High | Out of substrate scope; not ingested by design (incidental exposure → security-incident flow) |
 
 ## Practical Controls
 
@@ -171,14 +171,14 @@ prohibited_actions:
 
 ### Metadata-Only Operations
 
-> "BA's services operate exclusively on system metadata and configurations to assist Covered Entity in verifying HIPAA Security Rule compliance. BA does not process PHI and shall treat any inadvertent PHI exposure as a security incident triggering the breach notification process per 45 CFR 164.404."
+> "BA's services are designed to operate exclusively on system metadata and configurations to assist Covered Entity in verifying HIPAA Security Rule compliance. BA's substrate is designed to be PHI-free and BA treats compliance metadata conservatively as PHI-adjacent. Any inadvertent PHI exposure shall be treated as a security incident triggering the breach notification process per 45 CFR §164.404."
 
-### No PHI Processing
+### No PHI Processing (by design)
 
 - Collect only system-level logs (syslog, journald, auditd)
-- Scrub accidental PHI at source before transmission
-- Access restricted to /var/log, /etc, system directories only
-- Never access patient data directories or EHR databases
+- Scrub PHI patterns at appliance egress before transmission (defense-in-depth)
+- Access restricted to /var/log, /etc, system directories
+- No access path to patient data directories or EHR databases — incidental exposure is a security incident, not normal operation
 
 ### Sub-Processors
 
