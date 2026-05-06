@@ -199,6 +199,42 @@ def test_email_rename_call_sites_do_not_pass_forbidden_kwargs():
     )
 
 
+def test_all_send_email_bodies_in_opaque_modules_are_clean():
+    """Maya P2 follow-up (2026-05-06): the per-helper body scans
+    above only pin _send_dual_notification, _send_initiator_*, and
+    _send_target_accept_email. Two other send_email calls live in
+    client_user_email_rename.py — the self-initiated confirm
+    (line ~604) and the auto-provision welcome (line ~1087). Both
+    are opaque-by-construction today (static subjects, no org/
+    clinic context in body), but nothing pinned that. This sweep
+    walks ALL send_email calls in both opaque modules and forbids
+    the same context tokens at the body literal."""
+    forbidden_in_body = (
+        "{org_name}",
+        "{clinic_name}",
+        "{actor_kind}",
+        "{site_name}",
+        "{source_org_name}",
+        "{target_org_name}",
+        "{reason",  # catches {reason} and {reason[:200]}
+    )
+    for path in (_OWNER_TRANSFER, _EMAIL_RENAME):
+        src = path.read_text()
+        for m in re.finditer(
+            r"await send_email\(([^)]+(?:\([^)]*\)[^)]*)*)\)",
+            src,
+            re.DOTALL,
+        ):
+            block = m.group(1)
+            for token in forbidden_in_body:
+                assert token not in block, (
+                    f"{path.name}: a send_email(...) body interpolates "
+                    f"`{token}` — opaque-mode forbids context names "
+                    f"in unauthenticated SMTP channels. Module-wide "
+                    f"sweep, task #42 follow-up."
+                )
+
+
 def test_no_fstring_subjects_in_send_email_calls():
     """Maya 2nd-eye P2-2 (2026-05-06): regex-based subject scan can
     miss multi-line/kwarg subjects. Defence in depth: ban f-string

@@ -1837,3 +1837,60 @@ system. Every box built from v25 through v37 inherited the bug silently.
 [truncated...]
 
 ---
+
+## 2026-04-18-session-209-rls-p0-evidence-chain-stalled.md
+
+# Session 209 — 2026-04-18
+
+## RLS P0 + evidence_chain_stalled invariant
+
+### Arc
+
+Started continuing Session 208 wrap-up tasks:
+1. Verify CI green on `eafe45e` (round-table P1 audit-closure batch)
+2. Resume Task #38+ audit round-table
+3. Watch substrate_health provisioning_stalled fire rate
+
+Pivoted to an active P0 when dashboard data-quality contradictions (streaming data messed up) led to log scrape revealing **2,608 `InsufficientPrivilegeError` RLS rejections in 2h** on `compliance_bundles` INSERT.
+
+### Root cause
+
+Migration 234 (2026-04-18 earlier) flipped `ALTER ROLE mcp_app SET app.is_admin = 'false'` to make RLS fail-closed by default. `shared.py` was supposed to compensate via a SQLAlchemy `connect` event listener issuing `SET app.is_admin = 'true'`. That pattern is **fundamentally incompatible with PgBouncer transaction pooling** — PgBouncer's `server_reset_query = DISCARD ALL` wipes session-level SETs between client borrows, so only the FIRST transaction on each backend had admin context.
+
+A first fix (`ebb9f17`) correctly moved to `after_begin` + `SET LOCAL` (transaction-scoped, survives DISCARD ALL). It failed to work because the listener was bound to `async_session.sync_session_class` — `async_sessionmaker` has no such attribute, AttributeError was swallowed by a `try/except Exception: pass`, and the listener silently never registered.
+
+Second fix (`2ddc596`) corrected the target to `AsyncSession.sync_session_class` (class-level) and narrowed the silent-swallow handler to `(ImportError, AttributeError)` only so future bugs of this shape surface instead of hide.
+
+### Commits
+
+- `b7f6d87` — CI test-stage unblock (ESLint no-explicit-any + billing PHI boundary doc)
+- `bf861d6` — Migration 234 column fix (`timestamp` → `created_at` on admin_audit_log)
+- `eafe45e` — Migration 235 schema_migrations dup-key fix (removed manual INSERT)
+- `ebb9f17` — First RLS fix attempt (loaded but listener never fired)
+- `2ddc596` — **Actual P0 fix** — correct `AsyncSession.sync_session_class` target
+- `f6c6121` — `evidence_chain_stalled` sev1 substrate invariant
+
+### Evidence that the fix worked
+
+```
+# Before 2ddc596
+tx1: is_admin= false user= mcp_app
+tx2: is_admin= false
+
+# After 2ddc596
+tx1: is_admin= true user= mcp_app
+tx2: is_admin= true
+```
+
+Prod RLS rejection rate: 22/min → 0/min. Evidence bundles resumed flowing (14 inserts in first 15 min post-deploy).
+
+### Instrumentation
+
+New substrate invariant `evidence_chain_stalled` (sev1) — if ≥1 appliance checked in in the last 15 min but 0 `compliance_bundles` inserted in that window, open a violation. Outcome-layer signal catches RLS failures AND any other evidence-insert failure (partition missing, signing key rotation bugs, disk pressure, silent asyncpg exception). Would have fired the 2026-04-18 outage within 15 min instead of waiting for dashboard anomaly analysis hours later.
+
+Total substrate invariants: 28 → 32. Three of the four +4 invariants were shipped in Session 208 work (provisioning_stalled + two others) that memory hadn't reflected until this session's memory update.
+
+
+[truncated...]
+
+---
