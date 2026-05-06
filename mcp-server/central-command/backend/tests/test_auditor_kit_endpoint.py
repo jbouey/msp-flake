@@ -76,29 +76,55 @@ class TestAuditorKitEndpoint:
 # =============================================================================
 
 class TestAuditorKitZipContents:
+    """Round-table 2026-05-06 (Coach P1-2): writes go through the
+    deterministic _kit_zwrite helper. Each test now accepts either
+    the legacy `zf.writestr(...)` literal OR the new
+    `_zwrite(zf, ...)` / `_kit_zwrite(zf, ...)` patterns. Intent
+    (entry presence) preserved; pattern modernized."""
+
+    @staticmethod
+    def _name_in_kit(body: str, name: str) -> bool:
+        # Match any of:
+        #   zf.writestr("name", ...)
+        #   _zwrite(zf, "name", ...)
+        #   _kit_zwrite(zf, "name", ...)
+        # Or for the entry-list pattern:
+        #   ("name", ...) inside fixed_entries
+        legacy = f'zf.writestr("{name}"' in body
+        legacy_f = f"zf.writestr(f'{name}'" in body  # f-string variant
+        helper = f'_zwrite(zf, "{name}"' in body or f"_kit_zwrite(zf, \"{name}\"" in body
+        entry = f'("{name}",' in body  # fixed_entries tuple
+        return legacy or legacy_f or helper or entry
+
     def test_includes_readme(self):
         body = _get_func("download_auditor_kit")
-        assert 'zf.writestr("README.md"' in body
+        assert self._name_in_kit(body, "README.md")
 
     def test_includes_verify_sh(self):
         body = _get_func("download_auditor_kit")
-        assert 'zf.writestr("verify.sh"' in body
+        assert self._name_in_kit(body, "verify.sh")
 
     def test_includes_chain_metadata(self):
         body = _get_func("download_auditor_kit")
-        assert 'zf.writestr("chain.json"' in body
+        assert self._name_in_kit(body, "chain.json")
 
     def test_includes_bundles_jsonl(self):
         body = _get_func("download_auditor_kit")
-        assert 'zf.writestr("bundles.jsonl"' in body
+        assert self._name_in_kit(body, "bundles.jsonl")
 
     def test_includes_pubkeys_json(self):
         body = _get_func("download_auditor_kit")
-        assert 'zf.writestr("pubkeys.json"' in body
+        assert self._name_in_kit(body, "pubkeys.json")
 
     def test_includes_ots_files_dir(self):
         body = _get_func("download_auditor_kit")
-        assert 'zf.writestr(f"ots/{filename}"' in body
+        # OTS files use f"ots/{filename}" (or {ots_name}) in any of
+        # the helper variants. Match the path prefix flexibly.
+        assert (
+            'zf.writestr(f"ots/' in body
+            or '_zwrite(zf, f"ots/' in body
+            or '_kit_zwrite(zf, f"ots/' in body
+        )
 
 
 # =============================================================================
