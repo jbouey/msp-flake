@@ -142,6 +142,11 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_kill_switch_portal_disclosure.py"
     "tests/test_admin_billing_destructive.py"
     "tests/test_privileged_chain_allowed_events_lockstep.py"
+    # Round-table 31 / 32 anti-regression: HIPAA §164.312(a)(2)(iii)
+    # idle-session warning UI must stay wired in both portal contexts.
+    # Audit C3 was a false positive — this gate makes sure the wiring
+    # can't be silently dropped in a future refactor.
+    "tests/test_idle_session_warning_wired.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
