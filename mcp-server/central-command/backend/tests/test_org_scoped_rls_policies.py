@@ -125,6 +125,15 @@ CLIENT_PORTAL_OUT_OF_SCOPE = {
     "evidence_bundles",     # legacy table, replaced by compliance_bundles
     "enumeration_results",  # operator-only
     "go_agent_checks",      # operator-only (raw check telemetry)
+    # Maya final-sweep meta-gate flushed these two out (Session 217):
+    "incident_remediation_steps",  # RLS via JOIN to incidents.site_id;
+                                   # transitively-covered, not directly
+                                   # site-keyed. No org-scope read path
+                                   # from client_portal exists.
+    "partner_notifications",  # uses app.current_tenant as
+                              # partner_id sentinel (NOT site_id);
+                              # different RLS shape entirely. Reads
+                              # gated by partner-context, not org-context.
 }
 
 
@@ -199,6 +208,51 @@ def test_migration_278_applies_org_policy_to_compliance_bundles():
     # And uses a function that scopes by current_org via sites lookup
     assert "rls_site_belongs_to_current_org" in src
     assert "client_org_id::text = current_setting('app.current_org'" in src
+
+
+def test_site_rls_tables_list_covers_migrations():
+    """Maya P1 (Session 217 final sweep): the hand-maintained
+    SITE_RLS_TABLES list is the source of truth for which tables get
+    org-scoped policy coverage. If a future migration adds a CREATE
+    POLICY with `current_tenant` predicate on a NEW table without
+    updating SITE_RLS_TABLES here, the gate above silently passes
+    despite the new table being uncovered. This meta-gate scans every
+    migration for site-scoped policies + asserts each target table is
+    either in SITE_RLS_TABLES or in CLIENT_PORTAL_OUT_OF_SCOPE.
+
+    Catches: new feature ships migration with `tenant_isolation` policy
+    on a new table; client portal reads from it under org_connection;
+    customer sees zero rows. Same regression class as the 2026-05-05
+    P0 the parent test was designed to prevent — but at the source-of-
+    truth-list level so the parent test can't be fooled.
+    """
+    pat_create_policy = re.compile(
+        r"CREATE\s+POLICY\s+\w+\s+ON\s+(\w+)\s+FOR\s+ALL\s+USING\s*\([^)]*current_setting\s*\(\s*'app\.current_tenant'",
+        re.IGNORECASE,
+    )
+    discovered: set = set()
+    for mig in sorted(_MIG_DIR.glob("*.sql")):
+        src = mig.read_text()
+        for m in pat_create_policy.finditer(src):
+            tname = m.group(1).lower()
+            # Skip dynamic table names (e.g. partition templates) and
+            # tables with NULL placeholder in policy (none expected).
+            if tname == "tenant_isolation":
+                continue
+            discovered.add(tname)
+
+    missing = discovered - SITE_RLS_TABLES - CLIENT_PORTAL_OUT_OF_SCOPE
+    assert not missing, (
+        "Migrations declare site-RLS tenant_isolation policy on tables "
+        "that are NOT in tests/test_org_scoped_rls_policies.py "
+        "SITE_RLS_TABLES or CLIENT_PORTAL_OUT_OF_SCOPE. The parent gate "
+        "(test_every_client_portal_site_rls_table_has_org_policy) silently "
+        "passes for tables it doesn't know about → regression class "
+        "open. Add each missing table to SITE_RLS_TABLES (then ensure "
+        "mig 278's DO-block applies tenant_org_isolation), or to "
+        "CLIENT_PORTAL_OUT_OF_SCOPE with explicit justification.\n\n"
+        f"Tables found in migrations but not in either set: {sorted(missing)}"
+    )
 
 
 def test_migration_278_helper_function_is_stable():

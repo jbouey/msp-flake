@@ -180,7 +180,7 @@ async def compute_compliance_score(
 
     # Latest result per (site, check_type, hostname) across all bundles
     # the caller can see under their RLS context. Bounded by window_days
-    # (default 90) per round-table 30 — drops the unnest from ~777K rows
+    # (default 30) per round-table 30 — drops the unnest from ~777K rows
     # to ~50K for typical orgs.
     if window_days is None:
         rows = await conn.fetch(

@@ -181,7 +181,8 @@ artifact path.
 ## Things to NEVER do (durable)
 
 - Add a new site-RLS table without parallel `tenant_org_isolation` policy
-  (CI gate test_org_scoped_rls_policies catches this)
+  (CI gate test_org_scoped_rls_policies catches this — both the
+  manual SITE_RLS_TABLES list AND the auto-discover meta-gate)
 - `else 100.0` for compliance scores — show `null` + status instead
 - Depends-gate any restore endpoint (Maya P0-2 lesson)
 - Lazy-import a name that doesn't exist module-level (CI gate
@@ -190,3 +191,43 @@ artifact path.
   the canonical compute_compliance_score helper
 - Use `canonical_site_id()` for cryptographic-chain anchors (immutable
   binding rule from Session 213)
+- Bare `Depends(require_partner)` on partner-side mutations (any
+  /me/* POST/PUT/PATCH/DELETE). Use `require_partner_role("admin")` for
+  partner-org-state changes; `require_partner_role("admin", "tech")`
+  for site-state changes. Per-user actions (mark-own-notification-read)
+  may stay relaxed — explicitly allowlist in
+  test_partner_mutations_role_gated.py.
+- `<a href={downloadUrl}>` for any state-bearing endpoint that
+  rate-limits or requires session — use a JS fetch-as-blob handler so
+  401/429/500 surface as actionable copy. Pinned in
+  test_auditor_kit_frontend_blob_fetch.py for the auditor-kit case.
+
+## Round-tables 30 + 31 outcomes
+
+- **RT30 (perf + 404 fix):** auditor-kit URL canonical at
+  `/api/evidence/sites/{id}/auditor-kit`, NOT `/api/client/...`. Auth
+  gate `require_evidence_view_access` recognizes the new
+  `osiris_client_session` cookie. compute_compliance_score's default
+  window is 30 days (was unbounded; profiled 4.7s → 2.4s on 155K
+  bundles). Auditor-kit + evidence archive override `window_days=None`
+  for all-time chain reads.
+- **RT31 (post-audit sweep):** 7 partner mutations elevated from bare
+  `Depends(require_partner)` to `require_partner_role("admin", "tech")`.
+  Race-guard added to `self_deactivate_partner_user` (refuse 409 if
+  pending admin-transfer involves the user). `self_create_partner_user`
+  now UPSERTs on existing-but-inactive rows + emits new
+  `partner_user_reactivated` event_type (distinct from
+  partner_user_created in the chain). All 3 self-scoped endpoints now
+  call `log_partner_activity` (parity with operator-class POST).
+  Auditor-kit download replaced `<a href>` with `handleAuditorKitDownload`
+  + error-banner.
+- **Maya final sweep:** identified 5 near-duplicate
+  `_emit_attestation`/`_send_operator_visibility` helper pairs across
+  client + partner modules. DRY consolidation deferred (P2 — extract
+  to `chain_attestation.py` on next attestation-shape change). Two
+  CI-gate holes tightened: `test_no_partner_mutation_uses_bare_require_partner`
+  now asserts `not bare` regardless of `role` (was `bare and not role`),
+  and `test_org_scoped_rls_policies` gained an auto-discover meta-gate
+  reading `CREATE POLICY` from migrations.
+
+## ALLOWED_EVENTS — Session 217 closing count: 52

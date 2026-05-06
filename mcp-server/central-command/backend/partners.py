@@ -694,7 +694,13 @@ async def self_create_partner_user(
                 magic_expires,
             )
 
-    event_type = "partner_user_created"
+    # Maya final sweep (Session 217): emit a distinct event_type for
+    # the reactivate branch so auditor chain readers can distinguish
+    # net-new user from deactivate-then-reactivate.
+    event_type = (
+        "partner_user_reactivated" if is_reactivation
+        else "partner_user_created"
+    )
     reason = (
         f"Self-service partner_user {row['email']} "
         f"{'reactivated' if is_reactivation else 'created'} "

@@ -104,11 +104,21 @@ def test_no_partner_mutation_uses_bare_require_partner():
             if node.name in PER_USER_MUTATION_ALLOWLIST:
                 continue
             bare, role = _find_partner_dependency(node)
-            if bare and not role:
+            # Maya P1 (Session 217 final sweep): the original
+            # `bare and not role` check had an escape hatch — if a
+            # future endpoint declared BOTH dependencies (live bare +
+            # dead-weight role kwarg), the gate would pass while
+            # FastAPI silently used the bare one. Tightened to
+            # `assert not bare` regardless of whether a role gate is
+            # also present.
+            if bare:
                 violations.append(
                     f"partners.py:{node.lineno} {method} {path} → "
-                    f"{node.name}: uses Depends(require_partner) (any role) "
-                    f"instead of require_partner_role(...)"
+                    f"{node.name}: declares Depends(require_partner) "
+                    f"(any role). Even if a require_partner_role kwarg "
+                    f"is present alongside, FastAPI resolves Depends "
+                    f"first → bare auth wins. Replace with "
+                    f"require_partner_role(...)."
                 )
 
     assert not violations, (

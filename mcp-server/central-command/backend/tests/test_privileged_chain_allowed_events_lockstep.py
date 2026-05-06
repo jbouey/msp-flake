@@ -95,6 +95,9 @@ def test_allowed_events_matches_expected_set():
         # (Session 217 follow-up). Total ALLOWED_EVENTS: 51.
         "partner_user_role_changed",
         "partner_user_deactivated",
+        # Maya final sweep (Session 217): differentiate reactivate from
+        # create. Same anchor namespace, distinct semantic event.
+        "partner_user_reactivated",
         # Round-table 2026-05-04 item B — partner-admin transfer state
         # machine (mig 274). Maya's simpler shape: 4 events vs the
         # client-side owner-transfer's 6. NOT a fleet_order.

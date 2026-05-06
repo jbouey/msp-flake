@@ -127,6 +127,12 @@ ALLOWED_EVENTS = {
     # NOT in fleet_cli.PRIVILEGED_ORDER_TYPES (admin-API events).
     "partner_user_role_changed",
     "partner_user_deactivated",
+    # Round-table 31 + Maya final sweep (Session 217): reactivate is a
+    # semantically distinct event from create — auditors reading the
+    # chain need to distinguish "new user invited" from "deactivated
+    # user re-enabled." Pre-fix self_create_partner_user emitted
+    # partner_user_created for both branches.
+    "partner_user_reactivated",
     # Round-table 2026-05-04 item B — partner-admin transfer state
     # machine (mig 274). Maya's simpler shape: 2-state (pending →
     # completed/canceled/expired). 4 events vs client-side 6.
