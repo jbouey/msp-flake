@@ -4529,18 +4529,47 @@ def _collect_security_advisories() -> List[Tuple[Dict[str, Any], str]]:
     """Walk docs/security/SECURITY_ADVISORY_*.md and return list of
     (metadata_dict, raw_markdown_text). Sorted by filename so kit
     contents are deterministic. Returns empty list (not raises) if
-    the directory is missing — tests run from a tmp dir without docs.
+    the directory is missing — tests run from a tmp dir without
+    docs, AND production containers don't bundle the docs/ tree.
+
+    P0 fix 2026-05-06: prior version did `here.parents[3]` which
+    raised IndexError in the production container layout
+    (/app/dashboard_api/evidence_chain.py has only 3 parents);
+    auditor-kit downloads were 500'ing for every customer.
+
+    Resolution order:
+      1. OSIRIS_SECURITY_ADVISORIES_DIR env var (explicit, prod-friendly).
+      2. Walk parents of this file looking for docs/security (dev
+         layout AND any ancestor-dir layout).
+      3. Return empty list — kit is still complete without
+         advisories; the rest of the bundle stands on its own.
     """
-    # Walk up to repo root from this file. Backend file is at
-    # mcp-server/central-command/backend/evidence_chain.py; docs/security/
-    # is at repo root.
+    import os
+
+    candidate_dirs: List[pathlib.Path] = []
+    env_override = os.environ.get("OSIRIS_SECURITY_ADVISORIES_DIR")
+    if env_override:
+        candidate_dirs.append(pathlib.Path(env_override))
+
     here = pathlib.Path(__file__).resolve()
-    repo_root = here.parents[3]  # backend → central-command → mcp-server → repo
-    advisories_dir = repo_root / "docs" / "security"
-    if not advisories_dir.exists():
+    # Walk every ancestor — works for dev (deep tree) AND any
+    # container layout that mounts docs/ alongside the app dir.
+    for ancestor in here.parents:
+        candidate_dirs.append(ancestor / "docs" / "security")
+
+    advisories_dir: Optional[pathlib.Path] = None
+    for d in candidate_dirs:
+        try:
+            if d.exists() and d.is_dir():
+                advisories_dir = d
+                break
+        except OSError:
+            continue
+    if advisories_dir is None:
         return []
     out: List[Tuple[Dict[str, Any], str]] = []
-    for path in sorted(advisories_dir.glob("SECURITY_ADVISORY_*.md")):
+    advisories_dir_resolved: pathlib.Path = advisories_dir
+    for path in sorted(advisories_dir_resolved.glob("SECURITY_ADVISORY_*.md")):
         try:
             content = path.read_text()
         except Exception:

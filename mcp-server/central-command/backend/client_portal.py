@@ -1847,6 +1847,14 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
         # The Reports page also shows per-check details (audit-grade
         # listing). Pull the latest-per-check separately so we can
         # surface them in the response.
+        #
+        # P0 perf fix 2026-05-06: prior query had NO date window and
+        # scanned every partition of compliance_bundles (232K+ rows,
+        # PARTITIONED by month per Migration 138). Profiled 14.5s
+        # in production. Added 30-day window matching the canonical
+        # compute_compliance_score default — checks older than 30
+        # days are considered stale anyway, and a stale check
+        # surfacing as a Reports row would be misleading.
         checks = await conn.fetch("""
             WITH unnested AS (
                 SELECT
@@ -1859,6 +1867,7 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
                 FROM compliance_bundles cb,
                      jsonb_array_elements(cb.checks) AS c
                 WHERE cb.site_id = ANY($1)
+                  AND cb.checked_at >= NOW() - INTERVAL '30 days'
             ),
             latest AS (
                 SELECT DISTINCT ON (site_id, check_type, hostname)
