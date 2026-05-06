@@ -350,6 +350,143 @@ def test_mig_280_adds_prior_client_org_id():
 # ─────────────────────────────────────────────────────────────────
 
 
+# ─────────────────────────────────────────────────────────────────
+# 14-17. Email wiring (RT21 Phase 3)
+# ─────────────────────────────────────────────────────────────────
+
+
+def test_three_email_helpers_defined():
+    """Three customer-facing emails fire across the lifecycle:
+    source-release notice, target-accept notice, post-execute notice."""
+    src = _MODULE.read_text()
+    for fn in (
+        "_send_source_release_email",
+        "_send_target_accept_email",
+        "_send_post_execute_email",
+    ):
+        assert f"async def {fn}" in src, (
+            f"RT21 Phase 3: {fn} helper missing. The 3 customer-facing "
+            f"emails defined in the round-table doc are required."
+        )
+
+
+def test_initiate_sends_source_release_email():
+    src = _MODULE.read_text()
+    m = re.search(
+        r"async def initiate_cross_org_relocate\b.+?(?=\nasync def |\Z)",
+        src,
+        re.DOTALL,
+    )
+    assert m, "initiate endpoint not found"
+    body = m.group(0)
+    assert "_send_source_release_email" in body, (
+        "initiate endpoint must call _send_source_release_email — "
+        "Phase 3 email delivery wiring missing."
+    )
+
+
+def test_source_release_sends_target_accept_email_and_rotates_token():
+    """Source-release should rotate the target_accept_token (issuing
+    a fresh plaintext) and send the target-accept email. Pinning both
+    to defend against a future regression that splits them."""
+    src = _MODULE.read_text()
+    m = re.search(
+        r"async def source_release\b.+?(?=\nasync def |\Z)",
+        src,
+        re.DOTALL,
+    )
+    assert m, "source_release endpoint not found"
+    body = m.group(0)
+    assert "_send_target_accept_email" in body, (
+        "source_release endpoint must call _send_target_accept_email — "
+        "Phase 3 wiring missing."
+    )
+    assert "target_accept_token = secrets.token_urlsafe" in body, (
+        "source_release endpoint must rotate target_accept_token "
+        "(generate a fresh plaintext) — defends against the leak-window "
+        "class where a token sits idle from initiate-time."
+    )
+    assert "target_accept_token_hash = " in body, (
+        "source_release endpoint must hash the rotated token before "
+        "persisting (never plaintext in DB)."
+    )
+
+
+def test_execute_sends_post_execute_email_to_both_owners():
+    src = _MODULE.read_text()
+    m = re.search(
+        r"async def execute_relocate\b.+?(?=\nasync def |\Z)",
+        src,
+        re.DOTALL,
+    )
+    assert m, "execute_relocate endpoint not found"
+    body = m.group(0)
+    assert body.count("_send_post_execute_email") >= 2, (
+        "execute_relocate must send post-execute receipt to BOTH "
+        "owners (source + target) — round-table doc Adam tech-writer "
+        "section. Found <2 invocations."
+    )
+
+
+def test_email_bodies_have_no_banned_compliance_language():
+    """CLAUDE.md Session 199 banned-words rule applies to email bodies
+    too. Customer-facing legal language must NOT use ensures / prevents
+    / protects / guarantees / 100%."""
+    src = _MODULE.read_text()
+    # Extract the three email function bodies
+    helpers = re.findall(
+        r"async def (?:_send_source_release_email|_send_target_accept_email"
+        r"|_send_post_execute_email)\b.+?(?=\nasync def |\Z)",
+        src,
+        re.DOTALL,
+    )
+    assert len(helpers) == 3, (
+        f"Expected 3 email helper bodies; found {len(helpers)}"
+    )
+    banned = ("ensures", "prevents", "protects", "guarantees", "100%")
+    for helper_body in helpers:
+        for word in banned:
+            # Allow the words inside python identifiers / log keys —
+            # only check for the word as a standalone English token.
+            pat = re.compile(rf'\b{re.escape(word)}\b', re.IGNORECASE)
+            for m_word in pat.finditer(helper_body):
+                # Surrounding 30 chars to spot context
+                start = max(0, m_word.start() - 20)
+                end = min(len(helper_body), m_word.end() + 20)
+                ctx = helper_body[start:end]
+                # Skip docstring / comment lines that talk ABOUT the rule
+                if "banned" in ctx.lower() or "no banned" in ctx.lower():
+                    continue
+                raise AssertionError(
+                    f"Banned compliance-language word {word!r} found "
+                    f"in cross-org relocate email body — CLAUDE.md "
+                    f"Session 199 rule. Context: ...{ctx}..."
+                )
+
+
+def test_email_helpers_are_best_effort_logging_at_error():
+    """Every email helper MUST wrap its send in try/except + logger.error
+    so an SMTP outage never aborts the state transition. Pattern matches
+    client_owner_transfer._send_target_accept_email."""
+    src = _MODULE.read_text()
+    helpers = re.findall(
+        r"async def (?:_send_source_release_email|_send_target_accept_email"
+        r"|_send_post_execute_email)\b.+?(?=\nasync def |\Z)",
+        src,
+        re.DOTALL,
+    )
+    for helper_body in helpers:
+        assert "try:" in helper_body and "except" in helper_body, (
+            "email helper missing try/except wrapper — SMTP outage "
+            "could abort the state transition, which is a chain-of-"
+            "custody hazard. Wrap the send in try/except + logger.error."
+        )
+        assert "logger.error" in helper_body, (
+            "email helper missing logger.error on failure — SMTP "
+            "failures must be visible to operators."
+        )
+
+
 def test_sweep_loop_emits_expired_attestation():
     """Maya P0-3 parity (RT19 MFA sweep finding): silent expiration
     without a closure attestation row creates a §164.528 chain-of-

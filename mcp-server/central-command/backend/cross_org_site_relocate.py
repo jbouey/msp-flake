@@ -58,6 +58,10 @@ from .client_portal import _audit_client_action, get_client_user_from_session
 from .fleet import get_pool
 from .tenant_middleware import admin_connection
 
+# Frontend URL for magic-link redemption. Mirrors the pattern in
+# client_owner_transfer.py BASE_URL — same env-var, same default.
+BASE_URL = os.getenv("FRONTEND_URL", "https://www.osiriscare.net")
+
 logger = logging.getLogger(__name__)
 
 cross_org_relocate_router = APIRouter(
@@ -283,6 +287,247 @@ async def _check_target_org_baa(conn, target_org_id: str) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────
+# Email templates (RT21 Phase 3)
+#
+# Three customer-facing emails fire across the lifecycle:
+#   - source_release notice → source-org owner (carries magic link)
+#   - target_accept notice  → target-org owner (carries magic link)
+#   - post-execute notice   → BOTH owners (no link; receipt of move)
+#
+# Language follows CLAUDE.md Session 199 rules: NO banned words
+# (ensures/prevents/protects/guarantees/100%); use "supports audit-
+# readiness", "operator visibility", "PHI scrubbed at appliance".
+#
+# All three are async + best-effort: an email failure logs at ERROR
+# but does NOT abort the state transition. The chain-of-custody
+# attestation is the load-bearing record; the email is courtesy.
+# Pattern matches `client_owner_transfer._send_target_accept_email`.
+# ─────────────────────────────────────────────────────────────────
+
+
+async def _send_source_release_email(
+    *,
+    source_owner_email: str,
+    source_org_name: str,
+    target_org_name: str,
+    site_name: str,
+    initiator_email: str,
+    relocate_id: str,
+    source_release_token: str,
+    reason: str,
+    expires_at: datetime,
+) -> None:
+    """Email the source-org owner: 'OsirisCare admin proposes moving
+    your site to target-org. Click here to release within 7 days.'"""
+    try:
+        from .email_service import send_email
+        release_url = (
+            f"{BASE_URL}/admin/cross-org-relocate/source-release"
+            f"?token={source_release_token}&id={relocate_id}"
+        )
+        body = (
+            f"OsirisCare admin {initiator_email} has proposed moving "
+            f"site {site_name!r} from {source_org_name} to "
+            f"{target_org_name}.\n"
+            f"\n"
+            f"Reason recorded: {reason[:300]}\n"
+            f"\n"
+            f"As the current owner of {source_org_name}, your release "
+            f"is required for this move to proceed. Click here to "
+            f"release the site within 7 days:\n"
+            f"  {release_url}\n"
+            f"\n"
+            f"What happens after you release:\n"
+            f"  1. The owner of {target_org_name} receives an accept "
+            f"link, also valid for 7 days.\n"
+            f"  2. After they accept, a 24-hour cooling-off window "
+            f"begins. Either party can cancel the move during this "
+            f"window via the OsirisCare admin team.\n"
+            f"  3. After cooling-off, OsirisCare admin completes the "
+            f"move. Your evidence chain remains anchored to the "
+            f"original site identifier; auditors walk across the "
+            f"organization boundary via the chain-of-custody record.\n"
+            f"\n"
+            f"PHI is scrubbed at appliance egress and does not move "
+            f"between OsirisCare data planes during the relocate — "
+            f"the same substrate-class business associate handles the "
+            f"site before and after.\n"
+            f"\n"
+            f"Link expires: {expires_at.isoformat()}\n"
+            f"\n"
+            f"If you did not expect this email, do not click the link "
+            f"and contact your OsirisCare account representative. The "
+            f"OsirisCare admin who initiated this request can also "
+            f"cancel it.\n"
+            f"\n"
+            f"---\n"
+            f"OsirisCare — substrate-level cross-organization site "
+            f"relocate notice"
+        )
+        await send_email(
+            source_owner_email,
+            f"Site relocate request: {site_name} to {target_org_name}",
+            body,
+        )
+    except Exception:
+        logger.error("source_release_email_failed", exc_info=True)
+
+
+async def _send_target_accept_email(
+    *,
+    target_owner_email: str,
+    source_org_name: str,
+    target_org_name: str,
+    site_name: str,
+    relocate_id: str,
+    target_accept_token: str,
+    reason: str,
+    expires_at: datetime,
+    cooling_off_hours: int,
+) -> None:
+    """Email the target-org owner: 'Source has released; click here
+    to accept the site within 7 days.'"""
+    try:
+        from .email_service import send_email
+        accept_url = (
+            f"{BASE_URL}/admin/cross-org-relocate/target-accept"
+            f"?token={target_accept_token}&id={relocate_id}"
+        )
+        body = (
+            f"The owner of {source_org_name} has released site "
+            f"{site_name!r} for transfer to {target_org_name}. As the "
+            f"current owner of {target_org_name}, your acceptance is "
+            f"required to receive the site.\n"
+            f"\n"
+            f"Reason recorded: {reason[:300]}\n"
+            f"\n"
+            f"To accept ownership of {site_name!r}, click here within "
+            f"7 days:\n"
+            f"  {accept_url}\n"
+            f"\n"
+            f"Before you accept, confirm:\n"
+            f"  - {target_org_name} has a current Business Associate "
+            f"Agreement on file with OsirisCare. The accept endpoint "
+            f"will refuse if the BAA is not on file.\n"
+            f"  - You expect to receive the compliance-evidence chain "
+            f"of {site_name!r}, including all bundles signed under "
+            f"the source organization. The cryptographic chain remains "
+            f"anchored to the original site identifier and is "
+            f"verifiable end-to-end across the organization boundary.\n"
+            f"\n"
+            f"What happens after you accept:\n"
+            f"  1. A {cooling_off_hours}-hour cooling-off window "
+            f"begins.\n"
+            f"  2. Either {source_org_name} or {target_org_name} can "
+            f"cancel the move during this window via the OsirisCare "
+            f"admin team.\n"
+            f"  3. After cooling-off, OsirisCare admin completes the "
+            f"move. The site appears under {target_org_name} in your "
+            f"client portal.\n"
+            f"\n"
+            f"Link expires: {expires_at.isoformat()}\n"
+            f"\n"
+            f"If you do not expect this email, do not click the link. "
+            f"Contact your OsirisCare account representative.\n"
+            f"\n"
+            f"---\n"
+            f"OsirisCare — substrate-level cross-organization site "
+            f"relocate notice"
+        )
+        await send_email(
+            target_owner_email,
+            f"Site relocate accept request: {site_name} from {source_org_name}",
+            body,
+        )
+    except Exception:
+        logger.error("target_accept_email_failed", exc_info=True)
+
+
+async def _send_post_execute_email(
+    *,
+    recipient_email: str,
+    recipient_role: str,  # "source_owner" or "target_owner"
+    source_org_name: str,
+    target_org_name: str,
+    site_name: str,
+    site_id: str,
+    relocate_id: str,
+    executed_at: datetime,
+    executor_email: str,
+    attestation_bundle_id: Optional[str],
+) -> None:
+    """Receipt of move — both source + target owners get one of these
+    on completion. Carries the attestation_bundle_id so the recipient
+    has the chain-of-custody anchor for their records."""
+    try:
+        from .email_service import send_email
+        if recipient_role == "source_owner":
+            opening = (
+                f"Site {site_name!r} has been moved from "
+                f"{source_org_name} to {target_org_name}. As the "
+                f"former owner, you no longer see this site in your "
+                f"client portal."
+            )
+            audit_pointer = (
+                f"Your evidence chain for the period that {site_name!r} "
+                f"was under {source_org_name} remains intact and "
+                f"available to auditors via your auditor kit ZIP at "
+                f"/api/evidence/sites/{site_id}/auditor-kit. Cryptographic "
+                f"signatures continue to verify under the chain "
+                f"identifier of the original site."
+            )
+        else:
+            opening = (
+                f"Site {site_name!r} has been moved from "
+                f"{source_org_name} to {target_org_name}. As the "
+                f"current owner of {target_org_name}, this site is "
+                f"now visible in your client portal."
+            )
+            audit_pointer = (
+                f"The full historical evidence chain of {site_name!r} "
+                f"(including the period the site was under "
+                f"{source_org_name}) is available to your auditor via "
+                f"the auditor kit ZIP at /api/evidence/sites/{site_id}/"
+                f"auditor-kit. The chain crosses the organization "
+                f"boundary via a recorded relocate event; auditors "
+                f"verify each segment under its respective issuer."
+            )
+        body = (
+            f"{opening}\n"
+            f"\n"
+            f"Move completed: {executed_at.isoformat()}\n"
+            f"OsirisCare admin who completed the move: {executor_email}\n"
+            f"Cross-organization relocate identifier: {relocate_id}\n"
+            + (
+                f"Cryptographic chain anchor: {attestation_bundle_id}\n"
+                if attestation_bundle_id
+                else ""
+            ) +
+            f"\n"
+            f"{audit_pointer}\n"
+            f"\n"
+            f"PHI was scrubbed at appliance egress throughout the "
+            f"relocate; the same substrate-class business associate "
+            f"(OsirisCare) handles the site before and after the move. "
+            f"No PHI changed business-associate custody during the "
+            f"relocate.\n"
+            f"\n"
+            f"Questions? Contact your OsirisCare account representative.\n"
+            f"\n"
+            f"---\n"
+            f"OsirisCare — substrate-level cross-organization site "
+            f"relocate completion notice"
+        )
+        await send_email(
+            recipient_email,
+            f"Site relocate completed: {site_name}",
+            body,
+        )
+    except Exception:
+        logger.error("post_execute_email_failed", exc_info=True)
+
+
+# ─────────────────────────────────────────────────────────────────
 # Endpoint 1: initiate (Osiris admin only)
 # ─────────────────────────────────────────────────────────────────
 
@@ -357,16 +602,16 @@ async def initiate_cross_org_relocate(
         cool_h = (prefs and prefs["transfer_cooling_off_hours"]) or DEFAULT_COOLING_OFF_HOURS
         exp_d = (prefs and prefs["transfer_expiry_days"]) or DEFAULT_EXPIRY_DAYS
 
-        # Generate magic-link tokens. Stored as SHA256 — never plaintext.
-        # The plaintext goes in the email; the hash goes in the DB.
+        # Generate the source-release magic-link token only. The
+        # target-accept token is generated at source-release time
+        # (RT21 Phase 3 hardening: shorter leak window — no token sits
+        # idle waiting for source to act). Same rotation pattern as
+        # client_owner_transfer at the ack step.
         source_release_token = secrets.token_urlsafe(32)
-        target_accept_token = secrets.token_urlsafe(32)
         source_release_token_hash = hashlib.sha256(
             source_release_token.encode("utf-8")
         ).hexdigest()
-        target_accept_token_hash = hashlib.sha256(
-            target_accept_token.encode("utf-8")
-        ).hexdigest()
+        target_accept_token_hash = None  # filled at source-release
 
         expires_at = datetime.now(timezone.utc) + timedelta(days=exp_d)
 
@@ -408,6 +653,21 @@ async def initiate_cross_org_relocate(
             )
         expected_source_email = source_owner_row["email"].lower().strip()
         expected_target_email = target_owner_row["email"].lower().strip()
+
+        # Org + site names for the email body. Resolved in the same
+        # connection so we don't need a second pool acquire after commit.
+        names = await conn.fetchrow(
+            """
+            SELECT
+                (SELECT name FROM client_orgs WHERE id = $1::uuid) AS source_org_name,
+                (SELECT name FROM client_orgs WHERE id = $2::uuid) AS target_org_name
+            """,
+            source_org_id,
+            body.target_org_id,
+        )
+        source_org_name = (names and names["source_org_name"]) or "(unnamed organization)"
+        target_org_name = (names and names["target_org_name"]) or "(unnamed organization)"
+        site_display_name = site["clinic_name"] or body.site_id
 
         async with conn.transaction():
             row = await conn.fetchrow(
@@ -481,12 +741,9 @@ async def initiate_cross_org_relocate(
 
     # Patricia RT21 Gate 2: NEVER return plaintext tokens in the
     # response body. The endpoint is feature-flag-gated AND email
-    # delivery is required before the flow can complete. Until
-    # `cross_org_site_relocate_email_delivery` is wired (Phase 3), the
-    # initiate endpoint creates the row + attestation but the magic
-    # links are unreachable. The feature flag stays disabled until
-    # email infra ships — the design contract is "no flag flip without
-    # email delivery."
+    # delivery is required before the flow can complete. RT21 Phase 3
+    # wires the source-release email here — the plaintext token rides
+    # the email channel, never the response body.
     logger.info(
         "cross_org_site_relocate initiated",
         extra={
@@ -499,9 +756,29 @@ async def initiate_cross_org_relocate(
             "expected_target_email": expected_target_email,
         },
     )
-    # Tokens are NOT returned. Email-driven delivery only.
-    _ = source_release_token  # exists in DB as hash; plaintext is for email
-    _ = target_accept_token
+
+    # Phase 3: deliver the source-release magic link by email. The
+    # target-accept email fires LATER, only after source-release
+    # succeeds (so the target owner isn't notified of a move that
+    # might never happen). The send is best-effort — failures log at
+    # ERROR but the relocate row + attestation are already committed.
+    await _send_source_release_email(
+        source_owner_email=expected_source_email,
+        source_org_name=source_org_name,
+        target_org_name=target_org_name,
+        site_name=site_display_name,
+        initiator_email=actor_email,
+        relocate_id=relocate_id,
+        source_release_token=source_release_token,
+        reason=body.reason,
+        expires_at=expires_at,
+    )
+    # Marcus RT21 P3 token-lifecycle rule: drop the plaintext local var
+    # as soon as it's done being used. Defends against post-mortem stack
+    # capture / accidental logging / a future code path that survives an
+    # exception. The hash persists in DB; the plaintext only existed
+    # long enough to ride the email channel.
+    source_release_token = None  # noqa: F841
 
     return {
         "relocate_id": relocate_id,
@@ -510,7 +787,6 @@ async def initiate_cross_org_relocate(
         "cooling_off_hours": cool_h,
         "expected_source_release_email": expected_source_email,
         "expected_target_accept_email": expected_target_email,
-        "_email_delivery_pending": True,
     }
 
 
@@ -576,6 +852,35 @@ async def source_release(body: SourceReleaseRequest, request: Request):
             )
         actor_email = expected_email
 
+        # Generate the target-accept token now (rotation pattern —
+        # shorter leak window than issuing both tokens at initiate
+        # time and letting the target token sit idle).
+        target_accept_token = secrets.token_urlsafe(32)
+        target_accept_token_hash = hashlib.sha256(
+            target_accept_token.encode("utf-8")
+        ).hexdigest()
+
+        # Names + expected target email + expiry for the outbound email.
+        ctx = await conn.fetchrow(
+            """
+            SELECT
+                r.expected_target_accept_email,
+                r.expires_at,
+                s.clinic_name AS site_name,
+                (SELECT name FROM client_orgs WHERE id = r.source_org_id) AS source_org_name,
+                (SELECT name FROM client_orgs WHERE id = r.target_org_id) AS target_org_name,
+                COALESCE(
+                    (SELECT transfer_cooling_off_hours FROM client_orgs WHERE id = r.source_org_id),
+                    $2::int
+                ) AS cooling_off_hours
+            FROM cross_org_site_relocate_requests r
+            JOIN sites s ON s.site_id = r.site_id
+            WHERE r.id = $1
+            """,
+            relocate_id,
+            DEFAULT_COOLING_OFF_HOURS,
+        )
+
         async with conn.transaction():
             await conn.execute(
                 """
@@ -584,12 +889,14 @@ async def source_release(body: SourceReleaseRequest, request: Request):
                        source_release_email = $2,
                        source_release_at = NOW(),
                        source_release_reason = $3,
-                       source_release_token_hash = NULL
+                       source_release_token_hash = NULL,
+                       target_accept_token_hash = $4
                  WHERE id = $1
                 """,
                 relocate_id,
                 actor_email,
                 body.reason,
+                target_accept_token_hash,
             )
 
             bundle_id = await _emit_attestation(
@@ -606,6 +913,24 @@ async def source_release(body: SourceReleaseRequest, request: Request):
                 },
             )
             await _append_bundle_id(conn, relocate_id, bundle_id)
+
+    # Phase 3: deliver the target-accept magic link by email. After
+    # transaction commit so a partial-success state never exists where
+    # the target email links to a row that doesn't reflect "released."
+    if ctx:
+        await _send_target_accept_email(
+            target_owner_email=(ctx["expected_target_accept_email"] or "").lower().strip(),
+            source_org_name=ctx["source_org_name"] or "(unnamed organization)",
+            target_org_name=ctx["target_org_name"] or "(unnamed organization)",
+            site_name=ctx["site_name"] or row["site_id"],
+            relocate_id=relocate_id,
+            target_accept_token=target_accept_token,
+            reason=body.reason,
+            expires_at=ctx["expires_at"],
+            cooling_off_hours=ctx["cooling_off_hours"],
+        )
+    # Marcus RT21 P3 token-lifecycle rule: drop plaintext after use.
+    target_accept_token = None  # noqa: F841
 
     logger.info(
         "cross_org_site_relocate source-released",
@@ -778,6 +1103,23 @@ async def execute_relocate(
 
         await _check_target_org_baa(conn, str(row["target_org_id"]))
 
+        # Names for the post-execute receipt emails (resolved before
+        # the transaction so the lookup stays simple).
+        ctx = await conn.fetchrow(
+            """
+            SELECT
+                r.expected_source_release_email,
+                r.expected_target_accept_email,
+                s.clinic_name AS site_name,
+                (SELECT name FROM client_orgs WHERE id = r.source_org_id) AS source_org_name,
+                (SELECT name FROM client_orgs WHERE id = r.target_org_id) AS target_org_name
+            FROM cross_org_site_relocate_requests r
+            JOIN sites s ON s.site_id = r.site_id
+            WHERE r.id = $1
+            """,
+            relocate_id,
+        )
+
         async with conn.transaction():
             # Marcus RT21 Gate 2 fix: lock the relocate row + guard the
             # sites UPDATE with `WHERE client_org_id = source_org_id`.
@@ -880,6 +1222,37 @@ async def execute_relocate(
                     "attestation_bundle_id": bundle_id,
                 }),
                 (request.client.host if request.client else None),
+            )
+
+    # Phase 3: deliver post-execute receipts to BOTH owners. Best-
+    # effort — failures log at ERROR but the move + attestation are
+    # already committed. The bundle_id rides the email so each owner
+    # has the chain anchor in their records.
+    if ctx:
+        executed_at = datetime.now(timezone.utc)
+        s_email = (ctx["expected_source_release_email"] or "").lower().strip()
+        t_email = (ctx["expected_target_accept_email"] or "").lower().strip()
+        common = dict(
+            source_org_name=ctx["source_org_name"] or "(unnamed organization)",
+            target_org_name=ctx["target_org_name"] or "(unnamed organization)",
+            site_name=ctx["site_name"] or row["site_id"],
+            site_id=row["site_id"],
+            relocate_id=relocate_id,
+            executed_at=executed_at,
+            executor_email=actor_email,
+            attestation_bundle_id=bundle_id,
+        )
+        if s_email:
+            await _send_post_execute_email(
+                recipient_email=s_email,
+                recipient_role="source_owner",
+                **common,
+            )
+        if t_email:
+            await _send_post_execute_email(
+                recipient_email=t_email,
+                recipient_role="target_owner",
+                **common,
             )
 
     return {"relocate_id": relocate_id, "status": "completed"}

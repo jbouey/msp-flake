@@ -267,6 +267,29 @@ record (append-only `feature_flags` row + `admin_audit_log` row)
 adequately tracks substrate-configuration changes for §164.528
 purposes, OR guidance on a third source if needed.
 
+### Sub-question 4a — clinic name in email plaintext
+
+The three customer-facing emails wired in Phase 3 (source-release
+notice, target-accept notice, post-execute receipt) include
+`clinic_name` and `client_org` names in the subject line and body.
+SMTP relays see this plaintext.
+
+**Our position:** `clinic_name` is a site attribute (e.g. "North
+Valley Family Practice"), not a §164.514 individual identifier; it
+does not constitute PHI. SMTP relays in our delivery path are
+covered by the substrate's BAA arrangements with the email provider
+(Postmark, AWS SES, or equivalent — all maintain BAAs for healthcare
+clients). Business-name disclosure to a BAA-covered relay is
+acceptable under §164.504(e).
+
+**What we need from you:** confirmation that clinic-name in email
+plaintext is acceptable, OR guidance on whether we should
+restructure templates to use opaque relocate identifiers + a portal
+URL (the recipient logs in and sees the clinic name only inside the
+authenticated portal). Our default position is "acceptable as-is";
+we want explicit sign-off given that auditors sometimes flag any
+business-name in cleartext.
+
 ---
 
 ## 5. What you do not need to opine on
