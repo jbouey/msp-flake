@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { getScoreStatus } from '../constants';
 import { DisclaimerFooter } from '../components/composed';
+import { fetchBlob } from '../utils/portalFetch';
+import type { PortalFetchError } from '../utils/portalFetch';
 
 interface MonthlyReport {
   id: string;
@@ -111,42 +113,16 @@ export const ClientReports: React.FC = () => {
     }
   };
 
-  // Round-table 31 P1 (2026-05-05): the kit download was a plain
-  // <a href> which produced an opaque JSON error blob in a new tab on
-  // 401 (session expired) / 429 (rate-limited). Customer in a meeting
-  // would see "Not Found"-shaped output and think the product is
-  // broken. Fetch-as-blob lets us surface actionable copy on every
-  // error class.
+  // Round-table 31 P1: kit download routes through portalFetch.fetchBlob
+  // so 401/429/500 surface as actionable copy. Round-table 32 closure:
+  // the inline fetch+error-parse moved to portalFetch — this handler
+  // now branches on the canonical PortalFetchError.status only.
   const handleAuditorKitDownload = async (siteId: string, clinicName: string) => {
     setDownloadingKit(siteId);
     setError(null);
     try {
       const url = `/api/evidence/sites/${encodeURIComponent(siteId)}/auditor-kit`;
-      const res = await fetch(url, { credentials: 'include' });
-      if (!res.ok) {
-        if (res.status === 401 || res.status === 403) {
-          setError(
-            'Your session expired. Please log in again to download the kit.',
-          );
-          return;
-        }
-        if (res.status === 429) {
-          const retry = res.headers.get('Retry-After');
-          const minutes = retry ? Math.ceil(parseInt(retry, 10) / 60) : 60;
-          setError(
-            `Rate limit reached for this site (10 downloads per hour). Try again in ~${minutes} minutes.`,
-          );
-          return;
-        }
-        const detail = await res.text().catch(() => '');
-        let parsed: { detail?: string } | undefined;
-        try { parsed = JSON.parse(detail); } catch { /* not JSON */ }
-        setError(
-          parsed?.detail ||
-          `Auditor kit download failed (${res.status}). Try again or contact support.`,
-        );
-        return;
-      }
+      const res = await fetchBlob(url);
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -158,11 +134,23 @@ export const ClientReports: React.FC = () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? `Auditor kit download failed: ${e.message}`
-          : 'Auditor kit download failed (network error).',
-      );
+      const err = e as PortalFetchError & { retryAfter?: string };
+      if (err.status === 401 || err.status === 403) {
+        setError('Your session expired. Please log in again to download the kit.');
+      } else if (err.status === 429) {
+        const minutes = err.retryAfter
+          ? Math.ceil(parseInt(err.retryAfter, 10) / 60)
+          : 60;
+        setError(
+          `Rate limit reached for this site (10 downloads per hour). Try again in ~${minutes} minutes.`,
+        );
+      } else {
+        setError(
+          err.detail ||
+            err.message ||
+            'Auditor kit download failed (network error).',
+        );
+      }
     } finally {
       setDownloadingKit(null);
     }

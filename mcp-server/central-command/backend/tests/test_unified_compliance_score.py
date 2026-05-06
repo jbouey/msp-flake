@@ -67,7 +67,16 @@ def test_compute_compliance_score_default_window_is_30_days():
     155K-bundle North Valley org). 30 days keeps weekly-cadence checks
     in scope (≥4 runs in window) while staying under the 3s wall-clock
     target for cold dashboard loads. Auditor-kit + evidence archive
-    pass `window_days=None` to read the full chain."""
+    pass `window_days=None` to read the full chain.
+
+    Round-table 32 (Maya P2 strengthening): pre-fix this gate was a
+    pure string-match — pinned the literal `DEFAULT_WINDOW_DAYS = 30`
+    + the signature default, but did NOT verify the SQL actually
+    applies the filter. A refactor that ignores the constant in SQL
+    would pass. Now also asserts the bounded-query SQL contains the
+    `cb.checked_at > NOW() - ($N::int * INTERVAL '1 day')` pattern
+    AND that the asyncpg call passes `window_days` as a parameter.
+    """
     src = _read(_BACKEND / "compliance_score.py")
     assert "DEFAULT_WINDOW_DAYS = 30" in src, (
         "Round-table 30 default-window contract changed. If lowering "
@@ -77,6 +86,67 @@ def test_compute_compliance_score_default_window_is_30_days():
         "took 4.7s on North Valley with 155K bundles."
     )
     assert "window_days: Optional[int] = DEFAULT_WINDOW_DAYS" in src
+
+    # Behavior pin: the bounded-query branch must apply the
+    # `checked_at > NOW() - ($N::int * INTERVAL '1 day')` filter and
+    # pass window_days into the asyncpg call.
+    bounded_filter_pat = re.compile(
+        r"cb\.checked_at\s*>\s*NOW\s*\(\s*\)\s*-\s*\(\s*\$\d+::int\s*\*\s*INTERVAL\s*'1\s*day'\s*\)",
+        re.IGNORECASE,
+    )
+    assert bounded_filter_pat.search(src), (
+        "compute_compliance_score's bounded-query branch is missing "
+        "the parameterized `checked_at > NOW() - ($N::int * INTERVAL '1 day')` "
+        "filter. If you've refactored the SQL, ensure the filter is "
+        "still parameterized so window_days flows through."
+    )
+
+    # Behavior pin: window_days must be passed as a query parameter.
+    # The bounded-query branch's conn.fetch(...) call should include
+    # `window_days` as one of the positional args.
+    fetch_pat = re.compile(
+        r"conn\.fetch\(\s*\"\"\"[^\"]*?cb\.checked_at\s*>\s*NOW\(\)[^\"]*?\"\"\"\s*,\s*site_ids\s*,\s*window_days",
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert fetch_pat.search(src), (
+        "compute_compliance_score doesn't pass window_days as a "
+        "parameter to the bounded conn.fetch. The constant-define + "
+        "signature-default-set string-matches pass but the SQL would "
+        "ignore the value at runtime."
+    )
+
+    # Behavior pin: the unbounded branch (window_days=None) must NOT
+    # apply the time filter — auditor-kit + evidence archive depend on
+    # this for full-chain reads.
+    unbounded_branch_pat = re.compile(
+        r"if\s+window_days\s+is\s+None\s*:[^}]*?WHERE\s+cb\.site_id\s*=\s*ANY",
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert unbounded_branch_pat.search(src), (
+        "compute_compliance_score's window_days=None branch isn't "
+        "wired correctly — auditor-kit / evidence archive contexts "
+        "require all-time SQL with NO checked_at filter for full-chain reads."
+    )
+
+
+def test_score_window_unbounded_overrides_for_chain_reads():
+    """Maya round-table 32: the auditor-kit + evidence archive paths
+    intentionally pass `window_days=None` so the chain-of-custody view
+    is unfiltered. If a future refactor removed the None branch, the
+    auditor-kit ZIP would silently ship only the last 30 days of
+    bundles — chain integrity break.
+    """
+    src = _read(_BACKEND / "compliance_score.py")
+    # The signature must accept Optional[int]
+    assert "window_days: Optional[int]" in src
+    # The function body must branch on `window_days is None` to choose
+    # the unbounded SQL.
+    assert "if window_days is None:" in src, (
+        "compute_compliance_score must branch on `window_days is None` "
+        "to select the all-time SQL path. Without this branch the "
+        "auditor-kit / evidence archive would silently lose pre-30d "
+        "bundles."
+    )
 
 
 def test_canonical_helper_returns_structured_result():

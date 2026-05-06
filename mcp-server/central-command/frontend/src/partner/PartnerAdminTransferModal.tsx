@@ -20,7 +20,7 @@
  * (admin-API class, not fleet_orders).
  */
 import React, { useEffect, useState } from 'react';
-import { csrfHeaders } from '../utils/csrf';
+import { getJson, postJson } from '../utils/portalFetch';
 
 interface PartnerAdminTransferState {
   id: string;
@@ -52,36 +52,6 @@ interface Props {
 const MIN_REASON_CHARS = 20;
 const INITIATE_PHRASE = 'CONFIRM-PARTNER-ADMIN-TRANSFER';
 const ACCEPT_PHRASE = 'ACCEPT-PARTNER-ADMIN';
-
-async function postJson<T>(url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    let parsed: { detail?: string } | undefined;
-    try {
-      parsed = JSON.parse(detail);
-    } catch {
-      // not JSON
-    }
-    throw new Error(parsed?.detail || `${res.status} ${detail || res.statusText}`);
-  }
-  return res.json() as Promise<T>;
-}
-
-async function getJson<T>(url: string): Promise<T | null> {
-  const res = await fetch(url, { credentials: 'include' });
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(`${res.status} ${detail || res.statusText}`);
-  }
-  return res.json() as Promise<T>;
-}
 
 export const PartnerAdminTransferModal: React.FC<Props> = ({
   isOpen,

@@ -17,7 +17,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { usePartner } from './PartnerContext';
-import { csrfHeaders } from '../utils/csrf';
+import { postJson, patchJson, deleteJson } from '../utils/portalFetch';
+import type { PortalFetchError } from '../utils/portalFetch';
 import { PartnerAdminTransferModal } from './PartnerAdminTransferModal';
 
 interface PartnerUser {
@@ -97,15 +98,9 @@ export const PartnerUsersScreen: React.FC = () => {
     }
   };
 
-  const surfaceError = async (res: Response): Promise<never> => {
-    const detail = await res.text().catch(() => '');
-    let parsed: { detail?: string } | undefined;
-    try {
-      parsed = JSON.parse(detail);
-    } catch {
-      // not JSON
-    }
-    throw new Error(parsed?.detail || `${res.status} ${detail || res.statusText}`);
+  const _setErrorFromException = (e: unknown, fallback: string) => {
+    const err = e as PortalFetchError;
+    setError(err.detail || err.message || fallback);
   };
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -113,24 +108,18 @@ export const PartnerUsersScreen: React.FC = () => {
     setError(null);
     setActionBusy('invite');
     try {
-      const res = await fetch('/api/partners/me/users', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-        body: JSON.stringify({
-          email: inviteEmail,
-          name: inviteName || null,
-          role: inviteRole,
-        }),
+      await postJson('/api/partners/me/users', {
+        email: inviteEmail,
+        name: inviteName || null,
+        role: inviteRole,
       });
-      if (!res.ok) await surfaceError(res);
       setInviteOpen(false);
       setInviteEmail('');
       setInviteName('');
       setInviteRole('tech');
       await fetchUsers();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Invite failed');
+      _setErrorFromException(e, 'Invite failed');
     } finally {
       setActionBusy(null);
     }
@@ -150,19 +139,13 @@ export const PartnerUsersScreen: React.FC = () => {
     setError(null);
     setActionBusy(u.id);
     try {
-      const res = await fetch(
+      await patchJson(
         `/api/partners/me/users/${encodeURIComponent(u.id)}/role`,
-        {
-          method: 'PATCH',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-          body: JSON.stringify({ role: nextRole, reason }),
-        },
+        { role: nextRole, reason },
       );
-      if (!res.ok) await surfaceError(res);
       await fetchUsers();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Role change failed');
+      _setErrorFromException(e, 'Role change failed');
     } finally {
       setActionBusy(null);
     }
@@ -189,19 +172,13 @@ export const PartnerUsersScreen: React.FC = () => {
     setError(null);
     setActionBusy(u.id);
     try {
-      const res = await fetch(
+      await deleteJson(
         `/api/partners/me/users/${encodeURIComponent(u.id)}`,
-        {
-          method: 'DELETE',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-          body: JSON.stringify({ reason, confirm_phrase: phrase }),
-        },
+        { reason, confirm_phrase: phrase },
       );
-      if (!res.ok) await surfaceError(res);
       await fetchUsers();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Deactivation failed');
+      _setErrorFromException(e, 'Deactivation failed');
     } finally {
       setActionBusy(null);
     }

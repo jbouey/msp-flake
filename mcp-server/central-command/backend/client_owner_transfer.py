@@ -160,6 +160,18 @@ async def _expire_stale_transfers(conn, client_org_id: str) -> int:
     return len(rows)
 
 
+# Round-table 32 (2026-05-05) DRY closure — chain-attestation primitives
+# delegated to chain_attestation.py. This module's _emit_attestation
+# carries the extra `transfer_id` arg + the post-attest UPDATE on
+# client_org_owner_transfer_requests.attestation_bundle_ids — preserved
+# in the shim. Anchor-namespace + chain-gap rule live in chain_attestation.
+from .chain_attestation import (
+    emit_privileged_attestation as _emit_privileged_attestation_canonical,
+    resolve_client_anchor_site_id,
+    send_chain_aware_operator_alert as _send_chain_aware_operator_alert,
+)
+
+
 async def _emit_attestation(
     conn,
     client_org_id: str,
@@ -169,71 +181,35 @@ async def _emit_attestation(
     transfer_id: str,
     origin_ip: Optional[str] = None,
 ) -> Optional[str]:
-    """Write a privileged_access attestation bundle. Returns
-    bundle_id on success, None on failure (logged at ERROR — caller
-    decides whether to block).
-
-    Owner-transfer attestations bind to the org's PRIMARY site_id
-    (deterministic) so the chain is single-rooted per org. Multi-site
-    orgs still get one chain per transfer event; auditor kit walks
-    it via attestation_bundle_ids JSONB on the request row.
+    """Owner-transfer attestation: shared chain-emit + the per-row
+    attestation_bundle_ids JSONB update specific to this state machine.
     """
-    try:
-        # Resolve org's primary site_id for chain anchoring. Deterministic:
-        # earliest-created site under this org. If the org has no sites
-        # (just-created, unprovisioned), fall back to a synthetic site_id
-        # derived from the org_id — auditor kit will just see a chain
-        # rooted at that synthetic id rather than an actual site.
-        site_row = await conn.fetchrow(
+    anchor_site_id = await resolve_client_anchor_site_id(conn, client_org_id)
+    failed, bundle_id = await _emit_privileged_attestation_canonical(
+        conn,
+        anchor_site_id=anchor_site_id,
+        event_type=event_type,
+        actor_email=actor_email,
+        reason=reason,
+        approvals=[{
+            "stage": event_type.split("_")[-1],
+            "actor": actor_email,
+            "transfer_id": transfer_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }],
+        origin_ip=origin_ip,
+    )
+    if bundle_id:
+        await conn.execute(
             """
-            SELECT site_id FROM sites
-             WHERE client_org_id = $1::uuid
-             ORDER BY created_at ASC LIMIT 1
+            UPDATE client_org_owner_transfer_requests
+               SET attestation_bundle_ids =
+                   attestation_bundle_ids || to_jsonb($2::text)
+             WHERE id = $1::uuid
             """,
-            client_org_id,
+            transfer_id, bundle_id,
         )
-        anchor_site_id = (site_row["site_id"] if site_row
-                          else f"client_org:{client_org_id}")
-
-        att = await create_privileged_access_attestation(
-            conn,
-            site_id=anchor_site_id,
-            event_type=event_type,
-            actor_email=actor_email,
-            reason=reason,
-            origin_ip=origin_ip,
-            duration_minutes=None,
-            approvals=[{
-                "stage": event_type.split("_")[-1],  # initiated/acked/etc
-                "actor": actor_email,
-                "transfer_id": transfer_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }],
-        )
-        bundle_id = att.get("bundle_id")
-        # Append bundle_id to the request row's attestation_bundle_ids
-        if bundle_id:
-            await conn.execute(
-                """
-                UPDATE client_org_owner_transfer_requests
-                   SET attestation_bundle_ids =
-                       attestation_bundle_ids || to_jsonb($2::text)
-                 WHERE id = $1::uuid
-                """,
-                transfer_id, bundle_id,
-            )
-        return bundle_id
-    except PrivilegedAccessAttestationError as e:
-        logger.error(
-            "owner_transfer_attestation_failed",
-            exc_info=True,
-            extra={
-                "transfer_id": transfer_id,
-                "event_type": event_type,
-                "client_org_id": client_org_id,
-            },
-        )
-        return None
+    return bundle_id
 
 
 def _send_operator_visibility(
@@ -245,29 +221,20 @@ def _send_operator_visibility(
     org_id: str,
     attestation_failed: bool,
 ) -> None:
-    """Wrap send_operator_alert with the chain-gap escalation pattern
-    QA established for break-glass + billing destructive (commit
-    0c710d3b P1-3): if attestation failed, severity bumps to P0-CHAIN-
-    GAP and subject summary appends the marker."""
-    try:
-        from .email_alerts import send_operator_alert
-        if attestation_failed:
-            severity = "P0-CHAIN-GAP"
-            summary = f"{summary} [ATTESTATION-MISSING]"
-        details = {**details, "attestation_failed": attestation_failed}
-        send_operator_alert(
-            event_type=event_type,
-            severity=severity,
-            summary=summary,
-            details=details,
-            site_id=f"client_org:{org_id}",
-            actor_email=actor_email,
-        )
-    except Exception:
-        logger.error(
-            "operator_alert_dispatch_failed_owner_transfer",
-            exc_info=True,
-        )
+    """Thin shim → chain_attestation.send_chain_aware_operator_alert
+    with synthetic client_org:<id> site_id (owner-transfer events
+    always use the synthetic anchor for the operator-alert side; the
+    real site_id is on the cryptographic chain via _emit_attestation
+    above)."""
+    _send_chain_aware_operator_alert(
+        event_type=event_type,
+        severity=severity,
+        summary=summary,
+        details=details,
+        actor_email=actor_email,
+        site_id=f"client_org:{org_id}",
+        attestation_failed=attestation_failed,
+    )
 
 
 async def _send_initiator_confirmation_email(

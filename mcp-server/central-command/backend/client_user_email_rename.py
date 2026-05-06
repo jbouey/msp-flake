@@ -137,6 +137,16 @@ def _normalize(email: str) -> str:
     return email.strip().lower()
 
 
+# Round-table 32 (2026-05-05) DRY closure — chain-attestation primitives
+# delegated to chain_attestation.py. Thin shims preserve call-site
+# signatures across all 5 endpoints in this module.
+from .chain_attestation import (
+    emit_privileged_attestation as _emit_privileged_attestation_canonical,
+    resolve_client_anchor_site_id as _resolve_client_anchor_site_id,
+    send_chain_aware_operator_alert as _send_chain_aware_operator_alert,
+)
+
+
 async def _emit_attestation(
     conn,
     anchor_site_id: str,
@@ -146,34 +156,17 @@ async def _emit_attestation(
     target_user_id: str,
     origin_ip: Optional[str] = None,
 ) -> Optional[str]:
-    """Best-effort Ed25519 attestation. Mirrors the mfa_admin helper."""
-    try:
-        att = await create_privileged_access_attestation(
-            conn,
-            site_id=anchor_site_id,
-            event_type=event_type,
-            actor_email=actor_email,
-            reason=reason,
-            origin_ip=origin_ip,
-            duration_minutes=None,
-            approvals=[{
-                "stage": "rename",
-                "actor": actor_email,
-                "target_user_id": target_user_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }],
-        )
-        return att.get("bundle_id")
-    except PrivilegedAccessAttestationError:
-        logger.error(
-            "email_rename_attestation_failed",
-            exc_info=True,
-            extra={
-                "event_type": event_type,
-                "target_user_id": target_user_id,
-            },
-        )
-        return None
+    """Thin shim → chain_attestation.emit_privileged_attestation."""
+    _failed, bundle_id = await _emit_privileged_attestation_canonical(
+        conn,
+        anchor_site_id=anchor_site_id,
+        event_type=event_type,
+        actor_email=actor_email,
+        reason=reason,
+        target_user_id=target_user_id,
+        origin_ip=origin_ip,
+    )
+    return bundle_id
 
 
 def _send_operator_visibility(
@@ -185,39 +178,16 @@ def _send_operator_visibility(
     site_id: str,
     attestation_failed: bool,
 ) -> None:
-    """Chain-gap escalation pattern uniform with sessions 215/216 +
-    task #19 mfa_admin."""
-    try:
-        from .email_alerts import send_operator_alert
-        if attestation_failed:
-            severity = "P0-CHAIN-GAP"
-            summary = f"{summary} [ATTESTATION-MISSING]"
-        details = {**details, "attestation_failed": attestation_failed}
-        send_operator_alert(
-            event_type=event_type,
-            severity=severity,
-            summary=summary,
-            details=details,
-            site_id=site_id,
-            actor_email=actor_email,
-        )
-    except Exception:
-        logger.error(
-            "operator_alert_dispatch_failed_email_rename",
-            exc_info=True,
-        )
-
-
-async def _resolve_client_anchor_site_id(conn, org_id: str) -> str:
-    row = await conn.fetchrow(
-        """
-        SELECT site_id FROM sites
-         WHERE client_org_id = $1::uuid
-         ORDER BY created_at ASC LIMIT 1
-        """,
-        org_id,
+    """Thin shim → chain_attestation.send_chain_aware_operator_alert."""
+    _send_chain_aware_operator_alert(
+        event_type=event_type,
+        severity=severity,
+        summary=summary,
+        details=details,
+        actor_email=actor_email,
+        site_id=site_id,
+        attestation_failed=attestation_failed,
     )
-    return row["site_id"] if row else f"client_org:{org_id}"
 
 
 async def _check_rate_limit(conn, user_id: str) -> None:

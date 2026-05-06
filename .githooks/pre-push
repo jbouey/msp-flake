@@ -113,6 +113,8 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_unified_compliance_score.py"
     "tests/test_partner_mutations_role_gated.py"
     "tests/test_auditor_kit_frontend_blob_fetch.py"
+    "tests/test_chain_attestation_no_inline_duplicates.py"
+    "tests/test_portal_fetch_canonical.py"
     "tests/test_per_control_lockstep.py"
     "tests/test_no_inline_score_thresholds.py"
     "tests/test_expected_interval_calibration.py"

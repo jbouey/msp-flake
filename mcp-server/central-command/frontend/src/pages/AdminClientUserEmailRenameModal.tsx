@@ -18,7 +18,8 @@
  * was renamed via raw SQL because no UI existed; this closes that gap.
  */
 import React, { useState } from 'react';
-import { csrfHeaders } from '../utils/csrf';
+import { postJson } from '../utils/portalFetch';
+import type { PortalFetchError } from '../utils/portalFetch';
 
 interface Props {
   isOpen: boolean;
@@ -78,37 +79,27 @@ export const AdminClientUserEmailRenameModal: React.FC<Props> = ({
     }
     setLoading(true);
     try {
-      const res = await fetch(
+      const data = await postJson<{
+        new_email: string;
+        attestation_bundle_id: string | null;
+      }>(
         `/api/admin/client-users/${encodeURIComponent(userId)}/change-email`,
         {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-          body: JSON.stringify({
-            new_email: newEmail,
-            reason,
-            confirm_phrase: confirmPhrase,
-          }),
+          new_email: newEmail,
+          reason,
+          confirm_phrase: confirmPhrase,
         },
       );
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        let parsed: { detail?: string } | undefined;
-        try {
-          parsed = JSON.parse(text);
-        } catch {
-          // not JSON
-        }
-        throw new Error(parsed?.detail || `${res.status} ${text || res.statusText}`);
-      }
-      const data = await res.json();
       setResult({
         new_email: data.new_email,
         attestation_bundle_id: data.attestation_bundle_id,
       });
       onResolved?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Rename failed');
+      // PortalFetchError carries .detail when backend returned JSON;
+      // fall back to .message for network failures.
+      const err = e as PortalFetchError;
+      setError(err.detail || err.message || 'Rename failed');
     } finally {
       setLoading(false);
     }

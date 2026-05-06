@@ -107,6 +107,18 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+# Round-table 32 (2026-05-05) DRY closure: chain-attestation primitives
+# extracted to chain_attestation.py. The thin local wrappers below
+# preserve existing call signatures so the rest of this module didn't
+# need touching; future changes to the chain-gap rule or attestation
+# shape happen in one place. Anti-regression: tests/test_chain_attestation_no_inline_duplicates.py.
+from .chain_attestation import (
+    emit_privileged_attestation as _emit_privileged_attestation_canonical,
+    resolve_client_anchor_site_id as _resolve_client_anchor_site_id,
+    send_chain_aware_operator_alert as _send_chain_aware_operator_alert,
+)
+
+
 async def _emit_attestation(
     conn,
     anchor_site_id: str,
@@ -116,34 +128,20 @@ async def _emit_attestation(
     target_user_id: str,
     origin_ip: Optional[str] = None,
 ) -> Optional[str]:
-    """Best-effort Ed25519 attestation. Returns bundle_id or None."""
-    try:
-        att = await create_privileged_access_attestation(
-            conn,
-            site_id=anchor_site_id,
-            event_type=event_type,
-            actor_email=actor_email,
-            reason=reason,
-            origin_ip=origin_ip,
-            duration_minutes=None,
-            approvals=[{
-                "stage": event_type.split("_")[-1],
-                "actor": actor_email,
-                "target_user_id": target_user_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }],
-        )
-        return att.get("bundle_id")
-    except PrivilegedAccessAttestationError:
-        logger.error(
-            "mfa_admin_attestation_failed",
-            exc_info=True,
-            extra={
-                "event_type": event_type,
-                "target_user_id": target_user_id,
-            },
-        )
-        return None
+    """Thin shim → chain_attestation.emit_privileged_attestation.
+    Returns bundle_id or None (legacy shape; the canonical helper
+    returns (failed, bundle_id) tuple — failure can be inferred from
+    None at this shim's call sites)."""
+    _failed, bundle_id = await _emit_privileged_attestation_canonical(
+        conn,
+        anchor_site_id=anchor_site_id,
+        event_type=event_type,
+        actor_email=actor_email,
+        reason=reason,
+        target_user_id=target_user_id,
+        origin_ip=origin_ip,
+    )
+    return bundle_id
 
 
 def _send_operator_visibility(
@@ -155,41 +153,16 @@ def _send_operator_visibility(
     site_id: str,
     attestation_failed: bool,
 ) -> None:
-    """Chain-gap escalation pattern (uniform with the rest of session 216
-    operator alerts). On attestation failure: severity → P0-CHAIN-GAP +
-    [ATTESTATION-MISSING] subject suffix."""
-    try:
-        from .email_alerts import send_operator_alert
-        if attestation_failed:
-            severity = "P0-CHAIN-GAP"
-            summary = f"{summary} [ATTESTATION-MISSING]"
-        details = {**details, "attestation_failed": attestation_failed}
-        send_operator_alert(
-            event_type=event_type,
-            severity=severity,
-            summary=summary,
-            details=details,
-            site_id=site_id,
-            actor_email=actor_email,
-        )
-    except Exception:
-        logger.error(
-            "operator_alert_dispatch_failed_mfa_admin",
-            exc_info=True,
-        )
-
-
-async def _resolve_client_anchor_site_id(conn, org_id: str) -> str:
-    """Same anchor pattern as client_user_role_changed."""
-    row = await conn.fetchrow(
-        """
-        SELECT site_id FROM sites
-         WHERE client_org_id = $1::uuid
-         ORDER BY created_at ASC LIMIT 1
-        """,
-        org_id,
+    """Thin shim → chain_attestation.send_chain_aware_operator_alert."""
+    _send_chain_aware_operator_alert(
+        event_type=event_type,
+        severity=severity,
+        summary=summary,
+        details=details,
+        actor_email=actor_email,
+        site_id=site_id,
+        attestation_failed=attestation_failed,
     )
-    return row["site_id"] if row else f"client_org:{org_id}"
 
 
 async def _send_revoke_email_to_target(

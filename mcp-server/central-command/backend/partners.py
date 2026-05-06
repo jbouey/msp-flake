@@ -538,6 +538,10 @@ class PartnerUserDeactivate(BaseModel):
         description="Type the literal DEACTIVATE-PARTNER-USER")
 
 
+# Round-table 32 (2026-05-05) DRY closure — partner_user attestation
+# delegated to chain_attestation.py canonical helpers. The signature
+# of `_emit_partner_user_attestation` is preserved so the 3 call
+# sites (create / role-change / deactivate) need no changes.
 async def _emit_partner_user_attestation(
     pool, partner_id: str, event_type: str,
     actor_email: str, reason: str,
@@ -545,56 +549,29 @@ async def _emit_partner_user_attestation(
     new_role: Optional[str] = None,
     request: Optional[Request] = None,
 ) -> tuple[bool, Optional[str]]:
-    """Shared attestation helper for partner_user mutations. Returns
-    (failed, bundle_id). Mirrors the create_partner_user path's shape
-    so the chain is uniform across role-change / deactivate / create.
-    """
-    failed = False
-    bundle_id = None
-    try:
-        from .privileged_access_attestation import (
-            create_privileged_access_attestation,
-            PrivilegedAccessAttestationError,
+    """Thin shim → chain_attestation.emit_privileged_attestation
+    with partner-org anchor namespace + partner-specific approvals
+    payload (target_email + optional new_role)."""
+    from .chain_attestation import emit_privileged_attestation
+    approvals = [{
+        "stage": "applied",
+        "actor": actor_email,
+        "target_user_id": target_user_id,
+        "target_email": target_email,
+    }]
+    if new_role is not None:
+        approvals[0]["new_role"] = new_role
+    async with admin_connection(pool) as att_conn:
+        return await emit_privileged_attestation(
+            att_conn,
+            anchor_site_id=f"partner_org:{partner_id}",
+            event_type=event_type,
+            actor_email=actor_email or "unknown",
+            reason=reason,
+            approvals=approvals,
+            origin_ip=(request.client.host
+                       if request and request.client else None),
         )
-        anchor_site_id = f"partner_org:{partner_id}"
-        approvals = [{
-            "stage": "applied",
-            "actor": actor_email,
-            "target_user_id": target_user_id,
-            "target_email": target_email,
-        }]
-        if new_role is not None:
-            approvals[0]["new_role"] = new_role
-        async with admin_connection(pool) as att_conn:
-            try:
-                att = await create_privileged_access_attestation(
-                    att_conn,
-                    site_id=anchor_site_id,
-                    event_type=event_type,
-                    actor_email=actor_email or "unknown",
-                    reason=reason,
-                    origin_ip=(request.client.host
-                               if request and request.client else None),
-                    approvals=approvals,
-                )
-                bundle_id = att.get("bundle_id")
-            except PrivilegedAccessAttestationError:
-                failed = True
-                logger.error(
-                    f"{event_type}_attestation_failed",
-                    exc_info=True,
-                    extra={
-                        "partner_id": partner_id,
-                        "target_email": target_email,
-                    },
-                )
-    except Exception:
-        failed = True
-        logger.error(
-            f"{event_type}_attestation_unexpected", exc_info=True,
-            extra={"partner_id": partner_id},
-        )
-    return failed, bundle_id
 
 
 def _partner_user_op_alert(
@@ -602,26 +579,17 @@ def _partner_user_op_alert(
     details: dict, actor_email: Optional[str],
     site_id: str, attestation_failed: bool,
 ):
-    """Chain-gap escalation pattern uniform with the rest of the
-    partner-side hooks shipped in session 216."""
-    try:
-        from .email_alerts import send_operator_alert
-        if attestation_failed:
-            severity = "P0-CHAIN-GAP"
-            summary = f"{summary} [ATTESTATION-MISSING]"
-        details = {**details, "attestation_failed": attestation_failed}
-        send_operator_alert(
-            event_type=event_type,
-            severity=severity,
-            summary=summary,
-            details=details,
-            site_id=site_id,
-            actor_email=actor_email,
-        )
-    except Exception:
-        logger.error(
-            f"operator_alert_dispatch_failed_{event_type}", exc_info=True,
-        )
+    """Thin shim → chain_attestation.send_chain_aware_operator_alert."""
+    from .chain_attestation import send_chain_aware_operator_alert
+    send_chain_aware_operator_alert(
+        event_type=event_type,
+        severity=severity,
+        summary=summary,
+        details=details,
+        actor_email=actor_email,
+        site_id=site_id,
+        attestation_failed=attestation_failed,
+    )
 
 
 @router.post("/me/users")
