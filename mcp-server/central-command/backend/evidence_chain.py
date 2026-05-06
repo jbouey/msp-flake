@@ -4694,26 +4694,21 @@ def _parse_advisory_metadata(text: str, filename: str) -> Dict[str, Any]:
     return out
 
 
-_KIT_COMPRESSLEVEL = 6  # zlib level — pin explicitly so byte-identity
-                        # holds across CPython builds with different
-                        # bundled zlib defaults (Coach P1-3, 2026-05-06).
-
-
-def _kit_zwrite(zf: "zipfile.ZipFile", name: str, data, mtime) -> None:
-    """Deterministic ZIP write helper — pins date_time, compress_type,
-    external_attr, and (via the surrounding ZipFile context) the
-    compresslevel. Extracted to module scope (Coach P1-2) so the
-    determinism contract test imports the SAME implementation the
-    production endpoint uses, instead of duplicating it.
-
-    `data` may be str or bytes; `zipfile.ZipInfo`+`writestr` handles
-    both. mtime is a 6-tuple `(Y, M, D, h, m, s)`.
-    """
-    import zipfile as _zipfile
-    zi = _zipfile.ZipInfo(filename=name, date_time=mtime)
-    zi.compress_type = _zipfile.ZIP_DEFLATED
-    zi.external_attr = 0o644 << 16
-    zf.writestr(zi, data)
+# Round-table 2026-05-06 follow-up: determinism primitives moved
+# to auditor_kit_zip_primitives.py (FastAPI-free) so the contract
+# test can import them without triggering full module evaluation.
+# Re-export here for source-shape backwards compat (tests grep
+# this file).
+try:
+    from .auditor_kit_zip_primitives import (
+        _kit_zwrite,
+        _KIT_COMPRESSLEVEL,
+    )
+except ImportError:
+    from auditor_kit_zip_primitives import (
+        _kit_zwrite,
+        _KIT_COMPRESSLEVEL,
+    )
 
 
 def _collect_security_advisories() -> List[Tuple[Dict[str, Any], str]]:

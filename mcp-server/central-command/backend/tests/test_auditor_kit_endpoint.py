@@ -50,10 +50,13 @@ class TestAuditorKitEndpoint:
         assert "Content-Disposition" in body
         assert "attachment" in body
 
-    def test_endpoint_caps_limit_to_5000(self):
-        """Range cap prevents an attacker from requesting a 10GB ZIP."""
+    def test_endpoint_caps_limit_to_2000(self):
+        """Range cap prevents an attacker from requesting a 10GB ZIP.
+        Round-table 2026-05-06 (Steve P2): ceiling lowered from 5000
+        to 2000 — at 5000 bundles × ~50KB OTS each = ~250MB upstream
+        RAM before SpooledTemporaryFile spilling helps."""
         body = _get_func("download_auditor_kit")
-        assert "limit > 5000" in body
+        assert "limit > 2000" in body
         assert "limit < 1" in body
 
     def test_endpoint_supports_pagination(self):

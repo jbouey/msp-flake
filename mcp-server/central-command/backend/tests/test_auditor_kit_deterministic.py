@@ -30,14 +30,25 @@ def _load_endpoint_source() -> str:
 def test_zwrite_helper_pins_date_time_and_compress():
     """The deterministic helper must pin date_time, compress_type,
     and external_attr on every ZipInfo. Source-shape audit of the
-    module-level _kit_zwrite helper (Coach P1-2 extraction)."""
-    src = _load_endpoint_source()
-    assert "def _kit_zwrite(" in src, (
-        "Module-level _kit_zwrite helper must be defined "
-        "(Coach P1-2 extraction so test imports SAME impl)."
+    module-level _kit_zwrite helper.
+
+    Round-table 2026-05-06 follow-up: helper extracted to
+    auditor_kit_zip_primitives.py (FastAPI-free) so the integration
+    test can import it. Source-shape audit now scans BOTH the
+    primitives module (for the helper definition) AND evidence_chain
+    (for the import + delegation)."""
+    primitives_path = _BACKEND / "auditor_kit_zip_primitives.py"
+    assert primitives_path.exists(), (
+        "auditor_kit_zip_primitives module must exist — extracted "
+        "for test importability."
     )
-    helper_block_start = src.find("def _kit_zwrite(")
-    helper_block = src[helper_block_start : helper_block_start + 800]
+    primitives_src = primitives_path.read_text()
+    assert "def _kit_zwrite(" in primitives_src, (
+        "Module-level _kit_zwrite helper must be defined in "
+        "auditor_kit_zip_primitives.py."
+    )
+    helper_block_start = primitives_src.find("def _kit_zwrite(")
+    helper_block = primitives_src[helper_block_start : helper_block_start + 1200]
     assert "date_time=mtime" in helper_block, (
         "_kit_zwrite must pin date_time from caller-supplied mtime."
     )
@@ -48,19 +59,26 @@ def test_zwrite_helper_pins_date_time_and_compress():
         "_kit_zwrite must pin external_attr (file mode bits) so "
         "two downloads agree on permissions."
     )
-    # Inner closure in download_auditor_kit must delegate to the
-    # module-level helper, not duplicate the logic.
-    assert "_kit_zwrite(zf, name, data, zip_mtime)" in src, (
-        "download_auditor_kit's local _zwrite must delegate to "
-        "_kit_zwrite (no implementation drift)."
-    )
-    # Coach P1-3: explicit compresslevel pin.
-    assert "_KIT_COMPRESSLEVEL = 6" in src, (
+    assert "_KIT_COMPRESSLEVEL" in primitives_src and "= 6" in primitives_src, (
         "_KIT_COMPRESSLEVEL must be pinned to 6 (zlib level) so "
         "byte-identity holds across CPython builds."
     )
+    # evidence_chain must import + delegate, not duplicate.
+    src = _load_endpoint_source()
+    assert "from .auditor_kit_zip_primitives import" in src or (
+        "from auditor_kit_zip_primitives import" in src
+    ), (
+        "evidence_chain.py must import _kit_zwrite + "
+        "_KIT_COMPRESSLEVEL from the primitives module — no "
+        "implementation drift."
+    )
     assert "compresslevel=_KIT_COMPRESSLEVEL" in src, (
-        "ZipFile must be opened with compresslevel=_KIT_COMPRESSLEVEL."
+        "ZipFile in download_auditor_kit must use the pinned "
+        "compresslevel=_KIT_COMPRESSLEVEL."
+    )
+    assert "_kit_zwrite(zf, name, data, zip_mtime)" in src, (
+        "download_auditor_kit's local _zwrite must delegate to "
+        "_kit_zwrite from primitives."
     )
 
 
