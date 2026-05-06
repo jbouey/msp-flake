@@ -4188,7 +4188,7 @@ Both identities appear in `chain.json` so there is no ambiguity.
 - `chain.json` — chain-level metadata: site identity, genesis bundle,
   chain length, signing rate, OTS anchor counts, BAA effective dates.
 - `ots/*.ots` — raw OpenTimestamps proof files. One file per bundle that
-  has been anchored to Bitcoin. Filename = `{bundle_id}.ots`.
+  has been anchored to Bitcoin. Filename = `{{bundle_id}}.ots`.
 - `verify.sh` — bash script that runs the verification end-to-end. Reads
   every file in this directory, checks every signature, and prints a
   per-bundle PASS/FAIL summary.
@@ -4323,7 +4323,7 @@ has recorded for this site_id, in either direction:
 
 ```json
 "site_canonical_aliases": [
-  {
+  {{
     "from_site_id": "old-site-id-123",
     "to_site_id": "<this-site-id>",
     "actor": "operator@example.com",
@@ -4331,7 +4331,7 @@ has recorded for this site_id, in either direction:
     "related_migration": "255",
     "effective_at": "2026-04-29T10:22:34Z",
     "direction": "inbound"
-  }
+  }}
 ]
 ```
 

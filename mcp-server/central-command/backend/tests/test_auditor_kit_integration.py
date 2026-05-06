@@ -413,3 +413,171 @@ def test_kit_compresslevel_is_pinned_to_six():
     """Coach P1-3: zlib level 6 explicit — preempts CPython build
     drift on the bundled zlib's default."""
     assert _KIT_COMPRESSLEVEL == 6
+
+
+# ---------------------------------------------------------------- enterprise hardening
+# Round-table 2026-05-06 P0 production hotfix: a literal `{bundle_id}`
+# in the README's docs section was being interpreted by Python's
+# str.format() as a placeholder, and `_AUDITOR_KIT_README.format(...)`
+# raised KeyError on every download. The bug had been latent in the
+# template since `4240887b` but masked by the earlier `parents[3]`
+# IndexError that fired before the format() was reached. Once the
+# IndexError fix shipped (1bbee7d3), this bug surfaced.
+#
+# Three layers of hardening to prevent recurrence:
+#   1. test_real_readme_template_formats_without_keyerror —
+#      exercises the production template with the production kwargs;
+#      catches any future stray placeholder at unit-test time.
+#   2. test_readme_template_has_only_allowed_placeholders —
+#      scans the template AST-of-format-string for unknown
+#      placeholders and forbids them; durable static defense.
+#   3. test_rendered_readme_contains_round_table_sections —
+#      after format(), confirms the rendered text still has
+#      Scope / Reproducibility / Complaints / SLA copy intact;
+#      catches a future "fix" that strips substantive content
+#      while making format() succeed.
+
+
+_README_ALLOWED_PLACEHOLDERS = frozenset({
+    "site_id",
+    "clinic_name",
+    "generated_at",
+    "presenter_brand",
+    "presenter_contact_line",
+})
+
+
+def _load_real_readme_template() -> str:
+    import pathlib as _pl
+    src = (_pl.Path(__file__).resolve().parent.parent / "evidence_chain.py").read_text()
+    marker = "_AUDITOR_KIT_README = "
+    # Coach P3 belt-and-suspenders (round-table 2026-05-06): assert
+    # the marker is unique. If a future docstring or comment
+    # accidentally contains "_AUDITOR_KIT_README = " above the real
+    # assignment, the prior find() would grab the wrong block.
+    occurrences = src.count(marker)
+    assert occurrences == 1, (
+        f"_AUDITOR_KIT_README marker appears {occurrences} times in "
+        f"evidence_chain.py — the helper relies on a unique marker. "
+        f"Either rename the duplicate occurrence or change the "
+        f"marker to something more specific."
+    )
+    start = src.find(marker)
+    assert start > 0, "_AUDITOR_KIT_README marker not found"
+    # Triple-quoted block starts right after the marker
+    open_quote = src.find('"""', start)
+    close_quote = src.find('"""', open_quote + 3)
+    assert open_quote > 0 and close_quote > open_quote
+    # Sanity: the template should start with the README's H1 banner.
+    body = src[open_quote + 3 : close_quote]
+    assert body.lstrip().startswith("# "), (
+        "Loaded README template doesn't start with `# ` — the marker "
+        "may have grabbed the wrong block."
+    )
+    return body
+
+
+def test_real_readme_template_formats_without_keyerror():
+    """The production _AUDITOR_KIT_README must format() cleanly
+    when given the same kwargs the endpoint passes. A KeyError
+    here would surface as a 500 on every customer download — the
+    exact regression that took down the kit on 2026-05-06."""
+    template = _load_real_readme_template()
+    # Production kwargs (matches `download_auditor_kit` call site).
+    rendered = template.format(
+        site_id="north-valley-branch-2",
+        clinic_name="North Valley Branch 2",
+        generated_at="2026-05-06T00:00:00+00:00",
+        presenter_brand="OsirisCare",
+        presenter_contact_line="",
+    )
+    # Must produce non-empty output.
+    assert len(rendered) > 1000, (
+        "Rendered README is suspiciously short — did the template "
+        "swallow itself in a stray placeholder?"
+    )
+
+
+def test_readme_template_has_only_allowed_placeholders():
+    """Static defense: scan the template for `{name}`-shaped
+    placeholders and ensure each is in the allowlist. Rejects
+    `{bundle_id}` and similar stray references that would crash
+    .format() at customer-download time. Render example shell
+    snippets like `{bundle_id}.ots` must be escaped as
+    `{{bundle_id}}` so the template emits the literal text.
+
+    Round-table 2026-05-06 §7 hardening: Maya called out three
+    false-negative seams in the prior regex —
+      (a) whitespace inside braces (`{ bundle_id }`) was skipped;
+      (b) numeric/positional placeholders (`{0}`, `{}`) were
+          skipped (would raise IndexError on .format());
+      (c) format-spec on names (`{site_id:>40}`) was skipped.
+    All three are now covered: regex matches whitespace + numeric
+    + format-spec variants, then we extract the bare name and
+    cross-check against the allowlist."""
+    import re
+    template = _load_real_readme_template()
+    # Match {anything} that isn't {{escaped}}, including:
+    #   - whitespace inside the braces
+    #   - numeric/positional ({0}, {}) — those are forbidden
+    #   - format-spec ({name:>40}) — bare name extracted
+    #   - subscript ({name[expr]}) — bare name extracted
+    placeholder_re = re.compile(r"(?<!\{)\{([^{}]*)\}(?!\})")
+    forbidden_names: list[str] = []
+    bare_name_re = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)(?:\[[^\]]*\])?(?::[^}]*)?$")
+    for raw in placeholder_re.findall(template):
+        # (a) whitespace-padded names — .format() rejects these.
+        if raw != raw.strip():
+            forbidden_names.append(repr(raw))
+            continue
+        # (b) bare positional ({}) or numeric ({0}, {1}) — forbidden.
+        if raw == "" or raw.isdigit():
+            forbidden_names.append(repr(raw or "<empty {}>"))
+            continue
+        m = bare_name_re.match(raw)
+        if not m:
+            forbidden_names.append(repr(raw))
+            continue
+        bare_name = m.group(1)
+        if bare_name not in _README_ALLOWED_PLACEHOLDERS:
+            forbidden_names.append(bare_name)
+
+    assert not forbidden_names, (
+        f"README template references forbidden placeholder(s): "
+        f"{sorted(set(forbidden_names))}. Either add the bare name "
+        f"to _README_ALLOWED_PLACEHOLDERS AND pass the kwarg in "
+        f"download_auditor_kit's _AUDITOR_KIT_README.format(...) "
+        f"call, OR escape as `{{{{name}}}}` to render the literal "
+        f"text. The 2026-05-06 production outage was a stray "
+        f"`{{bundle_id}}` here."
+    )
+
+
+def test_rendered_readme_contains_round_table_sections():
+    """After format(), the rendered README must still have all the
+    round-table-mandated sections + SLA copy. A future 'fix' that
+    silences format() errors by deleting content (vs escaping)
+    would fail this gate."""
+    template = _load_real_readme_template()
+    rendered = template.format(
+        site_id="x", clinic_name="y", generated_at="z",
+        presenter_brand="OsirisCare", presenter_contact_line="",
+    )
+    # Carol P0-3 mandated sections.
+    assert "## Scope of this kit" in rendered
+    assert "## Reproducibility" in rendered
+    assert "## Complaints and concerns" in rendered
+    # SLA must be the firm 7/30 (user confirmed 2026-05-06).
+    assert "7 business days" in rendered
+    assert "30 days" in rendered
+    assert "compliance@osiriscare.com" in rendered
+    assert "hhs.gov/hipaa/filing-a-complaint" in rendered
+    # §164.528 framing.
+    assert "§164.528" in rendered
+    # No banned legal-language words leaked into the rendered output.
+    rendered_low = rendered.lower()
+    for banned in (" ensures ", " guarantees ", " audit-ready ", " 100% "):
+        assert banned not in rendered_low, (
+            f"Banned legal-language word `{banned.strip()}` in rendered "
+            f"README (CLAUDE.md Session 199 hard rule)."
+        )
