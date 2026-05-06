@@ -96,9 +96,10 @@ def test_state_changing_endpoints_check_feature_flag():
     bad = []
     for m in pattern.finditer(src):
         endpoint_name = m.group(2)
-        # Carve-out: enable_feature itself must NOT call
-        # _require_feature_enabled (it would self-deadlock the bootstrap).
-        if endpoint_name == "enable_feature":
+        # Carve-out: the flag-flip endpoints (propose-enable +
+        # approve-enable, dual-admin counsel revision 2026-05-06) must
+        # NOT call _require_feature_enabled — they ARE the bootstrap.
+        if endpoint_name in ("propose_enable", "approve_enable", "enable_feature"):
             continue
         # Find the body of this function — from end of signature to
         # next `async def` or EOF.
@@ -485,6 +486,204 @@ def test_email_helpers_are_best_effort_logging_at_error():
             "email helper missing logger.error on failure — SMTP "
             "failures must be visible to operators."
         )
+
+
+# ─────────────────────────────────────────────────────────────────
+# 20-23. Counsel revision 2026-05-06 — dual-admin + opaque emails
+# ─────────────────────────────────────────────────────────────────
+
+
+def test_dual_admin_flag_flip_endpoints_exist():
+    """Counsel governance hardening 2026-05-06: the single
+    enable_feature endpoint was split into propose_enable +
+    approve_enable. Two distinct admins required."""
+    src = _MODULE.read_text()
+    assert "@cross_org_relocate_router.post(\"/propose-enable\")" in src, (
+        "propose-enable endpoint missing — counsel revision dual-admin "
+        "governance hardening not in place."
+    )
+    assert "@cross_org_relocate_router.post(\"/approve-enable\")" in src, (
+        "approve-enable endpoint missing — counsel revision dual-admin "
+        "governance hardening not in place."
+    )
+    # And the legacy single-admin endpoint must NOT exist.
+    assert "@cross_org_relocate_router.post(\"/enable-feature\")" not in src, (
+        "Legacy /enable-feature single-admin endpoint still present. "
+        "Counsel revision split it into /propose-enable + /approve-enable. "
+        "Remove the legacy endpoint."
+    )
+
+
+def test_approve_enable_refuses_self_approval():
+    """The approve-enable endpoint MUST refuse if the approver is the
+    same admin as the proposer. Defense in depth: also pinned by DB
+    CHECK constraint in mig 282 (lower(approver_email) <> lower(proposer))."""
+    src = _MODULE.read_text()
+    m = re.search(
+        r"async def approve_enable\b.+?(?=\nasync def |\Z)",
+        src,
+        re.DOTALL,
+    )
+    assert m, "approve_enable endpoint not found"
+    body = m.group(0)
+    # Match the explicit check (any of these forms is fine)
+    assert re.search(
+        r"proposer\s*==\s*actor_email|same.admin.self.approval",
+        body,
+        re.IGNORECASE,
+    ), (
+        "approve_enable endpoint missing self-approval guard. Counsel "
+        "governance rule: a different admin must approve."
+    )
+
+
+def test_mig_282_dual_admin_check():
+    """Migration 282 must enforce approver != proposer at the DB
+    layer. Last line of defense if application code is compromised."""
+    mig = _BACKEND / "migrations" / "282_feature_flags_dual_admin.sql"
+    assert mig.exists(), "Migration 282 missing"
+    src = mig.read_text()
+    assert re.search(
+        r"lower\(enabled_by_email\)\s*<>\s*lower\(enable_proposed_by_email\)",
+        src,
+    ), (
+        "Migration 282 missing the approver != proposer CHECK. Counsel "
+        "governance hardening DB layer not in place."
+    )
+    assert "enable_proposed_by_email" in src and "enable_proposed_at" in src, (
+        "Migration 282 missing the propose-side columns."
+    )
+
+
+# Forbidden tokens in OPAQUE email subjects + bodies (counsel revision
+# 2026-05-06). Site names + org names + initiator email + reason text
+# are visible only after portal authentication.
+EMAIL_BODY_FORBIDDEN_INTERPOLATIONS = (
+    # Old verbose-mode parameter names that emails MUST NOT reference
+    "site_name=",
+    "source_org_name=",
+    "target_org_name=",
+    "initiator_email=",
+    # f-string interpolations of those would also appear as bare
+    # identifiers — guarded by the parameter-name check above since
+    # the helpers don't accept those parameters in opaque mode.
+)
+
+
+def test_email_helpers_have_opaque_signatures():
+    """The 3 email helpers' signatures must NOT accept site_name /
+    source_org_name / target_org_name / initiator_email parameters.
+    Counsel revision 2026-05-06: opaque mode by default."""
+    src = _MODULE.read_text()
+    for helper in (
+        "_send_source_release_email",
+        "_send_target_accept_email",
+        "_send_post_execute_email",
+    ):
+        m = re.search(
+            rf"async def {helper}\((.*?)\)",
+            src,
+            re.DOTALL,
+        )
+        assert m, f"{helper} not found"
+        sig = m.group(1)
+        for forbidden in (
+            "site_name",
+            "source_org_name",
+            "target_org_name",
+            "initiator_email",
+        ):
+            assert forbidden not in sig, (
+                f"{helper} signature still accepts {forbidden!r} — "
+                f"counsel revision 2026-05-06 made emails opaque. "
+                f"The portal serves identifying context after auth."
+            )
+
+
+def test_email_subjects_are_opaque():
+    """Email subject lines (the strings passed as second arg to
+    send_email) MUST NOT interpolate site/org names. Static-only or
+    reference-id-only."""
+    src = _MODULE.read_text()
+    # Find every send_email(recipient, subject, body) call and check
+    # the subject literal doesn't reference forbidden vars.
+    # Approximate by extracting send_email argument blocks.
+    for m in re.finditer(
+        r"await send_email\(\s*[^,]+,\s*([^,]+),",
+        src,
+        re.DOTALL,
+    ):
+        subject_arg = m.group(1).strip()
+        # Look for f-string interpolations of forbidden var names
+        for forbidden in ("site_name", "source_org_name", "target_org_name", "{site}"):
+            assert forbidden not in subject_arg, (
+                f"Email subject {subject_arg!r} interpolates "
+                f"{forbidden!r}. Counsel revision 2026-05-06: "
+                f"subjects must be opaque (static or reference-id only)."
+            )
+
+
+def test_email_call_sites_do_not_pass_forbidden_params():
+    """Maya wrap (RT21 counsel-revision): even if the helper signatures
+    drop the verbose parameters, a refactored call site could silently
+    re-introduce verbose mode by passing org/site names as kwargs that
+    the helper happens to accept (e.g. **kwargs). Guard the call sites
+    too."""
+    src = _MODULE.read_text()
+    forbidden_kwargs = (
+        "site_name=",
+        "source_org_name=",
+        "target_org_name=",
+        "initiator_email=",
+        "reason=",  # email body must not echo the user-supplied reason
+        "cooling_off_hours=",
+    )
+    bad = []
+    for m in re.finditer(
+        r"await _send_(?:source_release_email|target_accept_email|"
+        r"post_execute_email)\(([^)]+)\)",
+        src,
+        re.DOTALL,
+    ):
+        kwargs_block = m.group(1)
+        for forbidden in forbidden_kwargs:
+            if forbidden in kwargs_block:
+                bad.append(
+                    f"send_email call site passes forbidden kwarg "
+                    f"{forbidden!r}"
+                )
+    assert not bad, (
+        "Email call site re-introduced a verbose parameter via kwarg. "
+        "Counsel revision 2026-05-06 dropped these. Fix the call site "
+        "OR (with separate counsel approval) re-add the parameter to "
+        "the helper signature.\n\n"
+        + "\n".join(f"  - {b}" for b in bad)
+    )
+
+
+def test_email_bodies_do_not_interpolate_site_or_org_names():
+    """Within the 3 email helper bodies, no f-string interpolation of
+    site_name / source_org_name / target_org_name / initiator_email."""
+    src = _MODULE.read_text()
+    helpers = re.findall(
+        r"async def (?:_send_source_release_email|_send_target_accept_email"
+        r"|_send_post_execute_email)\b.+?(?=\nasync def |\Z)",
+        src,
+        re.DOTALL,
+    )
+    assert len(helpers) == 3, f"Expected 3 email helpers; found {len(helpers)}"
+    for helper_body in helpers:
+        for forbidden in (
+            "{site_name}",
+            "{source_org_name}",
+            "{target_org_name}",
+            "{initiator_email}",
+        ):
+            assert forbidden not in helper_body, (
+                f"Email helper body interpolates {forbidden!r}. "
+                f"Counsel revision 2026-05-06: opaque mode forbids "
+                f"site/org names in unauthenticated channels."
+            )
 
 
 def test_sweep_loop_emits_expired_attestation():

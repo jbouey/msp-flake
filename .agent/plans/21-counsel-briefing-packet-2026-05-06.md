@@ -2,12 +2,19 @@
 
 **For:** Outside HIPAA counsel
 **From:** OsirisCare engineering, on behalf of the privacy officer
-**Date:** 2026-05-06
+**Date:** 2026-05-06 (revised v2 after first-round adversarial review)
 **Companion artifacts:**
 - `.agent/plans/21-cross-org-site-relocate-roundtable-2026-05-05.md` — original engineering design round-table (Camila/Brian/Linda/Steve/Adam + Maya 2nd-eye)
 - `docs/lessons/sessions-218.md` — implementation retrospective + adversarial verdicts at Gates 1 + 2 + Maya final
 - BAA template — substrate-class business associate agreement (provided separately)
-- `cross_org_site_relocate.py` + `migrations/279,280,281` + `tests/test_cross_org_relocate_contract.py` — shipped engineering, behind a feature flag, awaiting your sign-off to enable
+- `cross_org_site_relocate.py` + `migrations/279,280,281,282` + `tests/test_cross_org_relocate_contract.py` — shipped engineering, behind a feature flag, awaiting your sign-off to enable
+
+**Revisions vs v1 of this packet (in response to your adversarial review):**
+- §1.5 added — single ontological sentence on data class (closes the "PHI vs metadata" inconsistency you flagged)
+- §2 Q1 reframed — drops the "same-BA therefore §164.504(e) inapplicable" framing; reframes as "we recognize §164.504(e) governs permitted use under each BAA regardless of vendor identity, and we are seeking your confirmation of permitted scope under both BAAs"
+- §2 Q2 reframed — drops "immutability is stronger than the standard"; reframes as "substantive completeness + retrievability under §164.528"
+- §3.5 added — dual-admin governance for the flag-flip (engineering shipped; counsel-recommended hardening of the choke point you flagged)
+- §4a updated — opaque-mode emails are now the engineering DEFAULT (shipped); we documented the alternative position rather than the position
 
 > **Posture:** This is an evidence-grade compliance attestation substrate. Engineering has built and tested a three-actor state machine for moving a site from one client_org (a covered entity) to another. The feature is shipped behind a database-stored feature flag that returns HTTP 503 until you authorize the flip. Your authorization appears in the cryptographic chain at flip time as a ≥40-character `enable_reason` containing your opinion identifier. We are asking for legal review on three specific §-questions; we are NOT asking for a re-design of the engineering.
 
@@ -33,61 +40,125 @@ Today our platform returns HTTP 403 on cross-org relocate with a
 
 ---
 
+## 1.5. Data classification — the single ontological sentence
+
+> *Counsel observed in v1 review that the brief contained an
+> ontological inconsistency: "PHI never changes BA custody" alongside
+> "custody-of-evidence transfer." Below is the corrected single
+> sentence that this entire briefing operates under.*
+
+**The data moved by this feature is COMPLIANCE METADATA, not PHI.**
+Specifically: Ed25519-signed attestation bundles describing controls
+applied to PHI-handling infrastructure (drift detection, log integrity,
+MFA status, encryption posture, configuration baselines), plus the
+relational `sites` row pointing at a `client_org_id`. PHI is scrubbed
+at appliance egress per the substrate's PHI-free design (Session 185
+of the engineering log); Central Command does not store PHI in any
+form. Cross-org relocate moves the SITE ROW + the CHAIN OF METADATA
+ATTESTATIONS — not PHI.
+
+**We treat the metadata conservatively as PHI-adjacent for accounting
+purposes** because it attests controls applied to PHI-handling systems
+and because customers and auditors expect substrate operators to err
+on the side of stricter custody discipline. We are not asserting PHI
+itself moves between business associates during a relocate.
+
+**What we need from you:** confirmation that this conservative
+treatment is appropriate, OR guidance that a different framing is
+required. If you tell us "this is metadata, full stop, treat it under
+narrower governance language than §164.528," we accept that framing
+and rewrite the engineering's customer-facing copy accordingly.
+
+The rest of this briefing operates under the conservative position
+above. If you redirect us to a narrower framing, the engineering
+controls are unchanged — only the language around them changes.
+
+---
+
 ## 2. The three §-questions on which we need your opinion
 
-### Question 1 — §164.504(e) BA-to-BA inapplicability
+### Question 1 — §164.504(e) permitted-use scope under both BAAs
 
-The HIPAA Privacy Rule's BA-to-BA transfer provisions (§164.504(e),
-disclosures between business associates) presume that PHI is moving
-from one BA's custody to a different BA's custody under different
-governing instruments.
+> *Counsel revised v2 in response to your adversarial feedback: the
+> earlier "same BA, therefore §164.504(e) does not apply" construction
+> was attackable. Below is the corrected framing.*
 
-**Our position:** OsirisCare is the SAME business associate on both
-sides of a cross-org relocate. The substrate's BAA with source-org and
-the substrate's BAA with target-org are different governing instruments
-with different covered entities, but the BA — us — is the same. PHI
-never changes BA custody.
+We recognize §164.504(e) governs permitted use and disclosure under
+each governing BAA, regardless of whether the vendor is the same. The
+relevant question is not "is OsirisCare the same vendor on both sides"
+(it is) but "does each BAA permit the use/access pattern that occurs
+during and after a cross-org relocate."
 
-**What we need from you:** confirmation that §164.504(e) BA-to-BA
-disclosure-accounting requirements do not apply to a cross-org relocate
-under this same-substrate-BA construction. If they DO apply, we need
-your guidance on what fields the relocate flow must record (Steve's
-threat model already captures actor/recipient/purpose/date — see §3).
+**Our position:**
+- The source-org BAA's permitted-use clause covers OsirisCare's
+  continued maintenance of the site's compliance evidence chain
+  through the source-release event.
+- The target-org BAA's standard substrate-class permitted-use clause
+  covers receipt of the site under the target's compliance program.
+- Engineering preconditions the target-accept step on
+  `client_orgs.baa_on_file = true` (Steve mit 5) — without an active
+  target BAA on file, the flow refuses to advance.
 
-### Question 2 — §164.528 disclosure-accounting under chain immutability
+**What we need from you:** written confirmation of permitted scope
+under both source and target BAAs, AND your guidance on whether
+either BAA requires explicit successor / continuity language to
+support this construction. If addendum required, please provide
+template language. We expect the addendum question to be the most
+likely point of conservative pushback; we accept addendum language
+on receiving-org BAAs going forward.
 
-Our cryptographic chain (Ed25519-signed + hash-chained + OpenTimestamps-
-anchored compliance bundles) is IMMUTABLE BY DESIGN. A bundle written
-under site X under client_org A is anchored at site X forever. After
-a cross-org relocate, the same site X's bundles are still anchored at
-site X — but `sites.client_org_id` now points at client_org B. Auditors
-walk the chain across the org boundary via a column we added
-(`sites.prior_client_org_id`) plus a boundary attestation event
-(`cross_org_site_relocate_executed`).
+### Question 2 — §164.528 substantive completeness + retrievability
 
-**Our position:** §164.528 disclosure accounting requires that an
-individual or their personal representative be able to obtain an
-accounting of disclosures of their PHI. The cross-org relocate is
-an EVENT (custody-of-evidence transfer), and we attest it with all
-four §164.528 fields:
+> *Counsel revised v2 in response to your adversarial feedback: the
+> earlier "immutability is stronger than the standard" framing was
+> the wrong test. Below is the corrected framing — substance + retrieval.*
 
-- **Date** — `executed_at` timestamp on the relocate row.
-- **Recipient** — target_org_id + target_owner_email.
-- **Description** — fixed event_type `cross_org_site_relocate_executed`.
-- **Purpose** — `initiator_reason` (≥20 chars enforced) + the chain
-  of source-release / target-accept reasons.
+§164.528 requires that an individual (or their personal representative)
+can obtain an accounting of disclosures of their PHI. The legal test
+is whether the accounting contains the required substance and is
+producible to the requesting party in the required form — not whether
+the underlying log uses tamper-evident technology.
 
-The §164.528 disclosure record is recoverable in three independent
-places: the `cross_org_site_relocate_requests` row (append-only, DELETE-
-blocked), the `admin_audit_log` row, and the cryptographic chain
-itself.
+**Our position:**
 
-**What we need from you:** confirmation that this triple-source disclosure
-record satisfies §164.528. If it does NOT, we need your guidance on
-what supplementary record-keeping to add. We expect the answer is YES
-because chain immutability is STRONGER than the standard accounting
-log (an attacker who alters the audit log cannot alter the OTS-anchored
-chain), but we want explicit sign-off.
+- We record each cross-org relocate event with all four §164.528 fields:
+  - **Date** — `executed_at` timestamp on the relocate row.
+  - **Recipient** — `target_org_id` + `target_owner_email` (verified at
+    target-accept against the pinned `expected_target_accept_email`).
+  - **Description** — fixed event_type `cross_org_site_relocate_executed`
+    plus a per-row natural-language description.
+  - **Purpose** — `initiator_reason` (≥20 chars enforced) + the
+    source-release reason + the target-accept reason (chain of stated
+    purposes across all three actors).
+
+- The record is recorded in durable, append-only systems and is
+  retrievable in patient-facing accounting form on request:
+  - The `cross_org_site_relocate_requests` row (append-only via DELETE
+    trigger; selectable by site_id) is the primary record.
+  - The `admin_audit_log` row (standard §164.528 disclosure-accounting
+    shape: user_id, username, action, target, details, ip_address,
+    created_at) is the conventional audit-trail entry.
+  - The cryptographic chain provides a third independent integrity
+    anchor — Ed25519-signed + OpenTimestamps-anchored — defending the
+    other two records against tampering or post-hoc alteration.
+
+We are NOT relying on cryptographic immutability as a substitute for
+substantive completeness or operational retrievability. The crypto
+chain is defense in depth against tampering; the §164.528 accounting
+form is satisfied by the structured, retrievable content of the
+relocate row + admin_audit_log row.
+
+**What we need from you:** confirmation that the substantive content
++ production posture above satisfy §164.528, AND your guidance on:
+- Any additional fields required (e.g. patient-identifier ranges if
+  this were classified as PHI rather than metadata; see §1.5).
+- The required production format for individuals' requests
+  (e.g. PDF, CSV, ledger format, pointer to portal page).
+- Retention duration the accounting record must survive at minimum
+  (§164.528(b)(2): 6 years from the date of the disclosure or from
+  the date when the disclosure was last in effect, whichever is later
+  — we want explicit guidance on counting "last in effect" for a
+  cross-org relocate event).
 
 ### Question 3 — Receiving-org BAA scope
 
@@ -226,9 +297,51 @@ All seven cross-cutting parity rules satisfied:
   directly; it goes through the canonical helper.
 - No banned compliance language ("ensures", "prevents", "guarantees")
   in any error message or log line.
-- Migration 279/280/281 ordering idempotent.
+- Migration 279/280/281/282 ordering idempotent.
 - Substrate invariant triplet (check + display_name +
   recommended_action) all in lockstep.
+
+---
+
+## 3.5. Dual-admin governance for the flag-flip (counsel-recommended)
+
+> *Counsel observed in v1 review that the flag-flip is the legal-
+> sensitivity choke point, sitting outside the cryptographic chain
+> (§4 below). Counsel suggested dual control: two admins, not one.
+> Engineering shipped this hardening on 2026-05-06; documented here.*
+
+The single `POST /enable-feature` endpoint has been replaced with a
+two-step approval flow (Migration 282). Both steps are admin-API class
+and write `admin_audit_log` rows + the dual-source `feature_flags`
+record:
+
+1. **`POST /admin/cross-org-relocate/propose-enable`**
+   First admin records intent + reason (≥20 chars). Flag stays disabled.
+   Stored on the row as `enable_proposed_by_email + enable_proposed_at +
+   enable_proposed_reason`.
+
+2. **`POST /admin/cross-org-relocate/approve-enable`**
+   Second admin must be a DIFFERENT person from the proposer. Reason
+   ≥40 chars — this is where the outside-counsel opinion identifier
+   appears. Stored as `enabled_by_email + enabled_at + enable_reason`.
+   The DB CHECK enforces `lower(enabled_by_email) <> lower(enable_proposed_by_email)`.
+   A code-path bypass that tries to self-approve will fail at the schema.
+
+**Why this matters legally:** the question "who authorized the live
+use of this legally sensitive feature, under what advice, and under
+what policy" now has TWO independent admin attestations on the
+record, not one. The opinion identifier rides the approver's reason
+field; the proposer's reason captures the operational trigger
+(e.g. "Q3 hospital network acquisition customer signed addendum;
+ready to enable for that engagement"). Together they satisfy both
+operational and legal sign-off questions in one substrate-readable
+record.
+
+**What we need from you:** confirmation that two-admin dual control
+satisfies your governance expectation, OR guidance on whether you
+require additional approval signatures (e.g. privacy officer
+co-signature, board notification) before the flag flips. We can add
+a third approver column with a parallel CHECK if you direct.
 
 ---
 
@@ -274,21 +387,51 @@ notice, target-accept notice, post-execute receipt) include
 `clinic_name` and `client_org` names in the subject line and body.
 SMTP relays see this plaintext.
 
-**Our position:** `clinic_name` is a site attribute (e.g. "North
-Valley Family Practice"), not a §164.514 individual identifier; it
-does not constitute PHI. SMTP relays in our delivery path are
-covered by the substrate's BAA arrangements with the email provider
-(Postmark, AWS SES, or equivalent — all maintain BAAs for healthcare
-clients). Business-name disclosure to a BAA-covered relay is
-acceptable under §164.504(e).
+> *Counsel revised v2 in response to your adversarial review:
+> "the safer alternative is cheap, counsel will prefer it." We agreed
+> and shipped opaque emails as the default on 2026-05-06. The
+> position below documents the change.*
 
-**What we need from you:** confirmation that clinic-name in email
-plaintext is acceptable, OR guidance on whether we should
-restructure templates to use opaque relocate identifiers + a portal
-URL (the recipient logs in and sees the clinic name only inside the
-authenticated portal). Our default position is "acceptable as-is";
-we want explicit sign-off given that auditors sometimes flag any
-business-name in cleartext.
+**What engineering shipped (current default behavior):**
+The three customer-facing emails (source-release, target-accept,
+post-execute receipt) are now OPAQUE: the subject lines and body
+content do NOT contain `clinic_name`, `source_org_name`,
+`target_org_name`, `initiator_email`, or the request reason. Subjects
+are static (`OsirisCare: action required — site relocate request`,
+etc.). Bodies redirect the recipient to the authenticated client
+portal where the full request context is visible only after portal
+auth. Magic-link tokens still ride the email channel (the portal
+auth is friction-free via the magic-link token), but the email
+itself reveals only that an action is requested for "one of your
+OsirisCare client organizations."
+
+This change is pinned by CI gates (`test_email_helpers_have_opaque_
+signatures`, `test_email_subjects_are_opaque`, `test_email_bodies_do
+_not_interpolate_site_or_org_names`) so a future regression cannot
+silently leak identifying info into unauthenticated channels.
+
+**Background on why we chose opaque-as-default:**
+Although `clinic_name` is a site attribute and not a §164.514
+individual identifier (so plaintext exposure does not technically
+constitute PHI disclosure), counsel observed that:
+- The COMBINATION of clinic_name + cross-org relocate context could
+  be argued to disclose a legally sensitive operational fact
+  (a particular clinic transferring across covered-entity boundaries).
+- SMTP relay plaintext widens the audience for that fact unnecessarily.
+- The safer alternative (opaque + portal auth for context) is cheap.
+
+We took counsel's "be ready to switch" recommendation as
+authorization to switch by default rather than maintain a fragile
+position. The change costs the recipient one extra context-switch
+(read email → click magic link → land in authenticated portal where
+context is shown). For a rare event in a high-trust workflow, this
+friction is acceptable.
+
+**What we need from you:** confirmation that opaque-mode emails
+satisfy your concern, OR guidance that verbose-mode is acceptable
+(in which case we ship verbose-mode templates under a separate
+change). Our default-position recommendation is to keep opaque mode
+permanent.
 
 ---
 

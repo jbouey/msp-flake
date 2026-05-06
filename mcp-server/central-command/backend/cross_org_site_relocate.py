@@ -214,7 +214,26 @@ class CancelRequest(BaseModel):
     reason: str = Field(..., min_length=MIN_REASON_LENGTH)
 
 
-class EnableFeatureRequest(BaseModel):
+class ProposeEnableRequest(BaseModel):
+    """First-admin proposal to enable the cross-org-relocate feature.
+
+    Outside-counsel adversarial review (2026-05-06) hardening: a single
+    admin enabling a legally sensitive capability is the design's
+    governance choke point. Two-step: this endpoint records the
+    proposal; a SECOND distinct admin must call /approve-enable.
+
+    Reason >=20 chars matches the rest of the privileged-access chain.
+    The legal-opinion identifier lives on the APPROVER's >=40-char
+    reason field, not here.
+    """
+    reason: str = Field(..., min_length=MIN_REASON_LENGTH)
+
+
+class ApproveEnableRequest(BaseModel):
+    """Second-admin approval of a pending proposal. Must be a DIFFERENT
+    admin than the one who proposed (DB CHECK + endpoint check enforce
+    both). Reason >=40 chars: this is where the outside-counsel opinion
+    identifier lands."""
     reason: str = Field(..., min_length=MIN_FLAG_REASON_LENGTH)
 
 
@@ -305,20 +324,39 @@ async def _check_target_org_baa(conn, target_org_id: str) -> None:
 # ─────────────────────────────────────────────────────────────────
 
 
+#
+# OPAQUE-MODE rationale (outside-counsel adversarial review 2026-05-06):
+# Subject lines and body content do NOT include site_name, source_org_name,
+# target_org_name, or initiator_email. Recipients click a magic-link to
+# the authenticated client portal where the full context (clinic name,
+# org names, requestor, reason) is visible only after authentication.
+#
+# Rationale per counsel:
+#   - Reduces SMTP-relay disclosure surface: "the easy thing to harden."
+#   - Closes the seam where the email itself reveals operational facts
+#     (a specific clinic transferring across covered-entity boundaries)
+#     even though clinic_name is not a §164.514 individual identifier.
+#   - "Once a safer alternative is cheap, counsel has less incentive to
+#     bless the riskier version." Opaque IS the cheap safer alternative.
+#
+# Helper signatures dropped site_name / source_org_name / target_org_name
+# parameters — the helpers don't need them anymore. The portal serves
+# the rich context behind authentication.
+#
+
+
 async def _send_source_release_email(
     *,
     source_owner_email: str,
-    source_org_name: str,
-    target_org_name: str,
-    site_name: str,
-    initiator_email: str,
     relocate_id: str,
     source_release_token: str,
-    reason: str,
     expires_at: datetime,
 ) -> None:
-    """Email the source-org owner: 'OsirisCare admin proposes moving
-    your site to target-org. Click here to release within 7 days.'"""
+    """Source-org owner notice: action required, click to portal.
+
+    Opaque mode (default). No site or organization names in the
+    subject or body — the magic link redirects through portal auth
+    where full request context is shown."""
     try:
         from .email_service import send_email
         release_url = (
@@ -326,47 +364,40 @@ async def _send_source_release_email(
             f"?token={source_release_token}&id={relocate_id}"
         )
         body = (
-            f"OsirisCare admin {initiator_email} has proposed moving "
-            f"site {site_name!r} from {source_org_name} to "
-            f"{target_org_name}.\n"
-            f"\n"
-            f"Reason recorded: {reason[:300]}\n"
-            f"\n"
-            f"As the current owner of {source_org_name}, your release "
-            f"is required for this move to proceed. Click here to "
-            f"release the site within 7 days:\n"
+            "Hello,\n"
+            "\n"
+            "An action is requested for one of your OsirisCare client "
+            "organizations: a cross-organization site relocate has "
+            "been initiated and your release is required for it to "
+            "proceed.\n"
+            "\n"
+            "To review the request and take action, click here within "
+            "7 days. The link redirects you through OsirisCare portal "
+            "authentication, where the full request context (site, "
+            "source organization, target organization, requestor, and "
+            "reason) is visible:\n"
             f"  {release_url}\n"
-            f"\n"
-            f"What happens after you release:\n"
-            f"  1. The owner of {target_org_name} receives an accept "
-            f"link, also valid for 7 days.\n"
-            f"  2. After they accept, a 24-hour cooling-off window "
-            f"begins. Either party can cancel the move during this "
-            f"window via the OsirisCare admin team.\n"
-            f"  3. After cooling-off, OsirisCare admin completes the "
-            f"move. Your evidence chain remains anchored to the "
-            f"original site identifier; auditors walk across the "
-            f"organization boundary via the chain-of-custody record.\n"
-            f"\n"
-            f"PHI is scrubbed at appliance egress and does not move "
-            f"between OsirisCare data planes during the relocate — "
-            f"the same substrate-class business associate handles the "
-            f"site before and after.\n"
-            f"\n"
+            "\n"
             f"Link expires: {expires_at.isoformat()}\n"
-            f"\n"
-            f"If you did not expect this email, do not click the link "
-            f"and contact your OsirisCare account representative. The "
-            f"OsirisCare admin who initiated this request can also "
-            f"cancel it.\n"
-            f"\n"
-            f"---\n"
-            f"OsirisCare — substrate-level cross-organization site "
-            f"relocate notice"
+            f"Reference: relocate-{relocate_id}\n"
+            "\n"
+            "Why this email omits identifying information:\n"
+            "We minimize identifying information in unauthenticated "
+            "channels (email transit, third-party SMTP relays). Full "
+            "details — including the clinic name and the source / "
+            "target organization names — are visible only inside the "
+            "authenticated portal session.\n"
+            "\n"
+            "If you did not expect this email, do not click the link. "
+            "Contact your OsirisCare account representative.\n"
+            "\n"
+            "---\n"
+            "OsirisCare — substrate-level cross-organization site "
+            "relocate notice"
         )
         await send_email(
             source_owner_email,
-            f"Site relocate request: {site_name} to {target_org_name}",
+            "OsirisCare: action required — site relocate request",
             body,
         )
     except Exception:
@@ -376,17 +407,16 @@ async def _send_source_release_email(
 async def _send_target_accept_email(
     *,
     target_owner_email: str,
-    source_org_name: str,
-    target_org_name: str,
-    site_name: str,
     relocate_id: str,
     target_accept_token: str,
-    reason: str,
     expires_at: datetime,
-    cooling_off_hours: int,
 ) -> None:
-    """Email the target-org owner: 'Source has released; click here
-    to accept the site within 7 days.'"""
+    """Target-org owner notice: action required, click to portal.
+
+    Opaque mode (default). No site or organization names in the
+    subject or body — the magic link redirects through portal auth
+    where full request context is shown, including the BAA-on-file
+    precondition and the cooling-off window detail."""
     try:
         from .email_service import send_email
         accept_url = (
@@ -394,49 +424,41 @@ async def _send_target_accept_email(
             f"?token={target_accept_token}&id={relocate_id}"
         )
         body = (
-            f"The owner of {source_org_name} has released site "
-            f"{site_name!r} for transfer to {target_org_name}. As the "
-            f"current owner of {target_org_name}, your acceptance is "
-            f"required to receive the site.\n"
-            f"\n"
-            f"Reason recorded: {reason[:300]}\n"
-            f"\n"
-            f"To accept ownership of {site_name!r}, click here within "
-            f"7 days:\n"
+            "Hello,\n"
+            "\n"
+            "An action is requested for one of your OsirisCare client "
+            "organizations: a cross-organization site relocate is "
+            "ready for your acceptance. The current owner of the "
+            "source organization has released the site; your "
+            "acceptance is required to receive it.\n"
+            "\n"
+            "To review the request and take action, click here within "
+            "7 days. The link redirects you through OsirisCare portal "
+            "authentication, where the full request context — site "
+            "name, source organization, target organization (yours), "
+            "BAA-on-file precondition, and cooling-off window — is "
+            "visible:\n"
             f"  {accept_url}\n"
-            f"\n"
-            f"Before you accept, confirm:\n"
-            f"  - {target_org_name} has a current Business Associate "
-            f"Agreement on file with OsirisCare. The accept endpoint "
-            f"will refuse if the BAA is not on file.\n"
-            f"  - You expect to receive the compliance-evidence chain "
-            f"of {site_name!r}, including all bundles signed under "
-            f"the source organization. The cryptographic chain remains "
-            f"anchored to the original site identifier and is "
-            f"verifiable end-to-end across the organization boundary.\n"
-            f"\n"
-            f"What happens after you accept:\n"
-            f"  1. A {cooling_off_hours}-hour cooling-off window "
-            f"begins.\n"
-            f"  2. Either {source_org_name} or {target_org_name} can "
-            f"cancel the move during this window via the OsirisCare "
-            f"admin team.\n"
-            f"  3. After cooling-off, OsirisCare admin completes the "
-            f"move. The site appears under {target_org_name} in your "
-            f"client portal.\n"
-            f"\n"
+            "\n"
             f"Link expires: {expires_at.isoformat()}\n"
-            f"\n"
-            f"If you do not expect this email, do not click the link. "
-            f"Contact your OsirisCare account representative.\n"
-            f"\n"
-            f"---\n"
-            f"OsirisCare — substrate-level cross-organization site "
-            f"relocate notice"
+            f"Reference: relocate-{relocate_id}\n"
+            "\n"
+            "Why this email omits identifying information:\n"
+            "We minimize identifying information in unauthenticated "
+            "channels (email transit, third-party SMTP relays). Full "
+            "details are visible only inside the authenticated portal "
+            "session.\n"
+            "\n"
+            "If you did not expect this email, do not click the link. "
+            "Contact your OsirisCare account representative.\n"
+            "\n"
+            "---\n"
+            "OsirisCare — substrate-level cross-organization site "
+            "relocate notice"
         )
         await send_email(
             target_owner_email,
-            f"Site relocate accept request: {site_name} from {source_org_name}",
+            "OsirisCare: action required — site relocate accept request",
             body,
         )
     except Exception:
@@ -446,81 +468,50 @@ async def _send_target_accept_email(
 async def _send_post_execute_email(
     *,
     recipient_email: str,
-    recipient_role: str,  # "source_owner" or "target_owner"
-    source_org_name: str,
-    target_org_name: str,
-    site_name: str,
-    site_id: str,
     relocate_id: str,
     executed_at: datetime,
-    executor_email: str,
     attestation_bundle_id: Optional[str],
 ) -> None:
-    """Receipt of move — both source + target owners get one of these
-    on completion. Carries the attestation_bundle_id so the recipient
-    has the chain-of-custody anchor for their records."""
+    """Post-execute receipt: no action; both owners get one.
+
+    Opaque mode (default). No site or organization names in the
+    subject or body — the recipient logs into the portal to see full
+    context including the auditor kit URL for the moved site."""
     try:
         from .email_service import send_email
-        if recipient_role == "source_owner":
-            opening = (
-                f"Site {site_name!r} has been moved from "
-                f"{source_org_name} to {target_org_name}. As the "
-                f"former owner, you no longer see this site in your "
-                f"client portal."
-            )
-            audit_pointer = (
-                f"Your evidence chain for the period that {site_name!r} "
-                f"was under {source_org_name} remains intact and "
-                f"available to auditors via your auditor kit ZIP at "
-                f"/api/evidence/sites/{site_id}/auditor-kit. Cryptographic "
-                f"signatures continue to verify under the chain "
-                f"identifier of the original site."
-            )
-        else:
-            opening = (
-                f"Site {site_name!r} has been moved from "
-                f"{source_org_name} to {target_org_name}. As the "
-                f"current owner of {target_org_name}, this site is "
-                f"now visible in your client portal."
-            )
-            audit_pointer = (
-                f"The full historical evidence chain of {site_name!r} "
-                f"(including the period the site was under "
-                f"{source_org_name}) is available to your auditor via "
-                f"the auditor kit ZIP at /api/evidence/sites/{site_id}/"
-                f"auditor-kit. The chain crosses the organization "
-                f"boundary via a recorded relocate event; auditors "
-                f"verify each segment under its respective issuer."
-            )
         body = (
-            f"{opening}\n"
-            f"\n"
-            f"Move completed: {executed_at.isoformat()}\n"
-            f"OsirisCare admin who completed the move: {executor_email}\n"
-            f"Cross-organization relocate identifier: {relocate_id}\n"
+            "Hello,\n"
+            "\n"
+            "A cross-organization site relocate that involved one of "
+            "your OsirisCare client organizations has been completed. "
+            "Log in to the OsirisCare portal to view the full context, "
+            "including the auditor kit URL for the moved site.\n"
+            "\n"
+            f"Completed at: {executed_at.isoformat()}\n"
+            f"Reference: relocate-{relocate_id}\n"
             + (
                 f"Cryptographic chain anchor: {attestation_bundle_id}\n"
                 if attestation_bundle_id
                 else ""
             ) +
-            f"\n"
-            f"{audit_pointer}\n"
-            f"\n"
-            f"PHI was scrubbed at appliance egress throughout the "
-            f"relocate; the same substrate-class business associate "
-            f"(OsirisCare) handles the site before and after the move. "
-            f"No PHI changed business-associate custody during the "
-            f"relocate.\n"
-            f"\n"
-            f"Questions? Contact your OsirisCare account representative.\n"
-            f"\n"
-            f"---\n"
-            f"OsirisCare — substrate-level cross-organization site "
-            f"relocate completion notice"
+            "\n"
+            f"Portal: {BASE_URL}\n"
+            "\n"
+            "Why this email omits identifying information:\n"
+            "We minimize identifying information in unauthenticated "
+            "channels. The full context — site name, organization "
+            "names, executor, auditor kit URL — is visible only inside "
+            "the authenticated portal session.\n"
+            "\n"
+            "Questions? Contact your OsirisCare account representative.\n"
+            "\n"
+            "---\n"
+            "OsirisCare — substrate-level cross-organization site "
+            "relocate completion notice"
         )
         await send_email(
             recipient_email,
-            f"Site relocate completed: {site_name}",
+            "OsirisCare: site relocate completed",
             body,
         )
     except Exception:
@@ -654,20 +645,11 @@ async def initiate_cross_org_relocate(
         expected_source_email = source_owner_row["email"].lower().strip()
         expected_target_email = target_owner_row["email"].lower().strip()
 
-        # Org + site names for the email body. Resolved in the same
-        # connection so we don't need a second pool acquire after commit.
-        names = await conn.fetchrow(
-            """
-            SELECT
-                (SELECT name FROM client_orgs WHERE id = $1::uuid) AS source_org_name,
-                (SELECT name FROM client_orgs WHERE id = $2::uuid) AS target_org_name
-            """,
-            source_org_id,
-            body.target_org_id,
-        )
-        source_org_name = (names and names["source_org_name"]) or "(unnamed organization)"
-        target_org_name = (names and names["target_org_name"]) or "(unnamed organization)"
-        site_display_name = site["clinic_name"] or body.site_id
+        # Note: org / site names are NOT resolved here. Counsel revision
+        # 2026-05-06 made emails opaque; the helpers no longer need
+        # those fields. The portal serves identifying context behind
+        # authentication. The names lookup that used to live here was
+        # removed.
 
         async with conn.transaction():
             row = await conn.fetchrow(
@@ -764,13 +746,8 @@ async def initiate_cross_org_relocate(
     # ERROR but the relocate row + attestation are already committed.
     await _send_source_release_email(
         source_owner_email=expected_source_email,
-        source_org_name=source_org_name,
-        target_org_name=target_org_name,
-        site_name=site_display_name,
-        initiator_email=actor_email,
         relocate_id=relocate_id,
         source_release_token=source_release_token,
-        reason=body.reason,
         expires_at=expires_at,
     )
     # Marcus RT21 P3 token-lifecycle rule: drop the plaintext local var
@@ -860,25 +837,17 @@ async def source_release(body: SourceReleaseRequest, request: Request):
             target_accept_token.encode("utf-8")
         ).hexdigest()
 
-        # Names + expected target email + expiry for the outbound email.
+        # Pre-fetch only what the opaque email needs: target owner
+        # email + expiry. Org/site names + cooling_off_hours are NOT
+        # included in the email (counsel revision 2026-05-06 — opaque
+        # mode); the portal renders all identifying context after auth.
         ctx = await conn.fetchrow(
             """
-            SELECT
-                r.expected_target_accept_email,
-                r.expires_at,
-                s.clinic_name AS site_name,
-                (SELECT name FROM client_orgs WHERE id = r.source_org_id) AS source_org_name,
-                (SELECT name FROM client_orgs WHERE id = r.target_org_id) AS target_org_name,
-                COALESCE(
-                    (SELECT transfer_cooling_off_hours FROM client_orgs WHERE id = r.source_org_id),
-                    $2::int
-                ) AS cooling_off_hours
-            FROM cross_org_site_relocate_requests r
-            JOIN sites s ON s.site_id = r.site_id
-            WHERE r.id = $1
+            SELECT expected_target_accept_email, expires_at
+              FROM cross_org_site_relocate_requests
+             WHERE id = $1
             """,
             relocate_id,
-            DEFAULT_COOLING_OFF_HOURS,
         )
 
         async with conn.transaction():
@@ -920,14 +889,9 @@ async def source_release(body: SourceReleaseRequest, request: Request):
     if ctx:
         await _send_target_accept_email(
             target_owner_email=(ctx["expected_target_accept_email"] or "").lower().strip(),
-            source_org_name=ctx["source_org_name"] or "(unnamed organization)",
-            target_org_name=ctx["target_org_name"] or "(unnamed organization)",
-            site_name=ctx["site_name"] or row["site_id"],
             relocate_id=relocate_id,
             target_accept_token=target_accept_token,
-            reason=body.reason,
             expires_at=ctx["expires_at"],
-            cooling_off_hours=ctx["cooling_off_hours"],
         )
     # Marcus RT21 P3 token-lifecycle rule: drop plaintext after use.
     target_accept_token = None  # noqa: F841
@@ -1103,19 +1067,16 @@ async def execute_relocate(
 
         await _check_target_org_baa(conn, str(row["target_org_id"]))
 
-        # Names for the post-execute receipt emails (resolved before
-        # the transaction so the lookup stays simple).
+        # Pre-fetch only the recipient emails for the opaque post-
+        # execute receipt. Org/site names omitted — counsel revision
+        # 2026-05-06: emails are opaque; the portal serves identifying
+        # context after authentication.
         ctx = await conn.fetchrow(
             """
-            SELECT
-                r.expected_source_release_email,
-                r.expected_target_accept_email,
-                s.clinic_name AS site_name,
-                (SELECT name FROM client_orgs WHERE id = r.source_org_id) AS source_org_name,
-                (SELECT name FROM client_orgs WHERE id = r.target_org_id) AS target_org_name
-            FROM cross_org_site_relocate_requests r
-            JOIN sites s ON s.site_id = r.site_id
-            WHERE r.id = $1
+            SELECT expected_source_release_email,
+                   expected_target_accept_email
+              FROM cross_org_site_relocate_requests
+             WHERE id = $1
             """,
             relocate_id,
         )
@@ -1232,27 +1193,22 @@ async def execute_relocate(
         executed_at = datetime.now(timezone.utc)
         s_email = (ctx["expected_source_release_email"] or "").lower().strip()
         t_email = (ctx["expected_target_accept_email"] or "").lower().strip()
-        common = dict(
-            source_org_name=ctx["source_org_name"] or "(unnamed organization)",
-            target_org_name=ctx["target_org_name"] or "(unnamed organization)",
-            site_name=ctx["site_name"] or row["site_id"],
-            site_id=row["site_id"],
-            relocate_id=relocate_id,
-            executed_at=executed_at,
-            executor_email=actor_email,
-            attestation_bundle_id=bundle_id,
-        )
+        # Opaque mode (counsel revision): same body for both owners,
+        # no source/target differentiation in the email itself. The
+        # portal serves the per-recipient detail after authentication.
         if s_email:
             await _send_post_execute_email(
                 recipient_email=s_email,
-                recipient_role="source_owner",
-                **common,
+                relocate_id=relocate_id,
+                executed_at=executed_at,
+                attestation_bundle_id=bundle_id,
             )
         if t_email:
             await _send_post_execute_email(
                 recipient_email=t_email,
-                recipient_role="target_owner",
-                **common,
+                relocate_id=relocate_id,
+                executed_at=executed_at,
+                attestation_bundle_id=bundle_id,
             )
 
     return {"relocate_id": relocate_id, "status": "completed"}
@@ -1368,40 +1324,38 @@ async def get_relocate(
 
 
 # ─────────────────────────────────────────────────────────────────
-# Endpoint 7: enable-feature (Patricia RT21 attested-flag flip)
+# Endpoint 7+8: dual-admin flag-flip (counsel governance hardening)
+#
+# Outside-counsel adversarial review (2026-05-06): a single admin
+# enabling a legally sensitive capability is the design's governance
+# choke point. The feature-flag toggle does not live in the
+# cryptographic chain (Marcus FK finding; substrate-level event with
+# no site anchor); its audit lives in (1) the append-only feature_flags
+# row + (2) admin_audit_log. Counsel's hardening: TWO distinct admins.
+#
+# Step 1 — propose-enable: first admin records intent + reason ≥20ch.
+#   Writes proposal columns; flag stays disabled.
+# Step 2 — approve-enable: second admin must be DIFFERENT from
+#   proposer. Reason ≥40ch — this is where the outside-counsel
+#   opinion identifier lives. DB CHECK enforces approver ≠ proposer.
 # ─────────────────────────────────────────────────────────────────
 
 
-@cross_org_relocate_router.post("/enable-feature")
-async def enable_feature(
-    body: EnableFeatureRequest,
+@cross_org_relocate_router.post("/propose-enable")
+async def propose_enable(
+    body: ProposeEnableRequest,
     request: Request,
     user: Dict[str, Any] = Depends(require_admin),
 ):
-    """Flip the feature flag from disabled→enabled. RT21 Gate 2 closure
-    (Marcus FK finding): the flag-flip is NOT in privileged_access
-    ALLOWED_EVENTS because compliance_bundles.site_id FKs to a real
-    site_id and the flag-flip has no site anchor. Audit trail lives in:
-
-      1. feature_flags row itself — append-only (DELETE trigger blocks).
-         Stores actor_email + reason ≥40ch + enabled_at + (later) the
-         disable triplet. Forensically recoverable.
-      2. admin_audit_log row — standard §164.528 disclosure-accounting
-         shape.
-
-    The asymmetry vs other privileged events is documented in
-    privileged_access_attestation.py near ALLOWED_EVENTS.
-
-    Patricia's intent — that the ≥40-char `reason` carries the legal-
-    opinion identifier — is preserved. Length is enforced both at the
-    Pydantic body-validation layer AND at the DB CHECK constraint."""
+    """First admin proposes enabling the cross-org-relocate feature.
+    A SECOND distinct admin must follow up with /approve-enable for the
+    flag to actually flip."""
     pool = await get_pool()
     actor_email = (user.get("email") or "").lower().strip()
     if not actor_email:
         raise HTTPException(403, "Admin actor email is required.")
 
     async with admin_connection(pool) as conn:
-        # Check current state — only flip from disabled→enabled here.
         row = await conn.fetchrow(
             "SELECT enabled FROM feature_flags WHERE flag_name = $1",
             FLAG_NAME,
@@ -1415,6 +1369,97 @@ async def enable_feature(
             raise HTTPException(
                 409,
                 f"Feature {FLAG_NAME!r} already enabled.",
+            )
+
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE feature_flags
+                   SET enable_proposed_by_email = $2,
+                       enable_proposed_at = NOW(),
+                       enable_proposed_reason = $3
+                 WHERE flag_name = $1
+                """,
+                FLAG_NAME,
+                actor_email,
+                body.reason,
+            )
+
+            await conn.execute(
+                """
+                INSERT INTO admin_audit_log (
+                    user_id, username, action, target, details, ip_address
+                )
+                VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6)
+                """,
+                user.get("id"),
+                actor_email,
+                "propose_enable_cross_org_site_relocate",
+                f"feature_flag:{FLAG_NAME}",
+                json.dumps({"reason": body.reason}),
+                (request.client.host if request.client else None),
+            )
+
+    return {
+        "flag_name": FLAG_NAME,
+        "proposed_by": actor_email,
+        "next_step": (
+            "A second distinct admin must POST /approve-enable with the "
+            "outside-counsel opinion identifier in the reason field "
+            "(>=40 chars) for the flag to flip."
+        ),
+    }
+
+
+@cross_org_relocate_router.post("/approve-enable")
+async def approve_enable(
+    body: ApproveEnableRequest,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_admin),
+):
+    """Second admin approves a pending propose-enable. MUST be a
+    different admin than the proposer (DB CHECK + endpoint check).
+    Reason >=40ch — counsel-opinion identifier lives here."""
+    pool = await get_pool()
+    actor_email = (user.get("email") or "").lower().strip()
+    if not actor_email:
+        raise HTTPException(403, "Admin actor email is required.")
+
+    async with admin_connection(pool) as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT enabled, enable_proposed_by_email, enable_proposed_at,
+                   enable_proposed_reason
+              FROM feature_flags
+             WHERE flag_name = $1
+            """,
+            FLAG_NAME,
+        )
+        if not row:
+            raise HTTPException(
+                500,
+                f"Feature flag {FLAG_NAME!r} row missing — mig 281 not applied.",
+            )
+        if row["enabled"]:
+            raise HTTPException(
+                409,
+                f"Feature {FLAG_NAME!r} already enabled.",
+            )
+        if not row["enable_proposed_by_email"]:
+            raise HTTPException(
+                412,
+                "No pending proposal. Call /propose-enable first as a "
+                "different admin.",
+            )
+        proposer = row["enable_proposed_by_email"].lower().strip()
+        if proposer == actor_email:
+            # Defense in depth — same check at the DB layer (CHECK
+            # constraint mig 282) so a code-path bypass still fails.
+            raise HTTPException(
+                403,
+                f"Same-admin self-approval rejected: this admin "
+                f"({actor_email}) proposed the enable. A different "
+                f"admin must approve. Counsel governance rule.",
             )
 
         async with conn.transaction():
@@ -1433,14 +1478,12 @@ async def enable_feature(
                     body.reason,
                 )
             except Exception as e:
-                # CHECK constraint failure (reason length, etc.).
                 raise HTTPException(
                     400,
                     f"Feature-flag update rejected at DB layer: {e}. "
-                    "Verify reason ≥40ch.",
+                    "Verify reason >=40ch and approver != proposer.",
                 )
 
-            # admin_audit_log row for §164.528 parity.
             await conn.execute(
                 """
                 INSERT INTO admin_audit_log (
@@ -1450,13 +1493,23 @@ async def enable_feature(
                 """,
                 user.get("id"),
                 actor_email,
-                "enable_cross_org_site_relocate",
+                "approve_enable_cross_org_site_relocate",
                 f"feature_flag:{FLAG_NAME}",
-                json.dumps({"reason": body.reason}),
+                json.dumps({
+                    "approver_reason": body.reason,
+                    "proposer": proposer,
+                    "proposed_at": row["enable_proposed_at"].isoformat(),
+                    "proposer_reason": row["enable_proposed_reason"],
+                }),
                 (request.client.host if request.client else None),
             )
 
-    return {"flag_name": FLAG_NAME, "enabled": True}
+    return {
+        "flag_name": FLAG_NAME,
+        "enabled": True,
+        "proposer": proposer,
+        "approver": actor_email,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────
