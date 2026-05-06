@@ -478,24 +478,25 @@ async def _send_deprovision_notices(
     Osiris is the substrate, the MSP/operator is the actor.
     """
     from .email_service import send_email
+    # Opaque mode (task #42 sweep, 2026-05-06): subject + body
+    # withhold org name and the verbatim reason. Recipient may be a
+    # forwarded or stale address; org identity, retention deadline,
+    # and reason are shown on the authenticated portal after the
+    # recipient signs in (which they can — read-only access is still
+    # available). The signed-out experience surfaces the deprovision
+    # notice on next login attempt.
     body_template = (
-        "Access to OsirisCare has been disabled for {org_name}.\n"
+        "Access to your OsirisCare account has been disabled by your "
+        "operator (the MSP or administrator who manages your account).\n"
         "\n"
         "What this means:\n"
-        "- All sites under this organization are now read-only.\n"
         "- Active sessions have been invalidated; you will be signed out.\n"
-        "- Your evidence and audit data are preserved through "
-        "{retention_until}.\n"
-        "\n"
-        "Reason recorded: {reason}\n"
+        "- Your data is preserved through the configured retention "
+        "period; sign in to view the exact deadline and details.\n"
         "\n"
         "If you believe this was done in error, please contact your "
-        "operator (the MSP / administrator who manages your OsirisCare "
-        "account) directly. OsirisCare cannot reverse a deprovision "
+        "operator directly. OsirisCare cannot reverse a deprovision "
         "without operator initiation.\n"
-        "\n"
-        "After {retention_until}, data may be permanently removed per "
-        "the configured retention policy.\n"
         "\n"
         "---\n"
         "OsirisCare — substrate-level deprovision notice"
@@ -504,12 +505,8 @@ async def _send_deprovision_notices(
         try:
             ok = await send_email(
                 rec["email"],
-                f"Access disabled: {org_name}",
-                body_template.format(
-                    org_name=org_name,
-                    retention_until=retention_until.isoformat(),
-                    reason=reason,
-                ),
+                "OsirisCare: account access disabled",
+                body_template,
             )
             if not ok:
                 logger.error(

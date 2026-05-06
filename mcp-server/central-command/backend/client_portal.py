@@ -400,10 +400,15 @@ async def request_magic_link(request: ClientMagicLinkRequest, http_request: Requ
 
     try:
         from .email_service import send_email
+        # Opaque mode (Maya P0, 2026-05-06): no recipient-name
+        # greeting in the SMTP body. The recipient address is on
+        # the envelope; rendering a name into plaintext-SMTP body
+        # adds an identity-binding leak with no UX value (the
+        # authenticated portal greets by name after click-through).
         await send_email(
             email,
             "Your OsirisCare Login Link",
-            f"""Hi{' ' + user['name'] if user['name'] else ''},
+            f"""Hello,
 
 Click here to sign in to your OsirisCare compliance portal:
 
@@ -2123,18 +2128,23 @@ async def invite_user(
 
     try:
         from .email_service import send_email
+        # Opaque mode (task #42 sweep, 2026-05-06): subject + body
+        # withhold org name. Recipient may be a mistyped address;
+        # the org identity should only appear after they click
+        # through and authenticate. Org name is shown on the
+        # accept-invite page after the token resolves.
         await send_email(
             email,
-            f"You're invited to {user['org_name']} on OsirisCare",
-            f"""Hi{' ' + invite.name if invite.name else ''},
+            "OsirisCare: invitation to join a team",
+            f"""Hello,
 
-You've been invited to join {user["org_name"]} on OsirisCare.
-
-Click here to accept the invitation:
+You've been invited to join a team on OsirisCare. Click below
+within 7 days to view and accept the invitation:
 
 {invite_link}
 
-This invitation expires in 7 days.
+If you weren't expecting this invitation, you can safely ignore
+this email.
 
 - The OsirisCare Team
 """
