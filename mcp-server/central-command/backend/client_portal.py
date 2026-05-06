@@ -865,6 +865,108 @@ async def list_sites(user: dict = Depends(require_client_user)):
         }
 
 
+# ----------------------------------------------------------------------
+# Appliance fleet view (RT33 P0, 2026-05-05)
+# ----------------------------------------------------------------------
+# Customer-facing list of the appliances substrate-attesting on their
+# behalf. Org-scoped, rollup-MV-backed, deliberately narrow field set.
+#
+# Field allowlist (Carol veto, RT33): no mac_address, no ip_addresses,
+# no daemon_health, no peer_macs — these reveal Layer 2 topology to a
+# class of users (clinical-staff portal viewers) that doesn't need it.
+# A compromised customer session must not become a fleet recon map.
+#
+# Pagination: cursor by appliance_id ASC, hard-cap 50. Most clinics have
+# 1-3 appliances; if a customer has 50+ they should be using the
+# operator (MSP) portal, not the substrate-class view.
+@auth_router.get("/appliances")
+async def list_client_appliances(
+    cursor: str = "",
+    limit: int = 25,
+    user: dict = Depends(require_client_user),
+):
+    """List appliances visible to this client org.
+
+    Returns the substrate appliances attesting compliance on the org's
+    sites. Read-only — operator-class actions (l2-mode, clear-stale,
+    fleet orders) are reserved for the MSP via central command.
+    """
+    if limit < 1 or limit > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="limit must be between 1 and 50",
+        )
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        # Query site_appliances directly (RLS-protected by mig 278
+        # tenant_org_isolation) with inline LATERAL heartbeat join.
+        # Steve veto from RT33 P2 review: querying the rollup MV
+        # bypasses RLS because PG MVs don't inherit base-table policies.
+        # Same live_status semantics as Migration 193's MV — heartbeats
+        # are the source of truth, last_checkin is cache.
+        rows = await conn.fetch(
+            """
+            SELECT sa.appliance_id,
+                   sa.site_id,
+                   COALESCE(sa.display_name, sa.hostname, sa.appliance_id) AS display_name,
+                   CASE
+                       WHEN hb.max_observed_at IS NULL THEN 'offline'
+                       WHEN hb.max_observed_at > NOW() - INTERVAL '90 seconds' THEN 'online'
+                       WHEN hb.max_observed_at > NOW() - INTERVAL '5 minutes' THEN 'stale'
+                       ELSE 'offline'
+                   END AS status,
+                   hb.max_observed_at AS last_heartbeat_at,
+                   sa.last_checkin,
+                   sa.agent_version,
+                   s.clinic_name
+            FROM site_appliances sa
+            JOIN sites s ON s.site_id = sa.site_id AND sa.deleted_at IS NULL
+            LEFT JOIN LATERAL (
+                SELECT MAX(observed_at) AS max_observed_at
+                FROM appliance_heartbeats
+                WHERE appliance_id = sa.appliance_id
+                  AND observed_at > NOW() - INTERVAL '24 hours'
+            ) hb ON true
+            WHERE s.client_org_id = $1
+              AND s.status != 'inactive'
+              AND ($2 = '' OR sa.appliance_id > $2)
+            ORDER BY sa.appliance_id ASC
+            LIMIT $3
+            """,
+            org_id, cursor, limit + 1,
+        )
+
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    next_cursor = rows[-1]["appliance_id"] if (has_more and rows) else None
+
+    return {
+        "appliances": [
+            {
+                "appliance_id": r["appliance_id"],
+                "site_id": r["site_id"],
+                "site_name": r["clinic_name"],
+                "display_name": r["display_name"],
+                "status": r["status"],
+                "last_heartbeat_at": (
+                    r["last_heartbeat_at"].isoformat()
+                    if r["last_heartbeat_at"] else None
+                ),
+                "last_checkin": (
+                    r["last_checkin"].isoformat()
+                    if r["last_checkin"] else None
+                ),
+                "agent_version": r["agent_version"],
+            }
+            for r in rows
+        ],
+        "next_cursor": next_cursor,
+        "limit": limit,
+    }
+
+
 @auth_router.get("/sites/{site_id}")
 async def get_site_detail(site_id: str, user: dict = Depends(require_client_user)):
     """Get detailed site info including compliance status."""

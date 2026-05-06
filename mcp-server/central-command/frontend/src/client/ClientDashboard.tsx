@@ -5,6 +5,7 @@ import { OsirisCareLeaf, WelcomeModal, InfoTip, DashboardErrorBoundary } from '.
 import { ClientDriftConfig } from './ClientDriftConfig';
 import { ComplianceHealthInfographic } from './ComplianceHealthInfographic';
 import { DevicesAtRisk } from './DevicesAtRisk';
+import { ClientAppliances } from './ClientAppliances';
 import { getScoreStatus } from '../constants';
 import { DisclaimerFooter } from '../components/composed';
 
@@ -533,6 +534,16 @@ export const ClientDashboard: React.FC = () => {
           <DevicesAtRisk
             siteId={dashboard.sites[0].site_id}
           />
+        )}
+
+        {/* Compliance appliances — RT33 (2026-05-05) */}
+        {dashboard && dashboard.sites.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-lg font-medium text-white mb-3">
+              Compliance Appliances
+            </h2>
+            <ClientAppliances />
+          </div>
         )}
 
         {/* Monitor Your Devices — Agent Downloads */}

@@ -152,6 +152,11 @@ SOURCE_LEVEL_TESTS=(
     # client_portal site/appliance queries that surfaced phantom data
     # for the user when North Valley was the only real site.
     "tests/test_client_portal_filters_soft_deletes.py"
+    # RT33 P2 client-portal appliance fleet endpoint contract: pins
+    # field allowlist (no Layer-2 leakage), source table (RLS-protected
+    # site_appliances NOT the rollup MV which bypasses RLS), and the
+    # 50-row hard cap.
+    "tests/test_client_appliances_field_allowlist.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
