@@ -16,7 +16,7 @@
 - §3.5 added — dual-admin governance for the flag-flip (engineering shipped; counsel-recommended hardening of the choke point you flagged)
 - §4a updated — opaque-mode emails are now the engineering DEFAULT (shipped); we documented the alternative position rather than the position
 
-> **Posture:** This is an evidence-grade compliance attestation substrate. Engineering has built and tested a three-actor state machine for moving a site from one client_org (a covered entity) to another. The feature is shipped behind a database-stored feature flag that returns HTTP 503 until you authorize the flip. Your authorization appears in the cryptographic chain at flip time as a ≥40-character `enable_reason` containing your opinion identifier. We are asking for legal review on three specific §-questions; we are NOT asking for a re-design of the engineering.
+> **Posture:** This is an evidence-grade compliance attestation substrate. Engineering has built and tested a three-actor state machine for moving a site from one client_org (a covered entity) to another. The feature is shipped behind a database-stored feature flag that returns HTTP 503 until you authorize the flip. Your authorization appears in the append-only enablement record (the `feature_flags` row, DELETE-blocked) and the linked `admin_audit_log` entry at flip time, as a ≥40-character `enable_reason` containing your opinion identifier — the flag-flip event itself is NOT in the cryptographic chain (see §4 for why, and what we record instead). We are asking for legal review on the §-questions in §2; we are NOT asking for a re-design of the engineering.
 
 ---
 
@@ -75,7 +75,18 @@ controls are unchanged — only the language around them changes.
 
 ---
 
-## 2. The three §-questions on which we need your opinion
+## 2. The §-questions on which we need your opinion
+
+Six review items in total. The three core §-questions live in this
+section (Q1/Q2/Q3); the other three are documented later in the
+packet but require equivalent counsel sign-off:
+
+- **Q1 (§2)** — §164.504(e) permitted-use scope under both BAAs
+- **Q2 (§2)** — §164.528 substantive completeness + retrievability
+- **Q3 (§2)** — receiving-org BAA scope (likely commercial choke point)
+- **Data classification (§1.5)** — metadata vs PHI ontological framing
+- **Dual-admin governance (§3.5)** — proposer + approver enablement
+- **Opaque-mode email defaults (§4a)** — minimization in unauthenticated channels
 
 ### Question 1 — §164.504(e) permitted-use scope under both BAAs
 
@@ -478,7 +489,11 @@ ask that you trust them unless you see a specific concern:
 
 **What we are asking for:**
 
-1. Written opinion on the three §-questions in §2.
+1. Written opinion on the §-questions in §2 (Q1 permitted-use scope,
+   Q2 §164.528 substantive completeness + retrievability, Q3 receiving-
+   org BAA scope) plus the data-classification framing in §1.5, the
+   dual-admin governance disclosure in §3.5, and the opaque-mode email
+   defaults disclosure in §4a.
 2. If your answer to any §-question is "no" or "addendum required,"
    the addendum language.
 
@@ -488,19 +503,34 @@ ask that you trust them unless you see a specific concern:
   one is in pipeline (~Q3 2026 hospital network acquisition).
 - Engineering is shipped + tested + deployed behind the flag. Your
   review can run async over multi-week without blocking other work.
-- When you return your opinion, the flag flip is a one-API-call
-  operational change. We will reference your opinion identifier in the
-  ≥40-character `enable_reason` field at flip time so the substrate's
-  cryptographic record contains the legal authority for enabling the
-  feature.
+- When you return your opinion, the flag flip is a TWO-API-call
+  dual-admin operational change (per §3.5): admin #1 calls
+  `/propose-enable` with the operational trigger as reason; admin #2
+  (must differ) calls `/approve-enable` with your opinion identifier
+  in the ≥40-character `enable_reason`. The DB CHECK enforces
+  `lower(approver) <> lower(proposer)` at the schema layer. Both
+  reasons land permanently on the append-only `feature_flags` row +
+  the linked `admin_audit_log` entries; the flag-flip itself is not
+  emitted into the cryptographic chain (see §4 for that disclosure
+  and rationale).
 
-**What we will hand back to you for your file:**
+**What we will hand back to you for your file** (note: no
+cryptographic-chain bundle is generated for the flag-flip event, per
+§4 — the artifacts below come from the append-only `feature_flags`
+row + the linked `admin_audit_log` rows):
 
-- The bundle ID of the `enable_cross_org_site_relocate`
-  `admin_audit_log` row (which contains your opinion reference).
-- The `feature_flags.cross_org_site_relocate` row's `enabled_at` +
-  `enabled_by_email` + `enable_reason`.
-- A confirmation page screenshot from our admin tooling.
+- The `admin_audit_log` row IDs for both
+  `propose_enable_cross_org_site_relocate` (admin #1) and
+  `approve_enable_cross_org_site_relocate` (admin #2) — these are
+  the auditable records of the dual-admin enablement; the approver's
+  row contains your opinion reference.
+- The `feature_flags.cross_org_site_relocate` row contents:
+  `enable_proposed_by_email` + `enable_proposed_at` +
+  `enable_proposed_reason` (proposer side) and `enabled_by_email` +
+  `enabled_at` + `enable_reason` (approver side, ≥40 chars,
+  carrying your opinion identifier).
+- A confirmation page screenshot from our admin tooling showing
+  the row contents post-flip.
 
 ---
 
