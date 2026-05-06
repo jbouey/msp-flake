@@ -762,6 +762,7 @@ async def mesh_consistency_check_loop():
                            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online,
                            COUNT(*) as total
                     FROM site_appliances
+                    WHERE deleted_at IS NULL
                     GROUP BY site_id
                     HAVING COUNT(*) > 1
                 """))
@@ -774,7 +775,14 @@ async def mesh_consistency_check_loop():
                     if online_count < 2:
                         continue  # Not a meaningful mesh
 
-                    # Check ring agreement
+                    # Check ring agreement.
+                    # Maya RT-mesh-runbook-audit (2026-05-06): added
+                    # `deleted_at IS NULL` filter — without it, a
+                    # soft-deleted appliance whose daemon never
+                    # cleaned up its last daemon_health JSON could
+                    # vote in the ring-size disagreement check + fire
+                    # phantom drift alerts. Same fix as the parent
+                    # site-list query above.
                     ring_result = await db.execute(text("""
                         SELECT appliance_id,
                                (daemon_health->>'mesh_ring_size')::int as ring_size,
@@ -782,6 +790,7 @@ async def mesh_consistency_check_loop():
                                assigned_targets
                         FROM site_appliances
                         WHERE site_id = :sid
+                          AND deleted_at IS NULL
                           AND last_checkin > NOW() - INTERVAL '5 minutes'
                           AND daemon_health IS NOT NULL
                     """), {"sid": site_id})

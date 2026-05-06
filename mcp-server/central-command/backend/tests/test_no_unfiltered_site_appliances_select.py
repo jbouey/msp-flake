@@ -64,7 +64,12 @@ BACKEND_DIR = REPO_ROOT / "mcp-server" / "central-command" / "backend"
 # 2026-05-05 RT33 ghost-data sweep: client_portal.py + partners.py
 # tightened to filter `deleted_at IS NULL` + `status != 'inactive'` on
 # all portal-facing site_appliances joins/selects. 95 → 85.
-BASELINE_MAX = 85
+# 2026-05-06 mesh-runbook adversarial audit (Maya 2nd-eye finding):
+# `mesh_consistency_check_loop()` in background_tasks.py was missing
+# `deleted_at IS NULL` on both the per-site rollup query AND the
+# ring-agreement query. Soft-deleted appliances were being counted
+# in the mesh "total" → false ring-drift alerts. 85 → 83.
+BASELINE_MAX = 83
 
 _FROM_PATTERN = re.compile(r"\bFROM\s+site_appliances\b", re.IGNORECASE)
 _NOQA_PATTERN = re.compile(
