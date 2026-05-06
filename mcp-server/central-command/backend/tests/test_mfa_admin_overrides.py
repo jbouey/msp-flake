@@ -313,19 +313,41 @@ def test_partner_events_use_partner_org_namespace():
 
 
 def test_client_events_use_org_primary_site_id():
+    """Round-table 32 closure: the anchor resolver moved from inline
+    in mfa_admin.py to the canonical chain_attestation.py. mfa_admin
+    imports it under the legacy name `_resolve_client_anchor_site_id`
+    so callsites didn't need touching. Verify both: the import line
+    AND the canonical helper's actual SQL."""
     src = _read(_BACKEND / "mfa_admin.py")
-    assert "_resolve_client_anchor_site_id" in src
-    helper = _find_function(src, "_resolve_client_anchor_site_id")
-    assert "ORDER BY created_at ASC LIMIT 1" in helper
+    assert "resolve_client_anchor_site_id" in src, (
+        "mfa_admin.py must reference the chain_attestation helper "
+        "(round-table 32 DRY closure)."
+    )
+    canonical = _read(_BACKEND / "chain_attestation.py")
+    helper = _find_function(canonical, "resolve_client_anchor_site_id")
+    assert "ORDER BY created_at ASC LIMIT 1" in helper, (
+        "chain_attestation.resolve_client_anchor_site_id must use "
+        "the oldest-site-by-created_at anchor pattern (CLAUDE.md "
+        "anchor-namespace convention)."
+    )
 
 
 # ─── Operator-alert chain-gap escalation ─────────────────────────
 
 
 def test_chain_gap_escalation_uniform():
+    """Round-table 32: the chain-gap escalation literals (P0-CHAIN-GAP +
+    [ATTESTATION-MISSING]) live ONLY in chain_attestation.py post-DRY
+    closure. mfa_admin's _send_operator_visibility shim delegates."""
+    canonical = _read(_BACKEND / "chain_attestation.py")
+    assert "P0-CHAIN-GAP" in canonical
+    assert "ATTESTATION-MISSING" in canonical
+    # mfa_admin must import + delegate (not re-implement inline).
     src = _read(_BACKEND / "mfa_admin.py")
-    assert "P0-CHAIN-GAP" in src
-    assert "ATTESTATION-MISSING" in src
+    assert "_send_chain_aware_operator_alert" in src, (
+        "mfa_admin must delegate operator alerts to chain_attestation "
+        "post-round-table-32 DRY closure."
+    )
 
 
 def test_revoke_severity_p0_class():

@@ -381,8 +381,15 @@ def test_substrate_actor_must_be_named_human():
 
 
 def test_anchor_uses_org_primary_site_id_with_synthetic_fallback():
+    """Round-table 32 closure: anchor resolver moved to chain_attestation.py.
+    client_user_email_rename imports it under the legacy name."""
     src = _read(_BACKEND / "client_user_email_rename.py")
-    fn = _find_function(src, "_resolve_client_anchor_site_id")
+    assert "resolve_client_anchor_site_id" in src, (
+        "client_user_email_rename must import the canonical anchor "
+        "resolver (round-table 32 DRY closure)."
+    )
+    canonical = _read(_BACKEND / "chain_attestation.py")
+    fn = _find_function(canonical, "resolve_client_anchor_site_id")
     assert fn
     assert "ORDER BY created_at ASC LIMIT 1" in fn
     assert 'f"client_org:{org_id}"' in fn
@@ -392,9 +399,17 @@ def test_anchor_uses_org_primary_site_id_with_synthetic_fallback():
 
 
 def test_chain_gap_escalation_uniform():
+    """Round-table 32: chain-gap literals live in chain_attestation.py
+    post-DRY closure. client_user_email_rename's
+    _send_operator_visibility shim delegates."""
+    canonical = _read(_BACKEND / "chain_attestation.py")
+    assert "P0-CHAIN-GAP" in canonical
+    assert "ATTESTATION-MISSING" in canonical
     src = _read(_BACKEND / "client_user_email_rename.py")
-    assert "P0-CHAIN-GAP" in src
-    assert "ATTESTATION-MISSING" in src
+    assert "_send_chain_aware_operator_alert" in src, (
+        "client_user_email_rename must delegate operator alerts to "
+        "chain_attestation post-round-table-32 DRY closure."
+    )
 
 
 # ─── Auto-provision-on-signup hook ───────────────────────────────
