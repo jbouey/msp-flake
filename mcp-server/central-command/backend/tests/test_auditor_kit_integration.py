@@ -320,6 +320,68 @@ def test_readme_contains_round_table_mandated_sections():
     assert "hhs.gov/hipaa/filing-a-complaint" in readme
 
 
+def test_production_readme_carries_firm_complaint_sla():
+    """User confirmed 2026-05-06: compliance@osiriscare.com is
+    wired as a monitored inbox with 7-business-day acknowledgment
+    + 30-day substantive-response targets. Pin the production
+    README's SLA copy so a future PR cannot silently soften it
+    back to best-effort.
+
+    Coach P0-3 (round-table 2026-05-06) caveat: an unbacked SLA
+    in a hash-chained artifact is a documented commitment risk.
+    Inverse caveat: a *backed* SLA must stay firm — softening it
+    back to ambiguity once the inbox is wired wastes the
+    operational commitment. This gate enforces the firm posture."""
+    import pathlib as _pl
+    evidence_chain_path = (
+        _pl.Path(__file__).resolve().parent.parent / "evidence_chain.py"
+    )
+    src = evidence_chain_path.read_text()
+    # Sanity: locate the README template embedded in evidence_chain.py
+    readme_marker = "_AUDITOR_KIT_README"
+    assert readme_marker in src, (
+        "_AUDITOR_KIT_README template not found in evidence_chain.py"
+    )
+    # The Complaints section must reference compliance@ with the
+    # firm 7/30 commitment, not the prior best-effort softening.
+    assert "compliance@osiriscare.com" in src, (
+        "compliance@ channel removed from kit README — Carol P1-1 "
+        "regression."
+    )
+    assert (
+        "7 business days" in src and "30 days" in src
+    ), (
+        "Auditor-kit README must commit to 7-business-day "
+        "acknowledgment + 30-day substantive-response targets "
+        "(user-confirmed operational commitment 2026-05-06). A "
+        "softening back to 'best-effort' wastes the wired-inbox "
+        "operational state."
+    )
+    # The §164.524 alignment is the auditor-recognizable peg —
+    # don't drop it.
+    assert "§164.524" in src, (
+        "§164.524 alignment dropped from Complaints SLA — auditors "
+        "rely on this peg to read our 30-day target as standards-"
+        "aligned, not arbitrary."
+    )
+    # Defense against silent regression to best-effort wording.
+    assert "best-effort acknowledgment" not in src, (
+        "Auditor-kit README still carries 'best-effort "
+        "acknowledgment' softening; user confirmed inbox is wired "
+        "with firm 7/30 SLA — update the README to match."
+    )
+    # Banned-words sweep on the new copy.
+    for banned in ("ensures", "guarantees", "audit-ready"):
+        readme_idx = src.find(readme_marker)
+        readme_end = src.find('"""', readme_idx + len(readme_marker))
+        readme_end = src.find('"""', readme_end + 3) + 3
+        readme_block = src[readme_idx:readme_end].lower()
+        assert banned not in readme_block, (
+            f"Banned legal-language word '{banned}' present in kit "
+            f"README (CLAUDE.md Session 199 hard rule)."
+        )
+
+
 # ---------------------------------------------------------------- helper
 
 

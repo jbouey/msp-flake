@@ -4377,9 +4377,10 @@ substrate or its operator has mishandled protected health information,
 you have multiple channels:
 
 - **Substrate operator (OsirisCare):** compliance@osiriscare.com —
-  best-effort acknowledgment; substantive response timeline depends on
-  the nature of the concern. (Formal SLA pending operational sign-off
-  before this language is hardened.)
+  we acknowledge within 7 business days and target a substantive
+  response within 30 days. (The 30-day target aligns with the
+  §164.524 access-request standard so auditors can use the same
+  clock.)
 - **Presenting partner ({presenter_brand}):** see the contact line at
   the top of this README.
 - **Covered entity:** complaints about the covered entity's HIPAA
