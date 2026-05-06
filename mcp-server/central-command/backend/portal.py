@@ -1361,12 +1361,26 @@ async def get_portal_home(
         # the round-table-documented "200 even when partial" rule.
         pass
 
+    # Carol P0 (round-table 2026-05-06): "protected" is on
+    # CLAUDE.md banned-words list (Session 199 legal-language
+    # rules). Renamed payload fields to monitored_* throughout
+    # while preserving the dual `protected` alias for one
+    # release cycle of frontend backwards-compat. Drop the
+    # alias once mobile/legacy clients confirm the new names.
     return {
         "site_id": site_id,
+        "monitored": protected,
+        "monitored_reason": protected_reason or "All checks passing",
+        "monitored_label": (
+            "Monitoring active"
+            if protected else "Needs your attention"
+        ),
+        # Backwards-compat (deprecated 2026-05-06; remove
+        # 2026-06-06 after all clients are on the new names).
         "protected": protected,
         "protected_reason": protected_reason or "All checks passing",
         "protected_label": (
-            "You are protected"
+            "Monitoring active"
             if protected else "Needs your attention"
         ),
         "last_updated_at": now.isoformat(),

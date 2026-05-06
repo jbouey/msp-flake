@@ -61,6 +61,7 @@ async def require_evidence_view_access(
     request: Request,
     portal_session: Optional[str] = Cookie(None),
     osiris_client_session: Optional[str] = Cookie(None),
+    osiris_partner_session: Optional[str] = Cookie(None),
     token: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     """Gate read-only per-site evidence endpoints.
@@ -73,10 +74,17 @@ async def require_evidence_view_access(
          into the new portal could see compliance data on the dashboard
          but couldn't download the auditor kit because this gate only
          knew about the legacy `portal_session` cookie shape).
-      3. The LEGACY per-site portal session cookie (`portal_session`)
+      3. NEW partner portal session cookie (`osiris_partner_session`)
+         where the partner manages the site (sites.partner_id =
+         partner_user.partner_id) AND the partner_user has role
+         'admin' or 'tech' per CLAUDE.md RT31. Round-table 2026-05-06
+         consensus: parity gap — partners need to pull the kit too.
+         billing-role partner_users are NOT permitted (auditor-kit
+         is site-state-class, not billing-class).
+      4. The LEGACY per-site portal session cookie (`portal_session`)
          bound to this site (Session 203 shared-link shape; still
          supported for auditor magic links).
-      4. A legacy portal token query param (`?token=…`) bound to this site.
+      5. A legacy portal token query param (`?token=…`) bound to this site.
 
     On failure raises HTTPException(403) with a single generic message
     so auditors can't enumerate which path failed.
@@ -121,14 +129,73 @@ async def require_evidence_view_access(
                         "org_id": str(client_user["org_id"]),
                         "email": client_user.get("email"),
                     }
-        except Exception:
-            # Best-effort — fall through to legacy paths on any error.
+        except (HTTPException, KeyError, AttributeError, asyncio.CancelledError):
+            # Maya P1 (round-table 2026-05-06): narrow the previously
+            # bare `except Exception` so unexpected exceptions surface
+            # to the request handler instead of silently masking
+            # routing bugs. Anything outside the expected set bubbles
+            # → 500 with traceback in operator logs.
             logger.warning(
                 "client_portal session evaluation failed in evidence gate",
                 exc_info=True,
             )
 
-    # 3/4. LEGACY portal session cookie OR legacy token query param.
+    # 3. NEW partner portal session — verify sites.partner_id matches
+    #    AND role is admin/tech (RT31). Round-table 2026-05-06 P0
+    #    parity fix. Uses the same partner_sessions ⨝ partner_users
+    #    LEFT JOIN that partners.py::require_partner uses, so role
+    #    resolution stays in lockstep.
+    if osiris_partner_session:
+        try:
+            from .partner_auth import hash_session_token as _hash_partner
+            from .fleet import get_pool as _get_partner_pool
+            from .tenant_middleware import (
+                admin_connection as _partner_admin_conn,
+            )
+
+            partner_pool = await _get_partner_pool()
+            partner_session_hash = _hash_partner(osiris_partner_session)
+            async with _partner_admin_conn(partner_pool) as conn:
+                partner_row = await conn.fetchrow("""
+                    SELECT ps.partner_id, ps.partner_user_id,
+                           pu.role AS user_role, pu.email AS user_email
+                      FROM partner_sessions ps
+                      JOIN partners p ON p.id = ps.partner_id
+                      LEFT JOIN partner_users pu ON pu.id = ps.partner_user_id
+                     WHERE ps.session_token_hash = $1
+                       AND ps.expires_at > NOW()
+                       AND p.status = 'active'
+                """, partner_session_hash)
+                if partner_row:
+                    role = partner_row["user_role"] or "admin"  # legacy NULL = admin
+                    if role in {"admin", "tech"}:
+                        owns = await conn.fetchval(
+                            """
+                            SELECT 1 FROM sites
+                             WHERE site_id = $1 AND partner_id = $2
+                             LIMIT 1
+                            """,
+                            site_id, partner_row["partner_id"],
+                        )
+                        if owns:
+                            return {
+                                "method": "partner_portal",
+                                "user_id": str(
+                                    partner_row["partner_user_id"]
+                                ) if partner_row.get(
+                                    "partner_user_id"
+                                ) else None,
+                                "partner_id": str(partner_row["partner_id"]),
+                                "email": partner_row.get("user_email"),
+                                "role": role,
+                            }
+        except (HTTPException, KeyError, AttributeError, asyncio.CancelledError):
+            logger.warning(
+                "partner_portal session evaluation failed in evidence gate",
+                exc_info=True,
+            )
+
+    # 4/5. LEGACY portal session cookie OR legacy token query param.
     try:
         from .portal import validate_session as _validate_portal_session
         portal_ctx = await _validate_portal_session(site_id, portal_session, token)
@@ -4554,7 +4621,12 @@ def _collect_security_advisories() -> List[Tuple[Dict[str, Any], str]]:
     here = pathlib.Path(__file__).resolve()
     # Walk every ancestor — works for dev (deep tree) AND any
     # container layout that mounts docs/ alongside the app dir.
-    for ancestor in here.parents:
+    # Hard cap (Maya P2 follow-up 2026-05-06): bound the walk so
+    # a path-walk loop or symlink cycle can't blow the request.
+    MAX_PARENT_WALK = 32
+    for i, ancestor in enumerate(here.parents):
+        if i >= MAX_PARENT_WALK:
+            break
         candidate_dirs.append(ancestor / "docs" / "security")
 
     advisories_dir: Optional[pathlib.Path] = None
@@ -5011,6 +5083,81 @@ async def download_auditor_kit(
             zf.writestr(f"disclosures/{_adv_meta['advisory_filename']}", _adv_text)
 
     buf.seek(0)
+    # Snapshot byte-count for audit log (SpooledTemporaryFile.tell()
+    # AFTER seek(0) returns 0; use os.fstat / file.getbuffer.size
+    # safely from the spooled buffer.)
+    try:
+        kit_byte_count = buf.seek(0, 2)  # seek to end → byte count
+        buf.seek(0)
+    except Exception:
+        kit_byte_count = -1
+
+    # Round-table 2026-05-06 P0 (Steve+Maya): structured audit log +
+    # admin_audit_log row on every download success. Without this
+    # row a customer can dispute whether a download happened and we
+    # have no producible record. Writes to admin_audit_log via the
+    # existing append-only triggers; failure here is logged at
+    # ERROR but does NOT block the response (the kit is the
+    # customer-facing artifact; an audit-write hiccup must not
+    # deny the §164.524 access right).
+    auth_method = (_auth or {}).get("method", "unknown")
+    auth_email = (_auth or {}).get("email") or "anonymous"
+    auth_user_id = (_auth or {}).get("user_id")
+    auth_partner_id = (_auth or {}).get("partner_id")
+    auth_role = (_auth or {}).get("role")
+    logger.info(
+        "auditor_kit_download",
+        extra={
+            "site_id": site_row.site_id,
+            "auth_method": auth_method,
+            "auth_email": auth_email,
+            "auth_user_id": auth_user_id,
+            "auth_partner_id": auth_partner_id,
+            "auth_role": auth_role,
+            "bundle_count": len(bundle_rows),
+            "pubkey_count": len(pubkeys),
+            "ots_file_count": len(ots_files),
+            "byte_count": kit_byte_count,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+    try:
+        await db.execute(text("""
+            INSERT INTO admin_audit_log
+                (user_id, username, action, target, details, ip_address, created_at)
+            VALUES
+                (NULL, :username, :action, :target, :details::jsonb, :ip, NOW())
+        """), {
+            "username": auth_email,
+            "action": "auditor_kit_download",
+            "target": f"site:{site_row.site_id}",
+            "details": _json.dumps({
+                "auth_method": auth_method,
+                "user_id": auth_user_id,
+                "partner_id": auth_partner_id,
+                "role": auth_role,
+                "bundle_count": len(bundle_rows),
+                "pubkey_count": len(pubkeys),
+                "ots_file_count": len(ots_files),
+                "byte_count": kit_byte_count,
+                "limit": limit,
+                "offset": offset,
+                "kit_version": chain_metadata.get("kit_version"),
+            }),
+            # IP capture would require adding `request: Request` to
+            # the endpoint signature. Punted to follow-up — the
+            # endpoint runs behind nginx so IP also lands in the
+            # access log keyed by request_id.
+            "ip": None,
+        })
+        await db.commit()
+    except Exception:
+        logger.error(
+            "auditor_kit_download_audit_log_write_failed",
+            exc_info=True,
+            extra={"site_id": site_row.site_id},
+        )
 
     safe_site = "".join(c if c.isalnum() or c in "-_" else "-" for c in site_row.site_id)
     filename = f"osiriscare-auditor-kit-{safe_site}-{generated_at[:10]}.zip"

@@ -2,23 +2,37 @@
  * PracticeHomeCard — Session 206 round-table hero component.
  *
  * Psychology-first design for the end-customer (practice manager):
- *   - Single green-or-orange "You are protected" indicator
- *   - Audit-kit download front-and-center
+ *   - Single green-or-orange "Monitoring active" indicator
+ *   - Audit-kit download front-and-center (via JS fetch→blob with
+ *     CSRF + spinner + error states; raw <a download> regressed
+ *     RT31 and was caught by 2026-05-06 round-table consistency
+ *     coach)
  *   - "This month" summary that makes the 75%-cheaper-than-MSP
  *     value prop visible
  *   - Partner attribution (named human) as trust signal
  *
  * Data from GET /api/portal/site/{site_id}/home which does the
  * aggregation server-side. Frontend stays dumb and fast.
+ *
+ * 2026-05-06 round-table changes:
+ *   - Carol P0: "protected" → "monitored" (CLAUDE.md banned words).
+ *   - Consistency coach P1: <a download> → fetchBlob with
+ *     401/429/network error states + spinner.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 
 interface HomeData {
   site_id: string;
-  protected: boolean;
-  protected_reason: string;
-  protected_label: string;
+  // Round-table 2026-05-06: monitored_* are canonical; protected_*
+  // are backwards-compat aliases that backend ships for one release
+  // cycle. Frontend prefers monitored_* and falls back.
+  monitored?: boolean;
+  monitored_reason?: string;
+  monitored_label?: string;
+  protected?: boolean;
+  protected_reason?: string;
+  protected_label?: string;
   last_updated_at: string;
   this_month: {
     issues_found: number;
@@ -34,9 +48,6 @@ interface HomeData {
   devices: { appliances: number; workstations: number };
   coverage_30d: Array<{ date: string; covered: boolean; incidents: number }>;
   auditor_kit_url: string;
-  // #73 closure 2026-05-02: fleet-wide healing pause state surfaces
-  // to client portal so an auditor visiting during a paused window
-  // can see auto-remediation was off.
   fleet_healing_state?: {
     disabled: boolean;
     paused_since?: string;
@@ -50,45 +61,131 @@ interface Props {
   isLoading?: boolean;
 }
 
-function relTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  const now = Date.now();
-  const diff = Math.max(0, Math.floor((now - t) / 1000));
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
-
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return iso;
+  }
 }
 
-export const PracticeHomeCard: React.FC<Props> = ({ data, practiceName, isLoading }) => {
+function relTime(iso: string): string {
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const min = Math.round(diff / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  return formatDate(iso);
+}
+
+export const PracticeHomeCard: React.FC<Props> = ({
+  data,
+  practiceName,
+  isLoading,
+}) => {
+  const [kitState, setKitState] = useState<
+    'idle' | 'downloading' | 'error'
+  >('idle');
+  const [kitError, setKitError] = useState<string | null>(null);
+
+  const handleDownloadKit = async (): Promise<void> => {
+    if (!data?.auditor_kit_url) return;
+    setKitState('downloading');
+    setKitError(null);
+    try {
+      const res = await fetch(data.auditor_kit_url, {
+        credentials: 'include',
+      });
+      if (res.status === 401) {
+        setKitState('error');
+        setKitError(
+          'Your session has expired. Sign in again and retry the download.'
+        );
+        return;
+      }
+      if (res.status === 429) {
+        const retry = res.headers.get('Retry-After') || '3600';
+        setKitState('error');
+        setKitError(
+          `Download limit reached (10/hr). Try again in ~${Math.ceil(
+            Number(retry) / 60
+          )} minutes.`
+        );
+        return;
+      }
+      if (!res.ok) {
+        setKitState('error');
+        setKitError(
+          `Download failed (HTTP ${res.status}). Contact support@osiriscare.com if this persists.`
+        );
+        return;
+      }
+      const blob = await res.blob();
+      const filename =
+        res.headers
+          .get('Content-Disposition')
+          ?.match(/filename="?([^";]+)"?/i)?.[1] ||
+        `auditor-kit-${data.site_id}.zip`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setKitState('idle');
+    } catch (e) {
+      setKitState('error');
+      setKitError(
+        (e as Error)?.message ||
+          'Network error preparing your download. Check your connection and retry.'
+      );
+    }
+  };
+
   if (isLoading || !data) {
     return (
-      <div className="rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 p-8 max-w-3xl mx-auto">
-        <div className="animate-pulse space-y-4">
-          <div className="h-4 w-1/3 bg-white/10 rounded" />
-          <div className="h-8 w-1/2 bg-white/10 rounded" />
+      <div className="max-w-3xl mx-auto space-y-4 animate-pulse">
+        <div className="rounded-2xl bg-white/5 border border-white/10 p-8">
+          <div className="h-12 w-3/4 bg-white/10 rounded" />
+          <div className="mt-3 h-4 w-1/2 bg-white/10 rounded" />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="rounded-2xl bg-white/5 border border-white/10 p-6 h-40" />
+          <div className="rounded-2xl bg-white/5 border border-white/10 p-6 h-40" />
+        </div>
+        <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
           <div className="h-4 w-full bg-white/10 rounded" />
         </div>
       </div>
     );
   }
 
-  const protectedIcon = data.protected ? '✓' : '⚠';
-  const protectedColor = data.protected ? 'text-emerald-400' : 'text-amber-400';
-  const bannerBg = data.protected
+  // Prefer monitored_* (canonical); fall back to protected_* (legacy
+  // alias). Backend ships both during the transition window.
+  const isMonitored = data.monitored ?? data.protected ?? false;
+  const monitoredReason =
+    data.monitored_reason ?? data.protected_reason ?? '';
+  const monitoredLabel =
+    data.monitored_label ?? data.protected_label ?? 'Status';
+  const monitoredIcon = isMonitored ? '✓' : '⚠';
+  const monitoredColor = isMonitored
+    ? 'text-emerald-400'
+    : 'text-amber-400';
+  const bannerBg = isMonitored
     ? 'bg-gradient-to-r from-emerald-500/10 to-emerald-400/5'
     : 'bg-gradient-to-r from-amber-500/10 to-amber-400/5';
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
-      {/* #73 closure 2026-05-02: fleet-wide healing pause banner.
-          Surfaces to client when MSP/admin has paused auto-remediation
-          fleet-wide. Auditor-visible record per HIPAA chain-of-custody. */}
       {data.fleet_healing_state?.disabled && (
         <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4">
           <div className="flex items-start gap-3">
@@ -125,19 +222,19 @@ export const PracticeHomeCard: React.FC<Props> = ({ data, practiceName, isLoadin
         </span>
       </div>
 
-      {/* Hero: protection status */}
+      {/* Hero: monitoring status */}
       <div className={`rounded-2xl ${bannerBg} backdrop-blur-xl border border-white/10 p-8`}>
         <div className="flex items-start gap-4">
-          <div className={`text-5xl ${protectedColor} leading-none`}>{protectedIcon}</div>
+          <div className={`text-5xl ${monitoredColor} leading-none`}>{monitoredIcon}</div>
           <div className="flex-1">
-            <h2 className={`text-2xl font-bold ${protectedColor} mb-1`}>
-              {data.protected_label}
+            <h2 className={`text-2xl font-bold ${monitoredColor} mb-1`}>
+              {monitoredLabel}
             </h2>
             <p className="text-sm text-white/70">
-              {data.protected ? (
-                <>All HIPAA compliance checks passing across {data.devices.workstations} workstation{data.devices.workstations === 1 ? '' : 's'} and {data.devices.appliances} appliance{data.devices.appliances === 1 ? '' : 's'}.</>
+              {isMonitored ? (
+                <>HIPAA compliance checks are passing across {data.devices.workstations} workstation{data.devices.workstations === 1 ? '' : 's'} and {data.devices.appliances} appliance{data.devices.appliances === 1 ? '' : 's'}.</>
               ) : (
-                <>{data.protected_reason}</>
+                <>{monitoredReason}</>
               )}
             </p>
           </div>
@@ -188,41 +285,49 @@ export const PracticeHomeCard: React.FC<Props> = ({ data, practiceName, isLoadin
             <h3 className="text-sm font-semibold text-white/80">For your auditor</h3>
           </div>
           <p className="text-sm text-white/70 flex-1">
-            Download a cryptographically signed proof package your auditor can verify independently on their own laptop. No OsirisCare infrastructure required to verify.
+            Download a cryptographically signed evidence integrity package your auditor can verify independently. Pair with your designated record set for HIPAA §164.528 disclosure accounting.
           </p>
-          <a
-            href={data.auditor_kit_url}
-            className="mt-4 inline-flex items-center justify-center px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold rounded-lg transition-colors"
-            download
+          <button
+            type="button"
+            onClick={handleDownloadKit}
+            disabled={kitState === 'downloading'}
+            className="mt-4 inline-flex items-center justify-center px-4 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-500/50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors"
           >
-            Download proof package
-          </a>
+            {kitState === 'downloading' ? 'Preparing…' : 'Download evidence package'}
+          </button>
+          {kitError && (
+            <p className="mt-2 text-xs text-amber-300" role="alert">
+              {kitError}
+            </p>
+          )}
         </div>
       </div>
 
       {/* 30-day coverage */}
       {data.coverage_30d && data.coverage_30d.length > 0 && (
-        <div className="rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 p-6">
-          <h3 className="text-sm font-semibold text-white/80 mb-2">
-            Coverage — last 30 days
-          </h3>
-          <div className="flex gap-0.5" aria-label="daily coverage history">
-            {data.coverage_30d.map((d) => (
+        <div className="rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <h3 className="text-sm font-semibold text-white/80">Coverage (last 30 days)</h3>
+          </div>
+          <div className="flex gap-1">
+            {data.coverage_30d.map((day) => (
               <div
-                key={d.date}
-                title={`${d.date}: ${d.covered ? 'all clear' : `${d.incidents} unresolved`}`}
-                className={`flex-1 h-8 rounded-sm ${
-                  d.covered ? 'bg-emerald-500/60' : 'bg-amber-500/60'
+                key={day.date}
+                title={`${formatDate(day.date)}${day.incidents > 0 ? ` — ${day.incidents} issue${day.incidents === 1 ? '' : 's'}` : ' — clean'}`}
+                className={`flex-1 h-8 rounded ${
+                  day.covered
+                    ? day.incidents > 0
+                      ? 'bg-amber-500/40'
+                      : 'bg-emerald-500/40'
+                    : 'bg-white/10'
                 }`}
               />
             ))}
-          </div>
-          <div className="mt-2 flex justify-between text-[11px] text-white/50">
-            <span>{data.coverage_30d[0]?.date}</span>
-            <span>Today</span>
           </div>
         </div>
       )}
     </div>
   );
 };
+
+export default PracticeHomeCard;
