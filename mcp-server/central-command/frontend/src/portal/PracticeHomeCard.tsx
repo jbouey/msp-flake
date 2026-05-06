@@ -285,7 +285,7 @@ export const PracticeHomeCard: React.FC<Props> = ({
             <h3 className="text-sm font-semibold text-white/80">For your auditor</h3>
           </div>
           <p className="text-sm text-white/70 flex-1">
-            Download a cryptographically signed evidence integrity package your auditor can verify independently. Pair with your designated record set for HIPAA §164.528 disclosure accounting.
+            Download a cryptographically signed evidence-integrity package your auditor can verify offline. This is audit-supportive technical evidence — not a substitute for your §164.528 disclosure accounting, designated record set, or complaint log.
           </p>
           <button
             type="button"

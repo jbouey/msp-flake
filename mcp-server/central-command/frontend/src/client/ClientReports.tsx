@@ -280,6 +280,11 @@ export const ClientReports: React.FC = () => {
                       network required."
                     </p>
                     <p className="mt-2 text-xs text-slate-500">
+                      This is audit-supportive technical evidence — not a
+                      substitute for your §164.528 disclosure accounting,
+                      designated record set, or complaint log.
+                    </p>
+                    <p className="mt-2 text-xs text-slate-500">
                       Rate-limited: 10 downloads per site per hour to prevent
                       bulk-export pressure.
                     </p>

@@ -4205,6 +4205,71 @@ If any line shows FAIL, the bundle in question has been altered or its
 signature does not match a known appliance public key. **Investigate any
 FAIL before signing off the audit.**
 
+## Scope of this kit
+
+This kit is a **cryptographic integrity artifact**. It is the evidence
+that the compliance bundles enumerated in `bundles.jsonl` were signed by
+the appliance keys listed in `pubkeys.json` at the times anchored by the
+OpenTimestamps proofs in `ots/`, and that the hash chain has not been
+altered since. `verify.sh` exercises that scope and nothing more.
+
+**What this kit IS:**
+
+- Cryptographic evidence of bundle integrity (Ed25519 signatures + SHA-256
+  hash chain + OpenTimestamps Bitcoin anchoring).
+- A chain-of-custody record for the compliance checks the appliance ran.
+- An offline-verifiable artifact — no vendor network access at any step.
+- Audit-supportive material that an auditor can pair with the covered
+  entity's own records.
+
+**What this kit IS NOT:**
+
+- It is **not, on its own, a §164.528 disclosure accounting**. The
+  §164.528 record of PHI disclosures (who accessed what PHI, when, to
+  whom, for what purpose) is maintained by the covered entity in its own
+  systems. This kit does not enumerate PHI access events.
+- It is **not a §164.524 right-of-access fulfillment**. Patient access
+  requests are served from the covered entity's designated record set,
+  not from this kit.
+- It is **not a §164.530(d) complaint resolution record**. Complaints
+  and their resolution are tracked by the covered entity (and, where
+  applicable, escalated per the channel below).
+- It is **not a substitute for the covered entity's audit logs, BAA
+  inventory, risk analysis, or workforce sanction records.**
+
+**Recommended pairing.** An auditor reviewing HIPAA compliance for the
+site referenced in this kit should request, from the covered entity:
+(a) the designated record set inventory; (b) the access-control audit
+log scoped to PHI systems; (c) the §164.528 disclosure accounting log;
+(d) the §164.530(d) complaint log. This kit corroborates the technical
+controls; those records corroborate the administrative and access
+controls.
+
+## Reproducibility
+
+This kit is built deterministically — embedded timestamps
+(`generated_at`) derive from the chain-head bundle's signed
+`created_at` (NOT from wall-clock), JSON keys are canonically sorted,
+ZIP entry order + mtimes + permissions are pinned, and `compresslevel`
+is fixed at zlib level 6.
+
+Two consecutive downloads of the same kit will produce **byte-identical
+ZIP archives** (matching SHA-256 hashes) when ALL of the following are
+unchanged between downloads:
+
+1. The chain head — no new compliance bundles written for this site.
+2. OpenTimestamps proof status — no `pending → anchored` transitions.
+3. The presentation snapshot — no edits to the partner's brand_name
+   or support contact between downloads.
+4. The advisory set — no new files in `docs/security/`.
+
+Auditors can use this property to detect substitution: download the
+kit, hash it, then re-download later and compare. A hash difference
+that is NOT explained by one of the four conditions above warrants
+investigation. The `chain.json["presentation"]` block records the
+exact presenter snapshot embedded in this kit so an auditor can
+distinguish a brand-update non-event from a substantive change.
+
 ## Known limitations
 
 - **Pending bundles**: bundles with `ots_status = "pending"` have been
@@ -4286,6 +4351,25 @@ remediation) are listed in `chain.json["disclosures"]` with the affected
 bundle range, root cause, and fix commit hash. We publish all such events
 proactively as a credibility commitment — see also the public security
 advisories page on the OsirisCare website.
+
+## Complaints and concerns
+
+If you are a patient, workforce member, or auditor and you believe the
+substrate or its operator has mishandled protected health information,
+you have multiple channels:
+
+- **Substrate operator (OsirisCare):** compliance@osiriscare.com —
+  best-effort acknowledgment; substantive response timeline depends on
+  the nature of the concern. (Formal SLA pending operational sign-off
+  before this language is hardened.)
+- **Presenting partner ({presenter_brand}):** see the contact line at
+  the top of this README.
+- **Covered entity:** complaints about the covered entity's HIPAA
+  compliance should be directed to the covered entity's Privacy Officer.
+- **HHS Office for Civil Rights (OCR):** you may file a complaint
+  directly with OCR at https://www.hhs.gov/hipaa/filing-a-complaint/ —
+  this right is not waived by raising the concern with us first, and we
+  will not retaliate against any individual who exercises it.
 
 ## Contact
 
@@ -4592,6 +4676,28 @@ def _parse_advisory_metadata(text: str, filename: str) -> Dict[str, Any]:
     return out
 
 
+_KIT_COMPRESSLEVEL = 6  # zlib level — pin explicitly so byte-identity
+                        # holds across CPython builds with different
+                        # bundled zlib defaults (Coach P1-3, 2026-05-06).
+
+
+def _kit_zwrite(zf: "zipfile.ZipFile", name: str, data, mtime) -> None:
+    """Deterministic ZIP write helper — pins date_time, compress_type,
+    external_attr, and (via the surrounding ZipFile context) the
+    compresslevel. Extracted to module scope (Coach P1-2) so the
+    determinism contract test imports the SAME implementation the
+    production endpoint uses, instead of duplicating it.
+
+    `data` may be str or bytes; `zipfile.ZipInfo`+`writestr` handles
+    both. mtime is a 6-tuple `(Y, M, D, h, m, s)`.
+    """
+    import zipfile as _zipfile
+    zi = _zipfile.ZipInfo(filename=name, date_time=mtime)
+    zi.compress_type = _zipfile.ZIP_DEFLATED
+    zi.external_attr = 0o644 << 16
+    zf.writestr(zi, data)
+
+
 def _collect_security_advisories() -> List[Tuple[Dict[str, Any], str]]:
     """Walk docs/security/SECURITY_ADVISORY_*.md and return list of
     (metadata_dict, raw_markdown_text). Sorted by filename so kit
@@ -4813,7 +4919,36 @@ async def download_auditor_kit(
 
     genesis = bundle_rows[0]
     latest = bundle_rows[-1]
-    generated_at = datetime.now(timezone.utc).isoformat()
+    # Round-table 2026-05-06 (Steve P0/Coach P0) — DETERMINISM:
+    # `generated_at` was previously `datetime.now()`, embedded into
+    # chain.json + identity_chain + iso_ca + README + filename.
+    # Two consecutive downloads of the same chain head produced
+    # different bytes, breaking the tamper-evidence promise of the
+    # kit (an auditor who hashes the ZIP and compares to a prior
+    # download cannot prove identity vs forgery).
+    #
+    # Replaced with the chain-head bundle's created_at — useful AND
+    # deterministic. Outer Content-Disposition filename + audit-log
+    # row keep wall-clock (presentation/audit, not artifact
+    # content). All ZIP entry mtimes pin to a single derived value
+    # via _zwrite below.
+    if latest.created_at:
+        content_ts = latest.created_at
+        if content_ts.tzinfo is None:
+            content_ts = content_ts.replace(tzinfo=timezone.utc)
+    else:
+        content_ts = datetime(1980, 1, 1, tzinfo=timezone.utc)
+    generated_at = content_ts.isoformat()
+    zip_mtime = (
+        content_ts.year, content_ts.month, content_ts.day,
+        content_ts.hour, content_ts.minute, content_ts.second,
+    )
+    # Wall-clock for presentation/audit (NOT embedded in artifacts).
+    download_at = datetime.now(timezone.utc).isoformat()
+    # Cache advisories once (Steve P3): consumed by chain.json
+    # disclosures projection AND by the disclosures/ ZIP entry
+    # writer below.
+    _advisories_cache = _collect_security_advisories()
 
     chain_metadata = {
         "kit_version": "2.1",
@@ -4910,7 +5045,7 @@ async def download_auditor_kit(
                 "advisory_in_kit": f"disclosures/{_adv_meta['advisory_filename']}",
                 "advisory_in_repo": f"/docs/security/{_adv_meta['advisory_filename']}",
             }
-            for (_adv_meta, _) in _collect_security_advisories()
+            for (_adv_meta, _) in _advisories_cache
         ],
         "verification": {
             "tools_required": ["python3", "sha256sum", "cryptography (pip)", "ots-cli (optional)"],
@@ -4953,7 +5088,7 @@ async def download_auditor_kit(
                 }
             except Exception:
                 pass
-        bundles_jsonl_lines.append(_json.dumps(bundle_obj))
+        bundles_jsonl_lines.append(_json.dumps(bundle_obj, sort_keys=True))
 
     # 6. Build the ZIP in memory
     # Week 6 — Auditor Kit v2 additions:
@@ -4976,7 +5111,7 @@ async def download_auditor_kit(
     """), {"sid": site_id})).fetchall()
 
     identity_chain_payload = {
-        "kit_version": "2.0",
+        "kit_version": "2.1",
         "site_id": site_row.site_id,
         "generated_at": generated_at,
         "events": [
@@ -5007,6 +5142,10 @@ async def download_auditor_kit(
         ),
     }
 
+    # Coach P2-2 (2026-05-06): explicit ORDER BY pins the row order
+    # so the iso_ca_payload.cas list is byte-deterministic across
+    # downloads. PostgreSQL does NOT guarantee cursor order without
+    # ORDER BY.
     iso_ca_rows = (await db.execute(text("""
         SELECT iso_release_sha, ca_pubkey_hex, valid_from, valid_until,
                revoked_at, revoked_reason
@@ -5015,10 +5154,11 @@ async def download_auditor_kit(
              SELECT DISTINCT iso_build_sha FROM provisioning_claim_events
               WHERE site_id = :sid AND iso_build_sha IS NOT NULL
          )
+         ORDER BY iso_release_sha
     """), {"sid": site_id})).fetchall()
 
     iso_ca_payload = {
-        "kit_version": "2.0",
+        "kit_version": "2.1",
         "generated_at": generated_at,
         "cas": [
             {
@@ -5049,38 +5189,65 @@ async def download_auditor_kit(
     # quickly and a 50MB ZIP doesn't pin a worker for the duration of
     # the upload.
     buf = tempfile.SpooledTemporaryFile(max_size=20 * 1024 * 1024)
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("README.md", _AUDITOR_KIT_README.format(
-            site_id=site_row.site_id,
-            clinic_name=site_row.clinic_name or "—",
-            generated_at=generated_at,
-            presenter_brand=presenter_brand,
-            presenter_contact_line=presenter_contact_line,
-        ))
-        zf.writestr("verify.sh", _AUDITOR_KIT_VERIFY_SH)
-        zf.writestr("chain.json", _json.dumps(chain_metadata, indent=2))
-        zf.writestr("bundles.jsonl", "\n".join(bundles_jsonl_lines) + "\n")
-        zf.writestr("pubkeys.json", _json.dumps({
-            "site_id": site_row.site_id,
-            "kit_version": "2.0",
-            "public_keys": pubkeys,
-            "verification_note": (
-                "Pin these public keys offline before verification. The fingerprint "
-                "field is the first 16 hex chars of SHA-256(public_key_hex) and is "
-                "stable across kit downloads — record it in your audit working papers."
-            ),
-        }, indent=2))
-        # v2 additions:
-        zf.writestr("identity_chain.json", _json.dumps(identity_chain_payload, indent=2))
-        zf.writestr("iso_ca_bundle.json", _json.dumps(iso_ca_payload, indent=2))
-        zf.writestr("verify_identity.sh", _AUDITOR_KIT_VERIFY_IDENTITY_SH)
-        for filename, data in ots_files.items():
-            zf.writestr(f"ots/{filename}", data)
-        # Write each security advisory under disclosures/ so the auditor
-        # has the FULL markdown text inline with the kit, not just a
-        # repo URL. Closes the disclosure-first commitment gap (#41).
-        for _adv_meta, _adv_text in _collect_security_advisories():
-            zf.writestr(f"disclosures/{_adv_meta['advisory_filename']}", _adv_text)
+
+    # Round-table 2026-05-06 DETERMINISM: every entry written via
+    # _kit_zwrite (module-level helper) gets pinned date_time +
+    # permissions + compress_type. ZipFile is opened with explicit
+    # compresslevel=6 (Coach P1-3) so byte-identity holds across
+    # CPython builds with different default zlib levels. Sorted
+    # entry order is enforced at the call site so the ZIP TOC is
+    # deterministic. sort_keys=True on every JSON ensures key
+    # order is canonical. Two consecutive downloads of an unchanged
+    # chain MUST produce byte-identical ZIPs.
+    def _zwrite(zf, name, data):  # local closure binds zip_mtime
+        _kit_zwrite(zf, name, data, zip_mtime)
+
+    # Use the advisories list cached at function entry (Steve P3 —
+    # was called twice; cached once at top of function).
+    advisories = _advisories_cache
+
+    # Build entry list with canonical JSON, then write in sorted
+    # (filename) order. _AUDITOR_KIT_README.format uses generated_at
+    # which is now the chain-head deterministic timestamp.
+    readme_text = _AUDITOR_KIT_README.format(
+        site_id=site_row.site_id,
+        clinic_name=site_row.clinic_name or "—",
+        generated_at=generated_at,
+        presenter_brand=presenter_brand,
+        presenter_contact_line=presenter_contact_line,
+    )
+    pubkeys_payload = {
+        "site_id": site_row.site_id,
+        "kit_version": "2.1",
+        "public_keys": pubkeys,
+        "verification_note": (
+            "Pin these public keys offline before verification. The "
+            "fingerprint field is the first 16 hex chars of SHA-256("
+            "public_key_hex) and is stable across kit downloads — "
+            "record it in your audit working papers."
+        ),
+    }
+    fixed_entries = [
+        ("README.md", readme_text),
+        ("verify.sh", _AUDITOR_KIT_VERIFY_SH),
+        ("verify_identity.sh", _AUDITOR_KIT_VERIFY_IDENTITY_SH),
+        ("chain.json", _json.dumps(chain_metadata, indent=2, sort_keys=True)),
+        ("bundles.jsonl", "\n".join(bundles_jsonl_lines) + "\n"),
+        ("pubkeys.json", _json.dumps(pubkeys_payload, indent=2, sort_keys=True)),
+        ("identity_chain.json", _json.dumps(identity_chain_payload, indent=2, sort_keys=True)),
+        ("iso_ca_bundle.json", _json.dumps(iso_ca_payload, indent=2, sort_keys=True)),
+    ]
+    with zipfile.ZipFile(
+        buf, "w", zipfile.ZIP_DEFLATED, compresslevel=_KIT_COMPRESSLEVEL,
+    ) as zf:
+        for name, blob in sorted(fixed_entries):
+            _zwrite(zf, name, blob)
+        for ots_name in sorted(ots_files):
+            _zwrite(zf, f"ots/{ots_name}", ots_files[ots_name])
+        # Closes the disclosure-first commitment gap (#41); the
+        # cached advisories list is already sorted by filename.
+        for _adv_meta, _adv_text in advisories:
+            _zwrite(zf, f"disclosures/{_adv_meta['advisory_filename']}", _adv_text)
 
     buf.seek(0)
     # Snapshot byte-count for audit log (SpooledTemporaryFile.tell()
@@ -5190,7 +5357,7 @@ async def download_auditor_kit(
         media_type="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-Kit-Version": "1.0",
+            "X-Kit-Version": "2.1",
             "X-Bundle-Count": str(len(bundle_rows)),
             "X-Pubkey-Count": str(len(pubkeys)),
             "X-OTS-File-Count": str(len(ots_files)),
