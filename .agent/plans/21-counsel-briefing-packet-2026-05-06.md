@@ -3,8 +3,9 @@
 **For:** Outside HIPAA counsel
 **From:** OsirisCare engineering, on behalf of the privacy officer
 **Date:** 2026-05-06
-**Version:** v2.2 (current; ready for counsel hand-out)
-**Revision history:** multi-round adversarial review with outside HIPAA counsel — v1 → v2 → v2.1 → v2.2.
+**Version:** v2.3 (current; counsel approval received + condition #2 hardened)
+**Revision history:** multi-round adversarial review with outside HIPAA counsel — v1 → v2 → v2.1 → v2.2 → v2.3.
+**Status:** Counsel approved feature for use 2026-05-06 contingent on five conditions (see §7). Conditions #1, #3, #4, #5 were already engineering-shipped pre-approval; condition #2 (receiving-org BAA/addendum expressly authorizes receipt) was hardened in this v2.3 with migration 283 + endpoint check + sev1 substrate invariant.
 **Companion artifacts:**
 - `.agent/plans/21-cross-org-site-relocate-roundtable-2026-05-05.md` — original engineering design round-table (Camila/Brian/Linda/Steve/Adam + Maya 2nd-eye)
 - `docs/lessons/sessions-218.md` — implementation retrospective + adversarial verdicts at Gates 1 + 2 + Maya final
@@ -22,6 +23,7 @@
 - *(v2.2)* §2 header expanded — was "the three §-questions"; now enumerates all six counsel review items (Q1/Q2/Q3 + §1.5 data classification + §3.5 dual-admin governance + §4a opaque emails) so nothing reads as a buried "extra ask"
 - *(v2.2)* §6 hand-back list aligned to dual-admin reality — was a single "bundle ID" entry; now lists both `admin_audit_log` row IDs (proposer + approver) + all six dual-admin `feature_flags` fields, with the explicit "no cryptographic-chain bundle is generated for the flag-flip event" qualifier
 - *(v2.2)* §6 timeline corrected — flag flip is a TWO-API-call dual-admin sequence (was "one-API-call"), with the schema-level approver≠proposer CHECK noted
+- *(v2.3)* Migration 283 + endpoint hardening + sev1 substrate invariant — added in response to your approval condition #2. The receiving-org check is now stronger than `baa_on_file=true`: it requires `baa_relocate_receipt_signature_id` (or `baa_relocate_receipt_addendum_signature_id`) to be non-NULL on `client_orgs`, pointing at a row in the existing `baa_signatures` table that contracts-team recorded after confirming the BAA language. NEW §8 documents the five approval conditions and their engineering-shipped state.
 
 > **Posture:** This is an evidence-grade compliance attestation substrate. Engineering has built and tested a three-actor state machine for moving a site from one client_org (a covered entity) to another. The feature is shipped behind a database-stored feature flag that returns HTTP 503 until you authorize the flip. Your authorization appears in the append-only enablement record (the `feature_flags` row, DELETE-blocked) and the linked `admin_audit_log` entry at flip time, as a ≥40-character `enable_reason` containing your opinion identifier — the flag-flip event itself is NOT in the cryptographic chain (see §4 for why, and what we record instead). We are asking for legal review on the §-questions in §2; we are NOT asking for a re-design of the engineering.
 
@@ -541,7 +543,42 @@ row + the linked `admin_audit_log` rows):
 
 ---
 
-## 7. Contact
+## 7. Counsel approval conditions (received 2026-05-06) — engineering state
+
+Outside HIPAA counsel approved the feature for use, contingent on
+five conditions. This section records the engineering state of each
+so a future reviewer (or auditor) can confirm operational alignment
+with the approval at any time.
+
+| # | Condition | Engineering state | Reference |
+|---|---|---|---|
+| 1 | Treat relocated data as compliance metadata / PHI-adjacent rather than patient PHI unless facts show otherwise | **Shipped pre-approval** — §1.5 of this packet documents the conservative ontological framing; engineering's customer-facing copy reflects metadata-not-PHI throughout | §1.5; `cross_org_site_relocate.py` docstrings |
+| 2 | Receiving organization's BAA or addendum expressly authorizes receipt and continuity of transferred site compliance records / evidence | **Hardened post-approval (v2.3)** — Migration 283 added `baa_relocate_receipt_signature_id` + `baa_relocate_receipt_addendum_signature_id` columns on `client_orgs`, FK'd to existing `baa_signatures` table. `_check_target_org_baa` refuses target-accept unless one of the two columns is non-NULL. Sev1 substrate invariant `cross_org_relocate_baa_receipt_unauthorized` catches post-execute drift | mig 283; `cross_org_site_relocate.py::_check_target_org_baa`; `assertions.py::_check_cross_org_relocate_baa_receipt_unauthorized` |
+| 3 | Relocate event recorded in durable, retrievable accounting form | **Shipped pre-approval** — three independent records: append-only `cross_org_site_relocate_requests` row (DELETE-blocked), `admin_audit_log` rows at each transition, cryptographic chain Ed25519-signed + OTS-anchored | §2 Q2; `cross_org_site_relocate.py::_emit_attestation` |
+| 4 | Dual-admin enablement governance remains in place | **Shipped pre-approval** — Migration 282 dual-admin schema; `/propose-enable` + `/approve-enable` two-step; DB CHECK enforces `lower(approver) <> lower(proposer)` | §3.5; mig 282; `cross_org_site_relocate.py::propose_enable`/`approve_enable` |
+| 5 | Opaque email notifications remain the default | **Shipped pre-approval** — three email helpers' signatures explicitly drop `site_name` / `org_name` / `initiator_email` / `reason` parameters; CI gates pin opaque mode | §4a; `cross_org_site_relocate.py::_send_*_email`; `tests/test_cross_org_relocate_contract.py::test_email_helpers_have_opaque_signatures` |
+
+**Operational note for the contracts team:** condition #2 puts the
+ball in your court for each prospective receiving org. Before any
+client_org can be a relocate target, contracts-team must:
+
+1. Review the org's standard substrate BAA. If its permitted-use
+   clause expressly covers receipt + continuity of transferred site
+   compliance records, record `baa_relocate_receipt_signature_id`
+   pointing at the standard BAA's signature row.
+2. If the standard BAA is silent, prepare an addendum with the
+   transfer/continuity language counsel provides, capture the
+   signature, and record `baa_relocate_receipt_addendum_signature_id`.
+3. Either way, set `baa_relocate_receipt_authorized_at` + `_by_email`
+   on the client_orgs row.
+
+The engineering layer refuses target-accept until step 1 OR 2 is
+complete. The substrate invariant fires sev1 if a completed
+relocate's target org subsequently has the column unset.
+
+---
+
+## 8. Contact
 
 - **Privacy officer:** [redacted — fill in before sending]
 - **Engineering lead on this feature:** Jeff (jbouey@osiriscare.io —

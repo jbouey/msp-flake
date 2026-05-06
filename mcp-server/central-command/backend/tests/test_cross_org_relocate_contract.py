@@ -258,6 +258,57 @@ def test_target_accept_checks_baa():
     )
 
 
+def test_target_accept_checks_baa_receipt_authorization():
+    """Counsel approval condition #2 (2026-05-06, mig 283): the helper
+    must ALSO require baa_relocate_receipt_signature_id (or the
+    addendum_signature_id) to be non-NULL. Plain `baa_on_file=true`
+    is insufficient — contracts-team must record the specific
+    receipt-authorization signature."""
+    src = _MODULE.read_text()
+    helper_match = re.search(
+        r"async def _check_target_org_baa\b.+?(?=\nasync def |\Z)",
+        src,
+        re.DOTALL,
+    )
+    assert helper_match, "_check_target_org_baa helper not found"
+    helper = helper_match.group(0)
+    assert "baa_relocate_receipt_signature_id" in helper, (
+        "_check_target_org_baa must read "
+        "client_orgs.baa_relocate_receipt_signature_id"
+    )
+    assert "baa_relocate_receipt_addendum_signature_id" in helper, (
+        "_check_target_org_baa must read "
+        "client_orgs.baa_relocate_receipt_addendum_signature_id"
+    )
+    assert "has_receipt_auth" in helper or re.search(
+        r"signature_id\s+is\s+not\s+None", helper
+    ), (
+        "_check_target_org_baa must compute a `has_receipt_auth`-style "
+        "predicate that requires at least one of the two signature_id "
+        "columns to be populated. Counsel approval condition #2."
+    )
+
+
+def test_mig_283_baa_receipt_signature_columns():
+    """Migration 283 must ADD the BAA receipt-authorization columns
+    on client_orgs and FK them to baa_signatures(signature_id)."""
+    mig = _BACKEND / "migrations" / "283_baa_relocate_receipt_signature.sql"
+    assert mig.exists(), "Migration 283 missing"
+    src = mig.read_text()
+    for col in (
+        "baa_relocate_receipt_signature_id",
+        "baa_relocate_receipt_authorized_at",
+        "baa_relocate_receipt_authorized_by_email",
+        "baa_relocate_receipt_addendum_signature_id",
+    ):
+        assert col in src, f"Migration 283 missing column {col}"
+    assert "REFERENCES baa_signatures(signature_id)" in src, (
+        "Migration 283 must FK signature_id columns to "
+        "baa_signatures(signature_id) — match existing "
+        "signup_sessions.baa_signature_id pattern (mig 224)"
+    )
+
+
 # ─────────────────────────────────────────────────────────────────
 # 9. NO plaintext token leak (Patricia RT21 Gate 2)
 # ─────────────────────────────────────────────────────────────────

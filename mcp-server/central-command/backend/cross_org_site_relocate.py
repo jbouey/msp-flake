@@ -284,21 +284,34 @@ async def _check_no_pending_owner_transfers(
 
 
 async def _check_target_org_baa(conn, target_org_id: str) -> None:
-    """Steve mit 5: target client_org MUST have baa_on_file=true. The
-    receiving BAA governs OsirisCare's receipt + ongoing handling of
-    the site's compliance metadata under the target's compliance
-    program. Without an active BAA on file the receive side cannot
-    proceed.
+    """Steve mit 5 + counsel approval condition #2 (2026-05-06): target
+    client_org MUST have (a) `baa_on_file=true` AND (b) a non-NULL
+    `baa_relocate_receipt_signature_id` (or addendum_signature_id) —
+    proving that contracts-team has reviewed the BAA language and
+    confirmed it expressly authorizes receipt + continuity of
+    transferred site compliance records.
+
+    Migration 283 added the receipt-authorization columns. The
+    boolean `baa_on_file` (mig 124) only confirms a BAA exists; the
+    new signature-id columns prove someone reviewed it for the
+    cross-org-relocate-specific language counsel's approval requires.
 
     NOTE on §164.504(e): the legal test is whether each governing BAA
     permits the use/access pattern that occurs during and after a
     cross-org relocate, regardless of whether the vendor is the same.
     The target-org BAA's permitted-use clause is what licenses the
-    receive-side activity; this check verifies that BAA is in force.
-    See `.agent/plans/21-counsel-briefing-packet-2026-05-06.md` §2 Q1
-    (v2 framing)."""
+    receive-side activity; this check verifies that BAA is in force
+    AND that contracts-team has confirmed the relevant language is
+    present. See `.agent/plans/21-counsel-briefing-packet-2026-05-06.md`
+    §2 Q1 + the v2.3 hardening note."""
     row = await conn.fetchrow(
-        "SELECT baa_on_file FROM client_orgs WHERE id = $1::uuid",
+        """
+        SELECT baa_on_file,
+               baa_relocate_receipt_signature_id,
+               baa_relocate_receipt_addendum_signature_id,
+               baa_relocate_receipt_authorized_at
+          FROM client_orgs WHERE id = $1::uuid
+        """,
         target_org_id,
     )
     if not row:
@@ -314,6 +327,31 @@ async def _check_target_org_baa(conn, target_org_id: str) -> None:
                 "relocate requires baa_on_file=true on the receiving "
                 "org BEFORE target-accept can complete. Set the BAA "
                 "via the org-management flow first."
+            ),
+        )
+    # Counsel approval condition #2 (mig 283): receipt language must
+    # be reviewed + a signature_id recorded. The signature can come
+    # from the standard BAA OR from a relocate-receipt addendum;
+    # either is acceptable. NULL means "BAA on file, but not reviewed
+    # for receipt language" — refuse.
+    has_receipt_auth = (
+        row["baa_relocate_receipt_signature_id"] is not None
+        or row["baa_relocate_receipt_addendum_signature_id"] is not None
+    )
+    if not has_receipt_auth:
+        raise HTTPException(
+            status_code=412,
+            detail=(
+                "Target org has a BAA on file but contracts-team has "
+                "not yet recorded receipt-authorization for cross-org "
+                "site relocate. Outside HIPAA counsel approval (2026-"
+                "05-06) is contingent on the receiving org's BAA or "
+                "addendum expressly authorizing receipt + continuity "
+                "of transferred site compliance records. Set "
+                "`baa_relocate_receipt_signature_id` or "
+                "`baa_relocate_receipt_addendum_signature_id` on the "
+                "client_orgs row via the org-management flow before "
+                "the target-accept step can advance."
             ),
         )
 

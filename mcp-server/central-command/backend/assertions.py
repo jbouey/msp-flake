@@ -615,6 +615,71 @@ async def _check_cross_org_relocate_chain_orphan(
     return violations
 
 
+async def _check_cross_org_relocate_baa_receipt_unauthorized(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev1 — counsel approval contingency #2 (2026-05-06): every
+    completed relocate's target org MUST have had a non-NULL
+    `baa_relocate_receipt_signature_id` (or addendum_signature_id)
+    AT THE TIME of the execute. A row that completed without that
+    column populated is a bypass that violates outside-counsel's
+    approval condition.
+
+    Engineering check at the endpoint layer (`_check_target_org_baa`)
+    refuses to advance target-accept without the signature. This
+    substrate invariant catches the case where:
+      - the column was populated at target-accept time
+      - then unset / NULLed by a subsequent admin action
+      - the relocate completed
+    OR a code-path bypass that skipped the receipt check.
+
+    The signature must STAY on the org's row after relocate (so
+    auditors walking back across the boundary can confirm the
+    receipt-authorization was in force at execute time). If contracts
+    later rolls back receipt-authorization for an org, that's a
+    business decision but should NOT erase the historical signature_id
+    on a completed relocate's target org.
+
+    The check is read-only: for each completed relocate, look at
+    the target org's current baa_relocate_receipt_signature_id +
+    addendum_signature_id. If both NULL, that's a sev1 violation.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT r.id AS relocate_id,
+               r.site_id,
+               r.target_org_id::text AS target_org_id,
+               r.executed_at,
+               co.baa_relocate_receipt_signature_id,
+               co.baa_relocate_receipt_addendum_signature_id
+          FROM cross_org_site_relocate_requests r
+          JOIN client_orgs co ON co.id = r.target_org_id
+         WHERE r.status = 'completed'
+        """
+    )
+    violations: List[Violation] = []
+    for row in rows:
+        has_auth = (
+            row["baa_relocate_receipt_signature_id"] is not None
+            or row["baa_relocate_receipt_addendum_signature_id"] is not None
+        )
+        if not has_auth:
+            violations.append(
+                Violation(
+                    site_id=row["site_id"],
+                    detail=(
+                        f"completed relocate {row['relocate_id']} "
+                        f"executed_at={row['executed_at']} has target "
+                        f"org {row['target_org_id']} with NULL "
+                        f"baa_relocate_receipt_signature_id — counsel "
+                        f"approval condition #2 violated; the move "
+                        f"happened without recorded receipt-authorization"
+                    ),
+                )
+            )
+    return violations
+
+
 async def _check_client_portal_zero_evidence_with_data(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -1505,6 +1570,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_cross_org_relocate_chain_orphan(c),
     ),
     Assertion(
+        name="cross_org_relocate_baa_receipt_unauthorized",
+        severity="sev1",
+        description="A completed cross_org_site_relocate_requests row has a target_org_id whose baa_relocate_receipt_signature_id (and addendum_signature_id) are both NULL. Outside-counsel approval (2026-05-06) condition #2 requires that the receiving org's BAA or addendum expressly authorize receipt of transferred site compliance records, recorded as a signature_id on the org row. Endpoint check at target-accept refuses without it; this invariant catches post-execute drift (admin un-authorizing the org after relocate completed, or a code-path bypass that skipped the check). Mig 283.",
+        check=lambda c: _check_cross_org_relocate_baa_receipt_unauthorized(c),
+    ),
+    Assertion(
         name="client_portal_zero_evidence_with_data",
         severity="sev2",
         description="An org with compliance_bundles in the last 7 days gets ZERO rows back when the canonical client-portal query is simulated under that org's RLS context. Catches the 2026-05-05 P0 regression class (mig 278) — RLS misalignment between substrate-owned data and the client portal's read view. Round-table 2026-05-05 Stage 4 closure.",
@@ -1969,6 +2040,21 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "Investigate which code path mutated the row, write a "
             "post-hoc attestation if the move was authorized, or "
             "reverse the change. RT21 (2026-05-05) Steve mit 4."
+        ),
+    },
+    "cross_org_relocate_baa_receipt_unauthorized": {
+        "display_name": "Cross-org relocate completed without BAA receipt-authorization",
+        "recommended_action": (
+            "A completed relocate's target org currently lacks both "
+            "`baa_relocate_receipt_signature_id` and "
+            "`baa_relocate_receipt_addendum_signature_id`. Outside-"
+            "counsel approval (2026-05-06) condition #2 requires this "
+            "signature exist at execute time and remain on the row. "
+            "Investigate (a) whether contracts-team unset the column "
+            "post-execute (business decision but should preserve "
+            "history) OR (b) whether a code-path bypass skipped the "
+            "endpoint receipt-auth check. If the move was authorized, "
+            "re-record the signature_id from the original BAA review."
         ),
     },
     "client_portal_zero_evidence_with_data": {
