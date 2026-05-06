@@ -1191,6 +1191,276 @@ async def get_org_compliance_packet(
 # ORG HEALTH (consolidated dashboard endpoint)
 # ============================================================================
 
+# ============================================================================
+# RT21 counsel approval condition #2 (2026-05-06) — contracts-team
+# endpoint to record receipt-authorization for a client_org.
+#
+# Replaces raw SQL UPDATE on the client_orgs.baa_relocate_receipt_*
+# columns (mig 283). Captures the actor + reason in admin_audit_log
+# alongside the row update so contracts-team's decision is recoverable
+# from the standard audit trail. Records what document was reviewed
+# (signature_id) + whether it was the primary BAA or an addendum.
+# ============================================================================
+
+
+class BaaReceiptAuthorizeRequest(BaseModel):
+    signature_id: str = Field(..., min_length=1)
+    is_addendum: bool = Field(
+        False,
+        description=(
+            "False = the standard BAA's permitted-use clause covers "
+            "receipt + continuity (signature_id points at the standard "
+            "BAA's signature row). True = an addendum was signed "
+            "specifically for receipt language (signature_id points at "
+            "the addendum's signature row in baa_signatures)."
+        ),
+    )
+    reason: str = Field(
+        ...,
+        min_length=20,
+        description=(
+            "Contracts-team's review note. >=20 chars matching the "
+            "rest of the privileged-action chain. Should describe "
+            "WHAT was reviewed (e.g., 'standard substrate-class BAA "
+            "v3.2, permitted-use clause §2(b) covers transferred-site "
+            "receipt; reviewed by [contracts officer email]')."
+        ),
+    )
+
+
+@router.post("/{org_id}/baa-receipt-authorize")
+async def record_baa_receipt_authorization(
+    org_id: str,
+    body: BaaReceiptAuthorizeRequest,
+    request: Request,
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Contracts-team endpoint: record that this org has been reviewed
+    + authorized to receive transferred sites under cross-org relocate.
+
+    Outside HIPAA counsel approval (2026-05-06) condition #2 requires
+    the receiving organization's BAA or addendum to expressly authorize
+    receipt + continuity. This endpoint captures the
+    contracts-team decision: which BAA (or addendum) was reviewed,
+    what its signature_id is, and who reviewed it.
+
+    The cross-org relocate `target-accept` endpoint refuses to advance
+    unless one of the two signature_id columns is non-NULL on the
+    target org. This endpoint is the canonical way to populate them.
+
+    Counsel-flagged operational note: per the 2026-05-06 approval,
+    once this column is populated, it should NOT be cleared on a
+    completed relocate's target org (would orphan the historical
+    authorization). Contracts can refuse FUTURE transfers by other
+    means; the historical signature_id remains as the audit record.
+    A sev1 substrate invariant
+    (cross_org_relocate_baa_receipt_unauthorized) catches drift.
+    """
+    if user.get("role") not in ("admin", "operator"):
+        raise HTTPException(status_code=403, detail="Admin only")
+    actor_email = (user.get("email") or user.get("username") or "").lower().strip()
+    if not actor_email or "@" not in actor_email:
+        raise HTTPException(403, "Admin actor email is required.")
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        # Verify the org exists.
+        org = await conn.fetchrow(
+            "SELECT id, name, baa_on_file FROM client_orgs WHERE id = $1::uuid",
+            org_id,
+        )
+        if not org:
+            raise HTTPException(status_code=404, detail="Org not found")
+        if not org["baa_on_file"]:
+            raise HTTPException(
+                status_code=412,
+                detail=(
+                    "Cannot record receipt-authorization on an org that "
+                    "lacks baa_on_file=true. Ensure the underlying BAA "
+                    "is on file first via the standard org-management "
+                    "flow, then call this endpoint."
+                ),
+            )
+
+        # Verify the signature_id exists in baa_signatures (FK would
+        # catch this at INSERT but we want a clean 412 for the operator
+        # rather than a 500 from a constraint violation).
+        sig = await conn.fetchrow(
+            "SELECT signature_id FROM baa_signatures WHERE signature_id = $1",
+            body.signature_id,
+        )
+        if not sig:
+            raise HTTPException(
+                status_code=412,
+                detail=(
+                    f"signature_id {body.signature_id!r} not found in "
+                    f"baa_signatures table. Ensure the BAA (or addendum) "
+                    f"e-signature was captured first via the existing "
+                    f"baa-signing flow, then reference its signature_id "
+                    f"here."
+                ),
+            )
+
+        async with conn.transaction():
+            if body.is_addendum:
+                await conn.execute(
+                    """
+                    UPDATE client_orgs
+                       SET baa_relocate_receipt_addendum_signature_id = $2,
+                           baa_relocate_receipt_authorized_at = NOW(),
+                           baa_relocate_receipt_authorized_by_email = $3
+                     WHERE id = $1::uuid
+                    """,
+                    org_id, body.signature_id, actor_email,
+                )
+            else:
+                await conn.execute(
+                    """
+                    UPDATE client_orgs
+                       SET baa_relocate_receipt_signature_id = $2,
+                           baa_relocate_receipt_authorized_at = NOW(),
+                           baa_relocate_receipt_authorized_by_email = $3
+                     WHERE id = $1::uuid
+                    """,
+                    org_id, body.signature_id, actor_email,
+                )
+
+            await conn.execute(
+                """
+                INSERT INTO admin_audit_log (
+                    user_id, username, action, target, details, ip_address
+                )
+                VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6)
+                """,
+                user.get("id"),
+                actor_email,
+                "record_baa_receipt_authorization",
+                f"client_org:{org_id}",
+                json.dumps({
+                    "signature_id": body.signature_id,
+                    "is_addendum": body.is_addendum,
+                    "reason": body.reason,
+                    "org_name": org["name"],
+                }),
+                (request.client.host if request.client else None),
+            )
+
+    return {
+        "org_id": org_id,
+        "signature_id": body.signature_id,
+        "is_addendum": body.is_addendum,
+        "authorized_at": datetime.now(timezone.utc).isoformat(),
+        "authorized_by": actor_email,
+        "next_step": (
+            "This org is now eligible to be a target_org_id in a cross-"
+            "org site relocate. The relocate flow's target-accept "
+            "endpoint will admit this org."
+        ),
+    }
+
+
+# ============================================================================
+# RT21 readiness check — pre-flight before the dual-admin flag flip.
+# ============================================================================
+
+
+@router.get("/cross-org-relocate-readiness")
+async def cross_org_relocate_readiness(
+    user: dict = Depends(auth_module.require_auth),
+):
+    """Pre-flight readiness check for the cross-org-relocate feature
+    flag. Returns the operational state of all five counsel-approval
+    conditions so admins can confirm the flip is safe before posting
+    propose-enable + approve-enable.
+
+    NOT a flag-flip endpoint. Read-only inspection.
+    """
+    if user.get("role") not in ("admin", "operator"):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        flag = await conn.fetchrow(
+            """
+            SELECT enabled, enabled_at, enabled_by_email, enable_reason,
+                   enable_proposed_at, enable_proposed_by_email,
+                   enable_proposed_reason
+              FROM feature_flags
+             WHERE flag_name = $1
+            """,
+            "cross_org_site_relocate",
+        )
+        eligible_targets = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM client_orgs
+             WHERE baa_on_file = true
+               AND (
+                   baa_relocate_receipt_signature_id IS NOT NULL
+                   OR baa_relocate_receipt_addendum_signature_id IS NOT NULL
+               )
+               AND deprovisioned_at IS NULL
+            """,
+        )
+        in_flight_relocates = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM cross_org_site_relocate_requests
+             WHERE status IN (
+                 'pending_source_release',
+                 'pending_target_accept',
+                 'pending_admin_execute'
+             )
+            """,
+        )
+
+    flag_state = "disabled"
+    if flag and flag["enabled"]:
+        flag_state = "enabled"
+    elif flag and flag["enable_proposed_at"]:
+        flag_state = "proposed_pending_approval"
+
+    return {
+        "flag_state": flag_state,
+        "flag_proposed_by_email": flag and flag["enable_proposed_by_email"],
+        "flag_proposed_at": (
+            flag["enable_proposed_at"].isoformat()
+            if flag and flag["enable_proposed_at"]
+            else None
+        ),
+        "flag_enabled_by_email": flag and flag["enabled_by_email"],
+        "flag_enabled_at": (
+            flag["enabled_at"].isoformat()
+            if flag and flag["enabled_at"]
+            else None
+        ),
+        "eligible_target_org_count": eligible_targets,
+        "in_flight_relocate_count": in_flight_relocates,
+        "checklist": [
+            {
+                "condition": "feature_flag enabled",
+                "met": flag_state == "enabled",
+                "next_step": (
+                    None if flag_state == "enabled"
+                    else "Two distinct admins must POST /api/admin/cross-org-"
+                         "relocate/propose-enable + /approve-enable. Flag flip "
+                         "requires the outside-counsel opinion identifier in "
+                         "the >=40-char approver reason."
+                ),
+            },
+            {
+                "condition": "at least one eligible target org has BAA receipt-authorization",
+                "met": eligible_targets > 0,
+                "next_step": (
+                    None if eligible_targets > 0
+                    else "Contracts-team must POST /api/dashboard/admin/orgs/"
+                         "{org_id}/baa-receipt-authorize for each receiving "
+                         "org after BAA review confirms the receipt + "
+                         "continuity language."
+                ),
+            },
+        ],
+    }
+
+
 @router.get("/{org_id}/health")
 async def get_org_health_dashboard(
     org_id: str,
