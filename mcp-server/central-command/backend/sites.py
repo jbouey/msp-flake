@@ -5605,17 +5605,22 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             )
             if client_email:
                 from .email_alerts import _send_smtp_with_retry
-                subject = f"OsirisCare — Your compliance monitoring is active"
+                # Opaque mode (Maya P0 sweep, 2026-05-06): subject +
+                # body withhold clinic name. Recipient is the
+                # registered client_contact_email; the org identity
+                # is shown on the authenticated portal.
+                subject = "OsirisCare — your compliance monitoring is active"
                 body = (
-                    f"Hi,\n\n"
-                    f"Your OsirisCare compliance appliance for {clinic_name or checkin.site_id} is now online "
-                    f"and monitoring your network.\n\n"
-                    f"What happens next:\n"
-                    f"  1. The appliance will discover devices on your network\n"
-                    f"  2. You'll receive a notification to register device credentials\n"
-                    f"  3. Compliance scanning begins automatically\n\n"
-                    f"You can view your compliance dashboard at any time through your client portal.\n\n"
-                    f"— OsirisCare\n"
+                    "Hi,\n\n"
+                    "Your OsirisCare compliance appliance is now online "
+                    "and monitoring your network.\n\n"
+                    "What happens next:\n"
+                    "  1. The appliance will discover devices on your network\n"
+                    "  2. You'll receive a notification to register device credentials\n"
+                    "  3. Compliance scanning begins automatically\n\n"
+                    "Sign in to your client portal to view the compliance "
+                    "dashboard for your site.\n\n"
+                    "— OsirisCare\n"
                 )
                 await _send_smtp_with_retry(client_email, subject, body)
                 logger.info(f"Welcome email sent to {client_email} for site {checkin.site_id}")

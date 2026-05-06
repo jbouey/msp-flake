@@ -9,6 +9,11 @@
  * Field set is deliberately narrow (Carol veto, RT33): no MAC, no IP,
  * no mesh-topology fields. A compromised customer session must not
  * become a fleet recon map.
+ *
+ * Theme fix 2026-05-06: was using dark-theme tokens (text-white/X,
+ * bg-white/5) inside a light-theme dashboard — text was invisible.
+ * Converted to design-system label-* and separator-light tokens to
+ * match the rest of ClientDashboard.tsx.
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { getJson } from '../utils/portalFetch';
@@ -41,8 +46,8 @@ interface SummaryProps {
 const ApplianceSummaryCard: React.FC<SummaryProps> = ({ rows }) => {
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg bg-white/5 backdrop-blur p-4 mb-4 border border-white/10">
-        <div className="text-sm text-white/70">
+      <div className="rounded-lg bg-white p-4 mb-4 border border-separator-light">
+        <div className="text-sm text-label-secondary">
           No appliances connected yet. Reach out to your MSP to schedule
           deployment.
         </div>
@@ -57,19 +62,19 @@ const ApplianceSummaryCard: React.FC<SummaryProps> = ({ rows }) => {
     .sort()[0];
   const summaryTone =
     online === total
-      ? 'text-emerald-300'
+      ? 'text-emerald-700'
       : online === 0
-        ? 'text-rose-300'
-        : 'text-amber-300';
+        ? 'text-rose-700'
+        : 'text-amber-700';
   return (
-    <div className="rounded-lg bg-white/5 backdrop-blur p-4 mb-4 border border-white/10 flex items-center justify-between">
+    <div className="rounded-lg bg-white p-4 mb-4 border border-separator-light flex items-center justify-between">
       <div>
         <div className={`text-sm font-medium ${summaryTone}`}>
           {online} of {total} appliance{total === 1 ? '' : 's'}{' '}
           {online === total ? 'healthy' : 'online'}
         </div>
         {oldest && (
-          <div className="text-xs text-white/60 mt-0.5">
+          <div className="text-xs text-label-tertiary mt-0.5">
             Oldest checkin: {formatTimeAgo(oldest)}
           </div>
         )}
@@ -137,7 +142,7 @@ export const ClientAppliances: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="rounded-lg bg-white/5 backdrop-blur p-6 text-sm text-white/60">
+      <div className="rounded-lg bg-white p-6 text-sm text-label-secondary border border-separator-light">
         Loading appliances…
       </div>
     );
@@ -145,7 +150,7 @@ export const ClientAppliances: React.FC = () => {
 
   if (error) {
     return (
-      <div className="rounded-lg bg-rose-500/10 border border-rose-500/30 p-4 text-sm text-rose-200">
+      <div className="rounded-lg bg-rose-50 border border-rose-200 p-4 text-sm text-rose-700">
         {error}
       </div>
     );
@@ -155,9 +160,9 @@ export const ClientAppliances: React.FC = () => {
     <div>
       <ApplianceSummaryCard rows={rows} />
       {rows.length > 0 && (
-        <div className="rounded-lg bg-white/5 backdrop-blur border border-white/10 overflow-hidden">
+        <div className="rounded-lg bg-white border border-separator-light overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-white/5 text-white/70 text-xs uppercase tracking-wide">
+            <thead className="bg-gray-50 text-label-secondary text-xs uppercase tracking-wide">
               <tr>
                 <th className="text-left px-4 py-2 font-medium">Appliance</th>
                 <th className="text-left px-4 py-2 font-medium">Site</th>
@@ -170,21 +175,21 @@ export const ClientAppliances: React.FC = () => {
               {rows.map((r) => (
                 <tr
                   key={r.appliance_id}
-                  className="border-t border-white/5 hover:bg-white/5"
+                  className="border-t border-separator-light hover:bg-gray-50"
                 >
-                  <td className="px-4 py-2.5 text-white/90">
+                  <td className="px-4 py-2.5 text-label-primary">
                     {r.display_name}
                   </td>
-                  <td className="px-4 py-2.5 text-white/70">
+                  <td className="px-4 py-2.5 text-label-secondary">
                     {r.site_name || r.site_id}
                   </td>
                   <td className="px-4 py-2.5">
                     <StatusBadge status={r.status} />
                   </td>
-                  <td className="px-4 py-2.5 text-white/70">
+                  <td className="px-4 py-2.5 text-label-secondary">
                     {formatTimeAgo(r.last_heartbeat_at || r.last_checkin)}
                   </td>
-                  <td className="px-4 py-2.5 text-white/70 font-mono text-xs">
+                  <td className="px-4 py-2.5 text-label-secondary font-mono text-xs">
                     {r.agent_version || '—'}
                   </td>
                 </tr>
@@ -192,11 +197,11 @@ export const ClientAppliances: React.FC = () => {
             </tbody>
           </table>
           {nextCursor && (
-            <div className="border-t border-white/5 px-4 py-2 text-center">
+            <div className="border-t border-separator-light px-4 py-2 text-center">
               <button
                 onClick={onLoadMore}
                 disabled={loadingMore}
-                className="text-xs text-white/70 hover:text-white disabled:opacity-50"
+                className="text-xs text-label-secondary hover:text-label-primary disabled:opacity-50"
               >
                 {loadingMore ? 'Loading…' : 'Load more'}
               </button>

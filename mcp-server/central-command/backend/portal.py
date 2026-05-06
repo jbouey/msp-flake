@@ -131,7 +131,7 @@ async def send_magic_link_email(to_email: str, site_name: str, magic_link: str) 
         message = Mail(
             from_email=FROM_EMAIL,
             to_emails=to_email,
-            subject=f"Your {site_name} Compliance Dashboard Access",
+            subject="Your OsirisCare compliance dashboard access",
             html_content=f"""
             <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
                 <div style="text-align: center; margin-bottom: 40px;">
@@ -140,7 +140,7 @@ async def send_magic_link_email(to_email: str, site_name: str, magic_link: str) 
                 </div>
 
                 <p style="color: #2d3748; font-size: 16px; line-height: 1.6;">
-                    Click the button below to access your compliance dashboard for <strong>{site_name}</strong>.
+                    Click the button below to access your compliance dashboard.
                 </p>
 
                 <div style="text-align: center; margin: 40px 0;">
@@ -192,21 +192,25 @@ def _send_magic_link_smtp(to_email: str, site_name: str, magic_link: str,
     from_addr = os.environ.get("SMTP_FROM", "noreply@osiriscare.net")
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Your {site_name} Compliance Dashboard Access"
+    # Opaque mode (Maya P0 sweep, 2026-05-06): drop site_name from
+    # subject and body. site_name retained as parameter for log
+    # parity but no longer rendered into the SMTP channel. The
+    # authenticated portal greets the recipient with site context.
+    msg["Subject"] = "Your OsirisCare compliance dashboard access"
     msg["From"] = from_addr
     msg["To"] = to_email
 
     text = (
-        f"Access your compliance dashboard for {site_name}:\n\n"
+        "Access your compliance dashboard:\n\n"
         f"{magic_link}\n\n"
-        f"This link expires in 60 minutes."
+        "This link expires in 60 minutes."
     )
     html = (
-        f'<p>Click below to access your compliance dashboard for <strong>{site_name}</strong>.</p>'
+        '<p>Click below to access your compliance dashboard.</p>'
         f'<p><a href="{magic_link}" style="background:#3182ce;color:white;padding:14px 32px;'
-        f'border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;">'
-        f'Access Dashboard</a></p>'
-        f'<p style="color:#718096;font-size:14px;">This link expires in 60 minutes.</p>'
+        'border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;">'
+        'Access Dashboard</a></p>'
+        '<p style="color:#718096;font-size:14px;">This link expires in 60 minutes.</p>'
     )
     msg.attach(MIMEText(text, "plain"))
     msg.attach(MIMEText(html, "html"))
@@ -743,7 +747,10 @@ async def request_magic_link(site_id: str, request: MagicLinkRequest):
                 smtp_from = os.getenv("SMTP_FROM", "noreply@osiriscare.net")
 
                 msg = MIMEMultipart("alternative")
-                msg["Subject"] = f"Your {site_name} Compliance Dashboard Access"
+                # Opaque mode (Maya P0 sweep, 2026-05-06): drop
+                # site_name from subject + body; portal serves
+                # context after auth.
+                msg["Subject"] = "Your OsirisCare compliance dashboard access"
                 msg["From"] = smtp_from
                 msg["To"] = request.email
 
@@ -754,7 +761,7 @@ async def request_magic_link(site_id: str, request: MagicLinkRequest):
                         <p style="color: #718096; margin-top: 8px;">HIPAA Compliance Monitoring Platform</p>
                     </div>
                     <p style="color: #2d3748; font-size: 16px; line-height: 1.6;">
-                        Click the button below to access your compliance dashboard for <strong>{site_name}</strong>.
+                        Click the button below to access your compliance dashboard.
                     </p>
                     <div style="text-align: center; margin: 40px 0;">
                         <a href="{magic_link}" style="background: #3182ce; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">

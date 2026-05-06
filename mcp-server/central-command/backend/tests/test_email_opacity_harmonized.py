@@ -50,6 +50,13 @@ _EMAIL_RENAME = _BACKEND / "client_user_email_rename.py"
 _CLIENT_PORTAL = _BACKEND / "client_portal.py"
 _ORG_MGMT = _BACKEND / "org_management.py"
 _RELOCATE = _BACKEND / "cross_org_site_relocate.py"
+# Maya 4th-pass P0: portal.py / sites.py / background_tasks.py were
+# misclassified as operator-only — they call SMTP fallbacks
+# (_send_smtp_with_retry / send_email) for client_contact_email
+# recipients with org/clinic interpolation. Moved into opaque scope.
+_PORTAL = _BACKEND / "portal.py"
+_SITES = _BACKEND / "sites.py"
+_BG_TASKS = _BACKEND / "background_tasks.py"
 
 _OPAQUE_MODULES = (
     _OWNER_TRANSFER,
@@ -57,6 +64,9 @@ _OPAQUE_MODULES = (
     _CLIENT_PORTAL,
     _ORG_MGMT,
     _RELOCATE,  # also pinned by test_cross_org_relocate_contract.py
+    _PORTAL,
+    _SITES,
+    _BG_TASKS,
 )
 
 # Forbidden parameter names in opaque-mode helpers (drop verbose-mode
@@ -139,6 +149,25 @@ def _iter_send_email_calls(tree: ast.Module) -> Iterable[ast.Call]:
             "_send_initiator_confirmation_email",
             "_send_target_accept_email",
         }:
+            yield node
+
+
+def _iter_mime_send_calls(tree: ast.Module) -> Iterable[ast.Call]:
+    """Yield calls to MIME-style senders. These take a pre-built
+    MIMEMessage as arg[0] — subject/body are set via
+    msg['Subject'] = ... earlier in the function, so the
+    arg-position checks don't apply. Subject opacity for these is
+    enforced separately by `test_mime_subject_assignments_opaque`."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = None
+        if isinstance(func, ast.Name):
+            name = func.id
+        elif isinstance(func, ast.Attribute):
+            name = func.attr
+        if name in {"_send_smtp_with_retry", "_send_magic_link_smtp"}:
             yield node
 
 
@@ -417,6 +446,48 @@ def test_bodies_are_opaque_across_all_modules():
     )
 
 
+def test_mime_subject_assignments_opaque():
+    """For MIME-style senders (`_send_smtp_with_retry`,
+    `_send_magic_link_smtp`), the subject is set on the message via
+    `msg["Subject"] = ...` earlier in the function. Walk the AST
+    for those Subscript-Subject assignments in opaque modules and
+    check they don't interpolate context tokens."""
+    failures: list[str] = []
+    for path in _OPAQUE_MODULES:
+        tree = _parse(path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for tgt in node.targets:
+                if not isinstance(tgt, ast.Subscript):
+                    continue
+                # msg["Subject"] = ...  — slice is a Constant("Subject")
+                slc = tgt.slice
+                slice_str = None
+                if isinstance(slc, ast.Constant) and isinstance(slc.value, str):
+                    slice_str = slc.value
+                if slice_str != "Subject":
+                    continue
+                rendered = _literal_string(node.value, tree, node)
+                if rendered is None:
+                    failures.append(
+                        f"{path.name}:{node.lineno} MIME Subject "
+                        f"assignment is not a string literal — "
+                        f"opaque-mode requires plain string subjects."
+                    )
+                    continue
+                for token in FORBIDDEN_SUBJECT_TOKENS:
+                    if token in rendered:
+                        failures.append(
+                            f"{path.name}:{node.lineno} MIME Subject "
+                            f"interpolates `{token}` — opaque-mode "
+                            f"forbids context names in subjects."
+                        )
+    assert not failures, "Opacity violations:\n" + "\n".join(
+        f"  - {f}" for f in failures
+    )
+
+
 def test_call_sites_do_not_pass_forbidden_kwargs():
     """Helper call sites in the opaque modules must not pass the
     verbose-mode context kwargs."""
@@ -462,10 +533,9 @@ def test_meta_every_send_email_caller_is_classified():
         _BACKEND / "mfa_admin.py",
         _BACKEND / "partner_auth.py",
         _BACKEND / "partner_admin_transfer.py",
-        _BACKEND / "portal.py",
-        _BACKEND / "background_tasks.py",
-        _BACKEND / "sites.py",
         _BACKEND / "email_service.py",
+        # NOTE: portal.py, background_tasks.py, sites.py moved to
+        # _OPAQUE_MODULES (Maya 4th-pass P0). Do NOT add them here.
     }
     classified = set(_OPAQUE_MODULES) | OPERATOR_ALLOWLIST
     discovered: list[pathlib.Path] = []
@@ -476,7 +546,12 @@ def test_meta_every_send_email_caller_is_classified():
             src = py_path.read_text()
         except Exception:
             continue
-        if "send_email(" in src or "_send_dual_notification(" in src:
+        if (
+            "send_email(" in src
+            or "_send_dual_notification(" in src
+            or "_send_smtp_with_retry(" in src
+            or "_send_magic_link_smtp(" in src
+        ):
             discovered.append(py_path)
     unclassified = [p for p in discovered if p not in classified]
     assert not unclassified, (

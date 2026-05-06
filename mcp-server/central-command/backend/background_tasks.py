@@ -1045,20 +1045,27 @@ async def unregistered_device_alert_loop():
 
                     count = site["unregistered_count"]
                     clinic = site["clinic_name"]
-                    subject = f"[OsirisCare] {count} device(s) at {clinic} need your attention"
+                    # Opaque mode (Maya P0 sweep, 2026-05-06): subject
+                    # + body withhold clinic name and per-device
+                    # hostname/port detail. count is operationally
+                    # useful and not org-identifying. The full device
+                    # list is shown on the authenticated portal where
+                    # the recipient lands after click-through. clinic
+                    # variable retained for audit logging only.
+                    subject = (
+                        "OsirisCare — devices on your network need attention"
+                    )
                     body = (
-                        f"Hi,\n\n"
-                        f"Our compliance monitoring detected {count} device(s) on your network "
-                        f"at {clinic} that are not currently covered by your security monitoring.\n\n"
-                        f"These devices have open management ports and appear to be servers or "
-                        f"workstations that should be monitored for HIPAA compliance:\n\n"
-                        + "\n".join(device_lines) +
-                        f"\n\nTo register these devices and enable compliance monitoring, "
-                        f"please log in to your portal:\n"
-                        f"  https://api.osiriscare.net/client/login\n\n"
-                        f"If any of these devices are expected and don't need monitoring "
-                        f"(e.g., test equipment), you can mark them as 'Ignored' in the portal.\n\n"
-                        f"This is an automated message from OsirisCare compliance monitoring.\n"
+                        "Hi,\n\n"
+                        f"Our compliance monitoring detected {count} device(s) "
+                        "on your network that are not currently covered by "
+                        "your security monitoring.\n\n"
+                        "Sign in to your portal to review the devices and "
+                        "register them for HIPAA compliance monitoring (or "
+                        "mark expected devices as 'Ignored'):\n"
+                        "  https://api.osiriscare.net/client/login\n\n"
+                        "This is an automated message from OsirisCare "
+                        "compliance monitoring.\n"
                     )
 
                     sent = await send_email(site["client_contact_email"], subject, body)

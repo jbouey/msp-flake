@@ -539,7 +539,7 @@ export const ClientDashboard: React.FC = () => {
         {/* Compliance appliances — RT33 (2026-05-05) */}
         {dashboard && dashboard.sites.length > 0 && (
           <div className="mb-8">
-            <h2 className="text-lg font-medium text-white mb-3">
+            <h2 className="text-lg font-medium text-label-primary mb-3">
               Compliance Appliances
             </h2>
             <ClientAppliances />
