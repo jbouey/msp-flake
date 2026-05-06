@@ -197,6 +197,13 @@ SOURCE_LEVEL_TESTS=(
     # ID namespace mismatch, L2 truth split, orders.status stuck). Mig
     # 284/285/286 fix each + 3 substrate invariants catch drift.
     "tests/test_data_model_audit_contract.py"
+    # 2026-05-06 deploy-failure follow-up: scans every migration's
+    # CREATE VIEW / CREATE FUNCTION blocks for `<alias>.<col>`
+    # references and cross-checks each against prod_columns.json.
+    # Would have caught the i.host_id bug that broke deploy
+    # 25432114856. Includes a self-test that constructs the bug
+    # synthetically and asserts the gate flags it.
+    "tests/test_migration_view_columns_exist.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
