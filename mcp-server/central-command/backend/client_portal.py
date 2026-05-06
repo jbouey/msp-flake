@@ -836,9 +836,9 @@ async def list_sites(user: dict = Depends(require_client_user)):
                    COALESCE(gas.overall_compliance_rate, 0) as agent_compliance_rate
             FROM sites s
             LEFT JOIN compliance_bundles cb ON cb.site_id = s.site_id
-            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id AND sa.deleted_at IS NULL
             LEFT JOIN site_go_agent_summaries gas ON gas.site_id = s.site_id
-            WHERE s.client_org_id = $1
+            WHERE s.client_org_id = $1 AND s.status != 'inactive'
             GROUP BY s.site_id, s.clinic_name, s.status, s.tier,
                      s.onboarding_stage, s.created_at,
                      gas.last_event, gas.total_agents, gas.overall_compliance_rate
@@ -1132,7 +1132,7 @@ async def get_client_devices_at_risk(
             SELECT sa.hostname, i.check_type, i.severity, i.created_at, i.id,
                    i.resolution_tier as resolution_level
             FROM incidents i
-            JOIN site_appliances sa ON sa.appliance_id = i.appliance_id::text
+            JOIN site_appliances sa ON sa.appliance_id = i.appliance_id::text AND sa.deleted_at IS NULL
             WHERE sa.site_id = $1
               AND i.status != 'resolved'
             ORDER BY sa.hostname, i.created_at DESC
@@ -3447,8 +3447,8 @@ async def get_agent_install_info(user: dict = Depends(require_client_user)):
                    sa.appliance_id, sa.hostname as appliance_hostname,
                    sa.ip_addresses, sa.agent_version
             FROM sites s
-            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
-            WHERE s.client_org_id = $1
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id AND sa.deleted_at IS NULL
+            WHERE s.client_org_id = $1 AND s.status != 'inactive'
             ORDER BY s.clinic_name
         """, org_id)
 
@@ -3521,7 +3521,7 @@ async def get_agent_config(
         appliance = await conn.fetchrow("""
             SELECT appliance_id, ip_addresses
             FROM site_appliances
-            WHERE site_id = $1
+            WHERE site_id = $1 AND deleted_at IS NULL
             ORDER BY last_checkin DESC NULLS LAST
             LIMIT 1
         """, site_id)
@@ -3584,7 +3584,7 @@ async def get_agent_install_script(
         appliance = await conn.fetchrow("""
             SELECT ip_addresses
             FROM site_appliances
-            WHERE site_id = $1
+            WHERE site_id = $1 AND deleted_at IS NULL
             ORDER BY last_checkin DESC NULLS LAST
             LIMIT 1
         """, site_id)
@@ -3737,7 +3737,7 @@ async def get_agent_mobileconfig(
         appliance = await conn.fetchrow("""
             SELECT ip_addresses
             FROM site_appliances
-            WHERE site_id = $1
+            WHERE site_id = $1 AND deleted_at IS NULL
             ORDER BY last_checkin DESC NULLS LAST
             LIMIT 1
         """, site_id)
@@ -4555,7 +4555,11 @@ async def get_unregistered_devices(
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
 
-        # Exclude appliance IPs (they're infrastructure, not client devices)
+        # Exclude appliance IPs (they're infrastructure, not client devices).
+        # NOTE: intentionally NOT filtered by deleted_at — historical IPs of
+        # soft-deleted appliances must STAY in the exclusion set so they don't
+        # resurface as "client devices" after cleanup. Carved out from the
+        # RT33 ghost-data gate (test_client_portal_filters_soft_deletes.py).
         appliance_ips = await conn.fetch(
             "SELECT unnest(ip_addresses::text[]) as ip FROM site_appliances WHERE site_id = $1",
             site_id

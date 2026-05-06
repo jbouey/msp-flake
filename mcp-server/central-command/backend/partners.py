@@ -1076,7 +1076,7 @@ async def get_my_sites(request: Request, partner: dict = require_partner_role("a
                    COALESCE(gas.overall_compliance_rate, 0) as agent_compliance_rate,
                    gas.last_event as agent_last_event
             FROM sites s
-            LEFT JOIN site_appliances sa ON s.site_id = sa.site_id
+            LEFT JOIN site_appliances sa ON s.site_id = sa.site_id AND sa.deleted_at IS NULL
             LEFT JOIN site_go_agent_summaries gas ON s.site_id = gas.site_id
             WHERE s.partner_id = $1
               AND s.status != 'inactive'
@@ -1246,8 +1246,7 @@ async def get_partner_dashboard(
                    COUNT(i.id) FILTER (WHERE i.resolution_tier = 'L2') AS l2_24h,
                    COUNT(i.id) FILTER (WHERE i.resolution_tier = 'L3') AS l3_24h
             FROM sites s
-            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
-                                       AND sa.deleted_at IS NULL
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id AND sa.deleted_at IS NULL
             LEFT JOIN incidents i ON i.site_id = s.site_id
                                  AND i.created_at > NOW() - INTERVAL '24 hours'
             WHERE s.partner_id = $1 AND s.status != 'inactive'
@@ -2102,7 +2101,7 @@ async def get_my_orgs(request: Request, partner: dict = require_partner_role("ad
             FROM client_orgs co
             LEFT JOIN sites s ON s.client_org_id = co.id
                 AND s.partner_id = $1 AND s.status != 'inactive'
-            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+            LEFT JOIN site_appliances sa ON sa.site_id = s.site_id AND sa.deleted_at IS NULL
             LEFT JOIN site_go_agent_summaries gas ON gas.site_id = s.site_id
             WHERE co.current_partner_id = $1
             GROUP BY co.id
@@ -3548,7 +3547,7 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
                    MAX(sa.last_checkin) as last_checkin
             FROM site_appliances sa
             JOIN sites s ON s.site_id = sa.site_id
-            WHERE s.partner_id = $1
+            WHERE s.partner_id = $1 AND sa.deleted_at IS NULL
             GROUP BY sa.site_id
         """, _uid(partner_id))
         app_map = {r['site_id']: {'count': r['appliance_count'], 'last_checkin': r['last_checkin']} for r in appliance_stats}
@@ -3559,7 +3558,7 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
                 SELECT COUNT(*) as total,
                        COUNT(*) FILTER (WHERE i.status = 'open') as open_count
                 FROM incidents i
-                JOIN site_appliances sa ON sa.appliance_id = i.appliance_id
+                JOIN site_appliances sa ON sa.appliance_id = i.appliance_id AND sa.deleted_at IS NULL
                 WHERE sa.site_id IN (SELECT site_id FROM sites WHERE partner_id = $1)
             """, _uid(partner_id))
         except Exception:
@@ -4485,7 +4484,7 @@ async def validate_credential(
         # Find an active appliance to run the validation
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM site_appliances
-            WHERE site_id = $1 AND status = 'online'
+            WHERE site_id = $1 AND status = 'online' AND deleted_at IS NULL
             ORDER BY last_checkin DESC NULLS LAST
             LIMIT 1
         """, site_id)
@@ -4493,7 +4492,7 @@ async def validate_credential(
         if not appliance:
             appliance = await conn.fetchrow("""
                 SELECT appliance_id FROM site_appliances
-                WHERE site_id = $1
+                WHERE site_id = $1 AND deleted_at IS NULL
                 ORDER BY last_checkin DESC NULLS LAST
                 LIMIT 1
             """, site_id)
@@ -4815,8 +4814,8 @@ async def get_partner_onboarding(request: Request, partner=Depends(require_partn
                    MAX(sa.last_checkin) as last_checkin,
                    (SELECT COUNT(*) FROM site_credentials sc WHERE sc.site_id = s.site_id) as credential_count
             FROM sites s
-            LEFT JOIN site_appliances sa ON s.site_id = sa.site_id
-            WHERE s.partner_id = $1
+            LEFT JOIN site_appliances sa ON s.site_id = sa.site_id AND sa.deleted_at IS NULL
+            WHERE s.partner_id = $1 AND s.status != 'inactive'
             GROUP BY s.site_id, s.clinic_name, s.contact_name, s.contact_email,
                      s.onboarding_stage, s.notes, s.blockers, s.created_at,
                      s.lead_at, s.discovery_at, s.proposal_at, s.contract_at,
@@ -4914,7 +4913,8 @@ async def trigger_site_checkin(
         # Find appliance
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM site_appliances
-            WHERE site_id = $1 ORDER BY last_checkin DESC NULLS LAST LIMIT 1
+            WHERE site_id = $1 AND deleted_at IS NULL
+            ORDER BY last_checkin DESC NULLS LAST LIMIT 1
         """, site_id)
         if not appliance:
             raise HTTPException(status_code=400, detail="No appliance connected to this site")
@@ -5100,7 +5100,7 @@ async def trigger_discovery(
         # Get active appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM site_appliances
-            WHERE site_id = $1 AND status = 'online'
+            WHERE site_id = $1 AND status = 'online' AND deleted_at IS NULL
             ORDER BY last_checkin DESC NULLS LAST
             LIMIT 1
         """, site_id)
@@ -5109,7 +5109,7 @@ async def trigger_discovery(
             # Try any appliance if none online
             appliance = await conn.fetchrow("""
                 SELECT appliance_id FROM site_appliances
-                WHERE site_id = $1
+                WHERE site_id = $1 AND deleted_at IS NULL
                 ORDER BY last_checkin DESC NULLS LAST
                 LIMIT 1
             """, site_id)

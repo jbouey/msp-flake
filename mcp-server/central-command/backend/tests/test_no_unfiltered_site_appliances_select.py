@@ -61,7 +61,10 @@ BACKEND_DIR = REPO_ROOT / "mcp-server" / "central-command" / "backend"
 # data_completeness query. Same pattern as provisioning.py:447,
 # routes.py:6653, etc. — legitimate natural-key resolution path that
 # the gate's regex over-flags. Acceptable to bump.
-BASELINE_MAX = 95
+# 2026-05-05 RT33 ghost-data sweep: client_portal.py + partners.py
+# tightened to filter `deleted_at IS NULL` + `status != 'inactive'` on
+# all portal-facing site_appliances joins/selects. 95 → 85.
+BASELINE_MAX = 85
 
 _FROM_PATTERN = re.compile(r"\bFROM\s+site_appliances\b", re.IGNORECASE)
 _NOQA_PATTERN = re.compile(

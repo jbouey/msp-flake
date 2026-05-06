@@ -147,6 +147,11 @@ SOURCE_LEVEL_TESTS=(
     # Audit C3 was a false positive — this gate makes sure the wiring
     # can't be silently dropped in a future refactor.
     "tests/test_idle_session_warning_wired.py"
+    # RT33 ghost-data anti-regression (2026-05-05). Pins
+    # `deleted_at IS NULL` + `status != 'inactive'` filters on
+    # client_portal site/appliance queries that surfaced phantom data
+    # for the user when North Valley was the only real site.
+    "tests/test_client_portal_filters_soft_deletes.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
