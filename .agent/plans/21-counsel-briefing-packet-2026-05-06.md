@@ -2,19 +2,26 @@
 
 **For:** Outside HIPAA counsel
 **From:** OsirisCare engineering, on behalf of the privacy officer
-**Date:** 2026-05-06 (revised v2 after first-round adversarial review)
+**Date:** 2026-05-06
+**Version:** v2.2 (current; ready for counsel hand-out)
+**Revision history:** multi-round adversarial review with outside HIPAA counsel — v1 → v2 → v2.1 → v2.2.
 **Companion artifacts:**
 - `.agent/plans/21-cross-org-site-relocate-roundtable-2026-05-05.md` — original engineering design round-table (Camila/Brian/Linda/Steve/Adam + Maya 2nd-eye)
 - `docs/lessons/sessions-218.md` — implementation retrospective + adversarial verdicts at Gates 1 + 2 + Maya final
 - BAA template — substrate-class business associate agreement (provided separately)
 - `cross_org_site_relocate.py` + `migrations/279,280,281,282` + `tests/test_cross_org_relocate_contract.py` — shipped engineering, behind a feature flag, awaiting your sign-off to enable
 
-**Revisions vs v1 of this packet (in response to your adversarial review):**
-- §1.5 added — single ontological sentence on data class (closes the "PHI vs metadata" inconsistency you flagged)
-- §2 Q1 reframed — drops the "same-BA therefore §164.504(e) inapplicable" framing; reframes as "we recognize §164.504(e) governs permitted use under each BAA regardless of vendor identity, and we are seeking your confirmation of permitted scope under both BAAs"
-- §2 Q2 reframed — drops "immutability is stronger than the standard"; reframes as "substantive completeness + retrievability under §164.528"
-- §3.5 added — dual-admin governance for the flag-flip (engineering shipped; counsel-recommended hardening of the choke point you flagged)
-- §4a updated — opaque-mode emails are now the engineering DEFAULT (shipped); we documented the alternative position rather than the position
+**Revisions vs v1 (cumulative through v2.2, in response to your adversarial review):**
+- *(v2)* §1.5 added — single ontological sentence on data class (closes the "PHI vs metadata" inconsistency you flagged)
+- *(v2)* §2 Q1 reframed — drops the "same-BA therefore §164.504(e) inapplicable" framing; reframes as "we recognize §164.504(e) governs permitted use under each BAA regardless of vendor identity, and we are seeking your confirmation of permitted scope under both BAAs"
+- *(v2)* §2 Q2 reframed — drops "immutability is stronger than the standard"; reframes as "substantive completeness + retrievability under §164.528"
+- *(v2)* §3.5 added — dual-admin governance for the flag-flip (engineering shipped; counsel-recommended hardening of the choke point you flagged)
+- *(v2)* §4a updated — opaque-mode emails are now the engineering DEFAULT (shipped); we documented the change rather than the prior position
+- *(v2.1)* JSON examples + code-comment + lessons-doc + claude.md durable rule scrubbed of v1 legacy theory ("BA-to-BA inapplicability", "triple-source attestation chain", "Osiris is the same BA on both sides")
+- *(v2.2)* Cover-posture paragraph reframed — was "your authorization appears in the cryptographic chain at flip time"; now correctly states the flag-flip is in the append-only enablement record + admin_audit_log, NOT the cryptographic chain (with §4 forward-pointer)
+- *(v2.2)* §2 header expanded — was "the three §-questions"; now enumerates all six counsel review items (Q1/Q2/Q3 + §1.5 data classification + §3.5 dual-admin governance + §4a opaque emails) so nothing reads as a buried "extra ask"
+- *(v2.2)* §6 hand-back list aligned to dual-admin reality — was a single "bundle ID" entry; now lists both `admin_audit_log` row IDs (proposer + approver) + all six dual-admin `feature_flags` fields, with the explicit "no cryptographic-chain bundle is generated for the flag-flip event" qualifier
+- *(v2.2)* §6 timeline corrected — flag flip is a TWO-API-call dual-admin sequence (was "one-API-call"), with the schema-level approver≠proposer CHECK noted
 
 > **Posture:** This is an evidence-grade compliance attestation substrate. Engineering has built and tested a three-actor state machine for moving a site from one client_org (a covered entity) to another. The feature is shipped behind a database-stored feature flag that returns HTTP 503 until you authorize the flip. Your authorization appears in the append-only enablement record (the `feature_flags` row, DELETE-blocked) and the linked `admin_audit_log` entry at flip time, as a ≥40-character `enable_reason` containing your opinion identifier — the flag-flip event itself is NOT in the cryptographic chain (see §4 for why, and what we record instead). We are asking for legal review on the §-questions in §2; we are NOT asking for a re-design of the engineering.
 
@@ -90,7 +97,7 @@ packet but require equivalent counsel sign-off:
 
 ### Question 1 — §164.504(e) permitted-use scope under both BAAs
 
-> *Counsel revised v2 in response to your adversarial feedback: the
+> *v2 of this packet revised the framing below in response to your v1 adversarial feedback: the
 > earlier "same BA, therefore §164.504(e) does not apply" construction
 > was attackable. Below is the corrected framing.*
 
@@ -120,7 +127,7 @@ on receiving-org BAAs going forward.
 
 ### Question 2 — §164.528 substantive completeness + retrievability
 
-> *Counsel revised v2 in response to your adversarial feedback: the
+> *v2 of this packet revised the framing below in response to your v1 adversarial feedback: the
 > earlier "immutability is stronger than the standard" framing was
 > the wrong test. Below is the corrected framing — substance + retrieval.*
 
@@ -416,7 +423,7 @@ notice, target-accept notice, post-execute receipt) include
 `clinic_name` and `client_org` names in the subject line and body.
 SMTP relays see this plaintext.
 
-> *Counsel revised v2 in response to your adversarial review:
+> *v2 of this packet revised the position below in response to your v1 adversarial review:
 > "the safer alternative is cheap, counsel will prefer it." We agreed
 > and shipped opaque emails as the default on 2026-05-06. The
 > position below documents the change.*
