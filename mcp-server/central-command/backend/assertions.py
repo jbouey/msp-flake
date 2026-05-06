@@ -553,6 +553,68 @@ async def _check_email_dlq_growing(conn: asyncpg.Connection) -> List[Violation]:
     ]
 
 
+async def _check_cross_org_relocate_chain_orphan(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev1 — a site shows prior_client_org_id set but no completed
+    cross_org_site_relocate_requests row attests the move.
+
+    RT21 (2026-05-05) Steve threat model item 4: the substrate must
+    detect when a cross-org move bypassed the proper flow. The proper
+    flow writes:
+      - sites.prior_client_org_id (set via execute_relocate)
+      - cross_org_site_relocate_requests row in status=completed
+        (recording all 6 attestation_bundle_ids across the lifecycle)
+    A direct UPDATE on sites.client_org_id (DBA shortcut, accidental
+    backfill, etc.) sets prior but leaves no relocate row — chain-of-
+    custody gap. Sev1 because §164.528 disclosure-accounting integrity
+    is on the line.
+
+    The check is read-only: for every site with prior_client_org_id
+    set, look for a completed relocate row matching site_id +
+    source_org_id (= prior) + target_org_id (= current). Any site
+    failing the lookup is a violation.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT s.site_id,
+               s.client_org_id::text AS current_org_id,
+               s.prior_client_org_id::text AS prior_org_id
+          FROM sites s
+         WHERE s.prior_client_org_id IS NOT NULL
+        """
+    )
+    violations: List[Violation] = []
+    for row in rows:
+        match = await conn.fetchval(
+            """
+            SELECT 1
+              FROM cross_org_site_relocate_requests
+             WHERE site_id = $1
+               AND source_org_id::text = $2
+               AND target_org_id::text = $3
+               AND status = 'completed'
+             LIMIT 1
+            """,
+            row["site_id"],
+            row["prior_org_id"],
+            row["current_org_id"],
+        )
+        if not match:
+            violations.append(
+                Violation(
+                    site_id=row["site_id"],
+                    detail=(
+                        f"site has prior_client_org_id={row['prior_org_id']} "
+                        f"and current client_org_id={row['current_org_id']} "
+                        f"but no completed cross_org_site_relocate_requests "
+                        f"row attests the move — chain-of-custody gap"
+                    ),
+                )
+            )
+    return violations
+
+
 async def _check_client_portal_zero_evidence_with_data(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -1437,6 +1499,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_email_dlq_growing(c),
     ),
     Assertion(
+        name="cross_org_relocate_chain_orphan",
+        severity="sev1",
+        description="A site has sites.prior_client_org_id SET but no completed cross_org_site_relocate_requests row attesting the move. Indicates a code path bypassed the relocate flow (direct UPDATE on sites.client_org_id), creating a chain-of-custody gap that auditors would flag. RT21 (2026-05-05) Steve mit 4 substrate-layer guarantee: every cross-org move MUST flow through the attested state machine; the substrate engine catches any drift.",
+        check=lambda c: _check_cross_org_relocate_chain_orphan(c),
+    ),
+    Assertion(
         name="client_portal_zero_evidence_with_data",
         severity="sev2",
         description="An org with compliance_bundles in the last 7 days gets ZERO rows back when the canonical client-portal query is simulated under that org's RLS context. Catches the 2026-05-05 P0 regression class (mig 278) — RLS misalignment between substrate-owned data and the client portal's read view. Round-table 2026-05-05 Stage 4 closure.",
@@ -1890,6 +1958,18 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "unblock. (3) `docker compose restart mcp-server` to rearm "
             "the loop. Sev1 because the evidence chain depends on "
             "compliance_bundles partition health.",
+    },
+    "cross_org_relocate_chain_orphan": {
+        "display_name": "Cross-org relocate without attestation — chain orphan",
+        "recommended_action": (
+            "A site has sites.prior_client_org_id set but no completed "
+            "cross_org_site_relocate_requests row attests the move. "
+            "Indicates the org change happened outside the attested "
+            "flow (direct UPDATE, accidental backfill, etc.). "
+            "Investigate which code path mutated the row, write a "
+            "post-hoc attestation if the move was authorized, or "
+            "reverse the change. RT21 (2026-05-05) Steve mit 4."
+        ),
     },
     "client_portal_zero_evidence_with_data": {
         "display_name": "Client portal hiding evidence — RLS misalignment",

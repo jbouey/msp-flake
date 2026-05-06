@@ -192,6 +192,34 @@ ALLOWED_EVENTS = {
     "client_user_email_changed_by_partner",
     "client_user_email_changed_by_substrate",
     "client_user_email_change_reversed",
+    # Task #21 closure 2026-05-05 — cross-org site relocate (Migrations
+    # 279 + 280 + 281). Three-actor state machine + cryptographic chain
+    # crossing the org boundary via sites.prior_client_org_id +
+    # site_canonical_aliases. Anchor: source org's primary site_id (the
+    # site being moved). NOT in PRIVILEGED_ORDER_TYPES — admin-API
+    # class (DB state mutation, not fleet_order). The 7th event is the
+    # feature-flag enable itself: flag flip is a privileged-class
+    # action with its own attestation chain entry, per Patricia
+    # (2026-05-05 RT21 adversarial). ALLOWED_EVENTS: 53.
+    "cross_org_site_relocate_initiated",
+    "cross_org_site_relocate_source_released",
+    "cross_org_site_relocate_target_accepted",
+    "cross_org_site_relocate_executed",
+    "cross_org_site_relocate_canceled",
+    "cross_org_site_relocate_expired",
+    # NOTE: `enable_cross_org_site_relocate` (the feature-flag flip) was
+    # considered for the privileged-access chain but DROPPED at RT21
+    # Gate 2 (Marcus): compliance_bundles.site_id FKs to sites(site_id),
+    # and the flag flip is a substrate-level event with no natural site
+    # anchor. Synthetic anchors fail the FK; fan-out per-site (the
+    # fleet_healing_global_pause pattern) is heavy for a rare event.
+    # The flag-flip's audit trail lives in two places instead:
+    #   1. feature_flags table is append-only (DELETE trigger) and
+    #      records actor_email + reason ≥40ch + enabled_at + disable
+    #      timestamps + reasons. This IS the historical record.
+    #   2. admin_audit_log row written on every toggle.
+    # Both are forensically recoverable; the asymmetry vs
+    # ALLOWED_EVENTS is intentional and documented here.
 }
 
 

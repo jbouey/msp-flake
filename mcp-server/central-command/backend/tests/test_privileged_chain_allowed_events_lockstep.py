@@ -143,6 +143,23 @@ def test_allowed_events_matches_expected_set():
         "client_user_email_changed_by_partner",
         "client_user_email_changed_by_substrate",
         "client_user_email_change_reversed",
+        # Task #21 closure 2026-05-05 — cross-org site relocate (Migrations
+        # 279 + 280 + 281). Round-table .agent/plans/21-cross-org-site-
+        # relocate-roundtable-2026-05-05.md. Three-actor state machine
+        # (initiate / source-release / target-accept / execute) + 2
+        # terminal lifecycle events (canceled / expired) + 1 attestation-
+        # gated feature-flag toggle (Patricia ask). NOT in
+        # PRIVILEGED_ORDER_TYPES — admin-API class. Total ALLOWED_EVENTS: 56.
+        "cross_org_site_relocate_initiated",
+        "cross_org_site_relocate_source_released",
+        "cross_org_site_relocate_target_accepted",
+        "cross_org_site_relocate_executed",
+        "cross_org_site_relocate_canceled",
+        "cross_org_site_relocate_expired",
+        # `enable_cross_org_site_relocate` was DROPPED at RT21 Gate 2
+        # (Marcus FK finding) — the flag flip's audit trail lives in
+        # feature_flags table (append-only via DELETE trigger) +
+        # admin_audit_log. ALLOWED_EVENTS: 55.
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

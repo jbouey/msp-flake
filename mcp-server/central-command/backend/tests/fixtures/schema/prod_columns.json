@@ -4543,6 +4543,7 @@
     "onboarding_stage",
     "pandadoc_id",
     "partner_id",
+    "prior_client_org_id",
     "proposal_at",
     "provider_count",
     "public_key",

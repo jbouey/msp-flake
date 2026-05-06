@@ -2379,6 +2379,8 @@ from dashboard_api.org_management import router as org_management_router
 app.include_router(org_management_router)  # Org lifecycle + quotas + export (Session 203)
 from dashboard_api.client_owner_transfer import owner_transfer_router  # noqa
 app.include_router(owner_transfer_router)  # Owner-transfer state machine (punch-list #8, 2026-05-04)
+from dashboard_api.cross_org_site_relocate import cross_org_relocate_router  # noqa
+app.include_router(cross_org_relocate_router)  # RT21 cross-org site relocate (2026-05-05) — feature-flagged
 from dashboard_api.partner_admin_transfer import partner_admin_transfer_router  # noqa
 app.include_router(partner_admin_transfer_router)  # Maya parity 2026-05-04 — partner analog
 from dashboard_api.mfa_admin import (  # noqa

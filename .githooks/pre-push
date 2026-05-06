@@ -186,6 +186,12 @@ SOURCE_LEVEL_TESTS=(
     # (l2_mode toggle, fleet-order, clear-stale) MUST stay on central
     # command per Maya rule.
     "tests/test_partner_fleet_appliances_no_mutation.py"
+    # RT21 cross-org site relocate contract (2026-05-05). Pins:
+    # 6 lifecycle events in ALLOWED_EVENTS, flag-flip event INTENTIONALLY
+    # absent (Marcus FK finding), feature-flag gate before mutations,
+    # pinned email attribution, race-guard on execute, owner-transfer
+    # interlock, BAA precondition, no plaintext token leak, mig CHECKs.
+    "tests/test_cross_org_relocate_contract.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
