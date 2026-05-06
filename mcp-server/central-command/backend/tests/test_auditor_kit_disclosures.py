@@ -64,9 +64,18 @@ def test_chain_json_uses_dynamic_disclosure_list():
         "Could not find `\"disclosures\": [...]` block in evidence_chain.py."
     )
     disclosures_block = m.group(1)
-    assert "_collect_security_advisories()" in disclosures_block, (
+    # Round-table 2026-05-06 (Steve P3): _collect_security_advisories()
+    # is now called ONCE at function entry and cached as
+    # `_advisories_cache`. The disclosures projection iterates the
+    # cached result. Either pattern (direct call OR cached
+    # iteration) satisfies the dynamic-list invariant — what's
+    # forbidden is a hardcoded list of advisory dicts.
+    has_dynamic_call = "_collect_security_advisories()" in disclosures_block
+    has_cached_iter = "_advisories_cache" in disclosures_block
+    assert has_dynamic_call or has_cached_iter, (
         "The disclosures list in chain.json must iterate "
-        "_collect_security_advisories() — not be a hardcoded list. "
+        "_collect_security_advisories() (or its cached alias "
+        "_advisories_cache) — not be a hardcoded list. "
         "Hardcoding misses newer advisories."
     )
 
@@ -74,13 +83,28 @@ def test_chain_json_uses_dynamic_disclosure_list():
 def test_zip_writes_disclosure_files():
     """download_auditor_kit must write each advisory's markdown under
     disclosures/<filename> in the ZIP. Otherwise the chain.json metadata
-    points at filenames not present in the kit."""
+    points at filenames not present in the kit.
+
+    Round-table 2026-05-06 (Coach P1-2): writes go through the
+    deterministic _kit_zwrite helper, so the literal-string
+    'zf.writestr(f"disclosures/' no longer appears. Accept either
+    `zf.writestr(...disclosures/...)` (legacy) OR
+    `_zwrite(zf, f"disclosures/..."` / `_kit_zwrite(zf, f"disclosures/..."`
+    (deterministic-helper)."""
     src = _read_evidence_chain()
-    assert 'zf.writestr(f"disclosures/' in src or "zf.writestr(f'disclosures/" in src, (
-        "download_auditor_kit doesn't write to disclosures/ in the ZIP. "
-        "The chain.json metadata references disclosures/<filename> — "
-        "those files MUST exist in the kit or the auditor kit ships "
-        "broken references."
+    patterns = (
+        'zf.writestr(f"disclosures/',
+        "zf.writestr(f'disclosures/",
+        '_zwrite(zf, f"disclosures/',
+        "_zwrite(zf, f'disclosures/",
+        '_kit_zwrite(zf, f"disclosures/',
+        "_kit_zwrite(zf, f'disclosures/",
+    )
+    assert any(p in src for p in patterns), (
+        "download_auditor_kit doesn't write to disclosures/ in the "
+        "ZIP. The chain.json metadata references disclosures/"
+        "<filename> — those files MUST exist in the kit or the "
+        "auditor kit ships broken references."
     )
 
 
