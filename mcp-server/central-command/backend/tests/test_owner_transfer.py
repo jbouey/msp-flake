@@ -287,25 +287,42 @@ def test_emails_use_neutral_legal_language():
 def test_email_subject_uses_anti_spam_phrasing():
     """Adam: subject line must avoid "ownership transfer" verbatim
     in the subject (some MSP-managed domains spam-filter on it).
-    Body is fine. Use 'Account access change request' as subject."""
+    2026-05-06 task #42 update: subjects are now opaque (no
+    {org_name} interpolation) per RT21 v2.3 counsel posture and
+    opaque-mode email parity. Anti-spam constraint preserved —
+    the new subjects say "account access" instead of "ownership
+    transfer", which still bypasses the spam-filter trigger word."""
     src = _read(_BACKEND / "client_owner_transfer.py")
     # Both _send_target_accept_email and _send_initiator_confirmation_email
-    # should subject as "Account access change request: {org_name}"
-    assert '"Account access change request: {org_name}"' in src or \
-           '"Account access change request:' in src, (
-        "Email subject pattern not found — Adam P3 anti-spam ratchet."
+    # subjects must contain "account access" and must NOT say
+    # "ownership transfer" (the original anti-spam ban) and must NOT
+    # interpolate {org_name} (the opaque-mode harmonization).
+    assert '"OsirisCare: account access change request initiated"' in src, (
+        "Initiator confirmation subject not found — opaque-mode "
+        "anti-spam phrasing required."
+    )
+    assert '"OsirisCare: action required — account access proposal"' in src, (
+        "Target accept subject not found — opaque-mode anti-spam "
+        "phrasing required."
     )
     # Banned phrasing in subject (body is fine)
     fn_starts = [
         src.find("def _send_target_accept_email("),
         src.find("def _send_initiator_confirmation_email("),
     ]
+    import re
     for fn_start in fn_starts:
         assert fn_start >= 0
-        fn_body = src[fn_start:fn_start + 3000]
-        # The actual `await send_email(target, SUBJECT, body)` call —
-        # SUBJECT is f-string positional 2.
-        # Just verify the canonical subject pattern is in the function body.
-        assert "Account access change request" in fn_body, (
-            "Subject pattern missing from email helper."
+        # Bound the window to this helper's body only — stop at the
+        # next `def `/`async def ` so docstrings of unrelated
+        # functions don't leak into the search.
+        end_match = re.search(r"\n(async )?def ", src[fn_start + 10:])
+        fn_end = fn_start + 10 + end_match.start() if end_match else len(src)
+        fn_body = src[fn_start:fn_end]
+        assert "account access" in fn_body, (
+            "Anti-spam subject pattern (account access) missing."
+        )
+        assert "ownership transfer" not in fn_body.lower(), (
+            "Banned spam-trigger phrase 'ownership transfer' found "
+            "in email helper body — Adam P3 anti-spam ratchet."
         )
