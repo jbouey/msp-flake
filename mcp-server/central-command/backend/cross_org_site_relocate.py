@@ -30,12 +30,17 @@ Endpoints (mounted at /api/admin/cross-org-relocate/):
   POST   /{id}/execute               — Osiris admin (after cooling-off)
   POST   /{id}/cancel                — any of the 3 actors
   GET    /{id}                       — visibility (admin)
-  POST   /enable-feature             — Patricia attested-flag flip
+  POST   /propose-enable             — first admin: propose flag flip
+  POST   /approve-enable             — second admin (must differ):
+                                       approve + flip flag enabled.
+                                       Reason >=40 chars carries the
+                                       outside-counsel opinion identifier.
 
 Feature-flag-gated. The flag itself is in feature_flags (Migration 281)
-and toggling it requires its own Ed25519 attestation (≥40-char reason
-including the legal-opinion identifier). Until counsel signs off and
-the flag flips, every endpoint here returns 503.
+and toggling it requires the dual-admin propose+approve sequence
+(Migration 282 — counsel governance hardening 2026-05-06; DB CHECK
+enforces approver != proposer). Until counsel signs off and both
+admins flip the flag, every endpoint here returns 503.
 """
 from __future__ import annotations
 
@@ -82,8 +87,9 @@ FLAG_NAME = "cross_org_site_relocate"
 # ─────────────────────────────────────────────────────────────────
 # Feature-flag gate. Patricia RT21 (2026-05-05): every endpoint
 # checks this before doing anything. Until outside-counsel BAA review
-# returns + an admin flips the flag through `/enable-feature`, the
-# endpoints return 503 with an actionable message.
+# returns AND two distinct admins complete the dual-admin sequence
+# (/propose-enable + /approve-enable, mig 282 governance hardening),
+# the endpoints return 503 with an actionable message.
 # ─────────────────────────────────────────────────────────────────
 
 
@@ -102,10 +108,12 @@ async def _require_feature_enabled(conn) -> None:
             status_code=503,
             detail=(
                 "Cross-org site relocate is pending outside-counsel BAA "
-                "review. Endpoint disabled. The feature flag flips via "
-                "POST /api/admin/cross-org-relocate/enable-feature, which "
-                "itself requires Ed25519 attestation referencing the "
-                "counsel sign-off."
+                "review. Endpoint disabled. To enable, two distinct "
+                "admins must POST /api/admin/cross-org-relocate/"
+                "propose-enable (operational trigger) followed by POST "
+                "/approve-enable (legal-opinion identifier in the "
+                ">=40-char reason field). DB CHECK enforces approver != "
+                "proposer."
             ),
         )
 
@@ -277,13 +285,18 @@ async def _check_no_pending_owner_transfers(
 
 async def _check_target_org_baa(conn, target_org_id: str) -> None:
     """Steve mit 5: target client_org MUST have baa_on_file=true. The
-    receiving BAA governs PHI handling once the site moves — without
-    one on file, the move would create an uncovered-disclosure event.
+    receiving BAA governs OsirisCare's receipt + ongoing handling of
+    the site's compliance metadata under the target's compliance
+    program. Without an active BAA on file the receive side cannot
+    proceed.
 
-    NOTE: this is a receive-side check. The substrate's BAA WITH the
-    receiving org is the governing instrument; per RT21 Marcus,
-    §164.504(e) BA-to-BA transfer rules don't apply because Osiris is
-    the same BA on both sides."""
+    NOTE on §164.504(e): the legal test is whether each governing BAA
+    permits the use/access pattern that occurs during and after a
+    cross-org relocate, regardless of whether the vendor is the same.
+    The target-org BAA's permitted-use clause is what licenses the
+    receive-side activity; this check verifies that BAA is in force.
+    See `.agent/plans/21-counsel-briefing-packet-2026-05-06.md` §2 Q1
+    (v2 framing)."""
     row = await conn.fetchrow(
         "SELECT baa_on_file FROM client_orgs WHERE id = $1::uuid",
         target_org_id,

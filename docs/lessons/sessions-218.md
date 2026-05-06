@@ -223,15 +223,28 @@ disclosure-accounting integrity is on the line. Runbook at
 ### Counsel preconditions (legal review, async, multi-day)
 
 The flag stays disabled until outside HIPAA counsel signs off on:
-1. §164.504(e) BA-to-BA inapplicability under same-substrate-BA.
-2. §164.528 disclosure-accounting under chain immutability.
+1. §164.504(e) permitted-use scope under both source-org and target-org
+   BAAs (regardless of vendor identity). This was originally framed as
+   "BA-to-BA inapplicability under same-substrate-BA" in the v1 packet
+   but counsel's adversarial review (2026-05-06) flagged that framing
+   as attackable; v2 reframes as permitted-use scope under each BAA.
+2. §164.528 substantive completeness + retrievability of the disclosure
+   accounting record (originally framed as "chain immutability is
+   stronger than the standard"; counsel's correction: the legal test is
+   content + producibility, not log tamper-resistance).
 3. Receiving-org BAA scope (does the standard substrate-BAA cover
-   "site relocations from prior orgs" or is an addendum required).
+   received clinics from prior orgs, or is successor / continuity /
+   addendum language required — counsel's likely commercial choke point).
+4. (NEW v2) Opaque-mode email defaults — confirm the cheap safer
+   alternative (no clinic/org names in email plaintext) is acceptable,
+   or direct us to ship verbose-mode templates instead.
 
 When counsel returns, the legal-opinion identifier goes in the ≥40-char
-`enable_reason` field at flag-flip time. The feature_flags row becomes
-the cryptographic record of "feature went from disabled to enabled at
-time T by actor X with legal opinion Y."
+`enable_reason` field at flag-flip time. After mig 282 + the
+counsel-revision split (commit f2bba323), this is the APPROVER's reason
+field; the proposer's separate ≥20-char reason captures the operational
+trigger. Two distinct admin attestations are required and the schema
+CHECK enforces approver != proposer at the DB layer.
 
 ---
 

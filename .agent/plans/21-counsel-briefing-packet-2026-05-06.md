@@ -240,28 +240,46 @@ Six lifecycle events, each Ed25519-signed + chain-linked + OTS-anchored.
   infrastructure wires (Phase 3).
 
 - **Flag-flip itself as a privileged action.** The feature-flag toggle
-  is not a free env-var flip. The `feature_flags` table requires
-  `enable_reason` ≥40 characters AND `enabled_by_email` AND
-  `enabled_at` — enforced at the database CHECK constraint. The
-  ≥40-char requirement is where YOUR opinion identifier goes:
+  is not a free env-var flip. Per §3.5 below, it requires TWO distinct
+  admins (propose + approve). The approver's `enable_reason` ≥40
+  characters carries your opinion identifier; the proposer's
+  `enable_proposed_reason` ≥20 characters carries the operational
+  trigger. Both are enforced at the database CHECK constraint, and the
+  approver-must-differ-from-proposer rule is also enforced at the
+  schema layer:
 
 ```
-POST /api/admin/cross-org-relocate/enable-feature
-Authorization: Bearer <Osiris admin token>
+# Step 1 — first admin proposes
+POST /api/admin/cross-org-relocate/propose-enable
+Authorization: Bearer <Osiris admin #1 token>
+Content-Type: application/json
+
+{
+  "reason": "Q3-2026 hospital-network acquisition customer (NEPA-Health) \
+            signed receiving-org BAA addendum 2026-XX-XX; ready to enable \
+            cross-org relocate for that engagement."
+}
+
+# Step 2 — second (DIFFERENT) admin approves; flag flips to enabled
+POST /api/admin/cross-org-relocate/approve-enable
+Authorization: Bearer <Osiris admin #2 token>
 Content-Type: application/json
 
 {
   "reason": "Outside-counsel HIPAA opinion 2026-XX-XX, doc-ID YYYYY: \
-            cross-org relocate covered under substrate-class BAA per \
-            §164.504(e) BA-to-BA inapplicability; §164.528 disclosure \
-            accounting satisfied via triple-source attestation chain."
+            permitted scope under both source-org and target-org BAAs \
+            confirmed (§164.504(e)); §164.528 substantive accounting + \
+            production posture confirmed; opaque-mode email defaults \
+            accepted; dual-admin governance accepted."
 }
 ```
 
-After the flip, the row in `feature_flags` carries this reason
+After the approval, the row in `feature_flags` carries BOTH reasons
 permanently (the table is append-only via DELETE trigger). An auditor
-reading the substrate state can recover WHY the feature was enabled,
-WHO enabled it, and WHEN.
+reading the substrate state can recover WHO proposed, WHO approved
+(must differ), WHEN each step happened, the OPERATIONAL trigger
+(proposer's reason), and the LEGAL AUTHORITY (approver's reason
+referencing your opinion).
 
 ### Marcus's adversarial finding closures (regulatory engineer)
 
