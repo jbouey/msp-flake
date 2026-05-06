@@ -155,12 +155,17 @@ the platform relies on.
 ### SQL: per-site mesh status
 
 Open a short-lived `psql` shell inside the running mcp-server
-container (it has the `DATABASE_URL` env var already set
-correctly). Use `psql` rather than ad-hoc Python — the connection
-string is a single line, no string-replacement gymnastics needed:
+container. The container's `DATABASE_URL` env var is already set
+correctly; use the form that does NOT echo the URL into your
+local shell history:
 
 ```bash
-docker exec -it mcp-server bash -lc 'psql "$DATABASE_URL"'
+# Drop into an interactive container shell first, then run psql
+# inside it. This keeps DATABASE_URL out of the LOCAL .bash_history
+# (Steve sec-2nd-eye review 2026-05-06).
+docker exec -it mcp-server bash
+# now inside the container:
+psql "$DATABASE_URL"
 ```
 
 ```sql
@@ -272,7 +277,18 @@ order of likelihood:
    ip neigh show | grep -E "<peer_subnet_prefix>"
    ```
 
-4. **Cross-subnet peers — backend delivery.** The checkin response
+4. **WireGuard logs.** The systemd unit name on NixOS appliances
+   should be `wg-quick-wg0.service` OR `wg-quick@wg0.service`
+   depending on how the NixOS module was wired. If the first
+   command returns "unit not found," try the others:
+
+   ```bash
+   journalctl -u wg-quick-wg0 -n 50 --no-pager 2>/dev/null \
+     || journalctl -u wg-quick@wg0 -n 50 --no-pager 2>/dev/null \
+     || systemctl list-units --type=service | grep -i wireguard
+   ```
+
+5. **Cross-subnet peers — backend delivery.** The checkin response
    carries peer info for cross-subnet meshes. Confirm the log line:
 
    ```bash
@@ -314,28 +330,52 @@ Should return `0`. If still > 0 after 2 minutes, proceed to Step 5.
 
 ### Step 5: Restart the daemon (last resort)
 
+> **SSH posture:** SSH to the appliance MUST go through the
+> documented bastion + WireGuard hub (see `.agent/reference/NETWORK.md`).
+> The bastion enforces MFA for the admin user; never SSH directly
+> from your workstation. If you don't see the appliance via the
+> bastion, the WireGuard tunnel is probably down — that's a
+> different incident class (network-down) and Step 5 won't help.
+
 ```bash
-ssh root@<appliance_wg_ip>
+ssh root@<appliance_wg_ip>          # via bastion + WG hub only
 systemctl restart appliance-daemon
 ```
 
 Triggers full peer re-discovery on startup. **Capture an audit
-trail entry** since this is a substrate-class state change:
+trail entry** since this is a substrate-class state change. Use
+psql variable-substitution so a tired 2am responder doesn't paste
+literal `<your-admin-uuid>` strings (which would silently fail the
+INSERT and leave NO audit row):
+
+```bash
+docker exec -it mcp-server bash    # then run psql below
+psql "$DATABASE_URL"
+```
 
 ```sql
+-- Substitute values at the top, then run the INSERT. psql will
+-- error fast with "invalid UUID" if you forget — better than a
+-- silent SQL error that leaves no audit trail.
+\set admin_uuid 'XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX'
+\set admin_email 'on-call@osiriscare.io'
+\set appliance_id 'site-foo-AABBCCDDEEFF'
+\set incident_ref 'PD-12345'
+\set bastion_ip '<bastion-source-ip>'
+
 INSERT INTO admin_audit_log (
     user_id, username, action, target, details, ip_address
 )
 VALUES (
-    '<your-admin-uuid>'::uuid,
-    '<your-admin-email>',
+    :'admin_uuid'::uuid,
+    :'admin_email',
     'mesh_incident_daemon_restart',
-    'site_appliance:<appliance_id>',
+    'site_appliance:' || :'appliance_id',
     jsonb_build_object(
         'reason', 'mesh ring drift unresolved after force_checkin',
-        'incident_ref', '<your-pager-incident-id>'
+        'incident_ref', :'incident_ref'
     ),
-    '<bastion-ip>'
+    :'bastion_ip'
 );
 ```
 
@@ -479,7 +519,18 @@ no coverage hole).
 > to do so makes the UPDATE either fail (with the row-guard
 > trigger active) OR succeed but leave an unaudited mass-mutation.
 
+Use psql variable-substitution so the placeholders don't ride
+through into the actual SQL — Postgres will error fast on missing
+substitutions instead of silently leaving an audit row with literal
+`<your-admin-uuid>` text.
+
 ```sql
+\set admin_uuid 'XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX'
+\set admin_email 'on-call@osiriscare.io'
+\set site_id 'north-valley-branch-2'
+\set incident_ref 'PD-12345'
+\set bastion_ip '<bastion-source-ip>'
+
 BEGIN;
 SET LOCAL app.allow_multi_row = 'true';
 
@@ -488,21 +539,21 @@ INSERT INTO admin_audit_log (
     user_id, username, action, target, details, ip_address
 )
 VALUES (
-    '<your-admin-uuid>'::uuid,
-    '<your-admin-email>',
+    :'admin_uuid'::uuid,
+    :'admin_email',
     'mesh_incident_single_appliance_fallback',
-    'site:<site>',
+    'site:' || :'site_id',
     jsonb_build_object(
         'reason', 'target_orphan unresolved; falling back to single-appliance scan to close coverage hole',
-        'incident_ref', '<your-pager-incident-id>',
+        'incident_ref', :'incident_ref',
         'expected_recovery', 'within 30 min after fix is deployed; revert via re-issuing force_checkin once mesh is restored'
     ),
-    '<bastion-ip>'
+    :'bastion_ip'
 );
 
 UPDATE site_appliances
    SET assigned_targets = NULL
- WHERE site_id = '<site>'
+ WHERE site_id = :'site_id'
    AND deleted_at IS NULL;
 
 COMMIT;
@@ -694,9 +745,29 @@ when network-class is suspected.
 
 ## 12. Change log
 
-- **2026-05-06** — adversarial audit + Maya 2nd-eye + production fix.
+- **2026-05-06 (v2.1)** — post-fix round-table 2nd-eye. After v2
+  shipped (commit 2ebeeffb), a process check identified that the
+  rewrite itself had not been adversarially reviewed. Re-convened
+  Sam/Carol/Dana/Adam/Steve/Maya on the SHIPPED commit. Two sev1
+  claims surfaced were FALSE ALARMS (the agent missed
+  `ALTER TABLE discovered_devices ADD COLUMN site_id` from mig 080
+  and the parallel `device_status` add from mig 096). Five real
+  hardenings applied:
+    - §3 quick-health command reworked to drop into container shell
+      first, keeping `DATABASE_URL` out of local bash history (Steve)
+    - §4 Step 2 + §5 added WireGuard systemd unit fallbacks for
+      NixOS variants (`wg-quick-wg0` vs `wg-quick@wg0`) (Carol)
+    - §4 Step 5 + §6 Step 4 audit-INSERTs converted to psql
+      `\set` variable-substitution pattern so a 2am responder
+      pasting placeholders gets a fast error instead of a silent
+      no-audit-row failure (Sam + Steve)
+    - §4 Step 5 SSH callout requires bastion + WG hub (MFA-gated)
+      with a clarifying note (Steve)
+    - §12 change log gained the RT-ticket / commit-reference
+      pattern for full traceability (Maya)
+- **2026-05-06 (v2)** — adversarial audit + Maya 2nd-eye + production fix.
   Round-table found 23 issues across the v1 runbook; v2 is a full
-  rewrite addressing every finding:
+  rewrite addressing every finding (commit 2ebeeffb):
   - Production fix: `mesh_consistency_check_loop()` now filters
     `deleted_at IS NULL` on both the per-site rollup and per-
     appliance ring queries (false ring-drift class fixed).
