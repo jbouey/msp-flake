@@ -222,61 +222,90 @@ class TestPubkeyExport:
 # README + verify.sh quality
 # =============================================================================
 
+def _render_readme():
+    """Round-table 2026-05-06 T1.1+T1.4 migration: README is now
+    rendered through the Jinja2 template registry, not stored as
+    an in-source `.format()` string. Tests check the RENDERED
+    output (catches dynamic copy + escapes the `{bundle_id}`
+    bug class permanently)."""
+    import sys, pathlib as _pl
+    backend = _pl.Path(__file__).resolve().parent.parent
+    if str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    from templates import render_template
+    return render_template(
+        "auditor_kit/README",
+        site_id="site-x",
+        clinic_name="Clinic Y",
+        generated_at="2026-05-06T00:00:00+00:00",
+        presenter_brand="OsirisCare",
+        presenter_contact_line="",
+    )
+
+
+def _render_verify_sh():
+    import sys, pathlib as _pl
+    backend = _pl.Path(__file__).resolve().parent.parent
+    if str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    from templates import render_template
+    return render_template("auditor_kit/verify_sh")
+
+
 class TestKitDocs:
+    """Round-table 2026-05-06 T1.4 migration: tests assert against
+    RENDERED output of the Jinja2 templates, not source-greps of
+    in-file constants. Catches dynamic copy that source-greps miss
+    + structurally retires the `.format()`-template-drift class."""
+
     def test_readme_template_exists(self):
-        src = _load()
-        assert "_AUDITOR_KIT_README" in src
-        # White-label bump: the README title is now templated on
-        # {presenter_brand} (partner brand, falls back to OsirisCare when
-        # the site has no partner). OsirisCare remains the cryptographic
-        # substrate attribution referenced inside the body copy.
-        assert ("{presenter_brand} Compliance Evidence" in src
-                or "OsirisCare Compliance Evidence" in src)
-        # Substrate attribution must still be visible somewhere in the
-        # README template — auditors need to know who signed.
-        assert "OsirisCare" in src
+        readme = _render_readme()
+        # White-label bump: the README title is templated on
+        # {{ presenter_brand }} (partner brand, falls back to
+        # OsirisCare when the site has no partner). OsirisCare
+        # remains the cryptographic substrate attribution referenced
+        # inside the body copy.
+        assert "OsirisCare Compliance Evidence" in readme
+        # Substrate attribution must still be visible somewhere in
+        # the rendered README — auditors need to know who signed.
+        assert "OsirisCare" in readme
 
     def test_readme_explains_what_success_looks_like(self):
-        src = _load()
-        assert "What success looks like" in src
+        readme = _render_readme()
+        assert "What success looks like" in readme
 
     def test_readme_documents_known_limitations(self):
         """Honesty about what the kit can't verify is the credibility
         difference vs. compliance-fraud platforms."""
-        src = _load()
-        assert "Known limitations" in src
-        assert "pending" in src.lower()
-        assert "legacy" in src.lower()
+        readme = _render_readme()
+        assert "Known limitations" in readme
+        assert "pending" in readme.lower()
+        assert "legacy" in readme.lower()
 
     def test_readme_explains_disclosures(self):
-        src = _load()
-        assert "Disclosures" in src
+        readme = _render_readme()
+        assert "Disclosures" in readme
 
     def test_verify_sh_exists(self):
-        src = _load()
-        assert "_AUDITOR_KIT_VERIFY_SH" in src
+        verify = _render_verify_sh()
+        assert verify.startswith("#!/usr/bin/env bash")
+        assert "OsirisCare auditor verification kit" in verify
 
     def test_verify_sh_uses_no_network_calls_to_osiriscare(self):
         """The verifier MUST NOT phone home — that would defeat the
         whole point of independent verification."""
-        src = _load()
-        # Find the verify.sh template body
-        idx = src.find("_AUDITOR_KIT_VERIFY_SH")
-        assert idx != -1
-        # Walk forward to the end of the triple-quoted block
-        end = src.find("'''", idx + 100)
-        verify_sh = src[idx:end] if end != -1 else src[idx:idx + 6000]
-        assert "osiriscare.net" not in verify_sh
-        assert "api.osiriscare" not in verify_sh
+        verify = _render_verify_sh()
+        assert "osiriscare.net" not in verify
+        assert "api.osiriscare" not in verify
 
     def test_verify_sh_runs_ed25519_verification(self):
-        src = _load()
-        assert "Ed25519PublicKey" in src
+        verify = _render_verify_sh()
+        assert "Ed25519PublicKey" in verify
 
     def test_verify_sh_walks_hash_chain(self):
-        src = _load()
-        assert "chain link broken" in src or "chain_pass" in src
+        verify = _render_verify_sh()
+        assert "chain link broken" in verify or "chain_pass" in verify
 
     def test_verify_sh_calls_ots_verify(self):
-        src = _load()
-        assert "ots verify" in src
+        verify = _render_verify_sh()
+        assert "ots verify" in verify

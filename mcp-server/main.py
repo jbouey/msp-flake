@@ -1627,6 +1627,39 @@ async def lifespan(app: FastAPI):
             exc_info=True,
         )
 
+    # Customer-facing template boot smoke (T1.2 round-table 2026-05-06).
+    # Renders every registered template (auditor-kit README, verify.sh,
+    # verify_identity.sh) with sentinel kwargs. Fails fast and ABORTS
+    # container start if any template is malformed (e.g. stray
+    # placeholder a la the `{bundle_id}` outage). Surfaces the bug
+    # class at deploy verification, not at the customer's first
+    # download. This is FAIL-CLOSED — uvicorn must not start serving
+    # customer requests with a known-broken template.
+    try:
+        from dashboard_api.templates import run_boot_smoke, BootSmokeFailure
+        passed, _failed = run_boot_smoke()
+        logger.info(
+            "customer_template_boot_smoke_ok",
+            extra={"templates_passed": len(passed), "names": passed},
+        )
+    except BootSmokeFailure as e:
+        logger.error(
+            "customer_template_boot_smoke_failed — REFUSING TO START",
+            exc_info=True,
+            extra={"error_msg": str(e)[:500]},
+        )
+        # Fail-closed: re-raise so uvicorn aborts container start.
+        # The 14-regression session of 2026-05-06 motivated this gate.
+        raise
+    except Exception as e:
+        logger.error(
+            f"customer_template_boot_smoke_unexpected_error: {e} — "
+            f"REFUSING TO START to avoid serving customer requests "
+            f"under unknown-template-state.",
+            exc_info=True,
+        )
+        raise
+
     # Verify exception + delegation tables exist. These used to be
     # created ad-hoc at startup, but the app pool (mcp_app via PgBouncer)
     # lacks CREATE on schema public, so the calls always failed with

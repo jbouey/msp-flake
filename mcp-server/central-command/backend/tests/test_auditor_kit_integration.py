@@ -332,53 +332,37 @@ def test_production_readme_carries_firm_complaint_sla():
     Inverse caveat: a *backed* SLA must stay firm — softening it
     back to ambiguity once the inbox is wired wastes the
     operational commitment. This gate enforces the firm posture."""
-    import pathlib as _pl
-    evidence_chain_path = (
-        _pl.Path(__file__).resolve().parent.parent / "evidence_chain.py"
-    )
-    src = evidence_chain_path.read_text()
-    # Sanity: locate the README template embedded in evidence_chain.py
-    readme_marker = "_AUDITOR_KIT_README"
-    assert readme_marker in src, (
-        "_AUDITOR_KIT_README template not found in evidence_chain.py"
-    )
-    # The Complaints section must reference compliance@ with the
-    # firm 7/30 commitment, not the prior best-effort softening.
-    assert "compliance@osiriscare.com" in src, (
+    # Round-table 2026-05-06 T1.4 migration: tests now check the
+    # RENDERED Jinja2 template, not the in-source `.format()` constant
+    # (deleted). Catches dynamic copy a source-grep would miss.
+    rendered = _render_readme_for_check()
+    assert "compliance@osiriscare.com" in rendered, (
         "compliance@ channel removed from kit README — Carol P1-1 "
         "regression."
     )
     assert (
-        "7 business days" in src and "30 days" in src
+        "7 business days" in rendered and "30 days" in rendered
     ), (
         "Auditor-kit README must commit to 7-business-day "
         "acknowledgment + 30-day substantive-response targets "
-        "(user-confirmed operational commitment 2026-05-06). A "
-        "softening back to 'best-effort' wastes the wired-inbox "
-        "operational state."
+        "(user-confirmed operational commitment 2026-05-06)."
     )
-    # The §164.524 alignment is the auditor-recognizable peg —
-    # don't drop it.
-    assert "§164.524" in src, (
+    assert "§164.524" in rendered, (
         "§164.524 alignment dropped from Complaints SLA — auditors "
         "rely on this peg to read our 30-day target as standards-"
         "aligned, not arbitrary."
     )
     # Defense against silent regression to best-effort wording.
-    assert "best-effort acknowledgment" not in src, (
+    assert "best-effort acknowledgment" not in rendered, (
         "Auditor-kit README still carries 'best-effort "
         "acknowledgment' softening; user confirmed inbox is wired "
         "with firm 7/30 SLA — update the README to match."
     )
-    # Banned-words sweep on the new copy.
+    rendered_low = rendered.lower()
     for banned in ("ensures", "guarantees", "audit-ready"):
-        readme_idx = src.find(readme_marker)
-        readme_end = src.find('"""', readme_idx + len(readme_marker))
-        readme_end = src.find('"""', readme_end + 3) + 3
-        readme_block = src[readme_idx:readme_end].lower()
-        assert banned not in readme_block, (
-            f"Banned legal-language word '{banned}' present in kit "
-            f"README (CLAUDE.md Session 199 hard rule)."
+        assert banned not in rendered_low, (
+            f"Banned legal-language word '{banned}' present in "
+            f"rendered kit README (CLAUDE.md Session 199 hard rule)."
         )
 
 
@@ -447,122 +431,113 @@ _README_ALLOWED_PLACEHOLDERS = frozenset({
 })
 
 
-def _load_real_readme_template() -> str:
-    import pathlib as _pl
-    src = (_pl.Path(__file__).resolve().parent.parent / "evidence_chain.py").read_text()
-    marker = "_AUDITOR_KIT_README = "
-    # Coach P3 belt-and-suspenders (round-table 2026-05-06): assert
-    # the marker is unique. If a future docstring or comment
-    # accidentally contains "_AUDITOR_KIT_README = " above the real
-    # assignment, the prior find() would grab the wrong block.
-    occurrences = src.count(marker)
-    assert occurrences == 1, (
-        f"_AUDITOR_KIT_README marker appears {occurrences} times in "
-        f"evidence_chain.py — the helper relies on a unique marker. "
-        f"Either rename the duplicate occurrence or change the "
-        f"marker to something more specific."
-    )
-    start = src.find(marker)
-    assert start > 0, "_AUDITOR_KIT_README marker not found"
-    # Triple-quoted block starts right after the marker
-    open_quote = src.find('"""', start)
-    close_quote = src.find('"""', open_quote + 3)
-    assert open_quote > 0 and close_quote > open_quote
-    # Sanity: the template should start with the README's H1 banner.
-    body = src[open_quote + 3 : close_quote]
-    assert body.lstrip().startswith("# "), (
-        "Loaded README template doesn't start with `# ` — the marker "
-        "may have grabbed the wrong block."
-    )
-    return body
-
-
-def test_real_readme_template_formats_without_keyerror():
-    """The production _AUDITOR_KIT_README must format() cleanly
-    when given the same kwargs the endpoint passes. A KeyError
-    here would surface as a 500 on every customer download — the
-    exact regression that took down the kit on 2026-05-06."""
-    template = _load_real_readme_template()
-    # Production kwargs (matches `download_auditor_kit` call site).
-    rendered = template.format(
+def _render_readme_for_check() -> str:
+    """Round-table 2026-05-06 T1.4: README is now a Jinja2 template
+    at backend/templates/auditor_kit/README.md.j2 (the in-source
+    `.format()` constant was deleted as the architectural fix for
+    the 14-regression class). Tests render via the registry and
+    assert against the rendered output — catches dynamic copy
+    that source-grep would miss."""
+    import sys, pathlib as _pl
+    backend = _pl.Path(__file__).resolve().parent.parent
+    if str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    from templates import render_template
+    return render_template(
+        "auditor_kit/README",
         site_id="north-valley-branch-2",
         clinic_name="North Valley Branch 2",
         generated_at="2026-05-06T00:00:00+00:00",
         presenter_brand="OsirisCare",
         presenter_contact_line="",
     )
+
+
+def _load_real_readme_template() -> str:
+    """Load the raw Jinja2 template TEXT (pre-render). Used by the
+    placeholder-allowlist scan to validate the template doesn't
+    introduce stray `{var}` references that StrictUndefined would
+    reject. Round-table 2026-05-06: source-grep into evidence_chain.py
+    retired; this now reads the .j2 file directly."""
+    import pathlib as _pl
+    p = (
+        _pl.Path(__file__).resolve().parent.parent
+        / "templates" / "auditor_kit" / "README.md.j2"
+    )
+    assert p.exists(), f"Template file not found: {p}"
+    body = p.read_text()
+    assert body.lstrip().startswith("# "), (
+        "Template doesn't start with `# ` — wrong file?"
+    )
+    return body
+
+
+def test_real_readme_template_formats_without_keyerror():
+    """The production README template (now Jinja2 with
+    StrictUndefined) must render cleanly when given the same
+    kwargs the endpoint passes. An UndefinedError here would
+    surface as a 500 on every customer download — the exact
+    regression class that took down the kit on 2026-05-06."""
+    rendered = _render_readme_for_check()
     # Must produce non-empty output.
     assert len(rendered) > 1000, (
         "Rendered README is suspiciously short — did the template "
-        "swallow itself in a stray placeholder?"
+        "swallow itself?"
     )
 
 
 def test_readme_template_has_only_allowed_placeholders():
-    """Static defense: scan the template for `{name}`-shaped
-    placeholders and ensure each is in the allowlist. Rejects
-    `{bundle_id}` and similar stray references that would crash
-    .format() at customer-download time. Render example shell
-    snippets like `{bundle_id}.ots` must be escaped as
-    `{{bundle_id}}` so the template emits the literal text.
+    """Static defense: scan the Jinja2 template for `{{ name }}`-
+    shaped placeholders and ensure each is in the allowlist.
+    Round-table 2026-05-06 T1.1 migration: the template now uses
+    Jinja2 syntax (`{{ var }}`) instead of `.format()` (`{var}`).
 
-    Round-table 2026-05-06 §7 hardening: Maya called out three
-    false-negative seams in the prior regex —
-      (a) whitespace inside braces (`{ bundle_id }`) was skipped;
-      (b) numeric/positional placeholders (`{0}`, `{}`) were
-          skipped (would raise IndexError on .format());
-      (c) format-spec on names (`{site_id:>40}`) was skipped.
-    All three are now covered: regex matches whitespace + numeric
-    + format-spec variants, then we extract the bare name and
-    cross-check against the allowlist."""
+    The single-brace bug class (`{bundle_id}`, JSON example
+    `{...}`) is now structurally impossible — Jinja2 doesn't
+    interpret single braces as placeholders. This test instead
+    pins the DOUBLE-brace placeholder set against the allowlist
+    so a future PR can't add a `{{ bundle_id }}` reference without
+    matching it to a render-time kwarg + boot-smoke sentinel."""
     import re
     template = _load_real_readme_template()
-    # Match {anything} that isn't {{escaped}}, including:
-    #   - whitespace inside the braces
-    #   - numeric/positional ({0}, {}) — those are forbidden
-    #   - format-spec ({name:>40}) — bare name extracted
-    #   - subscript ({name[expr]}) — bare name extracted
-    placeholder_re = re.compile(r"(?<!\{)\{([^{}]*)\}(?!\})")
-    forbidden_names: list[str] = []
-    bare_name_re = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)(?:\[[^\]]*\])?(?::[^}]*)?$")
+    # Jinja2 expression delimiters: `{{ ... }}`. Strip whitespace,
+    # strip filters (`{{ name | filter }}`), keep bare name.
+    placeholder_re = re.compile(r"\{\{\s*([^{}|]+?)(?:\s*\|[^}]+)?\s*\}\}")
+    found_names = set()
     for raw in placeholder_re.findall(template):
-        # (a) whitespace-padded names — .format() rejects these.
-        if raw != raw.strip():
-            forbidden_names.append(repr(raw))
-            continue
-        # (b) bare positional ({}) or numeric ({0}, {1}) — forbidden.
-        if raw == "" or raw.isdigit():
-            forbidden_names.append(repr(raw or "<empty {}>"))
-            continue
-        m = bare_name_re.match(raw)
-        if not m:
-            forbidden_names.append(repr(raw))
-            continue
-        bare_name = m.group(1)
-        if bare_name not in _README_ALLOWED_PLACEHOLDERS:
-            forbidden_names.append(bare_name)
-
-    assert not forbidden_names, (
-        f"README template references forbidden placeholder(s): "
-        f"{sorted(set(forbidden_names))}. Either add the bare name "
-        f"to _README_ALLOWED_PLACEHOLDERS AND pass the kwarg in "
-        f"download_auditor_kit's _AUDITOR_KIT_README.format(...) "
-        f"call, OR escape as `{{{{name}}}}` to render the literal "
-        f"text. The 2026-05-06 production outage was a stray "
-        f"`{{bundle_id}}` here."
+        # Bare name only — strip subscript / attr / filter.
+        bare = re.split(r"[\[.|\s]", raw.strip(), maxsplit=1)[0]
+        if bare:
+            found_names.add(bare)
+    unknown = found_names - _README_ALLOWED_PLACEHOLDERS
+    assert not unknown, (
+        f"README template references unknown Jinja2 placeholder(s): "
+        f"{sorted(unknown)}. Either add the name to "
+        f"_README_ALLOWED_PLACEHOLDERS AND pass the kwarg in "
+        f"download_auditor_kit's render_template(...) call AND add "
+        f"to required_kwargs in templates/auditor_kit/__init__.py, "
+        f"OR remove the reference. StrictUndefined would raise "
+        f"UndefinedError on render — boot smoke would catch this."
+    )
+    # Also forbid Jinja2 control tags `{% ... %}` we haven't
+    # explicitly approved — `{% raw %}` and `{% if %}` are fine but
+    # any new tag should land via a deliberate edit + test bump.
+    control_re = re.compile(r"\{%\s*([a-z]+)")
+    allowed_tags = {"if", "endif", "else", "elif", "for", "endfor",
+                    "raw", "endraw", "set", "with", "endwith"}
+    found_tags = set(control_re.findall(template)) - allowed_tags
+    assert not found_tags, (
+        f"README template uses unknown Jinja2 control tag(s): "
+        f"{sorted(found_tags)}. Add to allowlist if intentional."
     )
 
 
 def test_rendered_readme_contains_round_table_sections():
-    """After format(), the rendered README must still have all the
-    round-table-mandated sections + SLA copy. A future 'fix' that
-    silences format() errors by deleting content (vs escaping)
-    would fail this gate."""
-    template = _load_real_readme_template()
-    rendered = template.format(
-        site_id="x", clinic_name="y", generated_at="z",
-        presenter_brand="OsirisCare", presenter_contact_line="",
-    )
+    """After render, the README must still have all the round-table-
+    mandated sections + SLA copy. A future 'fix' that silences a
+    render error by deleting content (vs investigating) would fail
+    this gate."""
+    rendered = _render_readme_for_check()
     # Carol P0-3 mandated sections.
     assert "## Scope of this kit" in rendered
     assert "## Reproducibility" in rendered

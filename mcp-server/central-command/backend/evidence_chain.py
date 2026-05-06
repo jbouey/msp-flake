@@ -4158,488 +4158,6 @@ async def export_chain_of_custody(
 # (~10MB at 10KB/bundle). Auditors who want the full chain can call
 # repeatedly with `offset`.
 
-_AUDITOR_KIT_README = """# {presenter_brand} Compliance Evidence — Auditor Verification Kit
-
-**Presented by:** {presenter_brand}{presenter_contact_line}
-**Compliance substrate:** OsirisCare (issuer of Ed25519 signing keys and
-OpenTimestamps anchors referenced in this kit)
-
-This ZIP contains everything an external auditor needs to **independently
-verify** the compliance evidence collected for this site. **No connection
-to any vendor server is required at any point.** Verification uses only
-standard open-source tools.
-
-The cryptographic attribution in this kit (public keys, signatures, OTS
-proofs) is emitted by OsirisCare's substrate — that is the entity the
-auditor confirms signed the bundles. {presenter_brand} is the partner
-that manages this site and is presenting the evidence to the auditor.
-Both identities appear in `chain.json` so there is no ambiguity.
-
-## Contents
-
-- `bundles.jsonl` — one JSON object per evidence bundle, ordered by chain
-  position. Fields: `bundle_id`, `bundle_hash` (SHA-256), `prev_hash`,
-  `chain_position`, `agent_signature` (Ed25519, hex), `ots_status`,
-  `merkle_batch_id`, `merkle_leaf_index`, `merkle_proof`, `created_at`.
-- `pubkeys.json` — every per-appliance Ed25519 public key for this site.
-  The auditor should **pin** these (note them down, store offline) and
-  verify against them — never trust a public key fetched at verification
-  time.
-- `chain.json` — chain-level metadata: site identity, genesis bundle,
-  chain length, signing rate, OTS anchor counts, BAA effective dates.
-- `ots/*.ots` — raw OpenTimestamps proof files. One file per bundle that
-  has been anchored to Bitcoin. Filename = `{{bundle_id}}.ots`.
-- `verify.sh` — bash script that runs the verification end-to-end. Reads
-  every file in this directory, checks every signature, and prints a
-  per-bundle PASS/FAIL summary.
-
-## How to verify (5 minutes)
-
-```bash
-unzip auditor-kit-*.zip
-cd auditor-kit-*/
-bash verify.sh
-```
-
-The script requires:
-- `python3` (for JSON parsing and Ed25519 verification via `cryptography`)
-- `sha256sum` (any standard coreutils)
-- `ots` (OpenTimestamps CLI) — install via `pip install opentimestamps-client`
-
-If any of these are missing, the script will print install instructions.
-
-## What success looks like
-
-A clean run prints something like:
-
-```
-[PASS] hash chain     142/142 bundles linked correctly
-[PASS] signatures     142/142 bundles verified against pinned pubkeys
-[PASS] ots proofs      89/89  bundles anchored in Bitcoin
-[INFO] legacy bundles  53     pre-anchoring period (no OTS proof expected)
-```
-
-If any line shows FAIL, the bundle in question has been altered or its
-signature does not match a known appliance public key. **Investigate any
-FAIL before signing off the audit.**
-
-## Scope of this kit
-
-This kit is a **cryptographic integrity artifact**. It is the evidence
-that the compliance bundles enumerated in `bundles.jsonl` were signed by
-the appliance keys listed in `pubkeys.json` at the times anchored by the
-OpenTimestamps proofs in `ots/`, and that the hash chain has not been
-altered since. `verify.sh` exercises that scope and nothing more.
-
-**What this kit IS:**
-
-- Cryptographic evidence of bundle integrity (Ed25519 signatures + SHA-256
-  hash chain + OpenTimestamps Bitcoin anchoring).
-- A chain-of-custody record for the compliance checks the appliance ran.
-- An offline-verifiable artifact — no vendor network access at any step.
-- Audit-supportive material that an auditor can pair with the covered
-  entity's own records.
-
-**What this kit IS NOT:**
-
-- It is **not, on its own, a §164.528 disclosure accounting**. The
-  §164.528 record of PHI disclosures (who accessed what PHI, when, to
-  whom, for what purpose) is maintained by the covered entity in its own
-  systems. This kit does not enumerate PHI access events.
-- It is **not a §164.524 right-of-access fulfillment**. Patient access
-  requests are served from the covered entity's designated record set,
-  not from this kit.
-- It is **not a §164.530(d) complaint resolution record**. Complaints
-  and their resolution are tracked by the covered entity (and, where
-  applicable, escalated per the channel below).
-- It is **not a substitute for the covered entity's audit logs, BAA
-  inventory, risk analysis, or workforce sanction records.**
-
-**Recommended pairing.** An auditor reviewing HIPAA compliance for the
-site referenced in this kit should request, from the covered entity:
-(a) the designated record set inventory; (b) the access-control audit
-log scoped to PHI systems; (c) the §164.528 disclosure accounting log;
-(d) the §164.530(d) complaint log. This kit corroborates the technical
-controls; those records corroborate the administrative and access
-controls.
-
-## Reproducibility
-
-This kit is built deterministically — embedded timestamps
-(`generated_at`) derive from the chain-head bundle's signed
-`created_at` (NOT from wall-clock), JSON keys are canonically sorted,
-ZIP entry order + mtimes + permissions are pinned, and `compresslevel`
-is fixed at zlib level 6.
-
-Two consecutive downloads of the same kit will produce **byte-identical
-ZIP archives** (matching SHA-256 hashes) when ALL of the following are
-unchanged between downloads:
-
-1. The chain head — no new compliance bundles written for this site.
-2. OpenTimestamps proof status — no `pending → anchored` transitions.
-3. The presentation snapshot — no edits to the partner's brand_name
-   or support contact between downloads.
-4. The advisory set — no new files in `docs/security/`.
-
-Auditors can use this property to detect substitution: download the
-kit, hash it, then re-download later and compare. A hash difference
-that is NOT explained by one of the four conditions above warrants
-investigation. The `chain.json["presentation"]` block records the
-exact presenter snapshot embedded in this kit so an auditor can
-distinguish a brand-update non-event from a substantive change.
-
-## Known limitations
-
-- **Pending bundles**: bundles with `ots_status = "pending"` have been
-  submitted to the OpenTimestamps calendar but not yet anchored in a
-  Bitcoin block. They are NOT counted toward the OTS verification total
-  in `verify.sh`. Wait 2-6 hours for anchoring, then re-run.
-- **Legacy bundles**: bundles with `ots_status = "legacy"` predate the
-  current Ed25519 signing infrastructure (or were reclassified by a
-  documented data fix — see `chain.json["disclosures"]`). They are
-  reported as INFO, not FAIL.
-- **Merkle batched bundles**: a small fraction of bundles share an OTS
-  proof via a Merkle root. `verify.sh` walks the leaf path and matches
-  it against the stored root before counting the bundle as verified.
-
-## Site rename / appliance relocation — what about the site_id?
-
-Compliance bundles **bind to their issuing site_id forever** via the
-Ed25519 signature and OpenTimestamps proof. If an appliance is later
-relocated, or a site is renamed, the bundles in this kit retain their
-*original* site_id — that is the auditable fact.
-
-Operational telemetry (incidents, healing events, pattern statistics)
-may aggregate under a *canonical* site_id when the substrate has
-recorded a rename or relocation event in `site_canonical_mapping`.
-The auditor kit and this evidence chain are NOT affected by that
-aggregation: the cryptographic record always points to the issuing
-site_id at the time the bundle was signed.
-
-**Reconciling site_id aliases (in-kit, no live API needed):**
-
-`chain.json["site_canonical_aliases"]` lists every alias the substrate
-has recorded for this site_id, in either direction:
-
-```json
-"site_canonical_aliases": [
-  {{
-    "from_site_id": "old-site-id-123",
-    "to_site_id": "<this-site-id>",
-    "actor": "operator@example.com",
-    "reason": "Site renamed after appliance relocation",
-    "related_migration": "255",
-    "effective_at": "2026-04-29T10:22:34Z",
-    "direction": "inbound"
-  }}
-]
-```
-
-If you see operational telemetry under a different site_id than the
-bundles in this kit, check `site_canonical_aliases` first. Each entry
-identifies the human operator who authorized the alias and the reason.
-If a rename was performed via the substrate's `appliance_relocation`
-flow, you'll ALSO see a corresponding compliance bundle in
-`bundles.jsonl` for that event (cryptographically signed, in-chain).
-Aliases without a matching `appliance_relocation` bundle were inserted
-via direct admin action (e.g. backfill of historical relocations);
-the audit trail for those is in the substrate's `admin_audit_log`,
-not in the cryptographic chain.
-
-## Verifying the verifier
-
-`verify.sh` is open source and is the same script used by every
-OsirisCare audit kit, regardless of which partner presents it. You
-can read every line — it has no network calls (other than the
-optional `ots verify` which talks to public Bitcoin block explorers,
-never to OsirisCare or to {presenter_brand}).
-
-If you want a third-party-built verifier instead of trusting ours,
-you can use the OpenTimestamps CLI directly on each `.ots` file in
-the `ots/` directory:
-
-```bash
-for f in ots/*.ots; do ots verify "$f"; done
-```
-
-## Disclosures
-
-Any data integrity events (e.g. the April 2026 Merkle batch_id collision
-remediation) are listed in `chain.json["disclosures"]` with the affected
-bundle range, root cause, and fix commit hash. We publish all such events
-proactively as a credibility commitment — see also the public security
-advisories page on the OsirisCare website.
-
-## Complaints and concerns
-
-If you are a patient, workforce member, or auditor and you believe the
-substrate or its operator has mishandled protected health information,
-you have multiple channels:
-
-- **Substrate operator (OsirisCare):** compliance@osiriscare.com —
-  we acknowledge within 7 business days and target a substantive
-  response within 30 days. (The 30-day target aligns with the
-  §164.524 access-request standard so auditors can use the same
-  clock.)
-- **Presenting partner ({presenter_brand}):** see the contact line at
-  the top of this README.
-- **Covered entity:** complaints about the covered entity's HIPAA
-  compliance should be directed to the covered entity's Privacy Officer.
-- **HHS Office for Civil Rights (OCR):** you may file a complaint
-  directly with OCR at https://www.hhs.gov/hipaa/filing-a-complaint/ —
-  this right is not waived by raising the concern with us first, and we
-  will not retaliate against any individual who exercises it.
-
-## Contact
-
-Presented by: {presenter_brand}{presenter_contact_line}
-Compliance substrate: OsirisCare — support@osiriscare.net
-Generated for site: `{site_id}` ({clinic_name})
-Generated at: {generated_at}
-Kit version: 2.1
-
-For operational questions about this deployment, contact {presenter_brand}.
-For questions about the cryptographic substrate (key rotation, algorithm
-choice, disclosures), contact OsirisCare.
-"""
-
-
-_AUDITOR_KIT_VERIFY_SH = '''#!/usr/bin/env bash
-# OsirisCare auditor verification kit — verify.sh
-#
-# Reads bundles.jsonl + pubkeys.json + ots/*.ots and verifies the entire
-# chain WITHOUT touching the OsirisCare network. Run from the kit
-# directory after unzipping.
-
-set -euo pipefail
-
-KIT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$KIT_DIR"
-
-# --- Tool checks --------------------------------------------------------------
-
-require() {
-    local tool="$1"
-    local install_hint="$2"
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "ERROR: '$tool' is not installed."
-        echo "  Install: $install_hint"
-        exit 1
-    fi
-}
-
-require python3 "https://www.python.org/downloads/"
-require sha256sum "macOS: brew install coreutils, then alias sha256sum=gsha256sum"
-
-OTS_AVAILABLE=1
-if ! command -v ots >/dev/null 2>&1; then
-    OTS_AVAILABLE=0
-    echo "WARN: 'ots' (OpenTimestamps CLI) not installed — skipping OTS verification."
-    echo "      Install: pip install opentimestamps-client"
-fi
-
-# --- Verification (delegated to embedded Python) ------------------------------
-
-python3 - <<'PYEOF'
-import json
-import hashlib
-import os
-import sys
-
-KIT_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else os.getcwd()
-
-# Load pubkeys
-with open(os.path.join(KIT_DIR, "pubkeys.json")) as f:
-    pubkey_data = json.load(f)
-pubkeys_by_fp = {pk["fingerprint"]: pk for pk in pubkey_data["public_keys"]}
-pubkey_bytes = []
-for pk in pubkey_data["public_keys"]:
-    try:
-        pubkey_bytes.append(bytes.fromhex(pk["public_key_hex"]))
-    except Exception:
-        pass
-
-# Try to import cryptography for real Ed25519 verification
-try:
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    from cryptography.exceptions import InvalidSignature
-    HAS_CRYPTO = True
-except ImportError:
-    HAS_CRYPTO = False
-    print("WARN: 'cryptography' not installed — skipping signature verification")
-    print("      Install: pip install cryptography")
-
-def verify_ed25519(sig_hex, msg_hex, pubkeys):
-    if not HAS_CRYPTO:
-        return None
-    try:
-        sig = bytes.fromhex(sig_hex)
-        msg = bytes.fromhex(msg_hex)
-        for pk_bytes in pubkeys:
-            try:
-                Ed25519PublicKey.from_public_bytes(pk_bytes).verify(sig, msg)
-                return True
-            except InvalidSignature:
-                continue
-        return False
-    except Exception:
-        return False
-
-# Load bundles
-chain_pass = chain_fail = 0
-sig_pass = sig_fail = sig_skip = 0
-ots_count = 0
-legacy_count = 0
-prev_hash_expected = None
-
-with open(os.path.join(KIT_DIR, "bundles.jsonl")) as f:
-    bundles = [json.loads(line) for line in f if line.strip()]
-
-# Sort by chain_position to walk in order
-bundles.sort(key=lambda b: b.get("chain_position") or 0)
-
-for b in bundles:
-    bundle_id = b.get("bundle_id", "?")
-    bundle_hash = b.get("bundle_hash", "")
-    prev_hash = b.get("prev_hash", "")
-    sig = b.get("agent_signature")
-    ots_status = b.get("ots_status", "none")
-
-    # Hash chain check (skip the genesis row)
-    if prev_hash_expected is not None:
-        if prev_hash == prev_hash_expected:
-            chain_pass += 1
-        else:
-            chain_fail += 1
-            print(f"  [FAIL] chain link broken at bundle {bundle_id}")
-    prev_hash_expected = bundle_hash
-
-    # Signature check
-    if ots_status == "legacy":
-        legacy_count += 1
-    elif sig:
-        result = verify_ed25519(sig, bundle_hash, pubkey_bytes)
-        if result is True:
-            sig_pass += 1
-        elif result is False:
-            sig_fail += 1
-            print(f"  [FAIL] signature invalid for bundle {bundle_id}")
-        else:
-            sig_skip += 1
-    else:
-        sig_skip += 1
-
-    if ots_status == "anchored":
-        ots_count += 1
-
-# Summary
-total = len(bundles)
-print()
-print(f"Bundles in kit: {total}")
-print(f"[{'PASS' if chain_fail == 0 else 'FAIL'}] hash chain     {chain_pass}/{max(1,total-1)} links verified")
-if HAS_CRYPTO:
-    print(f"[{'PASS' if sig_fail == 0 else 'FAIL'}] signatures     {sig_pass}/{sig_pass + sig_fail} verified against pinned pubkeys")
-    if sig_skip:
-        print(f"[INFO] signatures     {sig_skip} skipped (no signature on bundle)")
-else:
-    print(f"[SKIP] signatures     {sig_pass + sig_fail + sig_skip} skipped (cryptography library not installed)")
-print(f"[INFO] ots proofs     {ots_count} bundles anchored in Bitcoin")
-print(f"[INFO] legacy bundles {legacy_count} (pre-anchoring or documented reclassification)")
-
-if chain_fail or sig_fail:
-    print()
-    print("VERIFICATION FAILED — investigate before signing off")
-    sys.exit(2)
-print()
-print("VERIFICATION PASSED")
-PYEOF
-
-# --- OTS verification (separate, optional) ------------------------------------
-
-if [ "$OTS_AVAILABLE" = "1" ] && [ -d ots ] && [ "$(ls -A ots 2>/dev/null)" ]; then
-    echo
-    echo "Running OpenTimestamps verification on $(ls ots/*.ots 2>/dev/null | wc -l) proof files..."
-    pass=0
-    fail=0
-    for f in ots/*.ots; do
-        if ots verify "$f" >/dev/null 2>&1; then
-            pass=$((pass+1))
-        else
-            fail=$((fail+1))
-            echo "  [FAIL] OTS verification failed for $(basename $f)"
-        fi
-    done
-    echo "[$([ $fail -eq 0 ] && echo PASS || echo FAIL)] ots cli       $pass/$((pass+fail)) verified against Bitcoin"
-fi
-'''
-
-
-# Week 6 — Auditor Kit v2 — identity-chain verifier.
-# Companion to verify.sh. Walks identity_chain.json + iso_ca_bundle.json
-# and confirms each claim event's chain_hash recomputes from its
-# canonical event JSON. Pure jq + sha256sum + base64 — no vendor
-# binary needed.
-_AUDITOR_KIT_VERIFY_IDENTITY_SH = '''#!/usr/bin/env bash
-# verify_identity.sh — Auditor Kit v2.
-# Recomputes the chain_hash of every claim event in identity_chain.json
-# and compares to the stored value. Drift = tampering.
-#
-# Requires: jq, sha256sum (or shasum on macOS).
-set -euo pipefail
-KIT_DIR="${1:-.}"
-IDENTITY="$KIT_DIR/identity_chain.json"
-[ -f "$IDENTITY" ] || { echo "missing $IDENTITY"; exit 2; }
-
-# Pick the right sha256 cli for the OS.
-if command -v sha256sum >/dev/null 2>&1; then
-    SHA() { sha256sum | awk '{print $1}'; }
-else
-    SHA() { shasum -a 256 | awk '{print $1}'; }
-fi
-
-GENESIS=$(printf '0%.0s' {1..64})
-events_count=$(jq '.events | length' "$IDENTITY")
-echo "Verifying $events_count claim event(s) from $IDENTITY ..."
-fail=0
-prev_expected="$GENESIS"
-for i in $(seq 0 $((events_count - 1))); do
-    ev=$(jq ".events[$i]" "$IDENTITY")
-
-    # Build canonical event JSON the same way the server does:
-    # sort_keys=True, separators=(',',':'). jq's `--sort-keys -c`
-    # produces exactly that.
-    canonical=$(jq --sort-keys -c '{
-        agent_pubkey_hex: (.agent_pubkey_hex | ascii_downcase),
-        claim_event_id:   .claim_event_id,
-        claimed_at:       .claimed_at,
-        iso_release_sha:  (.iso_release_sha // ""),
-        mac_address:      (.mac_address | ascii_upcase),
-        site_id:          ($SITE),
-        source:           .source
-    }' --arg SITE "$(jq -r .site_id "$IDENTITY")" <<< "$ev")
-
-    prev=$(jq -r .chain_prev_hash <<< "$ev")
-    stored=$(jq -r .chain_hash <<< "$ev")
-
-    expected=$(printf "%s:%s" "$prev" "$canonical" | SHA)
-
-    if [ "$expected" != "$stored" ]; then
-        echo "  FAIL idx=$i  expected=$expected  stored=$stored"
-        fail=$((fail + 1))
-    elif [ "$prev" != "$prev_expected" ]; then
-        echo "  FAIL idx=$i  chain break — prev=$prev  expected_prev=$prev_expected"
-        fail=$((fail + 1))
-    fi
-    prev_expected="$stored"
-done
-
-if [ "$fail" -eq 0 ]; then
-    echo "[PASS] all $events_count claim events recompute + chain to genesis"
-else
-    echo "[FAIL] $fail of $events_count failed"
-    exit 1
-fi
-'''
 
 
 # ─── Security advisory auto-include (followup #41) ────────────────────
@@ -4877,6 +4395,33 @@ async def download_auditor_kit(
     presenter_brand = "OsirisCare"
     presenter_contact_line = ""
     presenter_partner_id: Optional[str] = None
+
+    def _sanitize_partner_text(s: Optional[str], max_len: int = 200) -> str:
+        """Maya P0 (round-table 2026-05-06): partner-controlled
+        text (brand_name / support_email / support_phone) flows into
+        a Markdown README that auditors may open in a browser. With
+        the renderer's autoescape OFF (correct for .md output), a
+        partner could inject `<script>` or a Markdown javascript:
+        link via `brand_name`, hitting the clinic's auditor.
+        Defense-in-depth (validation at write in partners.py is the
+        primary defense; this is the secondary): strip control
+        chars, HTML-special chars, and Markdown-link metacharacters;
+        length-cap. Worst case: a partner with an unusual brand
+        gets the brand displayed sanitized rather than blocked."""
+        if not s:
+            return ""
+        out = []
+        for ch in s:
+            cp = ord(ch)
+            # Drop ASCII control chars (incl. NUL, BEL, ESC, etc.)
+            if cp < 0x20 and ch not in ("\t",):
+                continue
+            # Strip HTML/Markdown injection vectors.
+            if ch in '<>{}[]\\`|':
+                continue
+            out.append(ch)
+        return "".join(out)[:max_len]
+
     if site_row.partner_id:
         brand_row = (await db.execute(text("""
             SELECT id, brand_name, support_email, support_phone
@@ -4884,13 +4429,23 @@ async def download_auditor_kit(
              WHERE id = :pid
         """), {"pid": site_row.partner_id})).fetchone()
         if brand_row and brand_row.brand_name:
-            presenter_brand = brand_row.brand_name
-            presenter_partner_id = str(brand_row.id)
+            sanitized_brand = _sanitize_partner_text(brand_row.brand_name)
+            # Empty after sanitize → fall back to OsirisCare; ensures
+            # the README's title and contact lines never go blank.
+            if sanitized_brand:
+                presenter_brand = sanitized_brand
+                presenter_partner_id = str(brand_row.id)
             contact_bits = []
-            if brand_row.support_email:
-                contact_bits.append(brand_row.support_email)
-            if brand_row.support_phone:
-                contact_bits.append(brand_row.support_phone)
+            sanitized_email = _sanitize_partner_text(
+                brand_row.support_email, max_len=120,
+            )
+            sanitized_phone = _sanitize_partner_text(
+                brand_row.support_phone, max_len=40,
+            )
+            if sanitized_email:
+                contact_bits.append(sanitized_email)
+            if sanitized_phone:
+                contact_bits.append(sanitized_phone)
             if contact_bits:
                 presenter_contact_line = " — " + " · ".join(contact_bits)
 
@@ -5265,15 +4820,27 @@ async def download_auditor_kit(
     advisories = _advisories_cache
 
     # Build entry list with canonical JSON, then write in sorted
-    # (filename) order. _AUDITOR_KIT_README.format uses generated_at
-    # which is now the chain-head deterministic timestamp.
-    readme_text = _AUDITOR_KIT_README.format(
+    # (filename) order. README + verify scripts now render through
+    # the Jinja2 customer-template registry (round-table 2026-05-06
+    # T1.1-T1.4). StrictUndefined fails closed on missing kwargs,
+    # `{` and `}` literals in JSON examples are safe, and the boot
+    # smoke catches stray-placeholder regressions at deploy time
+    # — replaces the in-source .format() pattern that produced 14
+    # sequential regressions.
+    try:
+        from .templates import render_template as _render_template
+    except ImportError:
+        from templates import render_template as _render_template  # type: ignore
+    readme_text = _render_template(
+        "auditor_kit/README",
         site_id=site_row.site_id,
         clinic_name=site_row.clinic_name or "—",
         generated_at=generated_at,
         presenter_brand=presenter_brand,
         presenter_contact_line=presenter_contact_line,
     )
+    verify_sh_text = _render_template("auditor_kit/verify_sh")
+    verify_identity_sh_text = _render_template("auditor_kit/verify_identity_sh")
     pubkeys_payload = {
         "site_id": site_row.site_id,
         "kit_version": "2.1",
@@ -5287,8 +4854,8 @@ async def download_auditor_kit(
     }
     fixed_entries = [
         ("README.md", readme_text),
-        ("verify.sh", _AUDITOR_KIT_VERIFY_SH),
-        ("verify_identity.sh", _AUDITOR_KIT_VERIFY_IDENTITY_SH),
+        ("verify.sh", verify_sh_text),
+        ("verify_identity.sh", verify_identity_sh_text),
         ("chain.json", _json.dumps(chain_metadata, indent=2, sort_keys=True)),
         ("bundles.jsonl", "\n".join(bundles_jsonl_lines) + "\n"),
         ("pubkeys.json", _json.dumps(pubkeys_payload, indent=2, sort_keys=True)),

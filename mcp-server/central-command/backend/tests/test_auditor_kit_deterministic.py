@@ -215,14 +215,26 @@ def test_max_parent_walk_bound_present():
     )
 
 
+def _render_readme_for_check():
+    """Round-table 2026-05-06 T1.4: tests now check the RENDERED
+    README (Jinja2 from backend/templates/auditor_kit/README.md.j2),
+    not the in-source `.format()` constant (deleted)."""
+    import sys, pathlib as _pl
+    backend = _pl.Path(__file__).resolve().parent.parent
+    if str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    from templates import render_template
+    return render_template(
+        "auditor_kit/README",
+        site_id="x", clinic_name="y", generated_at="z",
+        presenter_brand="OsirisCare", presenter_contact_line="",
+    )
+
+
 def test_readme_includes_scope_and_complaint_sections():
     """Carol P0-3 + P1-1: README must include Scope-of-this-kit
     section and Complaints-and-concerns section."""
-    src = _load_endpoint_source()
-    readme_idx = src.find("_AUDITOR_KIT_README = ")
-    readme_end = src.find('"""', readme_idx + len("_AUDITOR_KIT_README = "))
-    readme_end = src.find('"""', readme_end + 3) + 3
-    readme = src[readme_idx:readme_end]
+    readme = _render_readme_for_check()
     assert "## Scope of this kit" in readme, (
         "README must include 'Scope of this kit' section "
         "(Carol P0-3 narrowing — kit is integrity evidence, "
@@ -252,12 +264,9 @@ def test_readme_includes_scope_and_complaint_sections():
 def test_readme_does_not_contain_banned_legal_words():
     """CLAUDE.md hard rule (Session 199 legal-language). The
     auditor-kit is the most adversarially-read artifact in the
-    project — verify zero banned words."""
-    src = _load_endpoint_source()
-    readme_idx = src.find("_AUDITOR_KIT_README = ")
-    readme_end = src.find('"""', readme_idx + len("_AUDITOR_KIT_README = "))
-    readme_end = src.find('"""', readme_end + 3) + 3
-    readme = src[readme_idx:readme_end].lower()
+    project — verify zero banned words IN THE RENDERED OUTPUT
+    (catches dynamic copy that a source-grep would miss)."""
+    readme = _render_readme_for_check().lower()
     banned = (
         " ensures",
         " prevents",
