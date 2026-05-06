@@ -285,38 +285,58 @@ async def _check_email_collision(
 async def _send_dual_notification(
     old_email: str,
     new_email: str,
-    actor_kind: str,
-    org_name: str,
 ) -> None:
     """Steve M2: notify BOTH old + new addresses. Best-effort.
 
-    Maya P1-2 (carried from #19 round-table): do NOT name the actor's
-    email inline — phishing-quotation attack vector. Old address gets a
-    "this wasn't me" path; new address gets the welcome confirmation.
-    Actor identity stays in the auditor kit.
+    Opaque mode (task #42 harmonization, 2026-05-06):
+      - Subject + body do NOT include org_name, actor_kind, or
+        actor email (the actor-omission was already in place per
+        Maya P1-2's anti-phishing-quotation concern; harmonization
+        extends to also drop org_name).
+      - Old address gets a security alert with a portal link. They
+        log in to see what's been changed and to whom.
+      - New address gets a welcome confirmation. They log in to
+        complete setup.
+
+    Posture matches RT21 v2.3 cross-org relocate emails (counsel-
+    approved opaque defaults). Helper signature dropped `org_name`
+    + `actor_kind` parameters; the portal serves identifying
+    context after authentication.
     """
     try:
         from .email_service import send_email
-        # OLD address — security alert
+        # OLD address — security alert (opaque)
         await send_email(
             old_email,
-            "Your OsirisCare login email was changed",
+            "OsirisCare: login email change on your account",
             (
-                f"The login email on your OsirisCare account "
-                f"({org_name}) was changed to a different address.\n\n"
-                f"If this was YOU (or your administrator on your "
-                f"behalf), no action is required. You will use the new "
-                f"email going forward.\n\n"
-                f"If this was NOT expected, contact your provider AND "
-                f"OsirisCare support immediately. Your prior sessions "
-                f"have been invalidated as a precaution. The full "
-                f"audit trail (including the actor's identity) is in "
-                f"your auditor kit and admin_audit_log.\n\n"
-                f"For your safety we do not name the actor inline in "
-                f"this email — a phishing attempt could otherwise "
-                f"quote the actor's email back to lend credibility.\n\n"
-                f"---\n"
-                f"OsirisCare — substrate-level account access notice"
+                "Hello,\n"
+                "\n"
+                "The login email on one of your OsirisCare accounts "
+                "has been changed to a different address.\n"
+                "\n"
+                "To see what was changed and confirm whether you "
+                "initiated it, log in via the portal:\n"
+                f"  {BASE_URL}/client/login\n"
+                "\n"
+                "If this was YOU (or your administrator on your "
+                "behalf), no action is required. You will use the "
+                "new email going forward; the full audit trail is "
+                "in your auditor kit + admin_audit_log.\n"
+                "\n"
+                "If this was NOT expected, contact your provider AND "
+                "OsirisCare support immediately. Your prior sessions "
+                "have been invalidated as a precaution.\n"
+                "\n"
+                "Why this email omits identifying information:\n"
+                "We minimize identifying information in unauthenticated "
+                "channels (email transit, third-party SMTP relays). "
+                "Full details — including the new address and the "
+                "actor — are visible only inside the authenticated "
+                "portal session.\n"
+                "\n"
+                "---\n"
+                "OsirisCare — substrate-level account access notice"
             ),
         )
     except Exception:
@@ -328,19 +348,29 @@ async def _send_dual_notification(
 
     try:
         from .email_service import send_email
-        # NEW address — welcome
+        # NEW address — welcome (opaque)
         await send_email(
             new_email,
-            "Your OsirisCare login email is now set",
+            "OsirisCare: login email is now set on your account",
             (
-                f"Your OsirisCare login email for {org_name} has been "
-                f"set to this address. You can sign in immediately at "
-                f"{BASE_URL}/client/login.\n\n"
-                f"If you did not expect this, contact OsirisCare "
-                f"support — someone may have used the platform's "
-                f"administrative path to redirect this account.\n\n"
-                f"---\n"
-                f"OsirisCare — login email update"
+                "Hello,\n"
+                "\n"
+                "Your OsirisCare login email has been set to this "
+                "address. You can sign in immediately at:\n"
+                f"  {BASE_URL}/client/login\n"
+                "\n"
+                "If you did not expect this, contact OsirisCare "
+                "support — someone may have used the platform's "
+                "administrative path to redirect this account.\n"
+                "\n"
+                "Why this email omits identifying information:\n"
+                "We minimize identifying information in unauthenticated "
+                "channels. Full details — organization, role, prior "
+                "address — are visible only inside the authenticated "
+                "portal session after you sign in.\n"
+                "\n"
+                "---\n"
+                "OsirisCare — login email update"
             ),
         )
     except Exception:
@@ -688,8 +718,6 @@ async def self_confirm_email_change(
     await _send_dual_notification(
         old_email=row["email"],
         new_email=new_email,
-        actor_kind="self",
-        org_name=org_name,
     )
 
     # Maya P0 (round-table 2026-05-05): self-service path MUST fire
@@ -786,8 +814,6 @@ async def partner_change_client_email(
     await _send_dual_notification(
         old_email=old_email,
         new_email=new_email,
-        actor_kind="partner",
-        org_name=org_name,
     )
 
     severity = _severity_for_role(user_row["role"])
@@ -946,8 +972,6 @@ async def substrate_change_client_email(
     await _send_dual_notification(
         old_email=old_email,
         new_email=new_email,
-        actor_kind="substrate",
-        org_name=org_name,
     )
 
     # Substrate action — owner-rename is P0, every other role is P1

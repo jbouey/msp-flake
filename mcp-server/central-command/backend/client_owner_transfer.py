@@ -237,44 +237,61 @@ def _send_operator_visibility(
     )
 
 
+#
+# OPAQUE-MODE rationale (task #42, harmonized 2026-05-06):
+# Subject lines and body content do NOT include org_name, target_email,
+# initiator_email, or reason text. Recipients click a magic-link to
+# the authenticated client portal where the full context (organization
+# name, proposed new owner, current owner, reason, cooling-off window)
+# is visible only after authentication.
+#
+# Same posture as cross_org_site_relocate emails (RT21 v2.3, counsel-
+# approved). Helper signatures dropped the verbose parameters; the
+# portal serves rich context behind authentication.
+#
+
+
 async def _send_initiator_confirmation_email(
     initiator_email: str,
-    org_name: str,
-    target_email: str,
     transfer_id: str,
-    reason: str,
 ) -> None:
-    """Email the current owner: 'You initiated a transfer. Cancel here
-    if this wasn't you.' Best-effort."""
+    """Email the current owner: 'You initiated an action. Cancel
+    here if this wasn't you.' Opaque mode (task #42 harmonization).
+
+    The initiator already has the operational context (they just
+    submitted the request). The email's value is the cancel-link
+    for the unauthorized-initiation case — that's still actionable
+    without identifying details in plaintext."""
     try:
         from .email_service import send_email
+        cancel_url = f"{BASE_URL}/client/owner-transfer/{transfer_id}/cancel"
+        portal_url = f"{BASE_URL}/client/owner-transfer/{transfer_id}"
         body = (
-            f"You initiated an account access change request for "
-            f"{org_name}.\n"
-            f"\n"
-            f"Proposed new owner: {target_email}\n"
-            f"Your reason: {reason[:200]}\n"
-            f"\n"
-            f"What happens next:\n"
-            f"  1. You re-confirm the request via the dashboard "
-            f"(re-authentication required).\n"
-            f"  2. {target_email} receives an accept link valid for "
-            f"7 days.\n"
-            f"  3. After {target_email} accepts, a 24-hour cooling-off "
-            f"period begins.\n"
-            f"  4. After cooling-off, ownership transfers and your "
-            f"account becomes admin-only.\n"
-            f"\n"
-            f"If you did NOT initiate this request, your account may "
-            f"be compromised. Cancel immediately:\n"
-            f"  {BASE_URL}/client/owner-transfer/{transfer_id}/cancel\n"
-            f"\n"
-            f"---\n"
-            f"OsirisCare — substrate-level account access notice"
+            "Hello,\n"
+            "\n"
+            "You initiated an account access change request on one of "
+            "your OsirisCare client organizations. To review the "
+            "request, log in via the portal:\n"
+            f"  {portal_url}\n"
+            "\n"
+            f"Reference: transfer-{transfer_id}\n"
+            "\n"
+            "Why this email omits identifying information:\n"
+            "We minimize identifying information in unauthenticated "
+            "channels (email transit, third-party SMTP relays). Full "
+            "details are visible only inside the authenticated portal "
+            "session.\n"
+            "\n"
+            "If you did NOT initiate this request, your account may be "
+            "compromised. Cancel immediately:\n"
+            f"  {cancel_url}\n"
+            "\n"
+            "---\n"
+            "OsirisCare — substrate-level account access notice"
         )
         await send_email(
             initiator_email,
-            f"Account access change request: {org_name}",
+            "OsirisCare: account access change request initiated",
             body,
         )
     except Exception:
@@ -283,14 +300,14 @@ async def _send_initiator_confirmation_email(
 
 async def _send_target_accept_email(
     target_email: str,
-    org_name: str,
-    initiator_email: str,
     transfer_id: str,
     accept_token: str,
-    reason: str,
     expires_at: datetime,
 ) -> None:
-    """Email the proposed new owner with the magic-link accept URL."""
+    """Email the proposed new owner with the magic-link accept URL.
+    Opaque mode (task #42): subject + body omit org_name +
+    initiator_email + reason. Portal renders all context after
+    authentication."""
     try:
         from .email_service import send_email
         accept_url = (
@@ -298,39 +315,35 @@ async def _send_target_accept_email(
             f"?token={accept_token}&id={transfer_id}"
         )
         body = (
-            f"{initiator_email} has proposed you as the new owner of "
-            f"{org_name} on OsirisCare.\n"
-            f"\n"
-            f"Reason recorded: {reason[:200]}\n"
-            f"\n"
-            f"To accept ownership, click here within 7 days:\n"
+            "Hello,\n"
+            "\n"
+            "An action is requested for one of your OsirisCare client "
+            "organizations: you have been proposed as the new owner. "
+            "To review the request and take action (accept or "
+            "decline), click here within 7 days. The link redirects "
+            "you through OsirisCare portal authentication, where the "
+            "full context (organization name, current owner, reason, "
+            "cooling-off window, ownership scope) is visible:\n"
             f"  {accept_url}\n"
-            f"\n"
-            f"What ownership grants:\n"
-            f"  - Full administrative control of {org_name} on "
-            f"OsirisCare.\n"
-            f"  - Ability to invite/remove users, change roles, "
-            f"approve privileged-access requests.\n"
-            f"  - Visibility into all evidence + audit logs for "
-            f"{org_name}.\n"
-            f"\n"
-            f"After you accept, a 24-hour cooling-off period begins. "
-            f"Either you or the current owner can cancel during this "
-            f"window. After cooling-off, transfer completes "
-            f"automatically.\n"
-            f"\n"
+            "\n"
             f"Link expires: {expires_at.isoformat()}\n"
-            f"\n"
-            f"If you did not expect this email, ignore it. The current "
-            f"owner of {org_name} initiated the request and can also "
-            f"cancel it.\n"
-            f"\n"
-            f"---\n"
-            f"OsirisCare — substrate-level account access notice"
+            f"Reference: transfer-{transfer_id}\n"
+            "\n"
+            "Why this email omits identifying information:\n"
+            "We minimize identifying information in unauthenticated "
+            "channels (email transit, third-party SMTP relays). Full "
+            "details are visible only inside the authenticated portal "
+            "session.\n"
+            "\n"
+            "If you did not expect this email, do not click the link. "
+            "Contact your OsirisCare account representative.\n"
+            "\n"
+            "---\n"
+            "OsirisCare — substrate-level account access notice"
         )
         await send_email(
             target_email,
-            f"Account access change request: {org_name}",
+            "OsirisCare: action required — account access proposal",
             body,
         )
     except Exception:
@@ -495,10 +508,7 @@ async def initiate_owner_transfer(
     )
     await _send_initiator_confirmation_email(
         initiator_email=initiator_email,
-        org_name=user.get("org_name", "your organization"),
-        target_email=target_email,
         transfer_id=transfer_id,
-        reason=body.reason,
     )
 
     return {
@@ -622,11 +632,8 @@ async def ack_owner_transfer(
     )
     await _send_target_accept_email(
         target_email=row["target_email"],
-        org_name=user.get("org_name", "your organization"),
-        initiator_email=initiator_email,
         transfer_id=transfer_id,
         accept_token=accept_token,
-        reason=row["reason"],
         expires_at=row["expires_at"],
     )
 
