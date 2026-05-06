@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
-  "session": 217,
-  "updated": "2026-05-05T19:08:00Z",
+  "session": 218,
+  "updated": "2026-05-06T03:55:00Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty. Refreshed 2026-05-04 post-Session-215: session/version/milestone fields had drifted (file said 214/0.4.6/v37 vs reality 215/0.4.13/v38).",
   "versions": {
     "agent": "0.4.13",
@@ -313,5 +313,5 @@
   },
   "completed_this_session": [],
   "iso_version": "v38",
-  "latest_milestone": "Session 216 (2026-05-04 / 2026-05-05): 13 commits at runtime-SHA-verified enterprise-grade bar. 4 migrations (272 Email DLQ, 273 client owner-transfer + 1-owner trigger, 274 partner admin-transfer + 1-admin trigger, 275 per-org transfer prefs). 2 state machines (client owner-transfer 6-event with cooling-off+magic-link, partner admin-transfer 4-event with immediate-completion — Maya operator-class). 13 new ALLOWED_EVENTS (22 → 35). 3 adversarial code reviews + 4 round-tables with Maya 2nd-eye gating cargo-culted parity 8 times. 1 new substrate invariant (email_dlq_growing sev2). 3 round-table design docs in .agent/plans/ ready for next-session implementation: SMTP consolidation (#12 SHIP), MFA admin overrides (#19 SHIP +mig 276 +8 events), Cross-org site relocate (#21 SHIP behind feature flag pending outside-counsel BAA review +mig 277/278 +6 events)."
+  "latest_milestone": "Session 218 (2026-05-05 / 2026-05-06): 7 commits shipped at enterprise-grade bar. RT33 (5 commits): client portal ghost-data filters across 14 portal queries, /api/client/appliances + ClientAppliances.tsx (RLS-protected), /api/partners/me/appliances fleet view + PartnerFleetAppliances.tsx (cross-site read-only with CTE), auditor-kit StreamingResponse + SpooledTemporaryFile + asyncio.to_thread (10x time-to-first-byte), poll-interval constants hoist. Plus P0 hotfix: pre-push now compiles every backend .py through python3.11 to catch the f-string-with-backslash deploy class that bricked 3 RT33 deploys. RT21 Cross-Org Site Relocate (1 commit, 2000 lines): 3-actor state machine + 6 lifecycle attestation events (49\u219255 ALLOWED_EVENTS) + sites.prior_client_org_id column + attested feature_flags table (Patricia \u226540-char reason floor) + cross_org_relocate_chain_orphan sev1 substrate invariant + 13-check CI gate. Adversarial round-tables at gates 1+2 with Patricia (HIPAA counsel surrogate) + Marcus (regulatory engineer) + Linda (PM) \u2014 Marcus VETO on cooling-off CHECK + Marcus VETO on FK incompatibility for flag-flip (event dropped, audit lives in append-only feature_flags + admin_audit_log) + Patricia REQUEST CHANGES on multi-owner attribution (pinned expected_*_email columns) + Patricia REQUEST CHANGES on plaintext token leak (email-only delivery; tokens never returned). Maya final 2nd-eye APPROVE. Feature flag stays disabled until outside HIPAA counsel signs off on \u00a7164.504(e) BA-to-BA inapplicability + \u00a7164.528 disclosure-accounting under chain immutability + receiving-org BAA scope. Total ALLOWED_EVENTS: 55 (49 + 6 lifecycle)."
 }
