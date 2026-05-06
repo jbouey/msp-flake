@@ -293,15 +293,16 @@ def test_email_subject_uses_anti_spam_phrasing():
     the new subjects say "account access" instead of "ownership
     transfer", which still bypasses the spam-filter trigger word."""
     src = _read(_BACKEND / "client_owner_transfer.py")
-    # Both _send_target_accept_email and _send_initiator_confirmation_email
-    # subjects must contain "account access" and must NOT say
-    # "ownership transfer" (the original anti-spam ban) and must NOT
-    # interpolate {org_name} (the opaque-mode harmonization).
-    assert '"OsirisCare: account access change request initiated"' in src, (
+    # Round-table 2026-05-06 (Adam): subjects rephrased to drop the
+    # SpamAssassin "action required" trigger and the redundant
+    # "OsirisCare:" prefix (From: header carries brand). New
+    # subjects keep "account" or "change" as the anti-"ownership
+    # transfer" anti-spam token. Pinning the new literals.
+    assert '"Account change request received"' in src, (
         "Initiator confirmation subject not found — opaque-mode "
         "anti-spam phrasing required."
     )
-    assert '"OsirisCare: action required — account access proposal"' in src, (
+    assert '"Confirm an account change request"' in src, (
         "Target accept subject not found — opaque-mode anti-spam "
         "phrasing required."
     )

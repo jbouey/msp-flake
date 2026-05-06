@@ -400,15 +400,18 @@ async def request_magic_link(request: ClientMagicLinkRequest, http_request: Requ
 
     try:
         from .email_service import send_email
-        # Opaque mode (Maya P0, 2026-05-06): no recipient-name
-        # greeting in the SMTP body. The recipient address is on
-        # the envelope; rendering a name into plaintext-SMTP body
-        # adds an identity-binding leak with no UX value (the
-        # authenticated portal greets by name after click-through).
+        # Round-table 2026-05-06 (Carol+Adam): a recipient's own
+        # name on their own envelope is NOT an identity leak in
+        # the SMTP-channel sense — the address IS the identity.
+        # Counsel's opacity concern is org/clinic/actor names,
+        # not the recipient greeting themselves. Personalized
+        # greeting also improves anti-phish deliverability score.
+        # Carve-out documented in
+        # tests/test_email_opacity_harmonized.py FORBIDDEN_BODY_TOKENS.
         await send_email(
             email,
             "Your OsirisCare Login Link",
-            f"""Hello,
+            f"""Hi{' ' + user['name'] if user['name'] else ''},
 
 Click here to sign in to your OsirisCare compliance portal:
 

@@ -49,8 +49,15 @@ _OWNER_TRANSFER = _BACKEND / "client_owner_transfer.py"
 _EMAIL_RENAME = _BACKEND / "client_user_email_rename.py"
 _CLIENT_PORTAL = _BACKEND / "client_portal.py"
 _ORG_MGMT = _BACKEND / "org_management.py"
+_RELOCATE = _BACKEND / "cross_org_site_relocate.py"
 
-_OPAQUE_MODULES = (_OWNER_TRANSFER, _EMAIL_RENAME, _CLIENT_PORTAL, _ORG_MGMT)
+_OPAQUE_MODULES = (
+    _OWNER_TRANSFER,
+    _EMAIL_RENAME,
+    _CLIENT_PORTAL,
+    _ORG_MGMT,
+    _RELOCATE,  # also pinned by test_cross_org_relocate_contract.py
+)
 
 # Forbidden parameter names in opaque-mode helpers (drop verbose-mode
 # context kwargs from helper signatures). Recipient-address params
@@ -147,23 +154,92 @@ def _arg(call: ast.Call, position: int, kw_aliases: tuple[str, ...]):
     return None
 
 
-def _resolve_name_in_module(tree: ast.Module, name: str) -> ast.AST | None:
-    """Find a same-module assignment `<name> = <expr>` and return the
-    expression. Used to follow `body = <template>; send_email(..., body)`
-    patterns so the gate doesn't fail open on Name args (Maya P1)."""
-    best = None
+def _enclosing_function(tree: ast.Module, target: ast.AST) -> ast.AST | None:
+    """Find the FunctionDef/AsyncFunctionDef that lexically encloses
+    `target` (the Call we're inspecting). Returns None if `target` is
+    at module scope. Pre-built parent map so we don't recompute."""
+    parent: dict[int, ast.AST] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for tgt in node.targets:
-                if isinstance(tgt, ast.Name) and tgt.id == name:
-                    best = node.value  # take the latest assignment
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            if node.target.id == name and node.value is not None:
-                best = node.value
-    return best
+        for child in ast.iter_child_nodes(node):
+            parent[id(child)] = node
+    cur: ast.AST | None = target
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return cur
+        cur = parent.get(id(cur))
+    return None
 
 
-def _literal_string(node, tree: ast.Module | None = None, _depth: int = 0) -> str | None:
+def _resolve_name(
+    tree: ast.Module, name: str, call: ast.AST | None = None
+) -> ast.AST | None:
+    """Scope-aware Name resolution (Steve P1 + Maya P1).
+
+    Rules (fail closed on ambiguity):
+      1. If `call` is provided, search Assigns inside the enclosing
+         FunctionDef first. If exactly one assignment to `name`
+         exists in that scope, return its RHS. If multiple distinct
+         RHS expressions exist (conditional rebind), return None
+         (unresolvable → fail closed).
+      2. Fall back to module-level Assigns ONLY if no
+         function-scoped assignment exists. Same multi-distinct-RHS
+         rule applies.
+
+    Module-walk taking "the latest assignment" (the prior
+    implementation) was scope-blind: a benign module-level
+    `body = "static"` could shadow a real function-local
+    `body = f"{org_name}"` and silently pass the gate."""
+
+    def _scan(scope: ast.AST) -> list[ast.AST]:
+        rhs: list[ast.AST] = []
+        for node in ast.walk(scope):
+            if isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name) and tgt.id == name:
+                        rhs.append(node.value)
+            elif isinstance(node, ast.AnnAssign):
+                if (
+                    isinstance(node.target, ast.Name)
+                    and node.target.id == name
+                    and node.value is not None
+                ):
+                    rhs.append(node.value)
+        return rhs
+
+    fn = _enclosing_function(tree, call) if call is not None else None
+    if fn is not None:
+        local = _scan(fn)
+        if len(local) == 1:
+            return local[0]
+        if len(local) > 1:
+            # Conditional rebind — multiple distinct RHS reach the
+            # call point. Fail closed; the contributor must inline.
+            distinct = {ast.dump(v) for v in local}
+            if len(distinct) > 1:
+                return None
+            return local[0]
+    module_lvl = _scan(tree)
+    if len(module_lvl) == 1:
+        return module_lvl[0]
+    if len(module_lvl) > 1:
+        distinct = {ast.dump(v) for v in module_lvl}
+        if len(distinct) > 1:
+            return None
+        return module_lvl[0]
+    return None
+
+
+# Backwards-compat alias for any external callers
+_resolve_name_in_module = _resolve_name
+
+
+def _literal_string(
+    node,
+    tree: ast.Module | None = None,
+    call: ast.AST | None = None,
+    _depth: int = 0,
+    _seen: set[int] | None = None,
+) -> str | None:
     """Render a string-ish AST node into its source-equivalent
     string, including f-string template text. Returns None for
     non-string-shaped nodes (variables, calls, etc.)."""
@@ -171,32 +247,57 @@ def _literal_string(node, tree: ast.Module | None = None, _depth: int = 0) -> st
         return None
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
+    if _seen is None:
+        _seen = set()
+    if id(node) in _seen or _depth > 4:
+        return None
+    _seen = _seen | {id(node)}
     if isinstance(node, ast.JoinedStr):
-        # f-string: concatenate literal text + {expr} placeholders
-        # rendered as `{ast.unparse(value)}` so forbidden interpolations
-        # are searchable as literal `{org_name}` etc.
+        # f-string: concatenate literal text + {expr} placeholders.
+        # If the expr is a Name and we have a tree, follow the Name
+        # through the resolver so two-step indirection
+        # (`f"{x}"` where `x = f"{org_name}"`) is caught (Maya P1).
         out = []
         for v in node.values:
             if isinstance(v, ast.Constant) and isinstance(v.value, str):
                 out.append(v.value)
             elif isinstance(v, ast.FormattedValue):
+                if isinstance(v.value, ast.Name) and tree is not None:
+                    nested = _literal_string(
+                        v.value, tree, call, _depth + 1, _seen
+                    )
+                    if nested is not None:
+                        out.append(nested)
+                        continue
                 try:
                     out.append("{" + ast.unparse(v.value) + "}")
                 except Exception:
                     out.append("{?}")
         return "".join(out)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        # "a" + "b" or f"x" + f"y"
-        left = _literal_string(node.left, tree, _depth)
-        right = _literal_string(node.right, tree, _depth)
+        left = _literal_string(node.left, tree, call, _depth, _seen)
+        right = _literal_string(node.right, tree, call, _depth, _seen)
         if left is not None and right is not None:
             return left + right
         return None
+    if isinstance(node, ast.IfExp):
+        # Conditional: `f"..." if cond else ""`. Render BOTH branches
+        # and concatenate so forbidden-token search hits a leak in
+        # either branch. Common in opaque-mode bodies that
+        # conditionally include a chain-anchor line.
+        body_s = _literal_string(node.body, tree, call, _depth, _seen)
+        else_s = _literal_string(node.orelse, tree, call, _depth, _seen)
+        if body_s is not None and else_s is not None:
+            return body_s + else_s
+        if body_s is not None:
+            return body_s
+        if else_s is not None:
+            return else_s
+        return None
     if isinstance(node, ast.Name) and tree is not None and _depth < 3:
-        # Follow `body = <template>; send_email(..., body)` (Maya P1)
-        target = _resolve_name_in_module(tree, node.id)
+        target = _resolve_name(tree, node.id, call)
         if target is not None:
-            return _literal_string(target, tree, _depth + 1)
+            return _literal_string(target, tree, call, _depth + 1, _seen)
         return None
     return None
 
@@ -251,7 +352,7 @@ def test_subjects_are_opaque_across_all_modules():
         tree = _parse(path)
         for call in _iter_send_email_calls(tree):
             subject = _arg(call, 1, ("subject",))
-            rendered = _literal_string(subject, tree)
+            rendered = _literal_string(subject, tree, call)
             if rendered is None:
                 # Non-string subject: it's a variable or call. Force
                 # the literal-string convention so opacity is auditable.
@@ -292,7 +393,7 @@ def test_bodies_are_opaque_across_all_modules():
             body = _arg(call, 2, ("body",))
             if body is None:
                 continue
-            rendered = _literal_string(body, tree)
+            rendered = _literal_string(body, tree, call)
             if rendered is None:
                 unresolvable.append(
                     f"{path.name}:{call.lineno} body arg "
@@ -341,40 +442,51 @@ def test_call_sites_do_not_pass_forbidden_kwargs():
     )
 
 
-def test_no_fstring_only_subjects_with_context_interpolation():
-    """Maya P2-2 belt: even if AST extraction fails on a weird
-    construct, this catch-all string scan flags any send_email line
-    where the subject literally contains `{org_name}` etc."""
-    for path in _OPAQUE_MODULES:
-        src = path.read_text()
-        for token in (
-            "{org_name}",
-            "{source_org_name}",
-            "{target_org_name}",
-            "{clinic_name}",
-            "{site_name}",
-        ):
-            # Find every occurrence of the token, then check if it
-            # sits within ~200 chars after a `send_email(` paren.
-            idx = 0
-            while True:
-                pos = src.find(token, idx)
-                if pos < 0:
-                    break
-                idx = pos + 1
-                window_start = max(0, pos - 400)
-                window = src[window_start:pos]
-                if "send_email(" in window and "_send_" not in window[
-                    window.rfind("send_email(") :
-                ][:30]:
-                    # Crude proximity check: this token sits in the
-                    # arg list of a send_email call. Real check is
-                    # the AST tests above; this is a backup.
-                    raise AssertionError(
-                        f"{path.name}:{src[:pos].count(chr(10))+1} "
-                        f"{token} appears within send_email(...) — "
-                        f"opaque-mode forbids."
-                    )
+def test_meta_every_send_email_caller_is_classified():
+    """Maya pre-mortem (round-table 2026-05-06): manual
+    `_OPAQUE_MODULES` is the most likely future-incident vector — a
+    contributor adds a new customer-facing email helper, forgets to
+    add it here, the gate silently passes, org names start leaking
+    again. Auto-discover every `*.py` under `backend/` that calls
+    `send_email(...)` or `_send_dual_notification(...)`. Each must
+    be classified as opaque (in `_OPAQUE_MODULES`) or operator (in
+    `OPERATOR_ALLOWLIST`) — no third state. Forces deliberate
+    triage on every new caller. Replaces the prior regex-belt
+    proximity test (Steve P3 — AST coverage now sufficient)."""
+    OPERATOR_ALLOWLIST = {
+        _BACKEND / "email_alerts.py",
+        _BACKEND / "privileged_access_notifier.py",
+        _BACKEND / "escalation_engine.py",
+        _BACKEND / "assertions.py",
+        _BACKEND / "notifications.py",
+        _BACKEND / "mfa_admin.py",
+        _BACKEND / "partner_auth.py",
+        _BACKEND / "partner_admin_transfer.py",
+        _BACKEND / "portal.py",
+        _BACKEND / "background_tasks.py",
+        _BACKEND / "sites.py",
+        _BACKEND / "email_service.py",
+    }
+    classified = set(_OPAQUE_MODULES) | OPERATOR_ALLOWLIST
+    discovered: list[pathlib.Path] = []
+    for py_path in _BACKEND.glob("*.py"):
+        if py_path.name.startswith("test_"):
+            continue
+        try:
+            src = py_path.read_text()
+        except Exception:
+            continue
+        if "send_email(" in src or "_send_dual_notification(" in src:
+            discovered.append(py_path)
+    unclassified = [p for p in discovered if p not in classified]
+    assert not unclassified, (
+        "send_email(...) callers not classified as opaque or "
+        "operator — pick one and add to either `_OPAQUE_MODULES` "
+        "(customer-facing → opaque required) or to "
+        "`OPERATOR_ALLOWLIST` in this test (internal → verbose "
+        "OK):\n"
+        + "\n".join(f"  - {p.name}" for p in unclassified)
+    )
 
 
 # ---------------------------------------------------------------- operator allowlist guard

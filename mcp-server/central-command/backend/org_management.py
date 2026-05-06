@@ -478,34 +478,51 @@ async def _send_deprovision_notices(
     Osiris is the substrate, the MSP/operator is the actor.
     """
     from .email_service import send_email
-    # Opaque mode (task #42 sweep, 2026-05-06): subject + body
-    # withhold org name and the verbatim reason. Recipient may be a
-    # forwarded or stale address; org identity, retention deadline,
-    # and reason are shown on the authenticated portal after the
-    # recipient signs in (which they can — read-only access is still
-    # available). The signed-out experience surfaces the deprovision
-    # notice on next login attempt.
+    # Round-table 2026-05-06 — opaque mode + UX-uniformity fixes:
+    # - subject + body withhold org name + verbatim reason
+    #   (counsel: org_name is identity-binding in plaintext SMTP;
+    #   reason may itself contain PHI or §164.530(a)(2) personnel
+    #   data).
+    # - retention-deadline DATE (not org-identifying) is included
+    #   so the recipient can compute their §164.524 access window
+    #   without needing to authenticate. Carol P0(a).
+    # - records-request@ + compliance@ + HHS OCR paths included
+    #   so §164.524 / §164.530(d)(1) escape valves survive the
+    #   deprovision (recipient may be locked out of portal). Carol
+    #   P0(b) + Maya P1.
+    # - "operator may BE the bad actor" carve-out: complaint path
+    #   to OsirisCare-as-BA is NOT optional.
+    retention_date_iso = retention_until.isoformat()
     body_template = (
-        "Access to your OsirisCare account has been disabled by your "
-        "operator (the MSP or administrator who manages your account).\n"
-        "\n"
-        "What this means:\n"
-        "- Active sessions have been invalidated; you will be signed out.\n"
-        "- Your data is preserved through the configured retention "
-        "period; sign in to view the exact deadline and details.\n"
-        "\n"
-        "If you believe this was done in error, please contact your "
-        "operator directly. OsirisCare cannot reverse a deprovision "
-        "without operator initiation.\n"
-        "\n"
-        "---\n"
-        "OsirisCare — substrate-level deprovision notice"
+        f"Your OsirisCare account access has been disabled by your "
+        f"operator (the MSP or administrator who manages your account).\n"
+        f"\n"
+        f"What this means:\n"
+        f"- Active sessions have been invalidated.\n"
+        f"- Your data is preserved through {retention_date_iso}.\n"
+        f"  After that date, data may be permanently removed per the\n"
+        f"  configured retention policy.\n"
+        f"- Read-only sign-in remains available during the retention "
+        f"window so you can review records.\n"
+        f"\n"
+        f"Next steps:\n"
+        f"- If you believe this was done in error, contact your "
+        f"operator first.\n"
+        f"- For records access independent of your operator, email "
+        f"records-request@osiriscare.com.\n"
+        f"- To file a complaint with OsirisCare directly, email "
+        f"compliance@osiriscare.com.\n"
+        f"- Under HIPAA you may also file a complaint with HHS Office "
+        f"for Civil Rights at hhs.gov/ocr/complaints.\n"
+        f"\n"
+        f"---\n"
+        f"OsirisCare — substrate-level deprovision notice"
     )
     for rec in recipients:
         try:
             ok = await send_email(
                 rec["email"],
-                "OsirisCare: account access disabled",
+                "Account access change",
                 body_template,
             )
             if not ok:

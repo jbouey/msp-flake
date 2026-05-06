@@ -291,7 +291,7 @@ async def _send_initiator_confirmation_email(
         )
         await send_email(
             initiator_email,
-            "OsirisCare: account access change request initiated",
+            "Account change request received",
             body,
         )
     except Exception:
@@ -343,7 +343,7 @@ async def _send_target_accept_email(
         )
         await send_email(
             target_email,
-            "OsirisCare: action required — account access proposal",
+            "Confirm an account change request",
             body,
         )
     except Exception:
