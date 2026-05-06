@@ -531,6 +531,12 @@ export const PartnerDashboard: React.FC = () => {
             Inventory
           </button>
           <button
+            onClick={() => navigate('/partner/appliances')}
+            className="px-4 py-3 font-medium transition border-b-2 -mb-px border-transparent text-slate-500 hover:text-indigo-600 whitespace-nowrap min-h-[44px]"
+          >
+            Appliances
+          </button>
+          <button
             onClick={() => navigate('/partner/security')}
             className="px-4 py-3 font-medium transition border-b-2 -mb-px border-transparent text-slate-500 hover:text-indigo-600 whitespace-nowrap min-h-[44px]"
           >

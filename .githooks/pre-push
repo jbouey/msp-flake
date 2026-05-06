@@ -157,6 +157,12 @@ SOURCE_LEVEL_TESTS=(
     # site_appliances NOT the rollup MV which bypasses RLS), and the
     # 50-row hard cap.
     "tests/test_client_appliances_field_allowlist.py"
+    # RT33 P3 partner-portal fleet appliance contract: pins read-only
+    # posture, partner_id scope, status_filter allowlist, 100-row cap,
+    # admin_connection canonical helper. Operator-class mutations
+    # (l2_mode toggle, fleet-order, clear-stale) MUST stay on central
+    # command per Maya rule.
+    "tests/test_partner_fleet_appliances_no_mutation.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."

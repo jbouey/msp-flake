@@ -10,3 +10,4 @@ export { PartnerSSOConfig } from './PartnerSSOConfig';
 export { PartnerMeshTopology } from './PartnerMeshTopology';
 export { PartnerConsentPage } from './PartnerConsentPage';
 export { PartnerUsersScreen } from './PartnerUsersScreen';
+export { PartnerFleetAppliances } from './PartnerFleetAppliances';

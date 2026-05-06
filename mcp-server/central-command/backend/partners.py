@@ -1061,6 +1061,138 @@ async def get_my_partner(request: Request, partner: dict = require_partner_role(
         }
 
 
+# ----------------------------------------------------------------------
+# Partner fleet appliance view (RT33 P0, 2026-05-05)
+# ----------------------------------------------------------------------
+# Cross-site fleet-wide appliance roll-up. Solves the "200 sites in
+# the book, can't answer 'which appliances are offline' without
+# clicking each one" problem flagged by Linda in RT33.
+#
+# Partner-class is operator-class so the field set is broader than the
+# client portal: includes mac_address + l2_mode for fleet ops context.
+# Still READ-ONLY — operator-class mutations (toggle l2_mode, fleet
+# orders, clear-stale) live on central command, not the partner portal.
+# Pinned by `tests/test_partner_fleet_appliances_no_mutation`.
+@router.get("/me/appliances")
+async def get_my_fleet_appliances(
+    cursor: str = "",
+    limit: int = 50,
+    status_filter: str = "",
+    site_id_filter: str = "",
+    partner: dict = require_partner_role("admin", "tech", "billing"),
+):
+    """Fleet appliance view across all sites under this partner.
+
+    Cursor pagination ASC by appliance_id, hard cap 100.
+    Optional server-side filters: status, site_id.
+    """
+    if limit < 1 or limit > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="limit must be between 1 and 100",
+        )
+    if status_filter and status_filter not in ("online", "stale", "offline"):
+        raise HTTPException(
+            status_code=400,
+            detail="status_filter must be 'online', 'stale', or 'offline'",
+        )
+    pool = await get_pool()
+
+    # Single-query CTE shape (Dana DBA fix from RT33 P3 review):
+    # The base CTE computes the per-appliance live_status ONCE via the
+    # LATERAL heartbeat join. The summary aggregates over the entire
+    # base set (unfiltered) and is attached to every row. Pagination /
+    # status_filter / site_filter apply only to the outer SELECT, so
+    # filtered views still see the un-filtered total/online/offline KPI.
+    # Replaces the prior two-query pattern that scanned heartbeats twice.
+    async with admin_connection(pool) as conn:
+        rows = await conn.fetch(
+            """
+            WITH fleet AS (
+                SELECT sa.appliance_id,
+                       sa.site_id,
+                       COALESCE(sa.display_name, sa.hostname, sa.appliance_id) AS display_name,
+                       sa.mac_address,
+                       sa.agent_version,
+                       sa.l2_mode,
+                       sa.last_checkin,
+                       hb.max_observed_at AS last_heartbeat_at,
+                       s.clinic_name,
+                       CASE
+                           WHEN hb.max_observed_at IS NULL THEN 'offline'
+                           WHEN hb.max_observed_at > NOW() - INTERVAL '90 seconds' THEN 'online'
+                           WHEN hb.max_observed_at > NOW() - INTERVAL '5 minutes' THEN 'stale'
+                           ELSE 'offline'
+                       END AS status
+                FROM site_appliances sa
+                JOIN sites s ON s.site_id = sa.site_id AND sa.deleted_at IS NULL
+                LEFT JOIN LATERAL (
+                    SELECT MAX(observed_at) AS max_observed_at
+                    FROM appliance_heartbeats
+                    WHERE appliance_id = sa.appliance_id
+                      AND observed_at > NOW() - INTERVAL '24 hours'
+                ) hb ON true
+                WHERE s.partner_id = $1 AND s.status != 'inactive'
+            )
+            SELECT f.*,
+                   (SELECT COUNT(*) FROM fleet) AS _total,
+                   (SELECT COUNT(*) FROM fleet WHERE status = 'online') AS _online,
+                   (SELECT COUNT(*) FROM fleet WHERE status IN ('offline','stale')) AS _offline
+            FROM fleet f
+            WHERE ($2 = '' OR f.appliance_id > $2)
+              AND ($3 = '' OR f.site_id = $3)
+              AND ($4 = '' OR f.status = $4)
+            ORDER BY f.appliance_id ASC
+            LIMIT $5
+            """,
+            partner['id'], cursor, site_id_filter, status_filter, limit + 1,
+        )
+
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    next_cursor = rows[-1]["appliance_id"] if (has_more and rows) else None
+
+    # Summary attached to every row by the CTE; pull from row[0] or
+    # zero-default when the result set is empty so the partner still
+    # sees a "0/0" KPI banner instead of nothing.
+    summary = (
+        {
+            "total": rows[0]["_total"],
+            "online": rows[0]["_online"],
+            "offline": rows[0]["_offline"],
+        }
+        if rows
+        else {"total": 0, "online": 0, "offline": 0}
+    )
+
+    return {
+        "appliances": [
+            {
+                "appliance_id": r["appliance_id"],
+                "site_id": r["site_id"],
+                "site_name": r["clinic_name"],
+                "display_name": r["display_name"],
+                "mac_address": r["mac_address"],
+                "agent_version": r["agent_version"],
+                "l2_mode": r["l2_mode"],
+                "status": r["status"],
+                "last_heartbeat_at": (
+                    r["last_heartbeat_at"].isoformat()
+                    if r["last_heartbeat_at"] else None
+                ),
+                "last_checkin": (
+                    r["last_checkin"].isoformat()
+                    if r["last_checkin"] else None
+                ),
+            }
+            for r in rows
+        ],
+        "summary": summary,
+        "next_cursor": next_cursor,
+        "limit": limit,
+    }
+
+
 @router.get("/me/sites")
 async def get_my_sites(request: Request, partner: dict = require_partner_role("admin", "tech", "billing")):
     """Get sites belonging to this partner."""
