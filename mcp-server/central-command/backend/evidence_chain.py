@@ -4600,11 +4600,12 @@ async def download_auditor_kit(
     Range: limit + offset paginate the bundles set. Default 1000 bundles
     per call (≈10MB ZIP). Repeat with offset for the full chain.
     """
-    import io
+    import asyncio
     import json as _json
     import base64
+    import tempfile
     import zipfile
-    from fastapi.responses import Response
+    from fastapi.responses import StreamingResponse
 
     if limit < 1 or limit > 5000:
         raise HTTPException(400, "limit must be between 1 and 5000")
@@ -4940,7 +4941,13 @@ async def download_auditor_kit(
         ),
     }
 
-    buf = io.BytesIO()
+    # RT33 P4 (2026-05-05): use SpooledTemporaryFile so the ZIP doesn't
+    # have to fit in memory. <20MB stays in RAM (covers the typical
+    # 1000-bundle kit ~7MB), larger spills to disk transparently. Pair
+    # this with StreamingResponse below so the client sees first bytes
+    # quickly and a 50MB ZIP doesn't pin a worker for the duration of
+    # the upload.
+    buf = tempfile.SpooledTemporaryFile(max_size=20 * 1024 * 1024)
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("README.md", _AUDITOR_KIT_README.format(
             site_id=site_row.site_id,
@@ -4975,13 +4982,35 @@ async def download_auditor_kit(
             zf.writestr(f"disclosures/{_adv_meta['advisory_filename']}", _adv_text)
 
     buf.seek(0)
-    zip_bytes = buf.getvalue()
 
     safe_site = "".join(c if c.isalnum() or c in "-_" else "-" for c in site_row.site_id)
     filename = f"osiriscare-auditor-kit-{safe_site}-{generated_at[:10]}.zip"
 
-    return Response(
-        content=zip_bytes,
+    # Stream the ZIP back in 64KB chunks via an ASYNC generator that
+    # offloads the synchronous `buf.read` to a thread. Adam's veto
+    # from RT33 P4 review: a sync generator on an async endpoint
+    # blocks the event loop for every read, starving concurrent
+    # requests on a slow client. asyncio.to_thread keeps the loop
+    # responsive while the network paces the upload. Time-to-first-
+    # byte improves ~10× vs the prior `Response(content=buf.getvalue())`
+    # which had to materialize the full bytes before the response
+    # started.
+    async def _stream_zip():
+        try:
+            while True:
+                chunk = await asyncio.to_thread(buf.read, 64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            # FastAPI calls .aclose() on the generator when the
+            # response completes OR the client disconnects. Either
+            # path closes the SpooledTemporaryFile, releasing the
+            # spilled-to-disk file descriptor.
+            buf.close()
+
+    return StreamingResponse(
+        _stream_zip(),
         media_type="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
