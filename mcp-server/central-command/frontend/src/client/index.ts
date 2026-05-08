@@ -5,6 +5,7 @@ export { ClientVerify } from './ClientVerify';
 export { ClientDashboard } from './ClientDashboard';
 export { ClientEvidence } from './ClientEvidence';
 export { ClientReports } from './ClientReports';
+export { ClientAttestations } from './ClientAttestations';
 export { ClientNotifications } from './ClientNotifications';
 export { ClientAlerts } from './ClientAlerts';
 export { ClientSettings } from './ClientSettings';
