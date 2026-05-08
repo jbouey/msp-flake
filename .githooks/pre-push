@@ -328,5 +328,26 @@ if [ "$FRONTEND_CHANGED" -eq 1 ]; then
         exit 1
     fi
     echo "[pre-push] ✓ frontend eslint clean"
+
+    # Frontend vitest — round-table-at-gates 2026-05-08 lesson: the
+    # `Response.blob()` undici-vs-jsdom asymmetry on commit d5b3c68a
+    # passed local tsc + eslint but failed CI vitest mid-deploy.
+    # Adding `npx vitest run` here surfaces test regressions
+    # pre-push instead of mid-deploy. Skip with PRE_PUSH_SKIP_VITEST=1
+    # if blocked (emergency only).
+    if [ -z "$PRE_PUSH_SKIP_VITEST" ]; then
+        echo "[pre-push] frontend vitest ..."
+        if ! npx vitest run --reporter=basic > /tmp/vitest-prepush.log 2>&1; then
+            echo "[pre-push] ❌ vitest failed — push blocked"
+            echo ""
+            tail -40 /tmp/vitest-prepush.log
+            echo ""
+            echo "[pre-push] Fix the failing test(s), then re-push."
+            echo "[pre-push] Skip vitest (emergency only): PRE_PUSH_SKIP_VITEST=1 git push"
+            echo "[pre-push] Bypass entirely: git push --no-verify"
+            exit 1
+        fi
+        echo "[pre-push] ✓ frontend vitest clean"
+    fi
     cd "$REPO_ROOT"
 fi
