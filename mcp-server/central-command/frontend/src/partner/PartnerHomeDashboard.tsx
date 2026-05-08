@@ -173,7 +173,12 @@ export const PartnerHomeDashboard: React.FC = () => {
                   <td className="px-5 py-2 text-right">
                     <button
                       className="text-blue-600 hover:text-blue-800 hover:underline text-sm"
-                      onClick={() => navigate(`/partner/site/${a.site_id}`)}
+                      // CRIT-1 fix (audit 2026-05-08): /partner/site/:siteId
+                      // route does not exist. Deflect to dashboard's Sites
+                      // tab with a query-param the dashboard can read to
+                      // scroll to that row. Cheap-path until a true site
+                      // overview route ships.
+                      onClick={() => navigate(`/partner/dashboard?site=${encodeURIComponent(a.site_id)}`)}
                     >
                       Open →
                     </button>
@@ -233,7 +238,11 @@ export const PartnerHomeDashboard: React.FC = () => {
           </div>
           <div className="text-xs text-slate-600 space-y-1 tabular-nums">
             <div className="flex justify-between">
-              <span>Drifts detected</span>
+              {/* MIN-1 fix (audit 2026-05-08): Session 199 retired
+                  "drift" in display copy — variable names may keep
+                  it (incidents_24h here) but customer-visible text
+                  switches to "Findings". */}
+              <span>Findings detected</span>
               <span>{bob.incidents_24h}</span>
             </div>
             <div className="flex justify-between">

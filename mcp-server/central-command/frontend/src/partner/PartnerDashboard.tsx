@@ -59,6 +59,13 @@ export const PartnerDashboard: React.FC = () => {
     if (billingStatus === 'success' || billingStatus === 'canceled') {
       setActiveTab('billing');
     }
+    // CRIT-1 / CRIT-2 fix (audit 2026-05-08): when /partner/site/:siteId
+    // would have been routed (it never was), PartnerHomeDashboard +
+    // PartnerWeeklyRollup now deflect to /partner/dashboard?site=<id>.
+    // Honor that param by landing on the Sites tab.
+    if (searchParams.get('site')) {
+      setActiveTab('sites');
+    }
   }, [searchParams]);
   const [sites, setSites] = useState<Site[]>([]);
   const [provisions, setProvisions] = useState<Provision[]>([]);
@@ -303,6 +310,7 @@ export const PartnerDashboard: React.FC = () => {
               }}
               className="px-3 py-2 text-sm text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition"
               title="Show Welcome Guide"
+              aria-label="Show welcome guide"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
@@ -399,8 +407,14 @@ export const PartnerDashboard: React.FC = () => {
 
       {/* Tabs */}
       <div className="max-w-7xl mx-auto px-6">
-        <div className="flex gap-4 border-b overflow-x-auto -mx-6 px-6 min-w-0">
+        <div
+          className="flex gap-4 border-b overflow-x-auto -mx-6 px-6 min-w-0"
+          role="tablist"
+          aria-label="Partner dashboard sections"
+        >
           <button
+            role="tab"
+            aria-selected={activeTab === 'sites'}
             onClick={() => setActiveTab('sites')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'sites'
@@ -411,6 +425,8 @@ export const PartnerDashboard: React.FC = () => {
             Sites ({sites.length})
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'onboarding'}
             onClick={() => setActiveTab('onboarding')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'onboarding'
@@ -421,6 +437,8 @@ export const PartnerDashboard: React.FC = () => {
             Onboarding
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'provisions'}
             onClick={() => setActiveTab('provisions')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'provisions'
@@ -431,6 +449,8 @@ export const PartnerDashboard: React.FC = () => {
             Provision Codes ({provisions.length})
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'agreements'}
             onClick={() => setActiveTab('agreements')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'agreements'
@@ -441,6 +461,8 @@ export const PartnerDashboard: React.FC = () => {
             Agreements
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'invites'}
             onClick={() => setActiveTab('invites')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'invites'
@@ -451,6 +473,8 @@ export const PartnerDashboard: React.FC = () => {
             Invites
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'billing'}
             onClick={() => setActiveTab('billing')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'billing'
@@ -461,6 +485,8 @@ export const PartnerDashboard: React.FC = () => {
             Billing
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'commission'}
             onClick={() => setActiveTab('commission')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'commission'
@@ -471,6 +497,8 @@ export const PartnerDashboard: React.FC = () => {
             Commission
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'compliance'}
             onClick={() => setActiveTab('compliance')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'compliance'
@@ -481,6 +509,8 @@ export const PartnerDashboard: React.FC = () => {
             Compliance
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'exceptions'}
             onClick={() => setActiveTab('exceptions')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'exceptions'
@@ -491,6 +521,8 @@ export const PartnerDashboard: React.FC = () => {
             Exceptions
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'escalations'}
             onClick={() => setActiveTab('escalations')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'escalations'
@@ -501,6 +533,8 @@ export const PartnerDashboard: React.FC = () => {
             Escalations
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'learning'}
             onClick={() => setActiveTab('learning')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'learning'
@@ -511,6 +545,8 @@ export const PartnerDashboard: React.FC = () => {
             Learning
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'sso'}
             onClick={() => setActiveTab('sso')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'sso'
@@ -521,6 +557,8 @@ export const PartnerDashboard: React.FC = () => {
             SSO
           </button>
           <button
+            role="tab"
+            aria-selected={activeTab === 'inventory'}
             onClick={() => setActiveTab('inventory')}
             className={`px-4 py-3 font-medium transition border-b-2 -mb-px whitespace-nowrap min-h-[44px] ${
               activeTab === 'inventory'
@@ -533,12 +571,14 @@ export const PartnerDashboard: React.FC = () => {
           <button
             onClick={() => navigate('/partner/appliances')}
             className="px-4 py-3 font-medium transition border-b-2 -mb-px border-transparent text-slate-500 hover:text-indigo-600 whitespace-nowrap min-h-[44px]"
+            aria-label="Open appliances page"
           >
             Appliances
           </button>
           <button
             onClick={() => navigate('/partner/security')}
             className="px-4 py-3 font-medium transition border-b-2 -mb-px border-transparent text-slate-500 hover:text-indigo-600 whitespace-nowrap min-h-[44px]"
+            aria-label="Open security settings"
           >
             Security
           </button>
@@ -1122,7 +1162,7 @@ const PartnerInventory: React.FC<{ apiKey: string | null }> = ({ apiKey }) => {
                             d.compliance_status === 'compliant' ? 'bg-emerald-100 text-emerald-700' :
                             d.compliance_status === 'drifted' ? 'bg-red-100 text-red-700' :
                             'bg-slate-100 text-slate-600'
-                          }`}>{d.compliance_status === 'drifted' ? 'non-compliant' : d.compliance_status}</span>
+                          }`}>{d.compliance_status === 'drifted' ? 'Failing' : d.compliance_status}</span>
                         </td>
                       </tr>
                     ))}

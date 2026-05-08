@@ -49,6 +49,50 @@ export const PartnerWeeklyRollup: React.FC = () => {
   const [data, setData] = useState<RollupResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // MAJ-1 fix (audit 2026-05-08): QBR is a rate-limited PDF
+  // download (Session 217 RT31 rule — auditor-kit + similar must
+  // use JS fetch->blob, not <a href>, so customers see actionable
+  // 401/429 copy). qbrBusy gates double-click; qbrError surfaces
+  // status to the user.
+  const [qbrBusy, setQbrBusy] = useState<string | null>(null);
+  const [qbrError, setQbrError] = useState<string | null>(null);
+
+  const handleQbrDownload = async (siteId: string, clinicName: string) => {
+    setQbrBusy(siteId);
+    setQbrError(null);
+    try {
+      const res = await fetch(`/api/partners/me/sites/${siteId}/qbr`, {
+        credentials: 'include',
+      });
+      if (res.status === 401) {
+        setQbrError('Session expired. Please sign in again to download QBR.');
+        return;
+      }
+      if (res.status === 429) {
+        const retryAfter = res.headers.get('Retry-After') || '60';
+        setQbrError(`Rate limit reached. Retry in ${retryAfter}s.`);
+        return;
+      }
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        setQbrError(`QBR download failed (${res.status}). ${detail.slice(0, 120)}`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `qbr-${clinicName.replace(/[^a-zA-Z0-9_-]+/g, '-').toLowerCase()}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setQbrError(e instanceof Error ? e.message : 'QBR download failed');
+    } finally {
+      setQbrBusy(null);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +129,21 @@ export const PartnerWeeklyRollup: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-6 pb-6">
+      {qbrError && (
+        <div
+          className="mb-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-sm text-rose-700 flex items-center justify-between"
+          role="alert"
+        >
+          <span>{qbrError}</span>
+          <button
+            onClick={() => setQbrError(null)}
+            className="text-rose-700 hover:text-rose-900 text-xs underline"
+            aria-label="Dismiss"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
           <div>
@@ -149,15 +208,14 @@ export const PartnerWeeklyRollup: React.FC = () => {
                         : '—'}
                     </td>
                     <td className="px-5 py-2 text-right whitespace-nowrap">
-                      <a
-                        href={`/api/partners/me/sites/${s.site_id}/qbr`}
-                        target="_blank"
-                        rel="noopener"
-                        className="text-slate-500 hover:text-slate-800 hover:underline text-xs mr-3"
+                      <button
+                        onClick={() => void handleQbrDownload(s.site_id, s.clinic_name || s.site_id)}
+                        disabled={qbrBusy === s.site_id}
+                        className="text-slate-500 hover:text-slate-800 hover:underline text-xs mr-3 disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Download quarterly business review PDF"
                       >
-                        QBR
-                      </a>
+                        {qbrBusy === s.site_id ? 'QBR…' : 'QBR'}
+                      </button>
                       <button
                         onClick={() => navigate(`/partner/site/${s.site_id}/topology`)}
                         className="text-slate-500 hover:text-slate-800 hover:underline text-xs mr-3"
@@ -174,7 +232,10 @@ export const PartnerWeeklyRollup: React.FC = () => {
                       </button>
                       <button
                         className="text-blue-600 hover:text-blue-800 hover:underline text-sm"
-                        onClick={() => navigate(`/partner/site/${s.site_id}`)}
+                        // CRIT-2 fix (audit 2026-05-08): /partner/site/:siteId
+                        // route does not exist; deflect to dashboard with
+                        // a query param so the partner lands on a real page.
+                        onClick={() => navigate(`/partner/dashboard?site=${encodeURIComponent(s.site_id)}`)}
                       >
                         Open →
                       </button>
