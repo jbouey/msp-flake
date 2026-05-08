@@ -67,3 +67,32 @@ area,file_line,label,endpoint,role_gate,d1_func,d2_auth,d3_failure,d4_loading,d5
 4-users,PartnerInvites.tsx:123,Create clinic invite,POST /api/partners/invites/create,admin tech,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,buildAuthedHeaders + 428 missing-agreements path,none
 4-users,PartnerInvites.tsx:163,Revoke clinic invite,POST /api/partners/invites/{id}/revoke,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,buildAuthedHeaders,none
 4-users,PartnerOnboarding.tsx:77,Trigger checkin,POST /api/partners/me/sites/{id}/trigger-checkin,admin tech billing,PASS,PASS,FAIL,PASS,PASS,PASS,PASS,PASS,PASS,MINOR,Silent catch on failure (Trigger checkin failed silently comment),Surface error
+5-attestations,PartnerAttestations.tsx:545,Back to partner dashboard (icon),client-only Link,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,aria-label set; Link,none
+5-attestations,PartnerAttestations.tsx:675,Copy public verify URL,clipboard only,n/a,PASS,N/A,PASS,PASS,PASS,PASS,PASS,N/A,PASS,NONE,toast on success/fail; aria-label set,none
+5-attestations,PartnerAttestations.tsx:699,Issue + download portfolio attestation,GET /api/partners/me/portfolio-attestation (PDF blob),admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,N/A(GET),PASS,NONE,fetchBlob; 401/403/429/409 toast paths; aria-busy + spinner,none
+5-attestations,PartnerAttestations.tsx:792,Issue + download BA Compliance Letter,GET /api/partners/me/ba-attestation (PDF blob),admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,N/A(GET),PASS,NONE,fetchBlob; same 401/403/429/409 paths; aria-busy,none
+5-attestations,PartnerAttestations.tsx:818,Add BAA (open modal),client-only state,admin,PASS,PASS,N/A,PASS,PASS,PASS,PASS,N/A,PASS,NONE,disabled when !isAdmin; pushToast on click guard,none
+5-attestations,PartnerAttestations.tsx:921,Revoke (per-row),DELETE /api/partners/me/ba-roster/{id},admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,DangerousActionModal tier-1 + ≥20-char reason; deleteJson,none
+5-attestations,PartnerAttestations.tsx:1132,Cancel (Add-BAA modal),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,disabled while busy,none
+5-attestations,PartnerAttestations.tsx:1145,Add to roster (submit),POST /api/partners/me/ba-roster,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,postJson; 409/403/other addError surfaced; minLength + required client-side gates,none
+5-attestations,PartnerAttestations.tsx:1199 (DAM),Confirm Revoke (DangerousActionModal),DELETE /api/partners/me/ba-roster/{id},admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,Tier-1 typed-confirm + reason ≥20-char + deleteJson,none
+5-attestations,PartnerAttestations.tsx:1199 (DAM),Cancel Revoke,client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,DangerousActionModal onCancel disabled while busy,none
+6-sitedetail,PartnerSiteDetail.tsx:268,Back to dashboard (error fallback),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,error path nav,none
+6-sitedetail,PartnerSiteDetail.tsx:329,Workstation agents (sub-route),client-only Link,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,Link to /partner/site/:id/agents (route exists),none
+6-sitedetail,PartnerSiteDetail.tsx:335,Devices (sub-route),client-only Link,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,Link to /partner/site/:id/devices,none
+6-sitedetail,PartnerSiteDetail.tsx:341,Check config (sub-route),client-only Link,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,Link to /partner/site/:id/drift-config,none
+6-sitedetail,PartnerSiteDetail.tsx:347,Mesh topology (sub-route),client-only Link,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,Link to /partner/site/:id/topology,none
+6-sitedetail,PartnerSiteDetail.tsx:353,Consent (sub-route),client-only Link,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,Link to /partner/site/:id/consent,none
+6-sitedetail,PartnerSiteDetail.tsx:424,Open client portal as practice owner,POST /api/partners/me/sites/{id}/client-portal-link,admin tech,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,DangerousActionModal reversible tier; ≥20-char reason; postJson,none
+6-sitedetail,PartnerSiteDetail.tsx:438,Issue Compliance Letter (deep link new tab),client-only nav,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,target=_blank rel=noopener noreferrer,none
+6-sitedetail,PartnerSiteDetail.tsx:446,Issue Wall Certificate (deep link new tab),client-only nav,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,target=_blank rel=noopener noreferrer,none
+6-sitedetail,PartnerSiteDetail.tsx:566,Copy magic link to clipboard,clipboard only,n/a,PASS,N/A,PASS,PASS,PASS,PASS,PASS,N/A,PASS,NONE,clipboard fail surfaces error,none
+6-sitedetail,PartnerSiteDetail.tsx:580,Done (close mint result),client-only state,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,resets all mint state,none
+6-sitedetail,PartnerSiteDetail.tsx:495 (DAM),Confirm Mint magic link,POST /api/partners/me/sites/{id}/client-portal-link,admin tech,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,reversible tier in DangerousActionModal; reason ≥20 chars; postJson,none
+6-sitedetail,PartnerSiteDetail.tsx:495 (DAM),Cancel Mint,client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,onCancel disabled while busy,none
+6-sitedetail,PartnerSiteAgents.tsx:81/83,Breadcrumb Clinics + siteId Link,client-only Link,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,read-only sub-route navigation,none
+6-sitedetail,PartnerSiteDevices.tsx:80/82,Breadcrumb Clinics + siteId Link,client-only Link,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,read-only sub-route navigation,none
+6-sitedetail,PartnerSiteDriftConfig.tsx:78/80,Breadcrumb Clinics + siteId Link,client-only Link,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,read-only; patchJson imported but unused (placeholder for future mutation),none
+4-users,PartnerExceptionManagement.tsx:312,Renew (exception),POST /api/exceptions/{id}/renew,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,DRIFT,MINOR,window.prompt() for reason — diverges from DangerousActionModal sibling pattern,Migrate to DangerousActionModal
+4-users,PartnerExceptionManagement.tsx:321,Revoke (exception),POST /api/exceptions/{id}/revoke,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,DRIFT,MINOR,window.prompt() for reason — drift,Migrate to DangerousActionModal
+4-users,PartnerSSOConfig.tsx:133,Delete SSO config,DELETE /api/partners/me/orgs/{id}/sso,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,DRIFT,MINOR,window.confirm() — drift from DangerousActionModal pattern,Migrate to DangerousActionModal
