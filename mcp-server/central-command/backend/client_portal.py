@@ -5355,3 +5355,232 @@ async def revoke_privacy_officer(
             else None
         ),
     }
+
+
+# =============================================================================
+# Compliance Attestation Letter (F1 — round-table 2026-05-06)
+# =============================================================================
+# Maria's customer-round-table finding: "what do I actually hand my
+# insurance carrier?" F1 returns a one-page branded PDF Maria
+# forwards to Brian (her Erie agent), Brian's underwriter, her board,
+# etc. PRECONDITIONS (Carol + Diane contracts):
+#   - active Privacy Officer designation (F2 row, revoked_at IS NULL)
+#   - BAA-on-file (baa_signatures row for the org's primary email)
+# Either missing → 409 Conflict with a specific reason. Never 500.
+
+@auth_router.get("/attestation-letter")
+async def issue_attestation_letter_pdf(
+    request: Request,
+    user: dict = Depends(require_client_user),
+):
+    """Issue + stream the PDF in a single request. Each call issues
+    a NEW letter (supersedes any prior active letter for this org).
+    Per-issue rate-limit: 5/hour per (org, user) — letters are
+    expensive to render and downstream recipients (carriers, boards)
+    don't need a fresh one per minute.
+
+    Returns: application/pdf (the rendered letter).
+    """
+    try:
+        from .client_attestation_letter import (
+            issue_letter, html_to_pdf, UnableToIssueLetter,
+        )
+    except ImportError:
+        from client_attestation_letter import (  # type: ignore
+            issue_letter, html_to_pdf, UnableToIssueLetter,
+        )
+    from fastapi.responses import Response
+
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    # Per-(org, user) rate limit (matches the auditor-kit per-caller
+    # bucket pattern from round-table 2026-05-06 P2).
+    try:
+        from .shared import check_rate_limit
+    except ImportError:
+        from shared import check_rate_limit  # type: ignore
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=str(org_id),
+        action="attestation_letter_issue",
+        window_seconds=3600,
+        max_requests=5,
+        caller_key=f"client:{user['user_id']}",
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Attestation letter issuance is rate-limited (5/hr "
+                f"per user). Retry in {retry_after_s}s."
+            ),
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        try:
+            result = await issue_letter(
+                conn=conn,
+                client_org_id=org_id,
+                issued_by_user_id=user["user_id"],
+                issued_by_email=user["email"],
+            )
+        except UnableToIssueLetter as e:
+            # Carol contract: 409, not 500. The customer needs to
+            # know WHICH precondition failed (Privacy Officer? BAA?)
+            # so they can resolve it.
+            raise HTTPException(status_code=409, detail=str(e))
+
+        await _audit_client_action(
+            conn, user,
+            action="ATTESTATION_LETTER_ISSUED",
+            target=result["letter_id"],
+            details={
+                "letter_id": result["letter_id"],
+                "attestation_hash": result["attestation_hash"],
+                "valid_until": result["valid_until"].isoformat(),
+                "practice_name": result["practice_name"],
+            },
+            request=request,
+        )
+
+    pdf_bytes = html_to_pdf(result["html"])
+    safe_practice = "".join(
+        c if c.isalnum() or c in "-_" else "-"
+        for c in result["practice_name"]
+    )[:80]
+    issue_date = result["issued_at"].strftime("%Y-%m-%d")
+    filename = f"compliance-attestation-{safe_practice}-{issue_date}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Attestation-Hash": result["attestation_hash"],
+            "X-Letter-Valid-Until": result["valid_until"].isoformat(),
+        },
+    )
+
+
+# =============================================================================
+# F4 — Public /verify/{hash} endpoint (round-table 2026-05-06)
+# =============================================================================
+# Brian-the-agent: "I will not scan QRs from a PDF, that's how you
+# get phished. What I trust: a 1-800 number I can call AND a public
+# verify URL my underwriter can hit." F4 is the second half of that.
+#
+# OCR-investigator contract: returns hash + issuance timestamp +
+# control count + Privacy Officer name + BAA-on-file boolean. Does
+# NOT leak client_org_id, internal IDs, or audit metadata.
+#
+# This endpoint is PUBLIC (no auth) — that's the point. The hash is
+# 64 hex chars (SHA-256), unguessable, presented on the issued letter.
+# Recipients (insurance carriers, OCR investigators, attorneys) hit
+# this endpoint to confirm the letter they were forwarded is real.
+#
+# Mounted on a separate truly-public router that main.py wires under
+# /api/verify. Rate-limit: 60/hour per source IP — probing defense.
+public_verify_router = APIRouter(prefix="/api/verify", tags=["public-verify"])
+
+
+@public_verify_router.get("/attestation/{attestation_hash}")
+async def public_verify_attestation_letter(
+    attestation_hash: str,
+    request: Request,
+):
+    """Public endpoint — NO AUTH. Returns OCR-grade payload for the
+    given attestation hash, or {"valid": false} if the hash is
+    unknown / malformed.
+
+    Threat model: hash is 64 hex chars (SHA-256), unguessable.
+    Probing is rate-limited per source IP.
+    """
+    # 1. Shape check — accept full hash OR 16-char prefix (matches
+    #    the abbreviated form printed on the letter for QR/short URL).
+    h = attestation_hash.strip().lower()
+    if not all(c in "0123456789abcdef" for c in h):
+        return {"valid": False, "reason": "malformed_hash"}
+    if len(h) not in (16, 64):
+        return {"valid": False, "reason": "malformed_hash"}
+
+    # 2. Per-IP rate-limit.
+    try:
+        from .shared import check_rate_limit
+    except ImportError:
+        from shared import check_rate_limit  # type: ignore
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=client_ip,
+        action="public_verify_attestation",
+        window_seconds=3600,
+        max_requests=60,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Verification rate limit reached. Retry in {retry_after_s}s.",
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    # 3. Lookup. SECURITY DEFINER function bypasses RLS for the
+    #    hash-keyed read; only OCR-grade fields returned.
+    try:
+        from .client_attestation_letter import get_letter_by_hash
+    except ImportError:
+        from client_attestation_letter import get_letter_by_hash  # type: ignore
+    pool = await get_pool()
+
+    # If the prefix form (16 chars), look up via prefix on the
+    # attestation_hash column with admin context (matches Maya P1
+    # — admin_connection used for substrate-level reads).
+    try:
+        from .tenant_middleware import admin_connection
+    except ImportError:
+        from tenant_middleware import admin_connection  # type: ignore
+
+    async with admin_connection(pool) as conn:
+        if len(h) == 64:
+            row = await get_letter_by_hash(conn, h)
+        else:
+            # Prefix lookup. Set RLS bypass for this read.
+            full_row = await conn.fetchrow(
+                """
+                SELECT attestation_hash FROM compliance_attestation_letters
+                 WHERE attestation_hash LIKE $1 || '%'
+                 LIMIT 1
+                """,
+                h,
+            )
+            if not full_row:
+                row = None
+            else:
+                row = await get_letter_by_hash(conn, full_row["attestation_hash"])
+
+    if not row:
+        return {"valid": False, "reason": "not_found"}
+
+    # 4. Compose the OCR-grade payload. Field selection mirrors the
+    #    SECURITY DEFINER function's RETURNS TABLE — no leaks.
+    return {
+        "valid": True,
+        "attestation_hash": row["attestation_hash"],
+        "issued_at": row["issued_at"].isoformat() if row["issued_at"] else None,
+        "valid_until": row["valid_until"].isoformat() if row["valid_until"] else None,
+        "is_expired": bool(row["is_expired"]),
+        "is_superseded": bool(row["is_superseded"]),
+        "period_start": row["period_start"].isoformat() if row["period_start"] else None,
+        "period_end": row["period_end"].isoformat() if row["period_end"] else None,
+        "bundle_count": row["bundle_count"],
+        "sites_covered_count": row["sites_covered_count"],
+        "privacy_officer": {
+            "name": row["privacy_officer_name"],
+            "title": row["privacy_officer_title"],
+        },
+        "baa_on_file": True,
+        "baa_dated_at": row["baa_dated_at"].isoformat() if row["baa_dated_at"] else None,
+        "baa_practice_name": row["baa_practice_name"],
+        "presenter_brand": row["presenter_brand"],
+        "overall_score": row["overall_score"],
+    }
+

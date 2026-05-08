@@ -231,6 +231,30 @@ _KWARGS_SECURITY_ALLOWLIST = frozenset({
     "generated_at",
     "presenter_brand",
     "presenter_contact_line",
+    # attestation_letter context (F1, round-table 2026-05-06).
+    # Each is a frozen snapshot value at issue time — no live PII
+    # lookups, no PHI shapes. Maria reviews this list before
+    # signoff. Maya security review pinned: no patient_*, no mrn,
+    # no diagnosis, no provider_npi.
+    "practice_name",
+    "period_start_human",
+    "period_end_human",
+    "sites_covered_count",
+    "appliances_count",
+    "workstations_count",
+    "bundle_count",
+    "privacy_officer_name",
+    "privacy_officer_title",
+    "privacy_officer_email",
+    "privacy_officer_accepted_human",
+    "privacy_officer_explainer_version",
+    "baa_dated_at_human",
+    "baa_practice_name",
+    "issued_at_human",
+    "valid_until_human",
+    "attestation_hash",
+    "verify_phone",
+    "verify_url_short",
 })
 
 
@@ -321,7 +345,8 @@ def run_boot_smoke() -> Tuple[List[str], List[Tuple[str, Exception]]]:
     return passed, failed
 
 
-# Side-effect import: register all auditor-kit templates at
+# Side-effect import: register all customer templates at
 # module-load time so callers don't need a separate import-then-use
 # step.
 from . import auditor_kit  # noqa: F401, E402
+from . import attestation_letter  # noqa: F401, E402

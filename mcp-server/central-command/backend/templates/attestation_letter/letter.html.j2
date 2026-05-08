@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Compliance Attestation — {{ practice_name }}</title>
+<style>
+@page {
+    size: Letter;
+    margin: 0.75in;
+    @bottom-center {
+        content: "Issued by {{ presenter_brand }}.  Verify: {{ verify_phone }} or {{ verify_url_short }}.  Valid until {{ valid_until_human }}.";
+        font-family: 'Helvetica', 'Arial', sans-serif;
+        font-size: 9pt;
+        color: #666;
+    }
+}
+body {
+    font-family: 'Helvetica', 'Arial', sans-serif;
+    color: #222;
+    line-height: 1.5;
+    font-size: 11pt;
+}
+.letterhead {
+    border-bottom: 2px solid #14A89E;
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+}
+.letterhead h1 {
+    font-size: 26pt;
+    font-weight: 700;
+    color: #1a365d;
+    margin: 0 0 4px 0;
+    letter-spacing: -0.5px;
+}
+.letterhead .practice-name {
+    font-size: 18pt;
+    font-weight: 600;
+    color: #2d3748;
+    margin: 0 0 6px 0;
+}
+.letterhead .period {
+    font-size: 11pt;
+    color: #4a5568;
+    margin: 0;
+}
+.statement {
+    margin: 24px 0;
+    font-size: 11.5pt;
+    line-height: 1.6;
+}
+.statement p {
+    margin: 0 0 14px 0;
+}
+.signoff {
+    margin-top: 36px;
+    padding-top: 18px;
+    border-top: 1px solid #e2e8f0;
+}
+.signoff .role-line {
+    font-size: 11pt;
+    color: #2d3748;
+    margin: 0 0 6px 0;
+}
+.signoff .signed-by {
+    font-size: 11pt;
+    color: #2d3748;
+    margin: 0;
+}
+.signoff .signed-meta {
+    font-size: 9.5pt;
+    color: #718096;
+    margin: 4px 0 0 0;
+}
+.attestation-block {
+    margin-top: 28px;
+    padding: 14px 16px;
+    background: #f7fafc;
+    border-left: 3px solid #14A89E;
+    font-size: 10pt;
+    color: #4a5568;
+}
+.attestation-block .label {
+    font-weight: 600;
+    color: #2d3748;
+}
+.attestation-block .hash {
+    font-family: 'Courier New', monospace;
+    font-size: 9pt;
+    word-break: break-all;
+}
+.disclaimer {
+    margin-top: 22px;
+    font-size: 9pt;
+    color: #718096;
+    line-height: 1.4;
+}
+.disclaimer p { margin: 0 0 6px 0; }
+.cover-paragraph {
+    margin-top: 28px;
+    padding: 14px 16px;
+    background: #f0fff4;
+    border-left: 3px solid #38a169;
+    font-size: 10pt;
+    color: #2d3748;
+}
+.cover-paragraph .label {
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: block;
+}
+</style>
+</head>
+<body>
+
+<div class="letterhead">
+    <h1>Compliance Attestation</h1>
+    <p class="practice-name">{{ practice_name }}</p>
+    <p class="period">For the period {{ period_start_human }} through {{ period_end_human }}</p>
+</div>
+
+<div class="statement">
+    <p>
+        This letter confirms that <strong>{{ practice_name }}</strong> operates a HIPAA Security Rule technical-safeguard monitoring program reviewed by its designated Privacy Officer, <strong>{{ privacy_officer_name }}</strong>, on a monthly cadence. From {{ period_start_human }} through {{ period_end_human }}, the practice's technical safeguards were monitored on a continuous automated schedule, capturing cryptographically signed evidence aligned to 45 CFR §164.308, §164.310, and §164.312 across {{ sites_covered_count }} site{{ 's' if sites_covered_count != 1 else '' }}, {{ appliances_count }} compliance appliance{{ 's' if appliances_count != 1 else '' }}, and {{ workstations_count }} workstation{{ 's' if workstations_count != 1 else '' }}.
+    </p>
+    <p>
+        {{ privacy_officer_name }}, as Privacy Officer, reviews the monthly evidence summary. Signed evidence bundles ({{ bundle_count }} for the covered period) and the technical Evidence Kit are available on request to the practice's carrier, legal counsel, or auditor.
+    </p>
+</div>
+
+<div class="signoff">
+    <p class="role-line"><strong>Designated Privacy Officer:</strong> {{ privacy_officer_name }}, {{ privacy_officer_title }}</p>
+    <p class="signed-by">Email: {{ privacy_officer_email }}</p>
+    <p class="signed-meta">Designation accepted {{ privacy_officer_accepted_human }} (explainer {{ privacy_officer_explainer_version }}).</p>
+</div>
+
+<div class="cover-paragraph">
+    <span class="label">For the recipient (insurance carrier, board chair, or counsel):</span>
+    This letter attests that {{ practice_name }} maintains an active HIPAA Security Rule technical-safeguard monitoring program for the period above. Evidence is preserved in a cryptographically signed chain. To independently verify this letter, call {{ verify_phone }} during business hours or visit {{ verify_url_short }}/{{ attestation_hash[:16] }}. Detailed technical evidence is available on request.
+</div>
+
+<div class="attestation-block">
+    <p><span class="label">Issued by:</span> {{ presenter_brand }}{{ presenter_contact_line }}</p>
+    <p><span class="label">Issued under BAA:</span> dated {{ baa_dated_at_human }} with {{ baa_practice_name }}</p>
+    <p><span class="label">Issuance:</span> {{ issued_at_human }} &nbsp;|&nbsp; <span class="label">Valid until:</span> {{ valid_until_human }} (90 days)</p>
+    <p><span class="label">Attestation hash:</span> <span class="hash">{{ attestation_hash }}</span></p>
+    <p><span class="label">Verify:</span> {{ verify_phone }} or {{ verify_url_short }}/{{ attestation_hash[:16] }}</p>
+</div>
+
+<div class="disclaimer">
+    <p>This letter is audit-supportive technical evidence. It is not a substitute for the practice's §164.528 disclosure accounting, designated record set, §164.530(d) complaint log, or workforce sanction records. Auditors and carriers may request the Evidence Kit (cryptographically signed bundles + chain + OpenTimestamps anchors) for offline verification.</p>
+    <p>Evidence bundles are exportable in vendor-neutral format on 30 days' written notice. Attestation-hash verification is honored for 7 years post-termination of the {{ presenter_brand }}–{{ baa_practice_name }} relationship (matching HIPAA §164.530(j) record-retention requirement).</p>
+</div>
+
+</body>
+</html>

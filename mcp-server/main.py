@@ -114,7 +114,7 @@ from dashboard_api.client_billing import router as client_billing_router
 from dashboard_api.exceptions_api import router as exceptions_router
 from dashboard_api.appliance_delegation import router as appliance_delegation_router
 from dashboard_api.learning_api import partner_learning_router
-from dashboard_api.client_portal import public_router as client_auth_router, auth_router as client_portal_router, billing_webhook_router
+from dashboard_api.client_portal import public_router as client_auth_router, auth_router as client_portal_router, billing_webhook_router, public_verify_router
 from dashboard_api.hipaa_modules import router as hipaa_modules_router
 from dashboard_api.companion import router as companion_router
 from dashboard_api.protection_profiles import router as protection_profiles_router
@@ -2369,6 +2369,12 @@ app.include_router(client_telemetry_router)   # Session 210: browser-side contra
 app.include_router(appliance_relocation_router)  # v36: appliance move detection + ack (HIPAA §164.310(d)(1))
 app.include_router(chaos_lab_router)
 app.include_router(public_status_router)
+# F4 — public /api/verify/attestation/{hash} (round-table 2026-05-06).
+# No auth; hash is 64 hex chars (SHA-256), unguessable. Insurance
+# carriers + OCR investigators + counsel hit this to confirm a
+# forwarded Compliance Attestation Letter is real. Rate-limited
+# 60/hour per source IP.
+app.include_router(public_verify_router)
 app.include_router(admin_status_router)
 app.include_router(mesh_targets_router)
 app.include_router(rescue_router)
