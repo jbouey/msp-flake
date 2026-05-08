@@ -58,6 +58,7 @@ class _FakeAdminConn:
 
 
 _tenant_mod.admin_connection = lambda pool: _FakeAdminConn(MagicMock())
+_tenant_mod.admin_transaction = lambda pool: _FakeAdminConn(MagicMock())
 
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if backend_dir not in sys.path:

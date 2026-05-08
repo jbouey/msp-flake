@@ -70,6 +70,7 @@ class _FakeAdminConn:
         pass
 
 _tenant_mod.admin_connection = lambda pool: _FakeAdminConn(MagicMock())
+_tenant_mod.admin_transaction = lambda pool: _FakeAdminConn(MagicMock())
 
 # Ensure backend dir is importable as dashboard_api package
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

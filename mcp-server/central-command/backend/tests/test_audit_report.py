@@ -68,6 +68,7 @@ sys.modules["dashboard_api.fleet"] = _fleet_mod
 
 _tenant_mod = types.ModuleType("dashboard_api.tenant_middleware")
 _tenant_mod.admin_connection = None
+_tenant_mod.admin_transaction = None
 sys.modules["dashboard_api.tenant_middleware"] = _tenant_mod
 
 # Register backend dir as dashboard_api package so relative imports work

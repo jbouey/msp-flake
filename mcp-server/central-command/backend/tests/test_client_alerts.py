@@ -86,11 +86,16 @@ async def _noop_admin_connection(pool):
     yield MagicMock()
 
 @_asynccontextmanager
+async def _noop_admin_transaction(pool):
+    yield MagicMock()
+
+@_asynccontextmanager
 async def _noop_org_connection(pool, *, org_id=None):
     yield MagicMock()
 
 _tenant_mod.tenant_connection = _noop_tenant_connection
 _tenant_mod.admin_connection = _noop_admin_connection
+_tenant_mod.admin_transaction = _noop_admin_transaction
 _tenant_mod.org_connection = _noop_org_connection
 
 # Stub phiscrub
