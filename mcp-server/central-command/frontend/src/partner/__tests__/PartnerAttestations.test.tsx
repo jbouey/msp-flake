@@ -113,9 +113,12 @@ function _jsonResponse(body: unknown, status = 200): Response {
 function _blobResponse(opts: {
   status?: number;
   headers?: Record<string, string>;
-  body?: string | Blob;
+  body?: string;
 }): Response {
-  return new Response(opts.body ?? new Blob(['%PDF-fake']), {
+  // Use a string body — undici's Response.blob() under node implements
+  // stream conversion on text but choked on Blob input on CI's node
+  // version. String body works on both jsdom + node-undici.
+  return new Response(opts.body ?? '%PDF-fake', {
     status: opts.status ?? 200,
     headers: opts.headers ?? {},
   });
