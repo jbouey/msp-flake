@@ -82,6 +82,19 @@ export const PartnerUsersScreen: React.FC = () => {
   );
   const [deactivateBusy, setDeactivateBusy] = useState(false);
 
+  // Role-change confirm state — replaces 3rd window.prompt
+  // (DangerousActionModal sprint follow-up 2026-05-08; flagged in
+  // the prior fork's "open questions" report).
+  const [roleChangeUser, setRoleChangeUser] = useState<PartnerUser | null>(
+    null,
+  );
+  const [roleChangeNext, setRoleChangeNext] = useState<string>('');
+  const [roleChangeReason, setRoleChangeReason] = useState('');
+  const [roleChangeError, setRoleChangeError] = useState<string | undefined>(
+    undefined,
+  );
+  const [roleChangeBusy, setRoleChangeBusy] = useState(false);
+
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       navigate('/partner/login', { replace: true });
@@ -112,11 +125,6 @@ export const PartnerUsersScreen: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const _setErrorFromException = (e: unknown, fallback: string) => {
-    const err = e as PortalFetchError;
-    setError(err.detail || err.message || fallback);
   };
 
   const handleInvite = (e: React.FormEvent) => {
@@ -152,29 +160,49 @@ export const PartnerUsersScreen: React.FC = () => {
     }
   };
 
-  const handleRoleChange = async (u: PartnerUser, nextRole: string) => {
+  const handleRoleChange = (u: PartnerUser, nextRole: string) => {
+    // DangerousActionModal sprint follow-up 2026-05-08 — replaces the
+    // 3rd window.prompt with a tier-1 typed-confirm modal carrying
+    // the reason textarea (parallels deactivate flow). The select's
+    // visual value is restored to u.role on cancel via the
+    // controlled-component pattern (see <select> below).
     if (nextRole === u.role) return;
-    const reason = window.prompt(
-      `Reason for changing ${u.email} from ${u.role} to ${nextRole} (≥20 chars, audit ledger):`,
-      '',
-    );
-    if (reason === null) return;
-    if (reason.length < 20) {
-      setError('Reason must be at least 20 characters.');
+    setRoleChangeUser(u);
+    setRoleChangeNext(nextRole);
+    setRoleChangeReason('');
+    setRoleChangeError(undefined);
+  };
+
+  const closeRoleChange = () => {
+    if (roleChangeBusy) return;
+    setRoleChangeUser(null);
+    setRoleChangeNext('');
+    setRoleChangeReason('');
+    setRoleChangeError(undefined);
+  };
+
+  const performRoleChange = async () => {
+    if (!roleChangeUser || !roleChangeNext) return;
+    if (roleChangeReason.trim().length < 20) {
+      setRoleChangeError('Reason must be at least 20 characters.');
       return;
     }
-    setError(null);
-    setActionBusy(u.id);
+    setRoleChangeError(undefined);
+    setRoleChangeBusy(true);
     try {
       await patchJson(
-        `/api/partners/me/users/${encodeURIComponent(u.id)}/role`,
-        { role: nextRole, reason },
+        `/api/partners/me/users/${encodeURIComponent(roleChangeUser.id)}/role`,
+        { role: roleChangeNext, reason: roleChangeReason.trim() },
       );
       await fetchUsers();
+      setRoleChangeUser(null);
+      setRoleChangeNext('');
+      setRoleChangeReason('');
     } catch (e) {
-      _setErrorFromException(e, 'Role change failed');
+      const err = e as { detail?: string; message?: string };
+      setRoleChangeError(err.detail || err.message || 'Role change failed');
     } finally {
-      setActionBusy(null);
+      setRoleChangeBusy(false);
     }
   };
 
@@ -522,6 +550,49 @@ export const PartnerUsersScreen: React.FC = () => {
         errorMessage={deactivateError}
         onConfirm={performDeactivate}
         onCancel={closeDeactivate}
+      />
+
+      {/* Tier-1 confirm — role change. DangerousActionModal sprint
+          follow-up 2026-05-08; closes the 3rd window.prompt class
+          (PartnerUsersScreen.handleRoleChange). User must type the
+          target email; reason ≥20 chars audit-ledger requirement
+          enforced by both UI + backend. */}
+      <DangerousActionModal
+        open={roleChangeUser !== null}
+        tier="irreversible"
+        title="Change partner user role"
+        verb="Change role"
+        target={roleChangeUser?.email || ''}
+        confirmInput="target"
+        description={
+          <div className="space-y-3">
+            <p>
+              This changes <b>{roleChangeUser?.email}</b>'s role from{' '}
+              <b>{roleChangeUser?.role}</b> to <b>{roleChangeNext}</b>.
+              Their permissions on the partner portal update on their next
+              page load. The 1-admin-min database trigger blocks demoting
+              the last admin; promote another user first.
+            </p>
+            <label className="block text-sm">
+              <span className="text-slate-700 font-medium">
+                Reason ({roleChangeReason.trim().length}/20+ chars, audit ledger)
+              </span>
+              <textarea
+                value={roleChangeReason}
+                onChange={(e) => setRoleChangeReason(e.target.value)}
+                rows={2}
+                disabled={roleChangeBusy}
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Why are you changing this user's role?"
+                minLength={20}
+              />
+            </label>
+          </div>
+        }
+        busy={roleChangeBusy}
+        errorMessage={roleChangeError}
+        onConfirm={performRoleChange}
+        onCancel={closeRoleChange}
       />
     </div>
   );

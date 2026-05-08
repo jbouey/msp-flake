@@ -18,6 +18,7 @@ import { PartnerSSOConfig } from './PartnerSSOConfig';
 import { PartnerSearchOmnibox } from './PartnerSearchOmnibox';
 import { PartnerWeeklyRollup } from './PartnerWeeklyRollup';
 import { InfoTip, WelcomeModal } from '../components/shared';
+import { useToast } from '../components/shared/Toast';
 import { formatTimeAgo } from '../constants';
 import { getScoreStatus } from '../constants/status';
 
@@ -49,6 +50,7 @@ export const PartnerDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { partner, apiKey, isAuthenticated, isLoading, logout } = usePartner();
+  const { addToast } = useToast();
 
   const [activeTab, setActiveTab] = useState<'sites' | 'onboarding' | 'provisions' | 'agreements' | 'invites' | 'billing' | 'commission' | 'compliance' | 'exceptions' | 'escalations' | 'learning' | 'sso' | 'inventory'>('sites');
   const [ssoConfigSite, setSsoConfigSite] = useState<{ id: string; name: string } | null>(null);
@@ -129,6 +131,10 @@ export const PartnerDashboard: React.FC = () => {
       }
     } catch (e) {
       console.error('Failed to load data', e);
+      // Audit MIN-5/8 fix-up 2026-05-08: silent catch was hiding 401/
+      // 5xx from the operator. Toast surfaces the failure without
+      // logging-out (loadData is non-fatal; tabs stay rendered).
+      addToast('error', 'Failed to load dashboard data. Try refreshing.');
     } finally {
       setLoading(false);
     }
@@ -153,9 +159,22 @@ export const PartnerDashboard: React.FC = () => {
         setNewClientName('');
         setShowNewProvision(false);
         loadData();
+        addToast('success', 'Provision code created.');
+      } else {
+        // Audit MIN-5 fix-up 2026-05-08: response.ok=false branch was
+        // silent. Surface 401/403/429/5xx with descriptive copy.
+        const detail = await response.text().catch(() => '');
+        if (response.status === 429) {
+          addToast('error', 'Provisioning rate-limited. Try again shortly.');
+        } else if (response.status === 401 || response.status === 403) {
+          addToast('error', "You don't have permission to create provisions.");
+        } else {
+          addToast('error', `Create provision failed (${response.status}). ${detail.slice(0, 120)}`);
+        }
       }
     } catch (e) {
       console.error('Failed to create provision', e);
+      addToast('error', 'Create provision failed (network error).');
     } finally {
       setCreating(false);
     }
@@ -210,16 +229,28 @@ export const PartnerDashboard: React.FC = () => {
     if (!isAuthenticated) return;
 
     try {
-      await fetch(`/api/partners/me/provisions/${id}`, {
+      const res = await fetch(`/api/partners/me/provisions/${id}`, {
         method: 'DELETE',
         credentials: 'include',
         headers: buildAuthedHeaders({ apiKey }),
       });
       setRevokeConfirmId(null);
-      loadData();
+      if (res.ok) {
+        addToast('success', 'Provision revoked.');
+        loadData();
+      } else {
+        // Audit MIN-6 fix-up 2026-05-08: response.ok=false branch
+        // was silent — operator clicked Yes and saw nothing happen.
+        if (res.status === 401 || res.status === 403) {
+          addToast('error', "You don't have permission to revoke this provision.");
+        } else {
+          addToast('error', `Revoke failed (${res.status}).`);
+        }
+      }
     } catch (e) {
       console.error('Failed to revoke', e);
       setRevokeConfirmId(null);
+      addToast('error', 'Revoke failed (network error).');
     }
   };
 
@@ -857,8 +888,15 @@ export const PartnerDashboard: React.FC = () => {
                     <div className="flex gap-3 justify-center">
                       <button
                         onClick={() => {
-                          navigator.clipboard.writeText(qrProvision.provision_code);
+                          // Audit MIN-7 fix-up 2026-05-08: copy was
+                          // silent. Surface success + handle clipboard
+                          // permission denial (Safari incognito etc).
+                          navigator.clipboard
+                            .writeText(qrProvision.provision_code)
+                            .then(() => addToast('success', 'Provision code copied to clipboard.'))
+                            .catch(() => addToast('error', 'Could not copy. Permission denied.'));
                         }}
+                        aria-label="Copy provision code to clipboard"
                         className="px-4 py-2 text-indigo-600 hover:text-indigo-800 font-medium transition flex items-center gap-2"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
