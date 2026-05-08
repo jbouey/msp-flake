@@ -22,6 +22,7 @@
  */
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock useClient.
@@ -108,10 +109,21 @@ function _jsonResponse(body: unknown, status = 200): Response {
 }
 
 function _renderDashboard() {
+  // Coach REC-2 2026-05-08: ClientDashboard data fetches migrated to
+  // useQuery; tests must wrap the component in a QueryClientProvider.
+  // Fresh QueryClient per render so cache state doesn't bleed
+  // across tests.
+  const qc = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: 0, gcTime: 0 },
+    },
+  });
   return render(
-    <MemoryRouter initialEntries={['/client/dashboard']}>
-      <ClientDashboard />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/client/dashboard']}>
+        <ClientDashboard />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

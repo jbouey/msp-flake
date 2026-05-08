@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useClient } from './ClientContext';
 import { OsirisCareLeaf, WelcomeModal, InfoTip, DashboardErrorBoundary } from '../components/shared';
 import { ClientDriftConfig } from './ClientDriftConfig';
@@ -85,13 +86,78 @@ export const ClientDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { user, isAuthenticated, isLoading, logout } = useClient();
 
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Coach perf-sweep REC-2 2026-05-08: ClientDashboard migrated from
+  // raw `useState + useEffect + fetch` to `useQuery`. Pre-fix every
+  // navigation back to /client/dashboard re-fired three fetches.
+  // Post-fix: returning within staleTime paints instantly from cache;
+  // background refetch keeps stale data updated. The QueryClient is
+  // configured at App.tsx; no provider change here.
+  const {
+    data: dashboard,
+    error: dashboardError,
+    isLoading: dashboardLoading,
+    refetch: refetchDashboard,
+  } = useQuery<DashboardData>({
+      queryKey: ['client/dashboard'],
+      queryFn: async () => {
+        const res = await fetch('/api/client/dashboard', {
+          credentials: 'include',
+        });
+        if (!res.ok) {
+          const err = new Error(`Failed to load dashboard (${res.status})`) as Error & { status?: number };
+          err.status = res.status;
+          throw err;
+        }
+        return res.json();
+      },
+      // 60s staleTime aligns with the backend perf_cache TTL (REC-1)
+      // — within 60s, both the frontend cache and the backend cache
+      // hold the same value; navigation back to dashboard paints
+      // instantly. After 60s the frontend re-fetches; backend may
+      // still serve from its own warm cache for the same window.
+      staleTime: 60_000,
+      enabled: isAuthenticated,
+      retry: 1,
+    });
+
+  const { data: notificationsData } = useQuery<{ notifications: Notification[] }>({
+    queryKey: ['client/notifications', { limit: 10 }],
+    queryFn: async () => {
+      const res = await fetch('/api/client/notifications?limit=10', {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+    staleTime: 30_000,
+    enabled: isAuthenticated,
+    retry: 1,
+  });
+  const notifications: Notification[] = notificationsData?.notifications || [];
+
+  const { data: agentInfo } = useQuery<AgentInstallInfo>({
+    queryKey: ['client/agent/install-info'],
+    queryFn: async () => {
+      const res = await fetch('/api/client/agent/install-info', {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+    staleTime: 5 * 60_000, // agent install info changes very rarely
+    enabled: isAuthenticated,
+    retry: 1,
+  });
+
+  // Loading + error states keep the same shape as the prior
+  // useState-based code so JSX consumers below are unchanged.
+  const loading = dashboardLoading;
+  const error = dashboardError
+    ? (dashboardError as Error).message
+    : null;
+
   const [showNotifications, setShowNotifications] = useState(false);
   const [driftConfigSite, setDriftConfigSite] = useState<{ id: string; name: string } | null>(null);
-  const [agentInfo, setAgentInfo] = useState<AgentInstallInfo | null>(null);
   const [agentSiteExpanded, setAgentSiteExpanded] = useState<string | null>(null);
   const [downloadingConfig, setDownloadingConfig] = useState<string | null>(null);
   const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem('osiriscare_onboarded'));
@@ -101,62 +167,6 @@ export const ClientDashboard: React.FC = () => {
       navigate('/client/login', { replace: true });
     }
   }, [isAuthenticated, isLoading, navigate]);
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchDashboard();
-      fetchNotifications();
-      fetchAgentInfo();
-    }
-  }, [isAuthenticated]);
-
-  const fetchDashboard = async () => {
-    try {
-      const response = await fetch('/api/client/dashboard', {
-        credentials: 'include',
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setDashboard(data);
-      } else {
-        setError('Failed to load dashboard');
-      }
-    } catch (e) {
-      setError('Failed to connect to server');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchNotifications = async () => {
-    try {
-      const response = await fetch('/api/client/notifications?limit=10', {
-        credentials: 'include',
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setNotifications(data.notifications || []);
-      }
-    } catch {
-      // Notification fetch failed silently — non-critical
-    }
-  };
-
-  const fetchAgentInfo = async () => {
-    try {
-      const response = await fetch('/api/client/agent/install-info', {
-        credentials: 'include',
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setAgentInfo(data);
-      }
-    } catch {
-      // Agent info fetch failed silently — non-critical
-    }
-  };
 
   const downloadConfig = async (siteId: string) => {
     setDownloadingConfig(siteId);
@@ -281,9 +291,7 @@ export const ClientDashboard: React.FC = () => {
           <p className="text-label-secondary mb-4">{error}</p>
           <button
             onClick={() => {
-              setError(null);
-              setLoading(true);
-              fetchDashboard();
+              void refetchDashboard();
             }}
             className="px-4 py-2 bg-accent-primary text-white rounded-lg hover:bg-accent-primary/90"
           >

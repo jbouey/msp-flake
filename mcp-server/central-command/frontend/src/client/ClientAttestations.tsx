@@ -50,6 +50,7 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useClient } from './ClientContext';
 import { fetchBlob, type PortalFetchError } from '../utils/portalFetch';
 import { csrfHeaders } from '../utils/csrf';
@@ -247,51 +248,51 @@ export const ClientAttestations: React.FC = () => {
   // designate. Pre-flight: fetch the PO designation on mount; if
   // none, intercept Issue clicks with an explanatory modal that
   // routes to /client/compliance.
-  const [poStatus, setPoStatus] = useState<'unknown' | 'designated' | 'missing'>(
-    'unknown',
-  );
+  //
+  // Coach perf-sweep REC-3 2026-05-08: migrated from raw `useEffect +
+  // fetch` to `useQuery` with 5-min staleTime. PO designation
+  // changes very rarely (typically once at org setup); 5-min cache
+  // avoids the ~50ms hit on every navigation back to attestations.
   const [showPoGate, setShowPoGate] = useState(false);
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/client/privacy-officer', {
-          credentials: 'include',
-        });
-        if (cancelled) return;
-        if (res.ok) {
-          const data = await res.json();
-          // Real backend shape (client_portal.py:5203):
-          //   { "designation": null }                — none designated
-          //   { "designation": { id, name, ... } }   — designated
-          // Older mock-only shape `{}` (no `designation` key) is
-          // treated as 'unknown' so dev/test environments don't
-          // accidentally trigger the gate.
-          if (data && data.designation === null) {
-            setPoStatus('missing');
-          } else if (data && data.designation && data.designation.id) {
-            setPoStatus('designated');
-          } else {
-            setPoStatus('unknown');
-          }
-        } else if (res.status === 404) {
-          setPoStatus('missing');
-        } else {
-          // 401/403/5xx — leave as 'unknown' so the issuance path
-          // falls through to the existing 409-toast handling. Don't
-          // block on uncertainty.
-          setPoStatus('unknown');
-        }
-      } catch {
-        if (!cancelled) setPoStatus('unknown');
+  const { data: poData } = useQuery<{
+    designation?: { id?: string } | null;
+  }>({
+    queryKey: ['client/privacy-officer'],
+    queryFn: async () => {
+      const res = await fetch('/api/client/privacy-officer', {
+        credentials: 'include',
+      });
+      if (res.status === 404) {
+        return { designation: null };
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated]);
+      if (!res.ok) {
+        const err = new Error(`${res.status}`) as Error & { status?: number };
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    },
+    // 5-min stale time per coach REC-3. PO designation transitions
+    // are rare (org setup, transfer, revocation); customer-perceived
+    // freshness gap is minimal vs. ~50ms saved on every nav.
+    staleTime: 5 * 60_000,
+    enabled: isAuthenticated,
+    retry: 1,
+  });
+
+  // Real backend shape (client_portal.py:5203):
+  //   { "designation": null }                — none designated
+  //   { "designation": { id, name, ... } }   — designated
+  // Older mock-only shape `{}` (no `designation` key) is treated as
+  // 'unknown' so dev/test environments don't accidentally trigger
+  // the gate.
+  const poStatus: 'unknown' | 'designated' | 'missing' = useMemo(() => {
+    if (!poData) return 'unknown';
+    if (poData.designation === null) return 'missing';
+    if (poData.designation && poData.designation.id) return 'designated';
+    return 'unknown';
+  }, [poData]);
 
   // ---------- F1 actions ----------
 

@@ -33,6 +33,7 @@ import {
   fireEvent,
 } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock ClientContext.useClient before importing the component.
@@ -91,10 +92,21 @@ function _mockClient(opts: {
 }
 
 function _renderPage() {
+  // Coach REC-3 2026-05-08: PO designation lookup migrated to
+  // useQuery; tests must wrap the component in a QueryClientProvider.
+  // Fresh QueryClient per render so cache state doesn't bleed
+  // across tests.
+  const qc = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: 0, gcTime: 0 },
+    },
+  });
   return render(
-    <MemoryRouter initialEntries={['/client/attestations']}>
-      <ClientAttestations />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/client/attestations']}>
+        <ClientAttestations />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
