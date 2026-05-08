@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
 from .auth import require_admin
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,8 @@ async def appliance_trace(
         "mesh_assignments": [],
     }
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-3 2026-05-08: 9-query handler.
+    async with admin_transaction(pool) as conn:
         # 1) discovered_devices — LAN scan ground truth
         if is_ip:
             rows = await conn.fetch(

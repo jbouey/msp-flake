@@ -42,7 +42,7 @@ except ImportError:
 
 from .fleet import get_pool
 from .db_utils import _uid
-from .tenant_middleware import tenant_connection, admin_connection, org_connection
+from .tenant_middleware import tenant_connection, admin_connection, admin_transaction, org_connection  # noqa: F401
 from .phi_boundary import sanitize_evidence_checks
 
 logger = logging.getLogger(__name__)
@@ -551,7 +551,11 @@ async def login_with_password(request: Request, body: PasswordLogin):
     pool = await get_pool()
     email = body.email.lower()
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-3 2026-05-08: 8-query password-login
+    # auth-path. user fetch + failed_login_attempts increment +
+    # session create + audit log. admin_transaction critical so the
+    # whole auth flow lands on one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         user = await conn.fetchrow("""
             SELECT cu.id, cu.password_hash, cu.is_active, cu.client_org_id,
                    co.status as org_status,

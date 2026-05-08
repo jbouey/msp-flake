@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Depends, R
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
 from .auth import require_admin
 from .order_signing import sign_admin_order, sign_fleet_order
 
@@ -453,7 +453,9 @@ async def list_rollouts(
 async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTasks, user: dict = Depends(require_admin)):
     """Create and start a new rollout."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-3 2026-05-08: 8-query handler — fleet
+    # rollout creation; multi-write path. admin_transaction pins.
+    async with admin_transaction(pool) as conn:
         # Verify release exists
         release = await conn.fetchrow(
             "SELECT id, version FROM update_releases WHERE id = $1 AND is_active = true",

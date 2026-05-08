@@ -27,7 +27,7 @@ from asyncpg.exceptions import PostgresError, LockNotAvailableError
 
 from .partners import require_partner
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
 from .partner_activity_logger import log_partner_learning_action, PartnerEventType
 
 logger = logging.getLogger(__name__)
@@ -855,7 +855,9 @@ async def bulk_approve_candidates(
     failed = 0
     errors: List[str] = []
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-3 2026-05-08: 9-query bulk-approve
+    # handler. admin_transaction pins SET LOCAL + queries.
+    async with admin_transaction(pool) as conn:
         partner_id = partner['id']
 
         for pattern_id in request.pattern_ids:

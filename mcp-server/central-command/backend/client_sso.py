@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
 from .oauth_login import encrypt_secret, decrypt_secret
 from .client_portal import (
     SESSION_COOKIE_NAME,
@@ -197,7 +197,11 @@ async def sso_callback(
     pool = await get_pool()
     state_hash = _hash_state(state)
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-3 2026-05-08: 8-query SSO callback —
+    # auth-path; multi-write (state delete + user upsert + session
+    # create + audit log). admin_transaction critical for routing-
+    # pathology safety on this flow.
+    async with admin_transaction(pool) as conn:
         # Fetch and delete state (single-use)
         state_row = await conn.fetchrow(
             "DELETE FROM client_oauth_state WHERE state_hash = $1 RETURNING *",
