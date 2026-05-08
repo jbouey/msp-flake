@@ -337,7 +337,7 @@ if [ "$FRONTEND_CHANGED" -eq 1 ]; then
     # if blocked (emergency only).
     if [ -z "$PRE_PUSH_SKIP_VITEST" ]; then
         echo "[pre-push] frontend vitest ..."
-        if ! npx vitest run --reporter=basic > /tmp/vitest-prepush.log 2>&1; then
+        if ! npx vitest run --reporter=default > /tmp/vitest-prepush.log 2>&1; then
             echo "[pre-push] ❌ vitest failed — push blocked"
             echo ""
             tail -40 /tmp/vitest-prepush.log
