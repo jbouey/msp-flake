@@ -966,6 +966,114 @@ describe('ClientAttestations', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/client/compliance');
   });
 
+  // -----------------------------------------------------------------
+  // Plan-38 wave-2: D2 reorder + D3 warm copy
+  // -----------------------------------------------------------------
+
+  it('D2: card visual order is F5 (wall-cert) → F1 (letter) → F3 (quarterly)', () => {
+    globalThis.fetch = vi.fn(async () => _jsonResponse({})) as unknown as typeof fetch;
+    _renderPage();
+    const wallCert = screen.getByTestId('wall-cert-card');
+    const letter = screen.getByTestId('letter-card');
+    const quarterly = screen.getByTestId('quarterly-card');
+    // DOCUMENT_POSITION_FOLLOWING (4) means the second arg comes
+    // AFTER the first in document order — this is the canonical
+    // way to assert visual ordering when the cards are siblings
+    // inside the same <main>.
+    expect(
+      wallCert.compareDocumentPosition(letter) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      letter.compareDocumentPosition(quarterly) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('D2: data-testids stay attached to correct content (testid → header pairing intact)', () => {
+    globalThis.fetch = vi.fn(async () => _jsonResponse({})) as unknown as typeof fetch;
+    _renderPage();
+    expect(
+      screen.getByTestId('wall-cert-card').textContent,
+    ).toMatch(/Wall Certificate/);
+    expect(
+      screen.getByTestId('letter-card').textContent,
+    ).toMatch(/Compliance Attestation Letter/);
+    expect(
+      screen.getByTestId('quarterly-card').textContent,
+    ).toMatch(/Quarterly Practice Compliance Summary/);
+  });
+
+  it('D3: Wall Certificate card uses warm "Print this for the lobby" body copy', () => {
+    globalThis.fetch = vi.fn(async () => _jsonResponse({})) as unknown as typeof fetch;
+    _renderPage();
+    const card = screen.getByTestId('wall-cert-card');
+    // Plan-38 §D3 specific copy.
+    expect(card.textContent).toMatch(/Print this for the lobby/);
+    expect(card.textContent).toMatch(
+      /landscape compliance certificate showing your practice is monitored by an Ed25519-signed substrate/,
+    );
+    expect(card.textContent).toMatch(
+      /Includes the verification URL anyone can check/,
+    );
+  });
+
+  it('D3: Letter card uses warm "working document for auditors" body copy', () => {
+    globalThis.fetch = vi.fn(async () => _jsonResponse({})) as unknown as typeof fetch;
+    _renderPage();
+    const card = screen.getByTestId('letter-card');
+    expect(card.textContent).toMatch(
+      /The working document for auditors, insurance underwriters, and counsel/,
+    );
+    expect(card.textContent).toMatch(
+      /hash-bound to your evidence chain/,
+    );
+    // The pre-warm copy ("Practice-owner-grade attestation
+    // summarizing your practice's compliance posture") MUST NOT
+    // appear — that was the partner-grade-technical baseline.
+    expect(card.textContent).not.toMatch(
+      /Practice-owner-grade attestation summarizing/,
+    );
+  });
+
+  it('D3: Quarterly card uses warm "quarterly aggregate" body copy', () => {
+    globalThis.fetch = vi.fn(async () => _jsonResponse({})) as unknown as typeof fetch;
+    _renderPage();
+    const card = screen.getByTestId('quarterly-card');
+    expect(card.textContent).toMatch(
+      /A quarterly aggregate of your practice's substrate evidence/,
+    );
+    expect(card.textContent).toMatch(/§164\.530\(j\) records retention/);
+  });
+
+  it('D3: §164.528 disclaimer block at bottom is byte-for-byte canonical', () => {
+    globalThis.fetch = vi.fn(async () => _jsonResponse({})) as unknown as typeof fetch;
+    _renderPage();
+    // Carol's hard rule: the §164.528 disclaimer is canonical legal
+    // copy — byte-for-byte parity with wave-1 baseline +
+    // ClientReports + PracticeHomeCard + auditor-kit README.
+    expect(
+      screen.getByText(
+        'Audit-supportive technical evidence. Not a substitute for your §164.528 disclosure accounting, designated record set, or §164.530(d) complaint log.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('D3 sibling-parity: warm copy does NOT introduce partner-portal framing', () => {
+    globalThis.fetch = vi.fn(async () => _jsonResponse({})) as unknown as typeof fetch;
+    _renderPage();
+    const text = document.body.textContent || '';
+    // These strings are PartnerAttestations-specific and must NOT
+    // bleed into the owner-side warmed copy.
+    expect(text).not.toMatch(/portfolio attestation/i);
+    expect(text).not.toMatch(/downstream BAA/i);
+    expect(text).not.toMatch(/operator-grade/i);
+    // And the page MUST still ship banned-words-clean.
+    for (const w of ['ensures', 'prevents', 'protects', 'guarantees', 'audit-ready', '100%']) {
+      expect(text.toLowerCase().includes(w.toLowerCase())).toBe(false);
+    }
+  });
+
   it('D6: PO-designated lets F1 issuance flow through normally', async () => {
     let f1Called = false;
     globalThis.fetch = vi.fn(async (input: string | URL) => {

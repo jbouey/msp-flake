@@ -471,7 +471,7 @@ export const ClientAttestations: React.FC = () => {
       } else if (err.status === 404) {
         pushToast(
           'error',
-          'No attestation letter found for this hash. Issue a new Compliance Attestation Letter (Card A) first.',
+          'No attestation letter found for this hash. Issue a new Compliance Attestation Letter first.',
         );
       } else if (err.status === 429) {
         const retry = err.retryAfter || '3600';
@@ -588,8 +588,98 @@ export const ClientAttestations: React.FC = () => {
         ))}
       </div>
 
+      {/* Plan-38 wave-2 D2 + D3 — card visual order is F5 → F1 → F3.
+          Wall Certificate leads (Maria's "I want to hang it in the
+          lobby" framing); Letter is the working document; Quarterly
+          is the records-retention artifact. data-testid stays
+          attached to the SAME content it always referenced — only
+          the visual order changes. Body copy is owner-warm per
+          plan-38 D3; the §164.528 disclaimer block at the bottom of
+          this <main> remains byte-for-byte canonical.
+
+          Sibling-parity (coach gate): backend response headers,
+          anchor namespaces, hash slug shape, RLS posture stay
+          identical with the partner-side mirror. UX divergence at
+          the presentation layer is expected — see
+          .agent/plans/38-client-attestations-product-roundtable-
+          2026-05-08.md and feedback_consistency_coach_pre_completion
+          _gate.md ("sibling parity at the BACKEND level; UX
+          divergence at the PRESENTATION level is allowed when
+          justified"). */}
       <main className="max-w-6xl mx-auto px-6 py-8 space-y-6">
-        {/* ---------- Card A: Compliance Attestation Letter (F1) ---------- */}
+        {/* ---------- Card C → first: Wall Certificate (F5) ---------- */}
+        <section
+          data-testid="wall-cert-card"
+          className="bg-white rounded-2xl shadow-sm border border-slate-200"
+          aria-labelledby="wall-cert-heading"
+        >
+          <div className="px-6 py-4 border-b border-slate-100">
+            <h2
+              id="wall-cert-heading"
+              className="text-base font-semibold text-slate-900"
+            >
+              Wall Certificate
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Print this for the lobby. A landscape compliance
+              certificate showing your practice is monitored by an
+              Ed25519-signed substrate. Includes the verification URL
+              anyone can check.
+            </p>
+          </div>
+          <div className="px-6 py-5 space-y-4">
+            {!letterSummary ? (
+              <div
+                data-testid="wall-cert-prereq-missing"
+                className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600"
+              >
+                Issue a Compliance Attestation Letter (below) first;
+                the wall certificate is an alternate render of that
+                signed payload.
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap gap-3 items-center">
+              <button
+                type="button"
+                onClick={handleWallCertDownload}
+                disabled={
+                  wallCertBusy !== 'idle' ||
+                  !letterSummary ||
+                  !canIssueWallCert
+                }
+                aria-busy={wallCertBusy === 'downloading'}
+                aria-label={
+                  canIssueWallCert
+                    ? 'Download Wall Certificate'
+                    : 'Download Wall Certificate (owner or admin role required)'
+                }
+                className="px-4 py-2 text-sm rounded-xl text-white font-medium hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                style={{
+                  background:
+                    'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)',
+                }}
+              >
+                {wallCertBusy === 'downloading' && (
+                  <span
+                    className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"
+                    aria-hidden="true"
+                  />
+                )}
+                {wallCertBusy === 'downloading'
+                  ? 'Preparing…'
+                  : 'Download Wall Certificate'}
+              </button>
+              {!canIssueWallCert && (
+                <span className="text-xs text-slate-500 self-center">
+                  Owner or admin role required to download.
+                </span>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* ---------- Card A → second: Compliance Attestation Letter (F1) ---------- */}
         <section
           data-testid="letter-card"
           className="bg-white rounded-2xl shadow-sm border border-slate-200"
@@ -603,11 +693,10 @@ export const ClientAttestations: React.FC = () => {
               Compliance Attestation Letter
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Practice-owner-grade attestation summarizing your practice's
-              compliance posture. Hand to insurance underwriters, board
-              chairs, or counsel. Each issuance is Ed25519-signed and
-              hash-chained; auditors can independently verify at the public
-              verify URL.
+              The working document for auditors, insurance
+              underwriters, and counsel. Each issuance is hash-bound
+              to your evidence chain — auditors can independently
+              verify.
             </p>
           </div>
           <div className="px-6 py-5 space-y-4">
@@ -724,7 +813,7 @@ export const ClientAttestations: React.FC = () => {
           </div>
         </section>
 
-        {/* ---------- Card B: Quarterly Practice Compliance Summary (F3) ---------- */}
+        {/* ---------- Card B → third: Quarterly Practice Compliance Summary (F3) ---------- */}
         <section
           data-testid="quarterly-card"
           className="bg-white rounded-2xl shadow-sm border border-slate-200"
@@ -738,10 +827,9 @@ export const ClientAttestations: React.FC = () => {
               Quarterly Practice Compliance Summary
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Quarterly aggregate of your practice's substrate evidence and
-              compliance posture. File for §164.530(j) records retention or
-              hand to your annual auditor. Each summary is hash-bound to the
-              canonical evidence chain.
+              A quarterly aggregate of your practice's substrate
+              evidence. File this for §164.530(j) records retention
+              or hand to your annual auditor.
             </p>
           </div>
           <div className="px-6 py-5 space-y-4">
@@ -883,78 +971,9 @@ export const ClientAttestations: React.FC = () => {
           </div>
         </section>
 
-        {/* ---------- Card C: Wall Certificate (F5) ---------- */}
-        <section
-          data-testid="wall-cert-card"
-          className="bg-white rounded-2xl shadow-sm border border-slate-200"
-          aria-labelledby="wall-cert-heading"
-        >
-          <div className="px-6 py-4 border-b border-slate-100">
-            <h2
-              id="wall-cert-heading"
-              className="text-base font-semibold text-slate-900"
-            >
-              Wall Certificate
-            </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              One-page landscape display certificate. Re-renders the most
-              recent Compliance Attestation Letter into a wall-frame
-              format — same Ed25519 signature, same evidence chain,
-              formatted for hanging in the practice.
-            </p>
-          </div>
-          <div className="px-6 py-5 space-y-4">
-            {!letterSummary ? (
-              <div
-                data-testid="wall-cert-prereq-missing"
-                className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600"
-              >
-                Issue a Compliance Attestation Letter (Card A above)
-                first; the wall certificate is an alternate render of
-                that signed payload.
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap gap-3 items-center">
-              <button
-                type="button"
-                onClick={handleWallCertDownload}
-                disabled={
-                  wallCertBusy !== 'idle' ||
-                  !letterSummary ||
-                  !canIssueWallCert
-                }
-                aria-busy={wallCertBusy === 'downloading'}
-                aria-label={
-                  canIssueWallCert
-                    ? 'Download Wall Certificate'
-                    : 'Download Wall Certificate (owner or admin role required)'
-                }
-                className="px-4 py-2 text-sm rounded-xl text-white font-medium hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                style={{
-                  background:
-                    'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)',
-                }}
-              >
-                {wallCertBusy === 'downloading' && (
-                  <span
-                    className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"
-                    aria-hidden="true"
-                  />
-                )}
-                {wallCertBusy === 'downloading'
-                  ? 'Preparing…'
-                  : 'Download Wall Certificate'}
-              </button>
-              {!canIssueWallCert && (
-                <span className="text-xs text-slate-500 self-center">
-                  Owner or admin role required to download.
-                </span>
-              )}
-            </div>
-          </div>
-        </section>
-
+        {/* §164.528 disclaimer — canonical legal copy. Byte-for-byte
+            parity with wave-1 baseline + ClientReports +
+            PracticeHomeCard + auditor-kit README. NEVER edit. */}
         <p className="text-xs text-slate-500 italic px-1">
           Audit-supportive technical evidence. Not a substitute for your
           §164.528 disclosure accounting, designated record set, or

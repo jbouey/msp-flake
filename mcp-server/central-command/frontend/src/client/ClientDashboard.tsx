@@ -435,6 +435,84 @@ export const ClientDashboard: React.FC = () => {
           />
         ) : (
         <>
+        {/* Plan-38 wave-2 D1 + D8 — Compliance Attestation hero card.
+            Sarah-PM verdict (Maria voice): Maria opens the dashboard
+            daily; the hero card with a 1-click flow puts the F1
+            artifact in her path without making her hunt for it.
+            Mobile-first per D8: full-width on mobile, bounded on
+            desktop; primary CTA stacks above secondary on mobile,
+            side-by-side from sm: up. The dedicated /client/attestations
+            page surfaces F5 / F1 / F3 cards (D2 reorder); the hero
+            card here is the single entry point — the prior
+            Quick-Links Attestations tile was REMOVED to avoid
+            splitting telemetry across two surfaces. Sibling-divergent
+            UX from partner-portal (which uses 2 dense stacked cards)
+            is justified by Maria's owner-flow mental model vs.
+            Lisa's operator-sweep mental model. See .agent/plans/38-client-attestations-product-
+            roundtable-2026-05-08.md §D1 + §D8 + feedback_consistency
+            _coach_pre_completion_gate.md. */}
+        <div className="mb-8 w-full md:max-w-3xl md:mx-auto">
+          <Link
+            to="/client/attestations"
+            data-testid="attestation-hero-card"
+            className="block rounded-2xl overflow-hidden border-2 border-accent-primary/30 hover:border-accent-primary hover:shadow-lg transition-all focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2"
+            style={{
+              background:
+                'linear-gradient(135deg, rgba(20,168,158,0.08) 0%, rgba(60,188,180,0.04) 100%)',
+            }}
+            aria-label="Issue Compliance Attestation Letter"
+          >
+            <div className="p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center gap-5">
+              <div
+                className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
+                style={{
+                  background:
+                    'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)',
+                  boxShadow: '0 4px 14px rgba(60,188,180,0.35)',
+                }}
+                aria-hidden="true"
+              >
+                <svg
+                  className="w-7 h-7 text-white"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                  />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-xl font-bold text-label-primary">
+                  Issue Compliance Attestation Letter
+                </h2>
+                <p className="text-sm text-label-secondary mt-1">
+                  Print one for your auditor, insurance underwriter, or
+                  to display in the lobby.
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 flex-shrink-0">
+                <span
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-xl text-white font-medium text-sm"
+                  style={{
+                    background:
+                      'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)',
+                  }}
+                >
+                  Issue letter
+                </span>
+                <span className="text-xs text-accent-primary font-medium hover:underline">
+                  View all attestations
+                </span>
+              </div>
+            </div>
+          </Link>
+        </div>
+
         {/* KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {/* Compliance Score */}
@@ -918,24 +996,12 @@ export const ClientDashboard: React.FC = () => {
             </div>
           </Link>
 
-          {/* Sprint 2026-05-08 — F1 + F3 + F5 attestation surfaces.
-              Owner-side mirror of /partner/attestations. */}
-          <Link
-            to="/client/attestations"
-            className="bg-white rounded-2xl shadow-sm border border-separator-light p-6 hover:border-accent-primary hover:shadow-md transition-all"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-teal-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="font-semibold text-label-primary">Attestations</h3>
-                <p className="text-sm text-label-tertiary">Letter, quarterly summary, wall certificate</p>
-              </div>
-            </div>
-          </Link>
+          {/* Plan-38 wave-2 D1 — the Attestations Quick-Links tile is
+              REPLACED by the hero card at the top of <main>. Sarah-PM
+              verdict was "ONE hero card for F1; a single 'View all
+              attestations' link". Two surfaces (hero + tile) would
+              dilute the entry point and split telemetry. The hero
+              card now owns the route. */}
 
           <Link
             to="/client/healing-logs"
