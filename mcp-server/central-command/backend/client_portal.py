@@ -5180,6 +5180,26 @@ async def submit_client_credentials(
 # designation, F1 refuses to render — Carol's "never print a stale
 # signature" contract.
 
+@auth_router.get("/privacy-officer/explainer")
+async def get_privacy_officer_explainer(
+    user: dict = Depends(require_client_user),
+):
+    """Return the canonical §164.308(a)(2) explainer text the wizard
+    must display PLUS its SHA-256 hash. The client submits the hash
+    back on POST /designate; server rejects mismatched hashes
+    (Carol MUST-1 + Maya P2-B closure)."""
+    try:
+        from .client_privacy_officer import get_explainer_text_and_hash, EXPLAINER_VERSION
+    except ImportError:
+        from client_privacy_officer import get_explainer_text_and_hash, EXPLAINER_VERSION  # type: ignore
+    text, sha256 = get_explainer_text_and_hash()
+    return {
+        "version": EXPLAINER_VERSION,
+        "text": text,
+        "sha256": sha256,
+    }
+
+
 @auth_router.get("/privacy-officer")
 async def get_privacy_officer_designation(
     user: dict = Depends(require_client_user),
@@ -5238,10 +5258,22 @@ async def designate_privacy_officer(
     title = (body.get("title") or "").strip()
     email = (body.get("email") or "").strip()
     ack = (body.get("acceptance_acknowledgement") or "").strip()
+    # Carol MUST-1 + Maya P2-B: server-side hash compare.
+    accepted_explainer_sha256 = (
+        body.get("accepted_explainer_sha256") or ""
+    ).strip().lower()
+    # Carol MUST-4: owner self-attests authority under governing docs.
+    is_authorized_self_attestation = bool(
+        body.get("is_authorized_self_attestation", False)
+    )
 
     pool = await get_pool()
     org_id = user["org_id"]
-    client_ip = request.client.host if request.client else None
+    # Steve P1-C: behind a proxy, use X-Forwarded-For.
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else None)
+    )
     user_agent = request.headers.get("user-agent", "")[:500]
 
     async with org_connection(pool, org_id=org_id) as conn:
@@ -5257,6 +5289,8 @@ async def designate_privacy_officer(
                 ip_address=client_ip,
                 user_agent=user_agent,
                 acceptance_acknowledgement=ack,
+                accepted_explainer_sha256=accepted_explainer_sha256,
+                is_authorized_self_attestation=is_authorized_self_attestation,
             )
         except PrivacyOfficerError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -5430,6 +5464,23 @@ async def issue_attestation_letter_pdf(
             # know WHICH precondition failed (Privacy Officer? BAA?)
             # so they can resolve it.
             raise HTTPException(status_code=409, detail=str(e))
+        except Exception as e:
+            # Steve P2-A (round-table 2026-05-06): two simultaneous
+            # issue_letter calls race past the supersede-prior +
+            # insert-new transaction; the second INSERT trips the
+            # idx_cal_one_active_per_org partial unique index and
+            # raises UniqueViolationError. Convert to 409 — customer
+            # can retry; the loser's letter wasn't issued.
+            cls_name = type(e).__name__
+            if "UniqueViolation" in cls_name or "IntegrityError" in cls_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Another attestation letter issuance is in flight "
+                        "for this organization. Retry in a moment."
+                    ),
+                )
+            raise
 
         await _audit_client_action(
             conn, user,
@@ -5444,7 +5495,12 @@ async def issue_attestation_letter_pdf(
             request=request,
         )
 
-    pdf_bytes = html_to_pdf(result["html"])
+    # Steve P1-A (round-table 2026-05-06): WeasyPrint render is
+    # synchronous (100-500ms). Wrap in asyncio.to_thread so the
+    # event loop stays responsive — concurrent letter issuances
+    # don't starve health checks or other endpoints.
+    import asyncio as _asyncio
+    pdf_bytes = await _asyncio.to_thread(html_to_pdf, result["html"])
     safe_practice = "".join(
         c if c.isalnum() or c in "-_" else "-"
         for c in result["practice_name"]
@@ -5496,20 +5552,33 @@ async def public_verify_attestation_letter(
     Threat model: hash is 64 hex chars (SHA-256), unguessable.
     Probing is rate-limited per source IP.
     """
-    # 1. Shape check — accept full hash OR 16-char prefix (matches
-    #    the abbreviated form printed on the letter for QR/short URL).
+    # 1. Shape check — accept full hash OR 32-char prefix.
+    # Steve P1-D + Maya P1-A (round-table 2026-05-06): the prior
+    # 16-char prefix (64 bits) admitted a birthday-collision
+    # tenant-mixup vector at ~2^32 letters and a targeted-grind
+    # collision via timestamp churn. 32 chars (128 bits) makes
+    # collision astronomical (~2^64 letters before 50% chance).
+    # Even with 32 chars we ALSO detect ambiguity below — defense
+    # in depth.
     h = attestation_hash.strip().lower()
     if not all(c in "0123456789abcdef" for c in h):
         return {"valid": False, "reason": "malformed_hash"}
-    if len(h) not in (16, 64):
-        return {"valid": False, "reason": "malformed_hash"}
+    if len(h) not in (32, 64):
+        return {"valid": False, "reason": "malformed_hash_minimum_32_hex_chars"}
 
-    # 2. Per-IP rate-limit.
+    # 2. Per-IP rate-limit. Steve P1-C (round-table 2026-05-06):
+    # behind nginx/Caddy/Cloudflare, request.client.host is the
+    # proxy IP (loopback). Use X-Forwarded-For (first hop) which
+    # nginx populates from the real client IP. Matches the
+    # existing helper in client_signup.py + client_portal.py.
     try:
         from .shared import check_rate_limit
     except ImportError:
         from shared import check_rate_limit  # type: ignore
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
     allowed, retry_after_s = await check_rate_limit(
         site_id=client_ip,
         action="public_verify_attestation",
@@ -5543,19 +5612,29 @@ async def public_verify_attestation_letter(
         if len(h) == 64:
             row = await get_letter_by_hash(conn, h)
         else:
-            # Prefix lookup. Set RLS bypass for this read.
-            full_row = await conn.fetchrow(
+            # 32-char prefix lookup. Steve P1-D + Maya P1-A defense
+            # in depth: also detect ambiguity (2+ matches → refuse
+            # rather than silently picking LIMIT 1). Astronomically
+            # unlikely at 128 bits, but if it happens we tell the
+            # caller "supply full hash" instead of returning the
+            # wrong tenant's payload.
+            full_rows = await conn.fetch(
                 """
                 SELECT attestation_hash FROM compliance_attestation_letters
                  WHERE attestation_hash LIKE $1 || '%'
-                 LIMIT 1
+                 LIMIT 2
                 """,
                 h,
             )
-            if not full_row:
+            if len(full_rows) > 1:
+                return {
+                    "valid": False,
+                    "reason": "ambiguous_prefix_supply_full_64_hex_hash",
+                }
+            if not full_rows:
                 row = None
             else:
-                row = await get_letter_by_hash(conn, full_row["attestation_hash"])
+                row = await get_letter_by_hash(conn, full_rows[0]["attestation_hash"])
 
     if not row:
         return {"valid": False, "reason": "not_found"}

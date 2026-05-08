@@ -120,7 +120,7 @@ body {
 
 <div class="statement">
     <p>
-        This letter confirms that <strong>{{ practice_name }}</strong> operates a HIPAA Security Rule technical-safeguard monitoring program reviewed by its designated Privacy Officer, <strong>{{ privacy_officer_name }}</strong>, on a monthly cadence. From {{ period_start_human }} through {{ period_end_human }}, the practice's technical safeguards were monitored on a continuous automated schedule, capturing cryptographically signed evidence aligned to 45 CFR §164.308, §164.310, and §164.312 across {{ sites_covered_count }} site{{ 's' if sites_covered_count != 1 else '' }}, {{ appliances_count }} compliance appliance{{ 's' if appliances_count != 1 else '' }}, and {{ workstations_count }} workstation{{ 's' if workstations_count != 1 else '' }}.
+        This letter documents that <strong>{{ practice_name }}</strong> operates a HIPAA Security Rule technical-safeguard monitoring program reviewed by its designated Privacy Officer, <strong>{{ privacy_officer_name }}</strong>, on a monthly cadence. From {{ period_start_human }} through {{ period_end_human }}, the practice's technical safeguards were monitored on a continuous automated schedule, capturing cryptographically signed evidence aligned to a defined subset of 45 CFR §164.312 technical safeguards and the §164.308(a)(1)(ii)(D) information-system-activity-review control across {{ sites_covered_count }} site{{ 's' if sites_covered_count != 1 else '' }}, {{ appliances_count }} compliance appliance{{ 's' if appliances_count != 1 else '' }}, and {{ workstations_count }} workstation{{ 's' if workstations_count != 1 else '' }}. The full check catalog is available on request.
     </p>
     <p>
         {{ privacy_officer_name }}, as Privacy Officer, reviews the monthly evidence summary. Signed evidence bundles ({{ bundle_count }} for the covered period) and the technical Evidence Kit are available on request to the practice's carrier, legal counsel, or auditor.
@@ -135,7 +135,7 @@ body {
 
 <div class="cover-paragraph">
     <span class="label">For the recipient (insurance carrier, board chair, or counsel):</span>
-    This letter attests that {{ practice_name }} maintains an active HIPAA Security Rule technical-safeguard monitoring program for the period above. Evidence is preserved in a cryptographically signed chain. To independently verify this letter, call {{ verify_phone }} during business hours or visit {{ verify_url_short }}/{{ attestation_hash[:16] }}. Detailed technical evidence is available on request.
+    This letter documents that {{ practice_name }} maintains an active HIPAA Security Rule technical-safeguard monitoring program for the period above. Evidence is preserved in a cryptographically signed chain. To independently verify this letter, call {{ verify_phone }} during business hours or visit {{ verify_url_short }}/{{ attestation_hash[:32] }}. Detailed technical evidence is available on request.
 </div>
 
 <div class="attestation-block">
@@ -143,12 +143,12 @@ body {
     <p><span class="label">Issued under BAA:</span> dated {{ baa_dated_at_human }} with {{ baa_practice_name }}</p>
     <p><span class="label">Issuance:</span> {{ issued_at_human }} &nbsp;|&nbsp; <span class="label">Valid until:</span> {{ valid_until_human }} (90 days)</p>
     <p><span class="label">Attestation hash:</span> <span class="hash">{{ attestation_hash }}</span></p>
-    <p><span class="label">Verify:</span> {{ verify_phone }} or {{ verify_url_short }}/{{ attestation_hash[:16] }}</p>
+    <p><span class="label">Verify:</span> {{ verify_phone }} or {{ verify_url_short }}/{{ attestation_hash[:32] }}</p>
 </div>
 
 <div class="disclaimer">
-    <p>This letter is audit-supportive technical evidence. It is not a substitute for the practice's §164.528 disclosure accounting, designated record set, §164.530(d) complaint log, or workforce sanction records. Auditors and carriers may request the Evidence Kit (cryptographically signed bundles + chain + OpenTimestamps anchors) for offline verification.</p>
-    <p>Evidence bundles are exportable in vendor-neutral format on 30 days' written notice. Attestation-hash verification is honored for 7 years post-termination of the {{ presenter_brand }}–{{ baa_practice_name }} relationship (matching HIPAA §164.530(j) record-retention requirement).</p>
+    <p>This letter is audit-supportive technical evidence. It contains no patient-identifying information and is not part of any designated record set under §164.524. It is not a substitute for the practice's §164.528 disclosure accounting, designated record set, §164.530(d) complaint log, or workforce sanction records. Auditors and carriers may request the Evidence Kit (cryptographically signed bundles + chain + OpenTimestamps anchors) for offline verification. To report a concern, contact compliance@osiriscare.com (best-effort acknowledgment within 7 business days; substantive response within 30 days) or the HHS Office for Civil Rights at hhs.gov/ocr/complaints.</p>
+    <p>Evidence bundles are exportable in vendor-neutral format on 30 days' written notice. Attestation-hash verification is supported through the term of the {{ presenter_brand }}–{{ baa_practice_name }} relationship plus a commercially reasonable wind-down period; the practice retains independent copies for §164.530(j) compliance.</p>
 </div>
 
 </body>

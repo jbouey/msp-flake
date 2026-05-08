@@ -125,6 +125,17 @@ CREATE INDEX IF NOT EXISTS idx_cal_org_issued
 CREATE INDEX IF NOT EXISTS idx_cal_org_active
     ON compliance_attestation_letters(client_org_id, valid_until DESC)
     WHERE superseded_by_id IS NULL;
+
+-- Steve P1-B (round-table 2026-05-06): one ACTIVE letter per org at
+-- a time. Without this, two concurrent issue_letter calls can race
+-- past the application-layer "supersede prior + insert new"
+-- transaction and produce two non-superseded rows. The partial
+-- unique index makes the second INSERT raise UniqueViolationError
+-- — caller maps to 409 Conflict (matches mig 287's posture for
+-- privacy_officer_designations.idx_po_designations_org_active).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cal_one_active_per_org
+    ON compliance_attestation_letters(client_org_id)
+    WHERE superseded_by_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_cal_designation
     ON compliance_attestation_letters(privacy_officer_designation_id);
 

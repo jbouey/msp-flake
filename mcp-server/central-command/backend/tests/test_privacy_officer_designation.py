@@ -203,16 +203,67 @@ def test_designate_writes_chain_attestation():
 def test_designate_replacement_is_atomic():
     """Replacement = revoke prior + insert new, in ONE transaction.
     Otherwise a concurrent reader could see zero-or-two designations
-    in the gap."""
+    in the gap. Window bumped to 8000 to accommodate Carol MUST-1 +
+    MUST-4 explainer-hash + self-attestation precondition checks
+    that grew the function body."""
     src = (_BACKEND / "client_privacy_officer.py").read_text()
-    # Find the designate function body
     idx = src.find("async def designate(")
     assert idx > 0
-    body = src[idx : idx + 4000]
+    body = src[idx : idx + 8000]
     assert "async with conn.transaction():" in body, (
         "designate() must wrap revoke-prior + insert-new in a single "
         "DB transaction — atomic replacement contract."
     )
+
+
+def test_designate_requires_explainer_hash_match():
+    """Carol MUST-1 + Maya P2-B (round-table 2026-05-06): server-
+    side hash compare against the canonical explainer text. Closes
+    the 'user submits 50 spaces' bypass — only way to produce the
+    correct hash is to have actually loaded the explainer file."""
+    src = (_BACKEND / "client_privacy_officer.py").read_text()
+    assert "_load_explainer_text" in src
+    assert "_expected_explainer_hash" in src
+    assert "accepted_explainer_sha256" in src
+    # Hash compare logic.
+    assert "submitted_sha != expected_sha" in src
+    # Canonical explainer file must exist on disk for v1-2026-05-06.
+    explainer_dir = (
+        _BACKEND / "templates" / "privacy_officer_explainer"
+    )
+    assert explainer_dir.exists(), (
+        "Canonical explainer directory missing — Carol MUST-1 "
+        "requires version-controlled explainer text"
+    )
+    v1 = explainer_dir / "v1-2026-05-06.md"
+    assert v1.exists(), (
+        "Canonical v1-2026-05-06 explainer file missing — "
+        "EXPLAINER_VERSION points at a non-existent file"
+    )
+    v1_text = v1.read_text()
+    assert "164.308(a)(2)" in v1_text
+    assert "Privacy Officer" in v1_text
+
+
+def test_designate_requires_authorization_self_attestation():
+    """Carol MUST-4 (round-table 2026-05-06): owner self-attests
+    they have governing-document authority to designate the
+    Privacy Officer. Closes the LLC-manager-vs-officer delegation
+    question without OsirisCare interpreting entity formation
+    documents."""
+    src = (_BACKEND / "client_privacy_officer.py").read_text()
+    assert "is_authorized_self_attestation" in src
+    assert "if not is_authorized_self_attestation:" in src
+    assert "governing documents" in src.lower()
+
+
+def test_explainer_endpoint_registered():
+    """GET /api/client/privacy-officer/explainer must return text +
+    sha256 + version. The wizard fetches this, displays text, and
+    submits the sha256 back on POST /designate."""
+    src = (_BACKEND / "client_portal.py").read_text()
+    assert '@auth_router.get("/privacy-officer/explainer")' in src
+    assert "get_explainer_text_and_hash" in src
 
 
 def test_revoke_requires_minimum_reason_length():

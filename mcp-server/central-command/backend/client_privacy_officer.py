@@ -58,6 +58,43 @@ logger = logging.getLogger(__name__)
 EXPLAINER_VERSION = "v1-2026-05-06"
 
 
+def _load_explainer_text() -> str:
+    """Return the canonical §164.308(a)(2) explainer text the wizard
+    displays. Carol MUST-1 + Maya P2-A/B (round-table 2026-05-06):
+    server pins canonical text + hash; an "I never saw the
+    explainer" defense evaporates."""
+    import pathlib as _pl
+    p = (
+        _pl.Path(__file__).resolve().parent
+        / "templates"
+        / "privacy_officer_explainer"
+        / f"{EXPLAINER_VERSION}.md"
+    )
+    if not p.exists():
+        raise PrivacyOfficerError(
+            f"Explainer text file missing: {p}. EXPLAINER_VERSION "
+            f"must point to a real file in "
+            f"templates/privacy_officer_explainer/."
+        )
+    return p.read_text()
+
+
+def get_explainer_text_and_hash() -> tuple[str, str]:
+    """Public helper for the API layer (the wizard fetches the
+    canonical text + hash, displays text, returns hash on accept).
+    Server-side hash compare in `designate()` ensures the client
+    actually saw the version it claims to have accepted."""
+    import hashlib as _hashlib
+    text = _load_explainer_text()
+    sha = _hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return text, sha
+
+
+def _expected_explainer_hash() -> str:
+    _, sha = get_explainer_text_and_hash()
+    return sha
+
+
 class PrivacyOfficerError(Exception):
     """Raised on any precondition violation. Callers should map to
     HTTPException with 4xx in the API layer."""
@@ -99,6 +136,8 @@ async def designate(
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     acceptance_acknowledgement: str = "",
+    accepted_explainer_sha256: str = "",
+    is_authorized_self_attestation: bool = False,
 ) -> Dict[str, Any]:
     """Create a new Privacy Officer designation.
 
@@ -137,6 +176,38 @@ async def designate(
             "display the §164.308(a)(2) explainer text and the user "
             "must click through. Shorter than 50 chars indicates a "
             "client bypassing the wizard."
+        )
+
+    # Carol MUST-1 + Maya P2-B (round-table 2026-05-06): server-side
+    # hash compare. Client sends the SHA-256 of the explainer text it
+    # rendered to the user; server rejects if the hash doesn't match
+    # the canonical file. Closes the "user submits 50 spaces and
+    # bypasses the wizard" gap — the only way to produce the correct
+    # hash is to have actually loaded the explainer.
+    expected_sha = _expected_explainer_hash()
+    submitted_sha = (accepted_explainer_sha256 or "").strip().lower()
+    if submitted_sha != expected_sha:
+        raise PrivacyOfficerError(
+            f"accepted_explainer_sha256 does not match the canonical "
+            f"v{EXPLAINER_VERSION} explainer hash. The wizard must "
+            f"fetch the explainer text via "
+            f"GET /api/client/privacy-officer/explainer and submit "
+            f"its SHA-256 with the designation. Submitted: "
+            f"{submitted_sha[:8] if submitted_sha else '(empty)'}; "
+            f"expected: {expected_sha[:8]}."
+        )
+    if not is_authorized_self_attestation:
+        # Carol MUST-4 (round-table 2026-05-06): owner self-attests
+        # they have the governing-document authority to designate
+        # the Privacy Officer on behalf of the practice. Closes the
+        # LLC-manager-vs-officer delegation question without
+        # requiring OsirisCare to interpret entity-formation docs.
+        raise PrivacyOfficerError(
+            "is_authorized_self_attestation must be True. The "
+            "designating user must self-attest under the practice's "
+            "governing documents (operating agreement, bylaws, "
+            "partnership agreement, or equivalent) that they are "
+            "authorized to designate the Privacy Officer."
         )
 
     name = name.strip()

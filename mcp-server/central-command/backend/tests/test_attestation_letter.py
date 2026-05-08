@@ -174,9 +174,15 @@ def test_template_renders_with_sentinel_kwargs():
     assert ", as Privacy Officer, reviews the monthly evidence summary" in rendered
     # Brian-the-agent: 1-800 phone number FIRST (not QR).
     assert "1-800-OSIRIS-1" in rendered or "1-800-" in rendered
-    # Diane-CPA contracts: BAA reference + 7-year retention.
+    # Diane-CPA contracts: BAA reference + retention commitment.
+    # Carol BLOCK-2 (round-table 2026-05-06): downgraded the
+    # unbacked 7-year SLA to "term of relationship + commercially
+    # reasonable wind-down period; CE retains independent copies
+    # for §164.530(j) compliance" — defensible without an
+    # operational retention SLA in place.
     assert "Issued under BAA" in rendered
-    assert "7 years post-termination" in rendered
+    assert "wind-down period" in rendered
+    assert "§164.530(j)" in rendered
     # Carol contract: §164.528 disclaimer present.
     assert "§164.528" in rendered
     # Cover paragraph for Janet's email forwarding workflow.
@@ -305,10 +311,12 @@ def test_public_verify_rate_limited():
 
 def test_public_verify_payload_does_not_leak_internals():
     """OCR-grade payload only. NEVER client_org_id, NEVER user_id,
-    NEVER ed25519_signature (signature is verifiable separately)."""
+    NEVER ed25519_signature (signature is verifiable separately).
+    Bumped search window to 8000 chars (Steve P1-D ambiguity guard
+    grew the function body)."""
     src = (_BACKEND / "client_portal.py").read_text()
     idx = src.find("async def public_verify_attestation_letter(")
-    body = src[idx : idx + 4000]
+    body = src[idx : idx + 8000]
     # Forbidden fields in the response payload.
     assert "client_org_id" not in body or "row[\"client_org_id\"]" not in body
     assert "ed25519_signature" not in body, (
@@ -324,15 +332,48 @@ def test_public_verify_payload_does_not_leak_internals():
     assert "bundle_count" in body
 
 
-def test_public_verify_accepts_short_or_full_hash():
-    """Letter prints a 16-char prefix in some places (URL-friendly)
-    and the full 64-char hash in others. Endpoint accepts both."""
+def test_public_verify_accepts_only_32_or_64_hash():
+    """Steve P1-D + Maya P1-A (round-table 2026-05-06): the prior
+    16-char prefix admitted a birthday-collision tenant-mixup
+    vector. 32 chars (128 bits) eliminates it, AND the endpoint
+    detects ambiguity at lookup time as defense-in-depth."""
     src = (_BACKEND / "client_portal.py").read_text()
     idx = src.find("async def public_verify_attestation_letter(")
     body = src[idx : idx + 4000]
-    assert "len(h) not in (16, 64)" in body, (
-        "F4 must accept BOTH the 16-char short form (printed on the "
-        "letter for URL/QR) AND the 64-char full SHA-256 hash"
+    assert "len(h) not in (32, 64)" in body, (
+        "F4 must enforce minimum 32-hex-char hash to close the "
+        "birthday-collision vector"
+    )
+    # 16-char prefix MUST be rejected.
+    assert "(16, 64)" not in body, (
+        "F4 must NO LONGER accept the 16-char prefix (insecure)"
+    )
+
+
+def test_public_verify_detects_ambiguous_prefix():
+    """Steve P1-D defense in depth: even at 32 chars, if a
+    pathological collision occurs, return ambiguity error rather
+    than silently picking LIMIT 1."""
+    src = (_BACKEND / "client_portal.py").read_text()
+    idx = src.find("async def public_verify_attestation_letter(")
+    body = src[idx : idx + 8000]
+    assert "ambiguous_prefix_supply_full_64_hex_hash" in body, (
+        "F4 must detect prefix collisions and refuse with an "
+        "ambiguity-error rather than picking LIMIT 1 silently"
+    )
+    assert "len(full_rows) > 1" in body
+
+
+def test_public_verify_uses_xforwarded_for_real_client_ip():
+    """Steve P1-C (round-table 2026-05-06): per-IP rate-limit using
+    request.client.host is meaningless behind nginx (proxy IP).
+    Use X-Forwarded-For first hop, fallback to client.host."""
+    src = (_BACKEND / "client_portal.py").read_text()
+    idx = src.find("async def public_verify_attestation_letter(")
+    body = src[idx : idx + 8000]
+    assert 'request.headers.get("x-forwarded-for"' in body, (
+        "F4 rate-limit IP keying must use X-Forwarded-For (first "
+        "hop) — request.client.host is the proxy behind nginx"
     )
 
 
