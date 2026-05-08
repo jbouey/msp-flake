@@ -5910,6 +5910,11 @@ async def issue_partner_ba_compliance_attestation_pdf(
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Attestation-Id": result["attestation_id"],
             "X-Attestation-Hash": result["attestation_hash"],
+            # Sibling-parity with P-F5 portfolio (partners.py:5580) +
+            # F1 letter (client_portal.py:5517). Without this header the
+            # PartnerAttestations Card B summary shows no validity
+            # window — round-table-at-gates Coach DENY 2026-05-08.
+            "X-Letter-Valid-Until": result["valid_until"].isoformat(),
         },
     )
 

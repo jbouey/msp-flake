@@ -328,9 +328,12 @@ export const PartnerAttestations: React.FC = () => {
       const filename = _filenameFromHeaders(res, fallback);
       _saveBlob(blob, filename);
       const hash = res.headers.get('X-Attestation-Hash') || '';
+      // X-Letter-Valid-Until parity with P-F5 portfolio + F1 letter.
+      // Backend ships the header (round-table fix-up 2026-05-08).
+      const validUntil = res.headers.get('X-Letter-Valid-Until');
       setBaSummary({
         attestation_hash: hash,
-        valid_until: null,
+        valid_until: validUntil,
         filename,
         fetched_at: new Date().toISOString(),
       });
