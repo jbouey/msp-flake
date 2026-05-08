@@ -337,6 +337,11 @@ if [ "$FRONTEND_CHANGED" -eq 1 ]; then
     # if blocked (emergency only).
     if [ -z "$PRE_PUSH_SKIP_VITEST" ]; then
         echo "[pre-push] frontend vitest ..."
+        # Vitest 4 dropped the `basic` built-in reporter — `default`
+        # is the canonical concise terminal reporter (one line per
+        # file). Vitest 3 accepted `basic`; 4.x throws "Failed to
+        # load custom Reporter from basic" because it tries to
+        # import a module named `basic`. Fix surfaced 2026-05-08.
         if ! npx vitest run --reporter=default > /tmp/vitest-prepush.log 2>&1; then
             echo "[pre-push] ❌ vitest failed — push blocked"
             echo ""
