@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Incident Response Timeline — {{ incident_id_short }}</title>
+<style>
+@page {
+    size: Letter;
+    margin: 0.75in;
+    @bottom-center {
+        content: "{{ presenter_brand }} on the OsirisCare substrate.  Incident {{ incident_id_short }}.  {{ generated_at_human }}.";
+        font-family: 'Helvetica', 'Arial', sans-serif;
+        font-size: 9pt;
+        color: #666;
+    }
+}
+body {
+    font-family: 'Helvetica', 'Arial', sans-serif;
+    color: #222;
+    line-height: 1.5;
+    font-size: 11pt;
+}
+.letterhead {
+    border-bottom: 2px solid #14A89E;
+    padding-bottom: 16px;
+    margin-bottom: 22px;
+}
+.letterhead h1 {
+    font-size: 22pt;
+    font-weight: 700;
+    color: #1a365d;
+    margin: 0 0 4px 0;
+    letter-spacing: -0.5px;
+}
+.letterhead .partner-name {
+    font-size: 13pt;
+    font-weight: 600;
+    color: #2d3748;
+    margin: 0 0 4px 0;
+}
+.letterhead .meta {
+    font-size: 11pt;
+    color: #4a5568;
+    margin: 0;
+}
+.summary {
+    margin: 18px 0;
+    padding: 14px 16px;
+    background: #f7fafc;
+    border-left: 3px solid #14A89E;
+}
+.summary table {
+    width: 100.000%;
+    border-collapse: collapse;
+}
+.summary td {
+    padding: 3px 6px;
+    color: #2d3748;
+    vertical-align: top;
+}
+.summary td.label {
+    font-weight: 600;
+    color: #4a5568;
+    width: 30%;
+}
+.section-h {
+    font-size: 13pt;
+    font-weight: 600;
+    color: #1a365d;
+    margin: 22px 0 8px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e2e8f0;
+}
+.timeline {
+    margin: 14px 0;
+    padding-left: 0;
+    list-style: none;
+}
+.timeline li {
+    position: relative;
+    padding: 8px 0 8px 22px;
+    border-left: 2px solid #14A89E;
+    margin-left: 8px;
+}
+.timeline li::before {
+    content: '●';
+    position: absolute;
+    left: -7px;
+    top: 8px;
+    color: #14A89E;
+    font-size: 10pt;
+}
+.timeline .ts {
+    font-size: 9pt;
+    color: #718096;
+    font-variant-numeric: tabular-nums;
+}
+.timeline .event-kind {
+    font-size: 10pt;
+    font-weight: 600;
+    color: #1a365d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 8px;
+}
+.timeline .desc {
+    font-size: 10.5pt;
+    color: #2d3748;
+    margin: 4px 0 0 0;
+    line-height: 1.5;
+}
+.empty-note {
+    color: #718096;
+    font-style: italic;
+    margin: 8px 0;
+}
+.footer-note {
+    margin-top: 24px;
+    padding: 12px 14px;
+    background: #f7fafc;
+    border-left: 3px solid #14A89E;
+    font-size: 9pt;
+    color: #4a5568;
+    line-height: 1.4;
+}
+</style>
+</head>
+<body>
+
+<div class="letterhead">
+    <h1>Incident Response Timeline</h1>
+    <p class="partner-name">{{ presenter_brand }} on the OsirisCare substrate</p>
+    <p class="meta">Incident {{ incident_id_short }} · {{ site_label }}</p>
+</div>
+
+<div class="summary">
+    <table>
+        <tr><td class="label">Type</td><td>{{ incident_type }}</td></tr>
+        <tr><td class="label">Severity</td><td>{{ severity }}</td></tr>
+        <tr><td class="label">Status</td><td>{{ status }}</td></tr>
+        <tr><td class="label">Resolution tier</td><td>{{ resolution_tier_label }}</td></tr>
+        <tr><td class="label">Created</td><td>{{ created_at_human }}</td></tr>
+        <tr><td class="label">Resolved</td><td>{{ resolved_at_human }}</td></tr>
+        <tr><td class="label">Time to resolution</td><td>{{ ttr_human }}</td></tr>
+    </table>
+</div>
+
+<h2 class="section-h">Timeline</h2>
+
+{% if events %}
+<ul class="timeline">
+    {% for e in events %}
+    <li>
+        <span class="ts">{{ e.timestamp_human }}</span>
+        <span class="event-kind">{{ e.kind }}</span>
+        <p class="desc">{{ e.description }}</p>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="empty-note">No telemetry events recorded for this incident. Verify the incident_id is correct and that the appliance has reported activity.</p>
+{% endif %}
+
+<div class="footer-note">
+    This timeline is rendered live from {{ presenter_brand }}'s operational telemetry on the OsirisCare substrate. Each event references signed evidence in the practice's compliance evidence chain (per-site auditor kit available on request). The auditor verifying this timeline can cross-reference the cited bundle hashes against the practice's offline-verifiable Auditor Kit. PHI is scrubbed at the appliance before egress; nothing in this timeline identifies a patient.
+</div>
+
+</body>
+</html>

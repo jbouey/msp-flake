@@ -287,6 +287,27 @@ _KWARGS_SECURITY_ALLOWLIST = frozenset({
     "roster",
     "total_monitored_sites",
     "onboarded_counterparty_count",
+    # partner_incident_timeline context (P-F8, partner round-table
+    # 2026-05-08). Per-incident chronological event timeline. The
+    # incident_id is opaque (UUID-shaped); site_label is a hash-
+    # prefix label (NOT clinic_name, per P-F7 site-label posture);
+    # events is a list of dicts with timestamp_human + kind +
+    # description. Description is an action label (e.g. "L1 rule
+    # fired", "operator ack", "remediation issued") — never a
+    # patient/clinic name. PHI is scrubbed at the appliance
+    # before egress so execution_telemetry is PHI-free; this
+    # template inherits that boundary.
+    "incident_id_short",
+    "incident_type",
+    "severity",
+    "status",
+    "resolution_tier_label",
+    "created_at_human",
+    "resolved_at_human",
+    "ttr_human",
+    "site_label",
+    "events",
+    "generated_at_human",
 })
 
 
@@ -385,3 +406,4 @@ from . import attestation_letter  # noqa: F401, E402
 from . import partner_portfolio_attestation  # noqa: F401, E402
 from . import partner_weekly_digest  # noqa: F401, E402
 from . import partner_ba_compliance  # noqa: F401, E402
+from . import partner_incident_timeline  # noqa: F401, E402

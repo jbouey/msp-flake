@@ -5905,6 +5905,100 @@ async def issue_partner_ba_compliance_attestation_pdf(
     )
 
 
+@router.get("/me/incidents/{incident_id}/timeline.pdf")
+async def render_partner_incident_timeline_pdf(
+    incident_id: str,
+    request: Request,
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Render + stream a per-incident response timeline PDF
+    (P-F8). Lisa's 2am owner-call artifact: 1-page chronological
+    view of how the substrate detected, planned, executed, and
+    resolved an incident.
+
+    admin OR tech (operational artifact, not a state-change). Read-
+    only — no chain attestation, no migration. Re-rendered live on
+    every call from the authoritative incidents +
+    execution_telemetry tables."""
+    try:
+        from .partner_incident_timeline import (
+            render_incident_timeline,
+            html_to_pdf,
+            IncidentTimelineError,
+        )
+        from .tenant_middleware import admin_connection
+        from .shared import check_rate_limit
+    except ImportError:
+        from partner_incident_timeline import (  # type: ignore
+            render_incident_timeline,
+            html_to_pdf,
+            IncidentTimelineError,
+        )
+        from tenant_middleware import admin_connection  # type: ignore
+        from shared import check_rate_limit  # type: ignore
+    from fastapi.responses import Response
+
+    # Reject obviously-malformed UUIDs before hitting the DB.
+    h = incident_id.strip().lower()
+    if len(h) < 8 or len(h) > 64 or not all(
+        c in "0123456789abcdef-" for c in h
+    ):
+        raise HTTPException(status_code=400, detail="malformed incident_id")
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    caller_user_id = (
+        partner.get("partner_user_id") or partner.get("user_id") or partner_id
+    )
+
+    # 60/hr per (partner, user) — operational artifact, looser than
+    # attestation issuance but still bounded.
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=partner_id,
+        action="partner_incident_timeline",
+        window_seconds=3600,
+        max_requests=60,
+        caller_key=f"partner_user:{caller_user_id}",
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate-limited. Retry in {retry_after_s}s.",
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    async with admin_connection(pool) as conn:
+        try:
+            result = await render_incident_timeline(
+                conn=conn,
+                partner_id=partner_id,
+                incident_id=incident_id,
+            )
+        except IncidentTimelineError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    import asyncio as _asyncio
+    pdf_bytes = await _asyncio.to_thread(html_to_pdf, result["html"])
+
+    safe_brand = "".join(
+        c if c.isalnum() or c in "-_" else "-"
+        for c in result["presenter_brand"]
+    )[:80]
+    filename = (
+        f"incident-timeline-{safe_brand}-{result['incident_id_short']}.pdf"
+    )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Incident-Id-Short": result["incident_id_short"],
+            "X-Site-Label": result["site_label"],
+        },
+    )
+
+
 # Public-verify router for partner portfolio attestation (sister to F4
 # client-letter verify). Anna-the-sales-lead hands this URL to a
 # prospect. The prospect confirms the portfolio attestation is real
