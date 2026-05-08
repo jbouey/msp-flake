@@ -438,3 +438,4 @@ from . import partner_weekly_digest  # noqa: F401, E402
 from . import partner_ba_compliance  # noqa: F401, E402
 from . import partner_incident_timeline  # noqa: F401, E402
 from . import quarterly_summary  # noqa: F401, E402
+from . import wall_cert  # noqa: F401, E402

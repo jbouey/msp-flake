@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HIPAA Compliance Monitoring — {{ practice_name }}</title>
+<style>
+@page {
+    size: Letter landscape;
+    margin: 0.5in;
+    @bottom-center {
+        content: "Issued by {{ presenter_brand }}.  Verify: {{ verify_phone }} or {{ verify_url_short }}/{{ attestation_hash[:32] }}.  Valid until {{ valid_until_human }}.";
+        font-family: 'Helvetica', 'Arial', sans-serif;
+        font-size: 9pt;
+        color: #666;
+    }
+}
+body {
+    font-family: 'Helvetica', 'Arial', sans-serif;
+    color: #1a1a1a;
+    line-height: 1.4;
+    font-size: 11pt;
+    margin: 0;
+}
+.frame {
+    border: 6px double #14A89E;
+    padding: 28px 36px 22px 36px;
+    height: 7.0in;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+.banner {
+    text-align: center;
+    border-bottom: 2px solid #14A89E;
+    padding-bottom: 14px;
+    margin-bottom: 18px;
+}
+.banner .eyebrow {
+    font-size: 10pt;
+    letter-spacing: 4px;
+    color: #14A89E;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin: 0 0 6px 0;
+}
+.banner h1 {
+    font-size: 32pt;
+    font-weight: 800;
+    color: #1a365d;
+    margin: 0 0 4px 0;
+    letter-spacing: -0.5px;
+    text-transform: uppercase;
+}
+.banner .subtitle {
+    font-size: 11pt;
+    color: #4a5568;
+    margin: 0;
+    font-style: italic;
+}
+.body-row {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    gap: 28px;
+    margin-top: 4px;
+}
+.left-col {
+    flex: 1.4;
+    display: flex;
+    flex-direction: column;
+}
+.right-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.practice-name {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-size: 36pt;
+    font-weight: 700;
+    color: #1a365d;
+    margin: 0 0 8px 0;
+    line-height: 1.1;
+}
+.period {
+    font-size: 12pt;
+    color: #4a5568;
+    margin: 0 0 18px 0;
+}
+.statement {
+    font-size: 11pt;
+    color: #2d3748;
+    margin: 0 0 14px 0;
+    line-height: 1.55;
+}
+.summary-block {
+    margin: 6px 0 0 0;
+    padding: 12px 14px;
+    background: #f0fdfa;
+    border-left: 4px solid #14A89E;
+    font-size: 10.5pt;
+    color: #2d3748;
+}
+.summary-block .label {
+    font-weight: 600;
+    color: #1a365d;
+}
+.signoff {
+    margin-top: 14px;
+    font-size: 10.5pt;
+    color: #2d3748;
+}
+.signoff .role-line {
+    margin: 0 0 4px 0;
+}
+.attestation-card {
+    background: #f7fafc;
+    border: 1px solid #cbd5e0;
+    border-left: 4px solid #14A89E;
+    padding: 14px 16px;
+    border-radius: 4px;
+    font-size: 10pt;
+    color: #2d3748;
+}
+.attestation-card .label {
+    font-weight: 600;
+    color: #1a365d;
+    display: block;
+    margin-bottom: 2px;
+}
+.attestation-card .hash {
+    font-family: 'Courier New', 'Menlo', monospace;
+    font-size: 11pt;
+    color: #1a1a1a;
+    word-break: break-all;
+    line-height: 1.35;
+    background: #ffffff;
+    padding: 6px 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 3px;
+    margin-top: 4px;
+}
+.attestation-card .verify-line {
+    margin-top: 10px;
+    font-size: 10pt;
+    color: #2d3748;
+}
+.issuance-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    padding: 12px 14px;
+    border-radius: 4px;
+    font-size: 9.5pt;
+    color: #4a5568;
+}
+.issuance-card p {
+    margin: 0 0 4px 0;
+}
+.issuance-card .label {
+    font-weight: 600;
+    color: #2d3748;
+}
+.disclaimer {
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+    font-size: 8pt;
+    color: #718096;
+    line-height: 1.4;
+}
+.disclaimer p { margin: 0 0 4px 0; }
+</style>
+</head>
+<body>
+
+<div class="frame">
+
+    <div class="banner">
+        <p class="eyebrow">Wall Certificate</p>
+        <h1>HIPAA Compliance Monitoring in Effect</h1>
+        <p class="subtitle">Cryptographically signed substrate — independently verifiable</p>
+    </div>
+
+    <div class="body-row">
+
+        <div class="left-col">
+            <p class="practice-name">{{ practice_name }}</p>
+            <p class="period">For the period {{ period_start_human }} through {{ period_end_human }}</p>
+
+            <p class="statement">
+                The technical safeguards of <strong>{{ practice_name }}</strong> are monitored on a continuous automated schedule against a defined subset of 45 CFR §164.312 technical safeguards and the §164.308(a)(1)(ii)(D) information-system-activity-review control. Cryptographically signed evidence is captured by the {{ presenter_brand }} compliance substrate.
+            </p>
+
+            <div class="summary-block">
+                <span class="label">Coverage:</span>
+                {{ sites_covered_count }} site{{ 's' if sites_covered_count != 1 else '' }},
+                {{ appliances_count }} compliance appliance{{ 's' if appliances_count != 1 else '' }},
+                {{ workstations_count }} workstation{{ 's' if workstations_count != 1 else '' }}<br>
+                <span class="label">Evidence:</span>
+                {{ bundle_count }} signed bundle{{ 's' if bundle_count != 1 else '' }}
+                · {{ ots_anchored_pct_str }}% Bitcoin-anchored
+            </div>
+
+            <div class="signoff">
+                <p class="role-line">Reviewed by <strong>{{ privacy_officer_name }}</strong>, {{ privacy_officer_title }} (Designated Privacy Officer).</p>
+                <p class="role-line">Issued under BAA dated {{ baa_dated_at_human }} with {{ baa_practice_name }}.</p>
+            </div>
+        </div>
+
+        <div class="right-col">
+
+            <div class="attestation-card">
+                <span class="label">Attestation Hash (SHA-256, Ed25519-signed)</span>
+                <div class="hash">{{ attestation_hash }}</div>
+                <p class="verify-line">
+                    <strong>Verify:</strong><br>
+                    Phone: {{ verify_phone }}<br>
+                    Web: {{ verify_url_short }}/{{ attestation_hash[:32] }}
+                </p>
+            </div>
+
+            <div class="issuance-card">
+                <p><span class="label">Issued by:</span> {{ presenter_brand }}{{ presenter_contact_line }}</p>
+                <p><span class="label">Issuance:</span> {{ issued_at_human }}</p>
+                <p><span class="label">Valid until:</span> {{ valid_until_human }} (90 days)</p>
+            </div>
+
+        </div>
+
+    </div>
+
+    <div class="disclaimer">
+        <p>This letter is audit-supportive technical evidence. It contains no patient-identifying information and is not part of any designated record set under §164.524. It is not a substitute for the practice's §164.528 disclosure accounting, designated record set, §164.530(d) complaint log, or workforce sanction records. Auditors and carriers may request the Evidence Kit (cryptographically signed bundles + chain + OpenTimestamps anchors) for offline verification. To report a concern, contact compliance@osiriscare.com (best-effort acknowledgment within 7 business days; substantive response within 30 days) or the HHS Office for Civil Rights at hhs.gov/ocr/complaints.</p>
+        <p>This wall certificate is an alternate display of the underlying Compliance Attestation Letter; the same Ed25519-signed payload backs both. Attestation-hash verification is supported through the term of the {{ presenter_brand }}–{{ baa_practice_name }} relationship plus a commercially reasonable wind-down period; the practice retains independent copies for §164.530(j) compliance.</p>
+    </div>
+
+</div>
+
+</body>
+</html>

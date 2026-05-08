@@ -551,3 +551,107 @@
     display: none;
   }
 }
+
+/* --- F5 Dashboard print stylesheet (sprint 2026-05-08) ---
+   Refines the Compliance Snapshot print path for Maria's
+   insurance-underwriting use case. Layered ON TOP of the legacy
+   block above so the legacy hides keep working. */
+@media print {
+  /* Page setup — Letter portrait with running header showing the
+     practice name + a date stamp. The practice name + attestation
+     hash short-form are injected via CSS variables on <html> by
+     React (see ClientDashboard.tsx setProperty calls). */
+  @page {
+    size: Letter;
+    margin: 0.5in 0.5in 0.6in 0.5in;
+    @top-center {
+      content: var(--print-running-header, "OsirisCare Compliance Snapshot");
+      font-family: 'Helvetica', 'Arial', sans-serif;
+      font-size: 9pt;
+      color: #555;
+    }
+    @bottom-center {
+      content: var(--print-running-footer, "");
+      font-family: 'Helvetica', 'Arial', sans-serif;
+      font-size: 8pt;
+      color: #777;
+    }
+  }
+
+  /* Force a clean light theme regardless of dark-mode preference,
+     so a B&W laser printer renders cleanly. */
+  html, body {
+    background: white !important;
+    color: #1a1a1a !important;
+    color-scheme: light !important;
+  }
+
+  /* Anything explicitly tagged as no-print is gone (the Print
+     button itself, popovers, action menus, search controls). */
+  .print\:hidden,
+  .no-print,
+  [data-print="hidden"],
+  button[data-action="print"],
+  [role="dialog"],
+  [role="tooltip"] {
+    display: none !important;
+  }
+
+  /* Composed-design-system primitives — page-break friendliness. */
+  .metric-card,
+  .status-badge,
+  .panel-header,
+  .compliance-card,
+  [data-pageblock="metric-card"],
+  [data-pageblock="status-badge"],
+  [data-pageblock="panel-header"] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Recharts / D3 SVG legibility on B&W printers. The dashboard
+     theme uses light-on-dark axis labels in dark mode; force them
+     to black so they survive a monochrome print. The fill on
+     bars/lines is preserved — Recharts uses inline fill which
+     beats this rule's specificity by design (the page-level
+     stroke override only catches axes/grids/labels). */
+  svg .recharts-cartesian-axis-line,
+  svg .recharts-cartesian-axis-tick-line,
+  svg .recharts-cartesian-grid-horizontal line,
+  svg .recharts-cartesian-grid-vertical line {
+    stroke: #1a1a1a !important;
+  }
+  svg .recharts-cartesian-axis-tick-value,
+  svg .recharts-text,
+  svg .recharts-label {
+    fill: #1a1a1a !important;
+  }
+
+  /* The print-only header banner inside ClientDashboard. Hidden
+     in normal viewing; appears on the first page of the printed
+     output as a self-contained title block (practice name + date
+     + attestation hash short-form). */
+  .print-only {
+    display: block !important;
+  }
+  .print-only-inline {
+    display: inline !important;
+  }
+
+  /* Links — show the URL after the link text so a printed copy
+     remains useful when scanned. Skip mailto + tel + anchors that
+     opt out (data-print-no-url). */
+  a[href]:not([data-print-no-url]):not([href^="mailto:"]):not([href^="tel:"]):not([href^="#"])::after {
+    content: " (" attr(href) ")";
+    font-size: 9pt;
+    color: #555;
+  }
+}
+
+/* Default state outside print — keep the print-only blocks hidden. */
+.print-only {
+  display: none;
+}
+.print-only-inline {
+  display: none;
+}

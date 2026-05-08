@@ -223,6 +223,37 @@ export const ClientDashboard: React.FC = () => {
     navigate('/client/login');
   };
 
+  /**
+   * F5 (sprint 2026-05-08) — Print Compliance Snapshot.
+   *
+   * Sets CSS variables on <html> so the @media print running
+   * header + footer (defined in index.css) include the practice
+   * name + the date the customer printed it. Pure window.print()
+   * — no backend call, no PDF generation here. The audit-grade
+   * artifact is the F1 attestation letter PDF (different endpoint).
+   *
+   * The dashboard view itself becomes the printable artifact via
+   * the F5 print stylesheet: nav chrome hidden, light theme
+   * forced, MetricCard/StatusBadge break-inside:avoid, Recharts
+   * axes blackened for monochrome printers.
+   */
+  const handlePrintSnapshot = () => {
+    const orgName = dashboard?.org.name || 'OsirisCare Compliance Snapshot';
+    const printedAt = new Date().toLocaleDateString(undefined, {
+      year: 'numeric', month: 'long', day: 'numeric',
+    });
+    // Header text — wrap in CSS string literal for @top-center.
+    const safeOrg = orgName.replace(/"/g, '');
+    document.documentElement.style.setProperty(
+      '--print-running-header',
+      `"${safeOrg} — Compliance Snapshot, printed ${printedAt}"`,
+    );
+    document.documentElement.style.setProperty(
+      '--print-running-footer',
+      `"Audit-supportive technical evidence — verify signed letter at osiriscare.io/verify"`,
+    );
+    window.print();
+  };
 
   if (isLoading || loading) {
     return (
@@ -330,6 +361,26 @@ export const ClientDashboard: React.FC = () => {
                 )}
               </div>
 
+              {/* Print Compliance Snapshot — F5 sprint 2026-05-08.
+                  Triggers window.print(); the @media print stylesheet
+                  in index.css hides nav chrome + dark theme + non-
+                  print buttons and forces a B&W-printer-friendly
+                  layout. Hidden in @media print itself via
+                  data-print="hidden". */}
+              <button
+                onClick={handlePrintSnapshot}
+                data-print="hidden"
+                data-action="print"
+                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-label-secondary hover:text-accent-primary border border-separator-light rounded-lg hover:bg-accent-primary/10 focus-visible:ring-2 focus-visible:ring-accent-primary focus-visible:ring-offset-2"
+                title="Print a snapshot of this dashboard for insurance underwriting or board review"
+                aria-label="Print Compliance Snapshot"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+                <span>Print Snapshot</span>
+              </button>
+
               {/* User Menu */}
               <div className="flex items-center gap-3">
                 <div className="text-right">
@@ -354,6 +405,28 @@ export const ClientDashboard: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Print-only banner — F5 sprint 2026-05-08. Hidden in
+            normal viewing; surfaces on the first page of the printed
+            output as a self-contained title block with practice name +
+            the date the customer printed it. The print stylesheet in
+            index.css flips display:block under @media print. */}
+        <div
+          className="print-only mb-6 pb-4 border-b-2 border-accent-primary"
+          aria-hidden="true"
+        >
+          <p className="text-xs uppercase tracking-widest text-label-tertiary">
+            {dashboard?.org.partner_brand || 'OsirisCare'} Compliance Portal
+          </p>
+          <h2 className="text-2xl font-bold text-label-primary mt-1">
+            {dashboard?.org.name} — Compliance Snapshot
+          </h2>
+          <p className="text-sm text-label-secondary mt-1">
+            Printed {new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}.
+            This snapshot is audit-supportive technical evidence and is not a substitute for the §164.528 disclosure accounting,
+            designated record set, or §164.530(d) complaint log. Verify the signed Compliance Attestation Letter at osiriscare.io/verify.
+          </p>
+        </div>
+
         {driftConfigSite ? (
           <ClientDriftConfig
             siteId={driftConfigSite.id}
