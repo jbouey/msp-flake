@@ -1790,8 +1790,15 @@ async def lifespan(app: FastAPI):
             _hb("fleet_order_expiry")
             try:
                 from dashboard_api.fleet import get_pool
+                from dashboard_api.tenant_middleware import admin_transaction
                 pool = await get_pool()
-                async with pool.acquire() as conn:
+                # admin_transaction (NOT pool.acquire) so the UPDATE is
+                # not RLS-filtered to zero rows. fleet_orders has 2 RLS
+                # policies (admin_bypass + tenant_isolation); the
+                # background path needs admin_bypass to expire across
+                # the fleet. Same class as F-P0-1 in audit/coach-e2e-
+                # attestation-audit-2026-05-08.md.
+                async with admin_transaction(pool) as conn:
                     updated = await conn.execute("""
                         UPDATE fleet_orders SET status = 'expired'
                         WHERE status IN ('active', 'pending') AND expires_at < NOW()
@@ -2052,13 +2059,24 @@ async def lifespan(app: FastAPI):
         await unregistered_device_alert_loop()
 
     async def _evidence_chain_check_loop():
-        """Daily verification of evidence hash chain integrity per site."""
+        """Daily verification of evidence hash chain integrity per site.
+
+        Uses admin_transaction (NOT pool.acquire) so the SELECT and
+        per-site break detection see compliance_bundles through
+        admin_bypass RLS. Without this, the loop iterates over zero
+        sites and the substrate is BLIND to chain corruption — same
+        class as the merkle_batch stall caught in the 2026-05-08
+        E2E attestation audit (F-P0-1). The chain-integrity check
+        IS the tamper-evidence promise; it cannot run RLS-filtered.
+        """
+        from dashboard_api.tenant_middleware import admin_transaction
+
         await asyncio.sleep(600)  # 10-minute startup delay
         while True:
             _hb("evidence_chain_check")
             try:
                 pool = await get_pool()
-                async with pool.acquire() as conn:
+                async with admin_transaction(pool) as conn:
                     site_ids = await conn.fetch(
                         "SELECT DISTINCT site_id FROM compliance_bundles"
                     )
@@ -2104,17 +2122,33 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.warning(f"Evidence chain check failed: {e}")
+                logger.error(
+                    "Evidence chain check failed", error=str(e), exc_info=True
+                )
             await asyncio.sleep(86400)  # Once per day
 
     async def _merkle_batch_loop():
-        """Hourly Merkle batching of evidence bundles for OTS."""
+        """Hourly Merkle batching of evidence bundles for OTS.
+
+        Uses admin_transaction (NOT pool.acquire) so the SELECT and the
+        per-site UPDATEs in process_merkle_batch see compliance_bundles
+        through admin_bypass RLS and pin to ONE PgBouncer backend for
+        the duration of the batch. Without this, the bare pool.acquire
+        path is RLS-filtered to zero rows on every iteration — the
+        Session-218 round-table audit caught a 2,669-bundle stall on
+        the only paying site that had silently grown for 18 days
+        because the loop's "no work" return is indistinguishable from
+        a genuinely-empty queue. See audit/coach-e2e-attestation-
+        audit-2026-05-08.md F-P0-1 + the bg_loop_silent class.
+        """
+        from dashboard_api.tenant_middleware import admin_transaction
+
         await asyncio.sleep(300)  # 5 min after startup
         while True:
             _hb("merkle_batch")
             try:
                 pool = await get_pool()
-                async with pool.acquire() as conn:
+                async with admin_transaction(pool) as conn:
                     sites = await conn.fetch(
                         "SELECT DISTINCT site_id FROM compliance_bundles WHERE ots_status = 'batching'"
                     )
@@ -2126,7 +2160,7 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error("Merkle batch loop error", error=str(e))
+                logger.error("Merkle batch loop error", error=str(e), exc_info=True)
             await asyncio.sleep(3600)  # 1 hour
 
     async def _audit_log_retention_loop():
