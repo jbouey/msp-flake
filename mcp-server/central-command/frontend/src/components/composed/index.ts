@@ -15,3 +15,8 @@ export { FloatingActionButton } from './FloatingActionButton';
 export type { FloatingAction } from './FloatingActionButton';
 export { Sparkline } from './Sparkline';
 export { FleetStatusPanel } from './FleetStatusPanel';
+export { DangerousActionModal } from './DangerousActionModal';
+export type {
+  DangerousActionModalProps,
+  DangerousActionTier,
+} from './DangerousActionModal';

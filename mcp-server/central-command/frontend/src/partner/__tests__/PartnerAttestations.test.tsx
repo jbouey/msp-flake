@@ -464,29 +464,33 @@ describe('PartnerAttestations', () => {
     fireEvent.click(revokeBtn);
 
     const dialog = await screen.findByRole('dialog');
-    // First try with mismatched typed-confirm:
+    // Migrated to <DangerousActionModal> tier-1 (Sprint-N+1 Decision 2).
+    // The reason textarea sits inside the modal description; the typed
+    // confirm input is rendered by the modal itself with data-testid.
     fireEvent.change(within(dialog).getByLabelText(/Reason/i), {
       target: { value: 'A reason of more than twenty characters total' },
     });
-    fireEvent.change(
-      within(dialog).getByLabelText(/Type Test Clinic to confirm/i),
-      { target: { value: 'wrong' } },
-    );
-    const submit = within(dialog).getByRole('button', { name: 'Revoke BAA' });
-    fireEvent.click(submit);
 
-    await waitFor(() => {
-      expect(
-        screen.getByText(/Confirmation did not match/i),
-      ).toBeInTheDocument();
-    });
+    const typedInput = within(dialog).getByTestId(
+      'dangerous-action-confirm-input',
+    );
+    fireEvent.change(typedInput, { target: { value: 'wrong' } });
+
+    // Submit is the data-attributed confirm button (the verb is "Revoke",
+    // but the cancel button also exists; target by data-attribute to
+    // disambiguate). With a mismatched typed value the button is disabled
+    // — so the click is a no-op (no error toast needed; the disabled
+    // state itself is the visual gate).
+    const submit = dialog.querySelector(
+      'button[data-dangerous-modal-role="confirm"]',
+    ) as HTMLButtonElement;
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
     expect(deleteCalls).toBe(0);
 
     // Now match exactly:
-    fireEvent.change(
-      within(dialog).getByLabelText(/Type Test Clinic to confirm/i),
-      { target: { value: 'Test Clinic' } },
-    );
+    fireEvent.change(typedInput, { target: { value: 'Test Clinic' } });
+    expect(submit).not.toBeDisabled();
     fireEvent.click(submit);
 
     await waitFor(() => {

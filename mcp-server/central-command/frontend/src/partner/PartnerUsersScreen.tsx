@@ -20,6 +20,9 @@ import { usePartner } from './PartnerContext';
 import { postJson, patchJson, deleteJson } from '../utils/portalFetch';
 import type { PortalFetchError } from '../utils/portalFetch';
 import { PartnerAdminTransferModal } from './PartnerAdminTransferModal';
+import { DangerousActionModal } from '../components/composed';
+
+const DEACTIVATE_PHRASE = 'DEACTIVATE-PARTNER-USER';
 
 interface PartnerUser {
   id: string;
@@ -65,6 +68,19 @@ export const PartnerUsersScreen: React.FC = () => {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
   const [inviteRole, setInviteRole] = useState<'tech' | 'billing'>('tech');
+  const [inviteConfirmOpen, setInviteConfirmOpen] = useState(false);
+  const [inviteConfirmError, setInviteConfirmError] = useState<
+    string | undefined
+  >(undefined);
+
+  // Deactivate confirm state — replaces 2× window.prompt with the
+  // DangerousActionModal tier-1 typed-confirm gate.
+  const [deactivateUser, setDeactivateUser] = useState<PartnerUser | null>(null);
+  const [deactivateReason, setDeactivateReason] = useState('');
+  const [deactivateError, setDeactivateError] = useState<string | undefined>(
+    undefined,
+  );
+  const [deactivateBusy, setDeactivateBusy] = useState(false);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -103,9 +119,18 @@ export const PartnerUsersScreen: React.FC = () => {
     setError(err.detail || err.message || fallback);
   };
 
-  const handleInvite = async (e: React.FormEvent) => {
+  const handleInvite = (e: React.FormEvent) => {
+    // Form submit now opens the tier-2 DangerousActionModal so the user
+    // sees an explicit "Invite {email}?" confirmation before the POST.
     e.preventDefault();
+    if (!inviteEmail) return;
     setError(null);
+    setInviteConfirmError(undefined);
+    setInviteConfirmOpen(true);
+  };
+
+  const performInvite = async () => {
+    setInviteConfirmError(undefined);
     setActionBusy('invite');
     try {
       await postJson('/api/partners/me/users', {
@@ -113,13 +138,15 @@ export const PartnerUsersScreen: React.FC = () => {
         name: inviteName || null,
         role: inviteRole,
       });
+      setInviteConfirmOpen(false);
       setInviteOpen(false);
       setInviteEmail('');
       setInviteName('');
       setInviteRole('tech');
       await fetchUsers();
     } catch (e) {
-      _setErrorFromException(e, 'Invite failed');
+      const err = e as PortalFetchError;
+      setInviteConfirmError(err.detail || err.message || 'Invite failed.');
     } finally {
       setActionBusy(null);
     }
@@ -151,35 +178,46 @@ export const PartnerUsersScreen: React.FC = () => {
     }
   };
 
-  const handleDeactivate = async (u: PartnerUser) => {
-    const reason = window.prompt(
-      `Reason for deactivating ${u.email} (≥20 chars, audit ledger):`,
-      '',
-    );
-    if (reason === null) return;
-    if (reason.length < 20) {
-      setError('Reason must be at least 20 characters.');
+  const openDeactivate = (u: PartnerUser) => {
+    setDeactivateUser(u);
+    setDeactivateReason('');
+    setDeactivateError(undefined);
+  };
+
+  const closeDeactivate = () => {
+    if (deactivateBusy) return;
+    setDeactivateUser(null);
+    setDeactivateReason('');
+    setDeactivateError(undefined);
+  };
+
+  const performDeactivate = async () => {
+    if (!deactivateUser) return;
+    if (deactivateReason.trim().length < 20) {
+      setDeactivateError('Reason must be at least 20 characters.');
       return;
     }
-    const phrase = window.prompt(
-      `Type DEACTIVATE-PARTNER-USER to confirm:`,
-      '',
-    );
-    if (phrase !== 'DEACTIVATE-PARTNER-USER') {
-      setError('Confirmation phrase did not match.');
-      return;
-    }
-    setError(null);
-    setActionBusy(u.id);
+    setDeactivateError(undefined);
+    setDeactivateBusy(true);
+    setActionBusy(deactivateUser.id);
     try {
       await deleteJson(
-        `/api/partners/me/users/${encodeURIComponent(u.id)}`,
-        { reason, confirm_phrase: phrase },
+        `/api/partners/me/users/${encodeURIComponent(deactivateUser.id)}`,
+        {
+          reason: deactivateReason.trim(),
+          confirm_phrase: DEACTIVATE_PHRASE,
+        },
       );
+      setDeactivateUser(null);
+      setDeactivateReason('');
       await fetchUsers();
     } catch (e) {
-      _setErrorFromException(e, 'Deactivation failed');
+      const err = e as PortalFetchError;
+      setDeactivateError(
+        err.detail || err.message || 'Deactivation failed.',
+      );
     } finally {
+      setDeactivateBusy(false);
       setActionBusy(null);
     }
   };
@@ -309,7 +347,7 @@ export const PartnerUsersScreen: React.FC = () => {
                     )}
                     {u.status === 'active' && (
                       <button
-                        onClick={() => void handleDeactivate(u)}
+                        onClick={() => openDeactivate(u)}
                         disabled={actionBusy === u.id}
                         className="text-xs text-red-600 hover:underline disabled:opacity-50"
                         title="Deactivate this user (sets status=inactive; not a hard delete)"
@@ -418,6 +456,72 @@ export const PartnerUsersScreen: React.FC = () => {
         // defense in depth.
         partnerRole={partner?.user_role || undefined}
         callerUserId={partner?.partner_user_id || undefined}
+      />
+
+      {/* Tier-2 confirm — invite. Wraps the existing form submit so the
+          user sees an explicit "Invite {email}?" before the POST fires. */}
+      <DangerousActionModal
+        open={inviteConfirmOpen}
+        tier="reversible"
+        title="Invite partner user"
+        verb="Invite"
+        target={inviteEmail || ''}
+        description={
+          <>
+            An invite email will be sent. The invitee gets <b>{inviteRole}</b>
+            {' '}access to <b>{partner?.name || 'your partner organization'}</b>
+            {' '}once they accept.
+          </>
+        }
+        busy={actionBusy === 'invite'}
+        errorMessage={inviteConfirmError}
+        onConfirm={performInvite}
+        onCancel={() => {
+          if (actionBusy !== 'invite') {
+            setInviteConfirmOpen(false);
+            setInviteConfirmError(undefined);
+          }
+        }}
+      />
+
+      {/* Tier-1 confirm — deactivate. Replaces 2× window.prompt with a
+          typed-confirm gate (user must type the user's email). Reason
+          textarea remains separate (≥20 chars audit-ledger requirement). */}
+      <DangerousActionModal
+        open={deactivateUser !== null}
+        tier="irreversible"
+        title="Deactivate partner user"
+        verb="Deactivate"
+        target={deactivateUser?.email || ''}
+        confirmInput="target"
+        description={
+          <div className="space-y-3">
+            <p>
+              This sets <b>{deactivateUser?.email}</b>'s status to{' '}
+              <b>inactive</b>. They will be signed out and lose access to the
+              partner portal. The 1-admin-min database trigger blocks the
+              last-admin deactivate; promote another user first.
+            </p>
+            <label className="block text-sm">
+              <span className="text-slate-700 font-medium">
+                Reason ({deactivateReason.trim().length}/20+ chars, audit ledger)
+              </span>
+              <textarea
+                value={deactivateReason}
+                onChange={(e) => setDeactivateReason(e.target.value)}
+                rows={2}
+                disabled={deactivateBusy}
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Why are you deactivating this user?"
+                minLength={20}
+              />
+            </label>
+          </div>
+        }
+        busy={deactivateBusy}
+        errorMessage={deactivateError}
+        onConfirm={performDeactivate}
+        onCancel={closeDeactivate}
       />
     </div>
   );

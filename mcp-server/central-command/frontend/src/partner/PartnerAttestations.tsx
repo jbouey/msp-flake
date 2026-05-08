@@ -37,6 +37,7 @@ import {
   deleteJson,
   type PortalFetchError,
 } from '../utils/portalFetch';
+import { DangerousActionModal } from '../components/composed';
 
 // ---------- Types ----------
 
@@ -191,11 +192,13 @@ export const PartnerAttestations: React.FC = () => {
   const [addSignerEmail, setAddSignerEmail] = useState<string>('');
   const [addDocSha256, setAddDocSha256] = useState<string>('');
 
-  // Revoke confirm (per-row inline)
+  // Revoke confirm (per-row inline) — typed-confirm gate now lives
+  // inside DangerousActionModal tier-1; this component owns the
+  // separate ≥20-char reason textarea (backend audit-ledger requirement).
   const [revokeRowId, setRevokeRowId] = useState<string | null>(null);
   const [revokeReason, setRevokeReason] = useState<string>('');
-  const [revokeTypedConfirm, setRevokeTypedConfirm] = useState<string>('');
   const [revokeBusy, setRevokeBusy] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | undefined>(undefined);
 
   // ---------- Data fetchers ----------
 
@@ -468,17 +471,12 @@ export const PartnerAttestations: React.FC = () => {
   const handleRevokeSubmit = async () => {
     if (!_activeRevokeRow) return;
     if (revokeReason.trim().length < 20) {
-      pushToast('error', 'Reason must be at least 20 characters.');
+      // Surface in the modal's errorMessage panel rather than a toast
+      // so the user sees the validation reason inline with the input.
+      setRevokeError('Reason must be at least 20 characters.');
       return;
     }
-    const expectedLabel = _revokeLabel(_activeRevokeRow);
-    if (revokeTypedConfirm.trim() !== expectedLabel) {
-      pushToast(
-        'error',
-        `Confirmation did not match. Type "${expectedLabel}" exactly.`,
-      );
-      return;
-    }
+    setRevokeError(undefined);
     setRevokeBusy(true);
     try {
       await deleteJson(
@@ -488,17 +486,13 @@ export const PartnerAttestations: React.FC = () => {
       pushToast('success', 'BAA revoked.');
       setRevokeRowId(null);
       setRevokeReason('');
-      setRevokeTypedConfirm('');
       await fetchRoster();
     } catch (e) {
       const err = e as PortalFetchError;
       if (err.status === 403) {
-        pushToast('error', "You don't have permission to revoke this BAA.");
+        setRevokeError("You don't have permission to revoke this BAA.");
       } else {
-        pushToast(
-          'error',
-          err.detail || err.message || 'Revoke failed.',
-        );
+        setRevokeError(err.detail || err.message || 'Revoke failed.');
       }
     } finally {
       setRevokeBusy(false);
@@ -929,7 +923,7 @@ export const PartnerAttestations: React.FC = () => {
                                       onClick={() => {
                                         setRevokeRowId(row.id);
                                         setRevokeReason('');
-                                        setRevokeTypedConfirm('');
+                                        setRevokeError(undefined);
                                       }}
                                       className="px-3 py-1 text-xs rounded-md bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
                                       aria-label={`Revoke BAA for ${cpLabel}`}
@@ -1161,93 +1155,56 @@ export const PartnerAttestations: React.FC = () => {
         </div>
       )}
 
-      {/* ---------- Revoke confirm (TODO: migrate to <DangerousActionModal> tier-1) ---------- */}
+      {/* Tier-1 confirm — Revoke downstream BAA. Migrated from inline
+          typed-confirm modal (Sprint-N+1 Decision 2, 2026-05-08).
+          The reason textarea sits inside the modal's description so it
+          travels with the typed-confirm gate; the gate itself enforces
+          the counterparty-label match. The actual DELETE happens via
+          deleteJson (CSRF preserved, baseline still 0). */}
       {revokeRowId && _activeRevokeRow && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="revoke-baa-title"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && !revokeBusy) {
-              setRevokeRowId(null);
-              setRevokeReason('');
-              setRevokeTypedConfirm('');
-            }
-          }}
-        >
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
-            <div className="px-5 py-4 border-b border-slate-100">
-              <h3
-                id="revoke-baa-title"
-                className="text-base font-semibold text-slate-900"
-              >
-                Revoke BAA
-              </h3>
-              <p className="mt-1 text-sm text-slate-600">
-                This will remove the active BAA for{' '}
-                <strong>{_revokeLabel(_activeRevokeRow)}</strong> from your
-                roster. Existing attestation chain entries are preserved
-                (immutable). This action cannot be undone.
+        <DangerousActionModal
+          open={true}
+          tier="irreversible"
+          title="Revoke downstream BAA"
+          verb="Revoke"
+          target={_revokeLabel(_activeRevokeRow)}
+          confirmInput="target"
+          description={
+            <div className="space-y-3">
+              <p>
+                This revokes <b>{_revokeLabel(_activeRevokeRow)}</b>'s
+                downstream BAA from your roster. The revocation is recorded in
+                the cryptographic chain attestation; the historical roster
+                entry remains visible in the BA Compliance Letter for audit
+                retention.
               </p>
-            </div>
-            <div className="px-5 py-4 space-y-3">
               <label className="block text-sm">
-                <span className="text-slate-700">
-                  Reason ({revokeReason.trim().length}/20+ chars)
+                <span className="text-slate-700 font-medium">
+                  Reason ({revokeReason.trim().length}/20+ chars, audit ledger)
                 </span>
                 <textarea
                   value={revokeReason}
                   onChange={(e) => setRevokeReason(e.target.value)}
                   rows={2}
+                  disabled={revokeBusy}
                   className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                   placeholder="Why are you revoking this BAA?"
                   minLength={20}
                 />
               </label>
-              <label className="block text-sm">
-                <span className="text-slate-700">
-                  Type{' '}
-                  <code className="bg-slate-100 px-1 rounded text-xs">
-                    {_revokeLabel(_activeRevokeRow)}
-                  </code>{' '}
-                  to confirm
-                </span>
-                <input
-                  type="text"
-                  value={revokeTypedConfirm}
-                  onChange={(e) => setRevokeTypedConfirm(e.target.value)}
-                  className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  autoFocus
-                />
-              </label>
             </div>
-            <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!revokeBusy) {
-                    setRevokeRowId(null);
-                    setRevokeReason('');
-                    setRevokeTypedConfirm('');
-                  }
-                }}
-                className="px-4 py-2 text-sm rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50"
-                disabled={revokeBusy}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleRevokeSubmit}
-                className="px-4 py-2 text-sm rounded-md bg-rose-600 text-white font-medium hover:bg-rose-700 disabled:opacity-50"
-                disabled={revokeBusy}
-              >
-                {revokeBusy ? 'Revoking…' : 'Revoke BAA'}
-              </button>
-            </div>
-          </div>
-        </div>
+          }
+          busy={revokeBusy}
+          errorMessage={revokeError}
+          onConfirm={handleRevokeSubmit}
+          onCancel={() => {
+            if (!revokeBusy) {
+              setRevokeRowId(null);
+              setRevokeReason('');
+              setRevokeError(undefined);
+            }
+          }}
+        />
       )}
     </div>
   );

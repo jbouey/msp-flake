@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { usePartner } from './PartnerContext';
 import { buildAuthedHeaders } from '../utils/csrf';
+import { DangerousActionModal } from '../components/composed';
 
 interface ApplianceTier {
   name: string;
@@ -75,6 +76,8 @@ export const PartnerBilling: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelError, setCancelError] = useState<string | undefined>(undefined);
 
   const fetchOptions: RequestInit = {
     credentials: 'include',
@@ -164,11 +167,13 @@ export const PartnerBilling: React.FC = () => {
     }
   };
 
-  const handleCancelSubscription = async () => {
-    if (!confirm('Are you sure you want to cancel your subscription? You will still have access until the end of your billing period.')) {
-      return;
-    }
+  const handleCancelSubscription = () => {
+    setCancelError(undefined);
+    setCancelOpen(true);
+  };
 
+  const performCancelSubscription = async () => {
+    setCancelError(undefined);
     setActionLoading(true);
     try {
       const response = await fetch('/api/billing/subscription/cancel', {
@@ -178,13 +183,14 @@ export const PartnerBilling: React.FC = () => {
       });
 
       if (response.ok) {
+        setCancelOpen(false);
         loadBillingData();
       } else {
-        const err = await response.json();
-        setError(err.detail || 'Failed to cancel subscription');
+        const err = await response.json().catch(() => ({}));
+        setCancelError(err.detail || 'Failed to cancel subscription');
       }
     } catch (e) {
-      setError('Failed to cancel subscription');
+      setCancelError('Failed to cancel subscription');
     } finally {
       setActionLoading(false);
     }
@@ -564,6 +570,32 @@ export const PartnerBilling: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Cancel-subscription confirmation (DangerousActionModal tier-1). */}
+      <DangerousActionModal
+        open={cancelOpen}
+        tier="irreversible"
+        title="Cancel subscription"
+        verb="Cancel"
+        target={billingStatus?.subscription_plan || 'Current plan'}
+        confirmInput="CANCEL"
+        description={
+          <>
+            Your subscription will end at the current billing period. You will
+            lose admin access to the partner portal at that time. Reactivation
+            requires re-onboarding.
+          </>
+        }
+        busy={actionLoading}
+        errorMessage={cancelError}
+        onConfirm={performCancelSubscription}
+        onCancel={() => {
+          if (!actionLoading) {
+            setCancelOpen(false);
+            setCancelError(undefined);
+          }
+        }}
+      />
     </div>
   );
 };
