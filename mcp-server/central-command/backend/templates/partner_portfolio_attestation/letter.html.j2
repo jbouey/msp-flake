@@ -121,7 +121,7 @@ body {
 
 <div class="statement">
     <p>
-        <strong>{{ presenter_brand }}</strong> operates the OsirisCare compliance substrate across <strong>{{ site_count }}</strong> client site{{ 's' if site_count != 1 else '' }}, comprising <strong>{{ appliance_count }}</strong> compliance appliance{{ 's' if appliance_count != 1 else '' }}, <strong>{{ workstation_count }}</strong> monitored workstation{{ 's' if workstation_count != 1 else '' }}, and <strong>{{ control_count }}</strong> continuously monitored technical control{{ 's' if control_count != 1 else '' }} drawn from the published OsirisCare check catalog.
+        <strong>{{ presenter_brand }}</strong> operates the OsirisCare compliance substrate across <strong>{{ site_count }}</strong> client site{{ 's' if site_count != 1 else '' }}, comprising <strong>{{ appliance_count }}</strong> compliance appliance{{ 's' if appliance_count != 1 else '' }}, <strong>{{ workstation_count }}</strong> monitored workstation{{ 's' if workstation_count != 1 else '' }}, and <strong>{{ control_count }}</strong> technical control{{ 's' if control_count != 1 else '' }} monitored on a continuous automated schedule, drawn from the published OsirisCare check catalog.
     </p>
     <p>
         Each site's evidence is Ed25519-signed at the appliance edge, hash-chained per site, and anchored via OpenTimestamps to the Bitcoin blockchain. As of {{ chain_head_at_human }}, <strong>{{ ots_anchored_pct_str }}%</strong> of the {{ bundle_count }} evidence bundle{{ 's' if bundle_count != 1 else '' }} captured during this period are anchor-confirmed; the remainder are pending confirmation per the standard OTS schedule.

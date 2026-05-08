@@ -164,7 +164,11 @@ def test_template_renders_with_sentinel_kwargs():
     # Round-table customer-iterated wording assertions.
     assert "Portfolio Attestation" in rendered
     assert "OsirisCare compliance substrate" in rendered
-    assert "continuously monitored technical control" in rendered
+    # Coach retroactive sweep 2026-05-08 — "continuously monitored" is
+    # banned wording (legally aggressive per OCR investigator review);
+    # canonical phrase from F1 attaches the cadence verb to "monitored".
+    assert "monitored on a continuous automated schedule" in rendered
+    assert "continuously monitored" not in rendered
     assert "Ed25519-signed at the appliance edge" in rendered
     assert "OpenTimestamps" in rendered
     # Carol BLOCK-2-style retention language (no unbacked SLA).
