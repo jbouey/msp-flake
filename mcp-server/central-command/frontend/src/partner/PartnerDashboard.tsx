@@ -460,6 +460,16 @@ export const PartnerDashboard: React.FC = () => {
           >
             Agreements
           </button>
+          {/* Attestations is a separate route — sprint 36 Decision 1.
+              Cross-route nav button (matches Appliances/Security pattern
+              below). Placed adjacent to Agreements for semantic grouping. */}
+          <button
+            onClick={() => navigate('/partner/attestations')}
+            className="px-4 py-3 font-medium transition border-b-2 -mb-px border-transparent text-slate-500 hover:text-indigo-600 whitespace-nowrap min-h-[44px]"
+            aria-label="Open attestations page"
+          >
+            Attestations
+          </button>
           <button
             role="tab"
             aria-selected={activeTab === 'invites'}

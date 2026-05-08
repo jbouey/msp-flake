@@ -129,7 +129,7 @@ const SubstrateRunbookPage = lazy(() => import('./pages/SubstrateRunbookPage'));
 // Partner module - lazy loaded with provider
 const PartnerRoutes = lazy(() => import('./partner').then(m => ({
   default: () => {
-    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity, PartnerAuditLog, PartnerMeshTopology, PartnerConsentPage, PartnerUsersScreen, PartnerFleetAppliances } = m;
+    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity, PartnerAuditLog, PartnerMeshTopology, PartnerConsentPage, PartnerUsersScreen, PartnerFleetAppliances, PartnerAttestations } = m;
     return (
       <PartnerProvider>
         <Routes>
@@ -138,6 +138,7 @@ const PartnerRoutes = lazy(() => import('./partner').then(m => ({
           <Route path="security" element={<PartnerSecurity />} />
           <Route path="users" element={<PartnerUsersScreen />} />
           <Route path="appliances" element={<PartnerFleetAppliances />} />
+          <Route path="attestations" element={<PartnerAttestations />} />
           <Route path="audit-log" element={<PartnerAuditLog />} />
           <Route path="site/:siteId/topology" element={<PartnerMeshTopology />} />
           <Route path="site/:siteId/consent" element={<PartnerConsentPage />} />

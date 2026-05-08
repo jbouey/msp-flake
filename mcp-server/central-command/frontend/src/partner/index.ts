@@ -11,3 +11,4 @@ export { PartnerMeshTopology } from './PartnerMeshTopology';
 export { PartnerConsentPage } from './PartnerConsentPage';
 export { PartnerUsersScreen } from './PartnerUsersScreen';
 export { PartnerFleetAppliances } from './PartnerFleetAppliances';
+export { PartnerAttestations } from './PartnerAttestations';
