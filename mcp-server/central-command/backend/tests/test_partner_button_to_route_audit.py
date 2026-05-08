@@ -317,13 +317,26 @@ def test_gate_catches_synthetic_orphan():
     """Positive control: feed a synthetic orphan navigate through the
     matcher logic + the real route table, confirm the orphan is
     flagged. This is the gate's tamper-evidence — if someone
-    inadvertently weakens the matcher, this test fails."""
+    inadvertently weakens the matcher, this test fails.
+
+    Sprint-N+2 (plan 37) note: `/partner/site/${id}` USED TO be the
+    canonical synthetic orphan because the route did not exist.
+    Sprint-N+2 added it as a real Route, so the synthetic moved to
+    `/partner/site/${id}/this-segment-does-not-exist` — still
+    structurally orphan, still a valid tamper-evidence control.
+    """
     routes = _extract_partner_routes()
-    # Synthetic orphan target that should NOT match any current Route.
-    orphan_target = _parameterize("/partner/site/${id}")
+    # Synthetic orphan target — a deeper segment under site that is
+    # NOT registered. If a future sprint adds the segment as a Route,
+    # update this fixture to a still-orphan path.
+    orphan_target = _parameterize(
+        "/partner/site/${id}/this-segment-does-not-exist"
+    )
     matched = any(_path_matches(orphan_target, r) for r in routes)
     assert not matched, (
-        "Synthetic orphan `/partner/site/${id}` matched a Route — "
-        "either the matcher is broken or someone added a route that "
-        "absorbs the orphan. Investigate before relaxing this test."
+        "Synthetic orphan "
+        "`/partner/site/${id}/this-segment-does-not-exist` matched a "
+        "Route — either the matcher is broken or someone added a "
+        "route that absorbs the orphan. Investigate before relaxing "
+        "this test."
     )

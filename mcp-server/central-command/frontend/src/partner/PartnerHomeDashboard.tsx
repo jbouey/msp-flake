@@ -173,12 +173,10 @@ export const PartnerHomeDashboard: React.FC = () => {
                   <td className="px-5 py-2 text-right">
                     <button
                       className="text-blue-600 hover:text-blue-800 hover:underline text-sm"
-                      // CRIT-1 fix (audit 2026-05-08): /partner/site/:siteId
-                      // route does not exist. Deflect to dashboard's Sites
-                      // tab with a query-param the dashboard can read to
-                      // scroll to that row. Cheap-path until a true site
-                      // overview route ships.
-                      onClick={() => navigate(`/partner/dashboard?site=${encodeURIComponent(a.site_id)}`)}
+                      // Sprint-N+2 (plan 37): /partner/site/:siteId is now a
+                      // first-class drill-down page. Reverted CRIT-1 deflect-
+                      // to-dashboard cheap-path now that the real route ships.
+                      onClick={() => navigate(`/partner/site/${encodeURIComponent(a.site_id)}`)}
                     >
                       Open →
                     </button>

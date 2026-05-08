@@ -6221,3 +6221,287 @@ async def public_verify_partner_ba_attestation(
         "onboarded_counterparty_count": row["onboarded_counterparty_count"],
         "presenter_brand": row["presenter_brand"],
     }
+
+
+# =============================================================================
+# Sprint-N+2 D4 — Partner→client-portal magic-link mint
+# =============================================================================
+# Lisa-the-MSP-MD's "open this clinic's portal as the practice owner"
+# workflow. Round-table .agent/plans/37-partner-per-site-drill-down-
+# roundtable-2026-05-08.md D4 RESOLVED — chain-attested via
+# ALLOWED_EVENTS. Mint endpoint:
+#   * admin OR tech role (operational debug — RT31 site-state class)
+#   * 5/hr per (partner, partner_user) — sensitive
+#   * reason ≥20 chars
+#   * 15-min single-use token in partner_client_portal_links (mig 293)
+#   * privileged_access_attestation row at partner_org:<partner_id>
+#   * admin_audit_log mirror (the chain-of-custody mirror parallel to
+#     the cryptographic record — same pattern as P-F6 BAA roster).
+# Sibling-parity headers per feedback_multi_endpoint_header_parity.md:
+#   X-Attestation-Hash + X-Letter-Valid-Until (we reuse the
+#   X-Letter-Valid-Until header as our 'token expires_at' since the
+#   sibling artifact-issuance endpoints use it for valid_until).
+
+@router.post("/me/sites/{site_id}/client-portal-link")
+async def mint_partner_client_portal_link(
+    request: Request,
+    site_id: str,
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Mint a 15-min single-use magic link to the client portal scoped
+    to this site. Chain-attested + admin-audit-logged.
+
+    Body: { reason: str ≥ 20 chars }
+
+    Response (200):
+      {
+        "url": "<frontend-url>/portal/site/<site_id>?magic=<token>",
+        "expires_at": ISO8601,
+        "magic_link_id": UUID,
+        "attestation_bundle_id": UUID | null,
+        "attestation_hash": <hex>,
+      }
+    Headers:
+      X-Attestation-Hash: <bundle_hash>
+      X-Letter-Valid-Until: <expires_at ISO8601>
+
+    Errors:
+      400  — reason missing or <20 chars
+      404  — site not found OR not owned by this partner
+      429  — rate-limited (5/hr per partner_user)
+      503  — chain attestation could not be written (refuse on
+             attestation failure per privileged-access invariant —
+             never mint without the chain link).
+    """
+    try:
+        from .privileged_access_attestation import (
+            create_privileged_access_attestation,
+            PrivilegedAccessAttestationError,
+        )
+        from .shared import check_rate_limit
+    except ImportError:
+        from privileged_access_attestation import (  # type: ignore
+            create_privileged_access_attestation,
+            PrivilegedAccessAttestationError,
+        )
+        from shared import check_rate_limit  # type: ignore
+
+    body = await request.json()
+    reason = (body.get("reason") or "").strip()
+    if not reason or len(reason) < 20:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "reason required (min 20 chars — describe why the "
+                "practice owner's portal is being opened)"
+            ),
+        )
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    caller_user_id_raw = (
+        partner.get("partner_user_id") or partner.get("user_id")
+    )
+    caller_user_id = str(caller_user_id_raw) if caller_user_id_raw else partner_id
+    caller_email = (
+        partner.get("oauth_email")
+        or partner.get("contact_email")
+        or partner.get("email")
+        or ""
+    )
+    client_ip = request.client.host if request.client else None
+
+    # Rate limit — 5/hr per (partner, partner_user). Sensitive flow:
+    # if a partner-admin's token leaks, the per-user bucket bounds the
+    # magic-link mint volume an attacker can pump out.
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=partner_id,
+        action="partner_client_portal_link_mint",
+        window_seconds=3600,
+        max_requests=5,
+        caller_key=f"partner_user:{caller_user_id}",
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Magic-link mint rate-limited for this partner_user. "
+                f"Retry in {retry_after_s}s."
+            ),
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    # Verify site belongs to this partner. Use partner-scoped tenant
+    # connection so RLS double-checks the site→partner ownership.
+    async with tenant_connection(pool, site_id=site_id) as conn:
+        site = await conn.fetchrow(
+            """
+            SELECT s.site_id, s.clinic_name, s.partner_id, s.client_org_id
+            FROM sites s
+            WHERE s.site_id = $1
+              AND s.partner_id = $2
+              AND s.status != 'inactive'
+            """,
+            site_id, partner["id"],
+        )
+        if not site:
+            raise HTTPException(
+                status_code=404,
+                detail="Site not found or not owned by this partner.",
+            )
+
+    # 15-minute TTL
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=15)
+    token = secrets.token_urlsafe(32)
+
+    # Chain attestation BEFORE the DB write — failure here MUST refuse
+    # the mint per privileged-access invariant (never mint without
+    # the cryptographic record).
+    attestation_bundle_id: Optional[str] = None
+    attestation_hash: Optional[str] = None
+    try:
+        async with admin_connection(pool) as att_conn:
+            try:
+                att = await create_privileged_access_attestation(
+                    att_conn,
+                    site_id=f"partner_org:{partner_id}",
+                    event_type="partner_client_portal_link_minted",
+                    actor_email=caller_email or f"partner_user:{caller_user_id}",
+                    reason=reason,
+                    origin_ip=client_ip,
+                    approvals=[{
+                        "stage": "minted",
+                        "actor": caller_email or f"partner_user:{caller_user_id}",
+                        "partner_id": partner_id,
+                        "site_id": site_id,
+                        "expires_at": expires_at.isoformat(),
+                    }],
+                )
+                attestation_bundle_id = att.get("bundle_id")
+                attestation_hash = att.get("bundle_hash")
+            except PrivilegedAccessAttestationError as e:
+                logger.error(
+                    "partner_client_portal_link_attestation_failed",
+                    exc_info=True,
+                    extra={
+                        "partner_id": partner_id,
+                        "site_id": site_id,
+                    },
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Cryptographic attestation unavailable; magic-"
+                        "link mint refused. Try again or contact "
+                        "operator. Detail: " + str(e)
+                    ),
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error(
+            "partner_client_portal_link_attestation_unexpected",
+            exc_info=True,
+            extra={"partner_id": partner_id, "site_id": site_id},
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Cryptographic attestation step failed unexpectedly; "
+                "magic-link mint refused."
+            ),
+        )
+
+    # Persist the magic-link row + admin-audit mirror in a single
+    # admin_transaction (multi-statement → admin_transaction per
+    # CLAUDE.md Session 212 routing rule).
+    try:
+        from .tenant_middleware import admin_transaction
+    except ImportError:
+        from tenant_middleware import admin_transaction  # type: ignore
+
+    magic_link_id: Optional[str] = None
+    async with admin_transaction(pool) as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO partner_client_portal_links (
+                partner_id, partner_user_id, site_id, token,
+                expires_at, minted_by_email, minted_by_ip, reason,
+                attestation_bundle_id
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                CASE WHEN $9::text = '' THEN NULL ELSE $9::uuid END
+            )
+            RETURNING id
+            """,
+            partner["id"],
+            (caller_user_id_raw if caller_user_id_raw else None),
+            site_id,
+            token,
+            expires_at,
+            (caller_email or None),
+            client_ip,
+            reason,
+            (attestation_bundle_id or ""),
+        )
+        magic_link_id = str(row["id"]) if row else None
+
+        # admin_audit_log mirror — the privileged_access_attestation
+        # helper writes a generic mirror; this row carries the
+        # partner-specific (partner_user_id, client_org_id, site_id,
+        # magic_link_id, ttl_seconds) shape Maya pinned in plan 37
+        # round-table verdict (D4-Maya conditions).
+        await conn.execute(
+            """
+            INSERT INTO admin_audit_log (username, action, target, details, ip_address, created_at)
+            VALUES ($1, $2, $3, $4::jsonb, $5, NOW())
+            """,
+            (caller_email or f"partner_user:{caller_user_id}"),
+            "PARTNER_CLIENT_PORTAL_LINK_MINTED",
+            f"site:{site_id}",
+            json.dumps({
+                "partner_id": partner_id,
+                "partner_user_id": caller_user_id,
+                "client_org_id": (
+                    str(site["client_org_id"])
+                    if site["client_org_id"] else None
+                ),
+                "site_id": site_id,
+                "magic_link_id": magic_link_id,
+                "ttl_seconds": 15 * 60,
+                "attestation_bundle_id": attestation_bundle_id,
+                "attestation_hash": attestation_hash,
+                "reason": reason,
+            }),
+            client_ip,
+        )
+
+    # Build the URL the partner copies into clipboard. Frontend serves
+    # /portal/site/<site_id>/login + ?magic=<token> consume path; the
+    # partner-mint token is handed off via the same query param the
+    # client-portal email-magic-link flow uses.
+    frontend_url = os.getenv("FRONTEND_URL", "https://www.osiriscare.net")
+    portal_url = (
+        f"{frontend_url}/portal/site/{site_id}/login?magic={token}"
+    )
+
+    return Response(
+        content=json.dumps({
+            "url": portal_url,
+            "expires_at": expires_at.isoformat(),
+            "magic_link_id": magic_link_id,
+            "attestation_bundle_id": attestation_bundle_id,
+            "attestation_hash": attestation_hash,
+        }),
+        media_type="application/json",
+        headers={
+            # Sibling-parity per feedback_multi_endpoint_header_parity.md
+            # — both X-Attestation-Hash + X-Letter-Valid-Until shipped on
+            # F1 + P-F5 + P-F6 issuance endpoints. We mirror the same two
+            # header keys for the magic-link mint so frontend parity
+            # tests treat this as a sibling artifact-issuance response.
+            "X-Attestation-Hash": (attestation_hash or ""),
+            "X-Letter-Valid-Until": expires_at.isoformat(),
+        },
+    )

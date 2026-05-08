@@ -12,3 +12,8 @@ export { PartnerConsentPage } from './PartnerConsentPage';
 export { PartnerUsersScreen } from './PartnerUsersScreen';
 export { PartnerFleetAppliances } from './PartnerFleetAppliances';
 export { PartnerAttestations } from './PartnerAttestations';
+// Sprint-N+2 — partner per-site drill-down (plan 37)
+export { PartnerSiteDetail } from './PartnerSiteDetail';
+export { PartnerSiteAgents } from './PartnerSiteAgents';
+export { PartnerSiteDevices } from './PartnerSiteDevices';
+export { PartnerSiteDriftConfig } from './PartnerSiteDriftConfig';

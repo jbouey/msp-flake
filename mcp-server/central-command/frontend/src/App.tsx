@@ -129,7 +129,7 @@ const SubstrateRunbookPage = lazy(() => import('./pages/SubstrateRunbookPage'));
 // Partner module - lazy loaded with provider
 const PartnerRoutes = lazy(() => import('./partner').then(m => ({
   default: () => {
-    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity, PartnerAuditLog, PartnerMeshTopology, PartnerConsentPage, PartnerUsersScreen, PartnerFleetAppliances, PartnerAttestations } = m;
+    const { PartnerProvider, PartnerLogin, PartnerDashboard, PartnerSecurity, PartnerAuditLog, PartnerMeshTopology, PartnerConsentPage, PartnerUsersScreen, PartnerFleetAppliances, PartnerAttestations, PartnerSiteDetail, PartnerSiteAgents, PartnerSiteDevices, PartnerSiteDriftConfig } = m;
     return (
       <PartnerProvider>
         <Routes>
@@ -140,6 +140,13 @@ const PartnerRoutes = lazy(() => import('./partner').then(m => ({
           <Route path="appliances" element={<PartnerFleetAppliances />} />
           <Route path="attestations" element={<PartnerAttestations />} />
           <Route path="audit-log" element={<PartnerAuditLog />} />
+          {/* Sprint-N+2 — partner per-site drill-down (plan 37). Parent
+              must be registered before sub-routes per react-router v6
+              ordering rules. */}
+          <Route path="site/:siteId" element={<PartnerSiteDetail />} />
+          <Route path="site/:siteId/agents" element={<PartnerSiteAgents />} />
+          <Route path="site/:siteId/devices" element={<PartnerSiteDevices />} />
+          <Route path="site/:siteId/drift-config" element={<PartnerSiteDriftConfig />} />
           <Route path="site/:siteId/topology" element={<PartnerMeshTopology />} />
           <Route path="site/:siteId/consent" element={<PartnerConsentPage />} />
           <Route path="*" element={<PartnerLogin />} />

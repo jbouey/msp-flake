@@ -170,6 +170,13 @@ def test_allowed_events_matches_expected_set():
         # Anchor: partner_org:<partner_id>. ALLOWED_EVENTS: 59.
         "partner_baa_roster_added",
         "partner_baa_roster_revoked",
+        # Sprint-N+2 closure 2026-05-08 — partner per-site drill-down
+        # cross-portal magic link (mig 293). Round-table
+        # .agent/plans/37-partner-per-site-drill-down-roundtable-2026-
+        # 05-08.md D4 RESOLVED. Anchor: partner_org:<partner_id>.
+        # NOT in PRIVILEGED_ORDER_TYPES (admin-API class, not
+        # fleet_order). ALLOWED_EVENTS: 60.
+        "partner_client_portal_link_minted",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

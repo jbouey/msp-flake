@@ -243,6 +243,16 @@ ALLOWED_EVENTS = {
     # PRIVILEGED_ORDER_TYPES — admin-API class.
     "partner_baa_roster_added",
     "partner_baa_roster_revoked",
+    # Sprint-N+2 closure 2026-05-08 — partner per-site drill-down
+    # cross-portal magic link (mig 293). Lisa-the-MSP-MD's
+    # "open this clinic's portal as the practice owner"
+    # workflow. Each mint is a partner-action privileged event
+    # (admin-API class — NOT a fleet_order, NOT in
+    # PRIVILEGED_ORDER_TYPES + v_privileged_types). Anchor:
+    # partner_org:<partner_id> (Session 216 convention for
+    # partner-org events). Round-table .agent/plans/37-partner-
+    # per-site-drill-down-roundtable-2026-05-08.md D4 RESOLVED.
+    "partner_client_portal_link_minted",
 }
 
 

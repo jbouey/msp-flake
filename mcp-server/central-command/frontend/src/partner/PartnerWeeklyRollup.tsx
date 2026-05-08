@@ -232,10 +232,10 @@ export const PartnerWeeklyRollup: React.FC = () => {
                       </button>
                       <button
                         className="text-blue-600 hover:text-blue-800 hover:underline text-sm"
-                        // CRIT-2 fix (audit 2026-05-08): /partner/site/:siteId
-                        // route does not exist; deflect to dashboard with
-                        // a query param so the partner lands on a real page.
-                        onClick={() => navigate(`/partner/dashboard?site=${encodeURIComponent(s.site_id)}`)}
+                        // Sprint-N+2 (plan 37): /partner/site/:siteId is now
+                        // a first-class drill-down page. Reverted CRIT-2
+                        // deflect-to-dashboard now that the real route ships.
+                        onClick={() => navigate(`/partner/site/${encodeURIComponent(s.site_id)}`)}
                       >
                         Open →
                       </button>
