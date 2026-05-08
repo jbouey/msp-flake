@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Weekly Operational Digest — {{ presenter_brand }}</title>
+<style>
+@page {
+    size: Letter;
+    margin: 0.75in;
+    @bottom-center {
+        content: "{{ presenter_brand }} on the OsirisCare substrate.  Week of {{ week_start_human }} through {{ week_end_human }}.";
+        font-family: 'Helvetica', 'Arial', sans-serif;
+        font-size: 9pt;
+        color: #666;
+    }
+}
+body {
+    font-family: 'Helvetica', 'Arial', sans-serif;
+    color: #222;
+    line-height: 1.5;
+    font-size: 11pt;
+}
+.letterhead {
+    border-bottom: 2px solid #14A89E;
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+}
+.letterhead h1 {
+    font-size: 24pt;
+    font-weight: 700;
+    color: #1a365d;
+    margin: 0 0 4px 0;
+    letter-spacing: -0.5px;
+}
+.letterhead .partner-name {
+    font-size: 14pt;
+    font-weight: 600;
+    color: #2d3748;
+    margin: 0 0 6px 0;
+}
+.letterhead .technician {
+    font-size: 11pt;
+    color: #4a5568;
+    margin: 0 0 4px 0;
+}
+.letterhead .period {
+    font-size: 11pt;
+    color: #4a5568;
+    margin: 0;
+}
+.kpi-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 22px 0;
+}
+.kpi-cell {
+    padding: 14px 16px;
+    background: #f7fafc;
+    border-left: 3px solid #14A89E;
+}
+.kpi-cell .num {
+    font-size: 22pt;
+    font-weight: 700;
+    color: #1a365d;
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+.kpi-cell .label {
+    font-size: 10pt;
+    color: #4a5568;
+    margin: 2px 0 0 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.section-h {
+    font-size: 13pt;
+    font-weight: 600;
+    color: #1a365d;
+    margin: 24px 0 8px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e2e8f0;
+}
+table.noisy-sites {
+    width: 100.000%;
+    border-collapse: collapse;
+    font-size: 11pt;
+}
+table.noisy-sites th, table.noisy-sites td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid #e2e8f0;
+}
+table.noisy-sites th {
+    background: #edf2f7;
+    font-weight: 600;
+    color: #2d3748;
+}
+table.noisy-sites td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.empty-note {
+    color: #718096;
+    font-style: italic;
+    margin: 8px 0;
+}
+.footer-note {
+    margin-top: 28px;
+    padding: 12px 14px;
+    background: #f0fff4;
+    border-left: 3px solid #38a169;
+    font-size: 10pt;
+    color: #2d3748;
+}
+</style>
+</head>
+<body>
+
+<div class="letterhead">
+    <h1>Weekly Operational Digest</h1>
+    <p class="partner-name">{{ presenter_brand }}</p>
+    <p class="technician">Prepared for: {{ technician_name }}</p>
+    <p class="period">Week of {{ week_start_human }} through {{ week_end_human }}</p>
+</div>
+
+<div class="kpi-grid">
+    <div class="kpi-cell">
+        <p class="num">{{ orders_run }}</p>
+        <p class="label">Orders run</p>
+    </div>
+    <div class="kpi-cell">
+        <p class="num">{{ alerts_triaged }}</p>
+        <p class="label">Alerts triaged</p>
+    </div>
+    <div class="kpi-cell">
+        <p class="num">{{ escalations_closed }}</p>
+        <p class="label">Escalations closed</p>
+    </div>
+    <div class="kpi-cell">
+        <p class="num">{{ mttr_median_human }}</p>
+        <p class="label">Median MTTR</p>
+    </div>
+</div>
+
+<h2 class="section-h">Top noisy sites this week</h2>
+{% if top_noisy_sites %}
+<table class="noisy-sites">
+    <thead>
+        <tr>
+            <th>Site</th>
+            <th class="num">Incidents</th>
+            <th class="num">Auto-resolved</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for site in top_noisy_sites %}
+        <tr>
+            <td>{{ site.label }}</td>
+            <td class="num">{{ site.incident_count }}</td>
+            <td class="num">{{ site.auto_resolved_count }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-note">No incidents requiring attention during the period. Quiet week.</p>
+{% endif %}
+
+<div class="footer-note">
+    This digest is operational metrics for {{ presenter_brand }}'s internal review. It is not a customer-facing artifact and is not intended for forwarding to insurance carriers, auditors, or boards. For audit-supportive evidence, use the Compliance Attestation Letter (per-site) or the Portfolio Attestation (aggregate).
+</div>
+
+</body>
+</html>

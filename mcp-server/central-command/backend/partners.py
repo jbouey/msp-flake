@@ -5463,3 +5463,290 @@ async def mark_partner_notification_read(
             notification_id, partner["id"],
         )
     return {"status": "ok"}
+
+
+# =============================================================================
+# P-F5 — Partner Portfolio Attestation Letter (round-table 2026-05-08)
+# =============================================================================
+# Greg-the-MSP-owner's website-trust-badge gap. Aggregate-only PDF
+# proving "MSP X runs N HIPAA-grade clinics on the OsirisCare
+# substrate" — without leaking which clinics. NO PHI, NO clinic
+# names. Counts + chain roots only.
+
+@router.get("/me/portfolio-attestation")
+async def issue_partner_portfolio_attestation_pdf(
+    request: Request,
+    partner: dict = require_partner_role("admin"),
+):
+    """Issue + stream the Portfolio Attestation PDF. admin-role
+    only (CLAUDE.md RT31 — partner-org-state class). Each call
+    issues a NEW attestation (supersedes any prior active).
+
+    Per-(partner, user) rate-limit 5/hr.
+    """
+    try:
+        from .partner_portfolio_attestation import (
+            issue_portfolio_attestation,
+            html_to_pdf,
+            UnableToIssuePortfolio,
+        )
+    except ImportError:
+        from partner_portfolio_attestation import (  # type: ignore
+            issue_portfolio_attestation,
+            html_to_pdf,
+            UnableToIssuePortfolio,
+        )
+    from fastapi.responses import Response
+    try:
+        from .shared import check_rate_limit
+        from .tenant_middleware import admin_transaction
+    except ImportError:
+        from shared import check_rate_limit  # type: ignore
+        from tenant_middleware import admin_transaction  # type: ignore
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    caller_user_id = (
+        partner.get("partner_user_id")
+        or partner.get("user_id")
+        or partner_id
+    )
+
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=partner_id,
+        action="partner_portfolio_attestation_issue",
+        window_seconds=3600,
+        max_requests=5,
+        caller_key=f"partner_user:{caller_user_id}",
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Portfolio attestation issuance is rate-limited "
+                f"(5/hr per user). Retry in {retry_after_s}s."
+            ),
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    async with admin_transaction(pool) as conn:
+        try:
+            result = await issue_portfolio_attestation(
+                conn=conn,
+                partner_id=partner_id,
+                issued_by_user_id=str(caller_user_id) if caller_user_id else None,
+                issued_by_email=partner.get("oauth_email") or partner.get("contact_email"),
+            )
+        except UnableToIssuePortfolio as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except Exception as e:
+            cls_name = type(e).__name__
+            if "UniqueViolation" in cls_name or "IntegrityError" in cls_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Another portfolio attestation issuance is in "
+                        "flight for this partner. Retry in a moment."
+                    ),
+                )
+            raise
+
+    # Steve P1-A: WeasyPrint render off the event loop.
+    import asyncio as _asyncio
+    pdf_bytes = await _asyncio.to_thread(html_to_pdf, result["html"])
+
+    safe_brand = "".join(
+        c if c.isalnum() or c in "-_" else "-"
+        for c in result["presenter_brand"]
+    )[:80]
+    issue_date = result["issued_at"].strftime("%Y-%m-%d")
+    filename = f"portfolio-attestation-{safe_brand}-{issue_date}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Attestation-Hash": result["attestation_hash"],
+            "X-Letter-Valid-Until": result["valid_until"].isoformat(),
+        },
+    )
+
+
+# =============================================================================
+# P-F7 — Technician Weekly Digest PDF (round-table 2026-05-08)
+# =============================================================================
+# Lisa-the-technician's "what'd you do this week" Monday review.
+# Internal artifact — operational metrics only. NOT for forwarding
+# to insurance carriers, auditors, or boards.
+
+@router.get("/me/rollup/weekly.pdf")
+async def issue_partner_weekly_digest_pdf(
+    request: Request,
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Stream the weekly digest PDF. admin OR tech role per
+    CLAUDE.md RT31 (operational artifact, not org-state class)."""
+    try:
+        from .partner_weekly_digest import render_weekly_digest, html_to_pdf
+    except ImportError:
+        from partner_weekly_digest import render_weekly_digest, html_to_pdf  # type: ignore
+    from fastapi.responses import Response
+    try:
+        from .shared import check_rate_limit
+        from .tenant_middleware import admin_connection
+    except ImportError:
+        from shared import check_rate_limit  # type: ignore
+        from tenant_middleware import admin_connection  # type: ignore
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    caller_user_id = (
+        partner.get("partner_user_id")
+        or partner.get("user_id")
+        or partner_id
+    )
+    technician_name = (
+        partner.get("user_name")
+        or partner.get("name")
+        or "your team"
+    )
+
+    # 10/hr per (partner, user) — digest is cheaper to render than
+    # the attestation letter; technicians may pull a few per day.
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=partner_id,
+        action="partner_weekly_digest",
+        window_seconds=3600,
+        max_requests=10,
+        caller_key=f"partner_user:{caller_user_id}",
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Weekly digest rate-limited. Retry in {retry_after_s}s.",
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    async with admin_connection(pool) as conn:
+        result = await render_weekly_digest(
+            conn=conn,
+            partner_id=partner_id,
+            technician_name=technician_name,
+        )
+
+    # Steve P1-A: WeasyPrint off the event loop.
+    import asyncio as _asyncio
+    pdf_bytes = await _asyncio.to_thread(html_to_pdf, result["html"])
+
+    safe_brand = "".join(
+        c if c.isalnum() or c in "-_" else "-"
+        for c in result["presenter_brand"]
+    )[:80]
+    week_date = result["week_end"].strftime("%Y-%m-%d")
+    filename = f"weekly-digest-{safe_brand}-{week_date}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+# Public-verify router for partner portfolio attestation (sister to F4
+# client-letter verify). Anna-the-sales-lead hands this URL to a
+# prospect. The prospect confirms the portfolio attestation is real
+# WITHOUT learning which clinics or any operational detail beyond
+# aggregate counts.
+partner_public_verify_router = APIRouter(prefix="/api/verify", tags=["public-verify"])
+
+
+@partner_public_verify_router.get("/portfolio/{attestation_hash}")
+async def public_verify_partner_portfolio_attestation(
+    attestation_hash: str,
+    request: Request,
+):
+    """Public — NO AUTH. Returns OCR-grade aggregate payload for
+    the given hash. NO partner_id leak, NO clinic names. Hash is
+    64 hex chars (SHA-256), unguessable. 32-char prefix accepted
+    with ambiguity detection (Steve P1-D pattern from F4)."""
+    h = attestation_hash.strip().lower()
+    if not all(c in "0123456789abcdef" for c in h):
+        return {"valid": False, "reason": "malformed_hash"}
+    if len(h) not in (32, 64):
+        return {"valid": False, "reason": "malformed_hash_minimum_32_hex_chars"}
+
+    try:
+        from .shared import check_rate_limit
+    except ImportError:
+        from shared import check_rate_limit  # type: ignore
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=client_ip,
+        action="public_verify_partner_portfolio",
+        window_seconds=3600,
+        max_requests=60,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Verification rate limit reached. Retry in {retry_after_s}s.",
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    try:
+        from .partner_portfolio_attestation import get_portfolio_by_hash
+        from .tenant_middleware import admin_connection
+    except ImportError:
+        from partner_portfolio_attestation import get_portfolio_by_hash  # type: ignore
+        from tenant_middleware import admin_connection  # type: ignore
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        if len(h) == 64:
+            row = await get_portfolio_by_hash(conn, h)
+        else:
+            full_rows = await conn.fetch(
+                """
+                SELECT attestation_hash FROM partner_portfolio_attestations
+                 WHERE attestation_hash LIKE $1 || '%'
+                 LIMIT 2
+                """,
+                h,
+            )
+            if len(full_rows) > 1:
+                return {
+                    "valid": False,
+                    "reason": "ambiguous_prefix_supply_full_64_hex_hash",
+                }
+            if not full_rows:
+                row = None
+            else:
+                row = await get_portfolio_by_hash(conn, full_rows[0]["attestation_hash"])
+
+    if not row:
+        return {"valid": False, "reason": "not_found"}
+
+    return {
+        "valid": True,
+        "attestation_hash": row["attestation_hash"],
+        "issued_at": row["issued_at"].isoformat() if row["issued_at"] else None,
+        "valid_until": row["valid_until"].isoformat() if row["valid_until"] else None,
+        "is_expired": bool(row["is_expired"]),
+        "is_superseded": bool(row["is_superseded"]),
+        "period_start": row["period_start"].isoformat() if row["period_start"] else None,
+        "period_end": row["period_end"].isoformat() if row["period_end"] else None,
+        "site_count": row["site_count"],
+        "appliance_count": row["appliance_count"],
+        "workstation_count": row["workstation_count"],
+        "control_count": row["control_count"],
+        "bundle_count": row["bundle_count"],
+        "ots_anchored_pct": float(row["ots_anchored_pct"]),
+        "chain_root_hex": row["chain_root_hex"],
+        "presenter_brand": row["presenter_brand"],
+    }

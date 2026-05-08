@@ -2375,6 +2375,12 @@ app.include_router(public_status_router)
 # forwarded Compliance Attestation Letter is real. Rate-limited
 # 60/hour per source IP.
 app.include_router(public_verify_router)
+# P-F5 — public /api/verify/portfolio/{hash} (partner round-table
+# 2026-05-08). Sister endpoint for the Partner Portfolio
+# Attestation. Anna's prospect hits this to confirm "MSP X runs N
+# HIPAA-grade clinics" is real — without learning which clinics.
+from dashboard_api.partners import partner_public_verify_router  # noqa: E402
+app.include_router(partner_public_verify_router)
 app.include_router(admin_status_router)
 app.include_router(mesh_targets_router)
 app.include_router(rescue_router)

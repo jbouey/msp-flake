@@ -255,6 +255,28 @@ _KWARGS_SECURITY_ALLOWLIST = frozenset({
     "attestation_hash",
     "verify_phone",
     "verify_url_short",
+    # partner_portfolio_attestation context (P-F5, partner round-
+    # table 2026-05-08). Aggregate-only — NO clinic identifiers,
+    # NO patient-shaped names. Maya-grade review pending; PM
+    # round-table verified the round-table copy avoids leakage.
+    "site_count",
+    "appliance_count",
+    "workstation_count",
+    "control_count",
+    "bundle_count",
+    "ots_anchored_pct_str",
+    "chain_root_hex",
+    "chain_head_at_human",
+    # partner_weekly_digest context (P-F7). Aggregate operational
+    # metrics only — NO incident details, NO host names.
+    "orders_run",
+    "alerts_triaged",
+    "escalations_closed",
+    "mttr_median_human",
+    "top_noisy_sites",
+    "week_start_human",
+    "week_end_human",
+    "technician_name",
 })
 
 
@@ -350,3 +372,5 @@ def run_boot_smoke() -> Tuple[List[str], List[Tuple[str, Exception]]]:
 # step.
 from . import auditor_kit  # noqa: F401, E402
 from . import attestation_letter  # noqa: F401, E402
+from . import partner_portfolio_attestation  # noqa: F401, E402
+from . import partner_weekly_digest  # noqa: F401, E402
