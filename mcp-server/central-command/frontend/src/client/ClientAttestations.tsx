@@ -240,11 +240,72 @@ export const ClientAttestations: React.FC = () => {
   // Card C — F5 wall cert (re-render of latest F1 row)
   const [wallCertBusy, setWallCertBusy] = useState<'idle' | 'downloading'>('idle');
 
+  // Plan-38 D6: Privacy Officer pre-flight gate. Pre-fix, F1 issuance
+  // would 409 with "A precondition is missing (Privacy Officer
+  // designation or BAA on file). Resolve the gap and retry." — but
+  // Maria has to CLICK Issue + read the toast + figure out where to
+  // designate. Pre-flight: fetch the PO designation on mount; if
+  // none, intercept Issue clicks with an explanatory modal that
+  // routes to /client/compliance.
+  const [poStatus, setPoStatus] = useState<'unknown' | 'designated' | 'missing'>(
+    'unknown',
+  );
+  const [showPoGate, setShowPoGate] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/client/privacy-officer', {
+          credentials: 'include',
+        });
+        if (cancelled) return;
+        if (res.ok) {
+          const data = await res.json();
+          // Real backend shape (client_portal.py:5203):
+          //   { "designation": null }                — none designated
+          //   { "designation": { id, name, ... } }   — designated
+          // Older mock-only shape `{}` (no `designation` key) is
+          // treated as 'unknown' so dev/test environments don't
+          // accidentally trigger the gate.
+          if (data && data.designation === null) {
+            setPoStatus('missing');
+          } else if (data && data.designation && data.designation.id) {
+            setPoStatus('designated');
+          } else {
+            setPoStatus('unknown');
+          }
+        } else if (res.status === 404) {
+          setPoStatus('missing');
+        } else {
+          // 401/403/5xx — leave as 'unknown' so the issuance path
+          // falls through to the existing 409-toast handling. Don't
+          // block on uncertainty.
+          setPoStatus('unknown');
+        }
+      } catch {
+        if (!cancelled) setPoStatus('unknown');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
+
   // ---------- F1 actions ----------
 
   const handleLetterIssue = async () => {
     if (!canIssueLetter) {
       pushToast('error', 'Sign in to issue an attestation letter.');
+      return;
+    }
+    // Plan-38 D6: pre-flight intercept. If we KNOW the PO is missing,
+    // surface the modal instead of POSTing + getting 409. If status
+    // is 'unknown' (auth flake or transient error), fall through to
+    // the issuance path; backend's 409 toast still catches the gap.
+    if (poStatus === 'missing') {
+      setShowPoGate(true);
       return;
     }
     setLetterBusy('issuing');
@@ -303,6 +364,12 @@ export const ClientAttestations: React.FC = () => {
   const handleQuarterlyIssue = async () => {
     if (!canIssueQuarterly) {
       pushToast('error', 'Sign in to issue a quarterly summary.');
+      return;
+    }
+    // Plan-38 D6: F3 quarterly summary also embeds the PO sign-off
+    // line — same pre-flight as F1.
+    if (poStatus === 'missing') {
+      setShowPoGate(true);
       return;
     }
     const resolved = _resolveQuarterChoice(quarterChoice);
@@ -584,25 +651,37 @@ export const ClientAttestations: React.FC = () => {
                   </div>
                 </div>
                 {letterSummary.attestation_hash && (
-                  <div className="mt-3 flex items-center gap-2 text-xs flex-wrap">
-                    <span className="text-slate-500">Public verify URL:</span>
-                    <code className="bg-white border border-slate-200 px-2 py-1 rounded font-mono text-[11px]">
-                      {PUBLIC_VERIFY_LETTER_BASE}
-                      {letterSummary.attestation_hash.slice(0, 32)}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleCopyVerify(
-                          PUBLIC_VERIFY_LETTER_BASE,
-                          letterSummary.attestation_hash,
-                        )
-                      }
-                      className="text-teal-600 hover:underline"
-                      aria-label="Copy attestation letter verify URL"
-                    >
-                      Copy
-                    </button>
+                  <div className="mt-3 space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs flex-wrap">
+                      <span className="text-slate-500">Public verify URL:</span>
+                      <code className="bg-white border border-slate-200 px-2 py-1 rounded font-mono text-[11px]">
+                        {PUBLIC_VERIFY_LETTER_BASE}
+                        {letterSummary.attestation_hash.slice(0, 32)}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleCopyVerify(
+                            PUBLIC_VERIFY_LETTER_BASE,
+                            letterSummary.attestation_hash,
+                          )
+                        }
+                        className="text-teal-600 hover:underline"
+                        aria-label="Copy attestation letter verify URL"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    {/* Plan-38 D4: explanatory caption for the
+                        owner audience. Maria forwards this URL in
+                        a cover email; auditor pastes into a
+                        browser to verify the letter without
+                        contacting OsirisCare. */}
+                    <p className="text-[11px] text-slate-500 italic">
+                      Send this URL alongside the PDF — recipient can
+                      verify cryptographically without contacting
+                      OsirisCare.
+                    </p>
                   </div>
                 )}
               </div>
@@ -734,25 +813,35 @@ export const ClientAttestations: React.FC = () => {
                   </div>
                 </div>
                 {quarterlySummary.attestation_hash && (
-                  <div className="mt-3 flex items-center gap-2 text-xs flex-wrap">
-                    <span className="text-slate-500">Public verify URL:</span>
-                    <code className="bg-white border border-slate-200 px-2 py-1 rounded font-mono text-[11px]">
-                      {PUBLIC_VERIFY_QUARTERLY_BASE}
-                      {quarterlySummary.attestation_hash.slice(0, 32)}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleCopyVerify(
-                          PUBLIC_VERIFY_QUARTERLY_BASE,
-                          quarterlySummary.attestation_hash,
-                        )
-                      }
-                      className="text-teal-600 hover:underline"
-                      aria-label="Copy quarterly summary verify URL"
-                    >
-                      Copy
-                    </button>
+                  <div className="mt-3 space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs flex-wrap">
+                      <span className="text-slate-500">Public verify URL:</span>
+                      <code className="bg-white border border-slate-200 px-2 py-1 rounded font-mono text-[11px]">
+                        {PUBLIC_VERIFY_QUARTERLY_BASE}
+                        {quarterlySummary.attestation_hash.slice(0, 32)}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleCopyVerify(
+                            PUBLIC_VERIFY_QUARTERLY_BASE,
+                            quarterlySummary.attestation_hash,
+                          )
+                        }
+                        className="text-teal-600 hover:underline"
+                        aria-label="Copy quarterly summary verify URL"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    {/* Plan-38 D4: caption mirrors the F1 card —
+                        auditor receiving the quarterly summary can
+                        verify cryptographically. */}
+                    <p className="text-[11px] text-slate-500 italic">
+                      Send this URL alongside the PDF — recipient can
+                      verify cryptographically without contacting
+                      OsirisCare.
+                    </p>
                   </div>
                 )}
               </div>
@@ -872,6 +961,68 @@ export const ClientAttestations: React.FC = () => {
           §164.530(d) complaint log.
         </p>
       </main>
+
+      {/* Plan-38 D6: Privacy Officer pre-flight modal. Triggered when
+          Maria clicks Issue F1 / F3 without a designated Privacy
+          Officer. Routes to /client/compliance where the F2
+          designation flow lives. role=dialog + aria-modal + focus
+          first button on open + ESC closes. */}
+      {showPoGate && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="po-gate-title"
+          aria-describedby="po-gate-desc"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowPoGate(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setShowPoGate(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <h2
+              id="po-gate-title"
+              className="text-lg font-semibold text-slate-900"
+            >
+              Designate a Privacy Officer first
+            </h2>
+            <p id="po-gate-desc" className="text-sm text-slate-700">
+              HIPAA §164.530(a)(1) requires every covered entity to
+              formally designate a Privacy Officer. Each Compliance
+              Attestation Letter and Quarterly Summary embeds that
+              designation as part of its signed payload — it can't be
+              issued without one. The same person can serve as both
+              Privacy Officer and Security Officer for small practices.
+            </p>
+            <p className="text-xs text-slate-500">
+              The compliance settings page walks you through the
+              designation; takes about 2 minutes.
+            </p>
+            <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPoGate(false)}
+                className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900"
+              >
+                Not now
+              </button>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => {
+                  setShowPoGate(false);
+                  navigate('/client/compliance');
+                }}
+                className="px-4 py-2 text-sm rounded-lg bg-teal-600 text-white font-medium hover:bg-teal-700"
+              >
+                Designate now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

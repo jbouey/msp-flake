@@ -895,4 +895,110 @@ describe('ClientAttestations', () => {
     expect(text).not.toMatch(/downstream BAA/i);
     expect(text).not.toMatch(/BA Compliance Letter/i);
   });
+
+  // -----------------------------------------------------------------
+  // Plan-38 D4 + D6 fix-up: verify caption + PO pre-flight gate
+  // -----------------------------------------------------------------
+
+  it('D4: F1 + F3 verify URLs carry the auditor-handoff caption', async () => {
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      if (url.includes('/api/client/privacy-officer')) {
+        return _jsonResponse({
+          designation: { id: 'po-uid', name: 'Smoke', title: 'Officer' },
+        });
+      }
+      if (url.includes('/api/client/attestation-letter')) {
+        return _blobResponse({
+          headers: {
+            'Content-Disposition': 'attachment; filename="letter.pdf"',
+            'X-Attestation-Hash': 'a'.repeat(64),
+            'X-Letter-Valid-Until': '2026-12-31T00:00:00Z',
+          },
+        });
+      }
+      return _jsonResponse({});
+    }) as unknown as typeof fetch;
+
+    _renderPage();
+    const issueBtn = await screen.findByRole('button', {
+      name: /Issue and download Compliance Attestation Letter/i,
+    });
+    fireEvent.click(issueBtn);
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /Send this URL alongside the PDF.*verify cryptographically without contacting OsirisCare/i,
+        ),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('D6: PO-missing intercepts F1 issuance with modal routing to /client/compliance', async () => {
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      if (url.includes('/api/client/privacy-officer')) {
+        // Missing-PO shape per backend client_portal.py:5219.
+        return _jsonResponse({ designation: null });
+      }
+      // F1 endpoint should NEVER be called when PO missing — return
+      // an error so the test fails loudly if the gate doesn't fire.
+      if (url.includes('/api/client/attestation-letter')) {
+        return _jsonResponse({ detail: 'should-not-be-called' }, 500);
+      }
+      return _jsonResponse({});
+    }) as unknown as typeof fetch;
+
+    _renderPage();
+    const issueBtn = await screen.findByRole('button', {
+      name: /Issue and download Compliance Attestation Letter/i,
+    });
+    // Wait for the PO-fetch effect to settle (poStatus → 'missing')
+    // before clicking. A small tick is enough.
+    await new Promise((r) => setTimeout(r, 0));
+    fireEvent.click(issueBtn);
+    // Modal renders synchronously after the click.
+    expect(
+      await screen.findByRole('dialog', { name: /Designate a Privacy Officer first/i }),
+    ).toBeInTheDocument();
+    // Click "Designate now" → navigate('/client/compliance').
+    fireEvent.click(screen.getByRole('button', { name: /Designate now/i }));
+    expect(mockNavigate).toHaveBeenCalledWith('/client/compliance');
+  });
+
+  it('D6: PO-designated lets F1 issuance flow through normally', async () => {
+    let f1Called = false;
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      if (url.includes('/api/client/privacy-officer')) {
+        return _jsonResponse({
+          designation: { id: 'po-uid', name: 'Smoke', title: 'Officer' },
+        });
+      }
+      if (url.includes('/api/client/attestation-letter')) {
+        f1Called = true;
+        return _blobResponse({
+          headers: {
+            'Content-Disposition': 'attachment; filename="letter.pdf"',
+            'X-Attestation-Hash': 'a'.repeat(64),
+          },
+        });
+      }
+      return _jsonResponse({});
+    }) as unknown as typeof fetch;
+
+    _renderPage();
+    const issueBtn = await screen.findByRole('button', {
+      name: /Issue and download Compliance Attestation Letter/i,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    fireEvent.click(issueBtn);
+    await waitFor(() => {
+      expect(f1Called).toBe(true);
+    });
+    // Modal MUST NOT render in the designated-PO path.
+    expect(
+      screen.queryByRole('dialog', { name: /Designate a Privacy Officer first/i }),
+    ).not.toBeInTheDocument();
+  });
 });
