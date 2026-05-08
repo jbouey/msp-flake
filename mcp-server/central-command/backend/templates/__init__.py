@@ -277,6 +277,16 @@ _KWARGS_SECURITY_ALLOWLIST = frozenset({
     "week_start_human",
     "week_end_human",
     "technician_name",
+    # partner_ba_compliance context (P-F6, partner round-table
+    # 2026-05-08). Tony's three-party BAA chain artifact. Roster is
+    # a list of dicts with counterparty_label + monitored_site_count;
+    # NO PHI, NO patient identifiers (counterparty_label is the
+    # CE's business name from client_orgs, public information).
+    "subcontractor_baa_dated_at_human",
+    "roster_count",
+    "roster",
+    "total_monitored_sites",
+    "onboarded_counterparty_count",
 })
 
 
@@ -374,3 +384,4 @@ from . import auditor_kit  # noqa: F401, E402
 from . import attestation_letter  # noqa: F401, E402
 from . import partner_portfolio_attestation  # noqa: F401, E402
 from . import partner_weekly_digest  # noqa: F401, E402
+from . import partner_ba_compliance  # noqa: F401, E402

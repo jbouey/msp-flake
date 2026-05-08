@@ -66,6 +66,13 @@ ALLOWED_DIRECT_CALL_MODULES = {
                                   # the right shape; the helper would
                                   # add an indirection that obscures
                                   # the evidence-chain link.
+    "partner_ba_compliance.py",   # P-F6 round-table 2026-05-08 —
+                                  # partner BAA roster (mig 290).
+                                  # Add + revoke transitions write
+                                  # chain attestations directly (anchor
+                                  # at partner_org:<partner_id>).
+                                  # Same posture as
+                                  # client_privacy_officer.py.
 }
 
 # Modules permitted to compose the chain-gap pattern inline (P0-CHAIN-GAP +

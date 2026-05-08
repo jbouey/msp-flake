@@ -1,0 +1,57 @@
+"""P-F6 BA Compliance Attestation template registration."""
+from .. import register_customer_template
+
+register_customer_template(
+    name="partner_ba_compliance/letter",
+    path="partner_ba_compliance/letter.html.j2",
+    required_kwargs={
+        "presenter_brand",
+        "presenter_contact_line",
+        "issued_at_human",
+        "valid_until_human",
+        "subcontractor_baa_dated_at_human",
+        "roster_count",
+        "roster",
+        "total_monitored_sites",
+        "onboarded_counterparty_count",
+        "attestation_hash",
+        "verify_phone",
+        "verify_url_short",
+    },
+    sentinel_factory=lambda: {
+        "presenter_brand": "__SMOKE__ MSP",
+        "presenter_contact_line": "",
+        "issued_at_human": "May 8, 2026",
+        "valid_until_human": "August 6, 2026",
+        "subcontractor_baa_dated_at_human": "January 15, 2026",
+        "roster_count": 2,
+        "roster": [
+            {
+                "counterparty_label": "Smoke Practice One",
+                "is_osiris_onboarded": True,
+                "monitored_site_count": 3,
+                "executed_at_human": "March 1, 2026",
+                "expiry_at_human": "no fixed expiry",
+                "scope": "Technical safeguard monitoring + remediation orchestration",
+                "signer_name": "Dr. Smoke",
+                "signer_title": "Owner / Privacy Officer",
+            },
+            {
+                "counterparty_label": "Smoke Practice Two",
+                "is_osiris_onboarded": False,
+                "monitored_site_count": 0,
+                "executed_at_human": "April 2, 2026",
+                "expiry_at_human": "April 2, 2027",
+                "scope": "Managed services + HIPAA Security Rule oversight",
+                "signer_name": "Dr. Smoke Two",
+                "signer_title": "Practice Administrator",
+            },
+        ],
+        "total_monitored_sites": 3,
+        "onboarded_counterparty_count": 1,
+        "attestation_hash": "0" * 64,
+        "verify_phone": "1-800-OSIRIS-1",
+        "verify_url_short": "osiriscare.io/verify/ba-attestation",
+    },
+    owner="partner-product",
+)

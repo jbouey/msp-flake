@@ -233,6 +233,16 @@ ALLOWED_EVENTS = {
     # (revocation = replacement; new designation must follow).
     "client_org_privacy_officer_designated",
     "client_org_privacy_officer_revoked",
+    # P-F6 closure 2026-05-08 — partner BAA roster (mig 290).
+    # Tony-the-MSP-HIPAA-lead's three-party BAA chain:
+    # CE → MSP-as-BA → OsirisCare-as-Subcontractor. Each
+    # MSP→clinic BAA in the roster generates a chain-anchored
+    # attestation; revocation does the same. Anchor: synthetic
+    # partner_org:<partner_id> namespace (matches Session 216
+    # convention for partner-org events). NOT in
+    # PRIVILEGED_ORDER_TYPES — admin-API class.
+    "partner_baa_roster_added",
+    "partner_baa_roster_revoked",
 }
 
 

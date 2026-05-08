@@ -5655,6 +5655,256 @@ async def issue_partner_weekly_digest_pdf(
     )
 
 
+# =============================================================================
+# P-F6 — BA Compliance Attestation + downstream-BAA roster
+# =============================================================================
+# Tony-the-MSP-HIPAA-lead's three-party BAA chain artifact. The
+# Letter (rendered live from the active roster) lists each
+# downstream BAA + cross-references monitored sites + cites the
+# OsirisCare→MSP subcontractor BAA from partner_agreements.
+
+@router.get("/me/ba-roster")
+async def list_partner_baa_roster(
+    partner: dict = require_partner_role("admin", "tech"),
+):
+    """Read the active downstream BAA roster (revoked_at IS NULL).
+    admin OR tech roles may read; only admin may add/revoke."""
+    try:
+        from .partner_ba_compliance import list_active_roster
+        from .tenant_middleware import admin_connection
+    except ImportError:
+        from partner_ba_compliance import list_active_roster  # type: ignore
+        from tenant_middleware import admin_connection  # type: ignore
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    async with admin_connection(pool) as conn:
+        rows = await list_active_roster(conn, partner_id)
+    return {
+        "roster": [
+            {
+                "id": str(r["id"]),
+                "counterparty_org_id": (
+                    str(r["counterparty_org_id"])
+                    if r.get("counterparty_org_id") else None
+                ),
+                "counterparty_practice_name": r.get("counterparty_practice_name"),
+                "executed_at": r["executed_at"].isoformat() if r.get("executed_at") else None,
+                "expiry_at": r["expiry_at"].isoformat() if r.get("expiry_at") else None,
+                "scope": r["scope"],
+                "signer_name": r["signer_name"],
+                "signer_title": r["signer_title"],
+                "signer_email": r.get("signer_email"),
+                "attestation_bundle_id": (
+                    str(r["attestation_bundle_id"])
+                    if r.get("attestation_bundle_id") else None
+                ),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post("/me/ba-roster")
+async def add_partner_baa_to_roster(
+    request: Request,
+    partner: dict = require_partner_role("admin"),
+):
+    """Add a per-clinic BAA to the partner's roster. admin-only.
+
+    Body: counterparty_org_id (UUID, optional) OR counterparty_practice_name (str, optional)
+          executed_at (ISO date), expiry_at (ISO date or null),
+          scope (≥20 chars), signer_name, signer_title,
+          signer_email (optional), doc_sha256 (optional)
+    """
+    try:
+        from .partner_ba_compliance import add_baa_to_roster, BAComplianceError
+        from .tenant_middleware import admin_transaction
+    except ImportError:
+        from partner_ba_compliance import add_baa_to_roster, BAComplianceError  # type: ignore
+        from tenant_middleware import admin_transaction  # type: ignore
+
+    body = await request.json()
+    org_id_raw = body.get("counterparty_org_id")
+    practice_name = (body.get("counterparty_practice_name") or "").strip() or None
+    executed_at_iso = body.get("executed_at")
+    expiry_at_iso = body.get("expiry_at")
+    scope = (body.get("scope") or "").strip()
+    signer_name = (body.get("signer_name") or "").strip()
+    signer_title = (body.get("signer_title") or "").strip()
+    signer_email = (body.get("signer_email") or "").strip() or None
+    doc_sha256 = (body.get("doc_sha256") or "").strip() or None
+
+    if not executed_at_iso:
+        raise HTTPException(status_code=400, detail="executed_at required (ISO date)")
+    try:
+        from datetime import datetime as _dt
+        executed_at = _dt.fromisoformat(executed_at_iso.replace("Z", "+00:00"))
+        expiry_at = (
+            _dt.fromisoformat(expiry_at_iso.replace("Z", "+00:00"))
+            if expiry_at_iso else None
+        )
+    except (ValueError, AttributeError) as e:
+        raise HTTPException(status_code=400, detail=f"invalid date format: {e}")
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    caller_user_id = (
+        partner.get("partner_user_id")
+        or partner.get("user_id")
+    )
+    caller_email = (
+        partner.get("oauth_email") or partner.get("contact_email") or ""
+    )
+
+    async with admin_transaction(pool) as conn:
+        try:
+            new_row = await add_baa_to_roster(
+                conn=conn,
+                partner_id=partner_id,
+                counterparty_org_id=str(org_id_raw) if org_id_raw else None,
+                counterparty_practice_name=practice_name,
+                executed_at=executed_at,
+                expiry_at=expiry_at,
+                scope=scope,
+                signer_name=signer_name,
+                signer_title=signer_title,
+                signer_email=signer_email,
+                doc_sha256=doc_sha256,
+                uploaded_by_user_id=str(caller_user_id) if caller_user_id else None,
+                uploaded_by_email=caller_email,
+            )
+        except BAComplianceError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "status": "ok",
+        "id": str(new_row["id"]),
+        "attestation_bundle_id": (
+            str(new_row.get("attestation_bundle_id"))
+            if new_row.get("attestation_bundle_id") else None
+        ),
+    }
+
+
+@router.delete("/me/ba-roster/{roster_id}")
+async def revoke_partner_baa_from_roster(
+    roster_id: str,
+    request: Request,
+    partner: dict = require_partner_role("admin"),
+):
+    """Revoke a roster entry. admin-only. Body: { reason: str ≥20 chars }."""
+    try:
+        from .partner_ba_compliance import revoke_baa_from_roster, BAComplianceError
+        from .tenant_middleware import admin_transaction
+    except ImportError:
+        from partner_ba_compliance import revoke_baa_from_roster, BAComplianceError  # type: ignore
+        from tenant_middleware import admin_transaction  # type: ignore
+
+    body = await request.json()
+    reason = (body.get("reason") or "").strip()
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    caller_user_id = partner.get("partner_user_id") or partner.get("user_id")
+    caller_email = (
+        partner.get("oauth_email") or partner.get("contact_email") or ""
+    )
+
+    async with admin_transaction(pool) as conn:
+        try:
+            revoked = await revoke_baa_from_roster(
+                conn=conn,
+                partner_id=partner_id,
+                roster_id=roster_id,
+                revoking_user_id=str(caller_user_id) if caller_user_id else None,
+                revoking_user_email=caller_email,
+                reason=reason,
+            )
+        except BAComplianceError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    if revoked is None:
+        return {"status": "noop", "message": "No active roster entry to revoke."}
+    return {"status": "ok", "revoked_id": str(revoked["id"])}
+
+
+@router.get("/me/ba-attestation")
+async def issue_partner_ba_compliance_attestation_pdf(
+    request: Request,
+    partner: dict = require_partner_role("admin"),
+):
+    """Render + stream the BA Compliance Attestation PDF.
+    admin-only. Re-renders live from the current roster on each
+    call (no separate "issued attestation" table — the auditor
+    wants the current snapshot)."""
+    try:
+        from .partner_ba_compliance import (
+            issue_ba_compliance_attestation,
+            html_to_pdf,
+            BAComplianceError,
+        )
+        from .tenant_middleware import admin_connection
+        from .shared import check_rate_limit
+    except ImportError:
+        from partner_ba_compliance import (  # type: ignore
+            issue_ba_compliance_attestation,
+            html_to_pdf,
+            BAComplianceError,
+        )
+        from tenant_middleware import admin_connection  # type: ignore
+        from shared import check_rate_limit  # type: ignore
+    from fastapi.responses import Response
+
+    pool = await get_pool()
+    partner_id = str(partner["id"])
+    caller_user_id = partner.get("partner_user_id") or partner.get("user_id") or partner_id
+
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=partner_id,
+        action="partner_ba_attestation_issue",
+        window_seconds=3600,
+        max_requests=5,
+        caller_key=f"partner_user:{caller_user_id}",
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate-limited. Retry in {retry_after_s}s.",
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    async with admin_connection(pool) as conn:
+        try:
+            result = await issue_ba_compliance_attestation(
+                conn=conn,
+                partner_id=partner_id,
+                issued_by_user_id=str(caller_user_id) if caller_user_id else None,
+                issued_by_email=partner.get("oauth_email") or partner.get("contact_email"),
+            )
+        except BAComplianceError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+
+    import asyncio as _asyncio
+    pdf_bytes = await _asyncio.to_thread(html_to_pdf, result["html"])
+
+    safe_brand = "".join(
+        c if c.isalnum() or c in "-_" else "-"
+        for c in result["presenter_brand"]
+    )[:80]
+    issue_date = result["issued_at"].strftime("%Y-%m-%d")
+    filename = f"ba-compliance-{safe_brand}-{issue_date}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Attestation-Id": result["attestation_id"],
+            "X-Attestation-Hash": result["attestation_hash"],
+        },
+    )
+
+
 # Public-verify router for partner portfolio attestation (sister to F4
 # client-letter verify). Anna-the-sales-lead hands this URL to a
 # prospect. The prospect confirms the portfolio attestation is real
@@ -5748,5 +5998,98 @@ async def public_verify_partner_portfolio_attestation(
         "bundle_count": row["bundle_count"],
         "ots_anchored_pct": float(row["ots_anchored_pct"]),
         "chain_root_hex": row["chain_root_hex"],
+        "presenter_brand": row["presenter_brand"],
+    }
+
+
+@partner_public_verify_router.get("/ba-attestation/{attestation_hash}")
+async def public_verify_partner_ba_attestation(
+    attestation_hash: str,
+    request: Request,
+):
+    """Public — NO AUTH. Returns OCR-grade payload for the given
+    BA Compliance Attestation hash. NO partner_id leak, NO
+    counterparty names, NO roster detail — only aggregate counts +
+    presenter brand. The detailed roster is partner-portal-only.
+
+    Coach retroactive sweep 2026-05-08 — convergence with P-F5
+    portfolio verify route. Same 32-char-floor + ambiguity-detection
+    + X-Forwarded-For + 60/hr per-IP rate-limit posture."""
+    h = attestation_hash.strip().lower()
+    if not all(c in "0123456789abcdef" for c in h):
+        return {"valid": False, "reason": "malformed_hash"}
+    if len(h) not in (32, 64):
+        return {"valid": False, "reason": "malformed_hash_minimum_32_hex_chars"}
+
+    try:
+        from .shared import check_rate_limit
+    except ImportError:
+        from shared import check_rate_limit  # type: ignore
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=client_ip,
+        action="public_verify_partner_ba_attestation",
+        window_seconds=3600,
+        max_requests=60,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Verification rate limit reached. Retry in {retry_after_s}s.",
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    try:
+        from .partner_ba_compliance import get_ba_attestation_by_hash
+        from .tenant_middleware import admin_connection
+    except ImportError:
+        from partner_ba_compliance import get_ba_attestation_by_hash  # type: ignore
+        from tenant_middleware import admin_connection  # type: ignore
+
+    pool = await get_pool()
+    async with admin_connection(pool) as conn:
+        if len(h) == 64:
+            row = await get_ba_attestation_by_hash(conn, h)
+        else:
+            full_rows = await conn.fetch(
+                """
+                SELECT attestation_hash FROM partner_ba_compliance_attestations
+                 WHERE attestation_hash LIKE $1 || '%'
+                 LIMIT 2
+                """,
+                h,
+            )
+            if len(full_rows) > 1:
+                return {
+                    "valid": False,
+                    "reason": "ambiguous_prefix_supply_full_64_hex_hash",
+                }
+            if not full_rows:
+                row = None
+            else:
+                row = await get_ba_attestation_by_hash(
+                    conn, full_rows[0]["attestation_hash"]
+                )
+
+    if not row:
+        return {"valid": False, "reason": "not_found"}
+
+    return {
+        "valid": True,
+        "attestation_hash": row["attestation_hash"],
+        "issued_at": row["issued_at"].isoformat() if row["issued_at"] else None,
+        "valid_until": row["valid_until"].isoformat() if row["valid_until"] else None,
+        "is_expired": bool(row["is_expired"]),
+        "is_superseded": bool(row["is_superseded"]),
+        "subcontractor_baa_dated_at": (
+            row["subcontractor_baa_dated_at"].isoformat()
+            if row["subcontractor_baa_dated_at"] else None
+        ),
+        "roster_count": row["roster_count"],
+        "total_monitored_sites": row["total_monitored_sites"],
+        "onboarded_counterparty_count": row["onboarded_counterparty_count"],
         "presenter_brand": row["presenter_brand"],
     }

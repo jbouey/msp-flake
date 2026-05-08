@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BA Compliance Attestation — {{ presenter_brand }}</title>
+<style>
+@page {
+    size: Letter;
+    margin: 0.75in;
+    @bottom-center {
+        content: "Issued by {{ presenter_brand }}.  Verify: {{ verify_phone }} or {{ verify_url_short }}.  Valid until {{ valid_until_human }}.";
+        font-family: 'Helvetica', 'Arial', sans-serif;
+        font-size: 9pt;
+        color: #666;
+    }
+}
+body {
+    font-family: 'Helvetica', 'Arial', sans-serif;
+    color: #222;
+    line-height: 1.5;
+    font-size: 11pt;
+}
+.letterhead {
+    border-bottom: 2px solid #14A89E;
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+}
+.letterhead h1 {
+    font-size: 24pt;
+    font-weight: 700;
+    color: #1a365d;
+    margin: 0 0 4px 0;
+    letter-spacing: -0.5px;
+}
+.letterhead .partner-name {
+    font-size: 16pt;
+    font-weight: 600;
+    color: #2d3748;
+    margin: 0 0 6px 0;
+}
+.letterhead .period {
+    font-size: 11pt;
+    color: #4a5568;
+    margin: 0;
+}
+.statement {
+    margin: 22px 0;
+    font-size: 11.5pt;
+    line-height: 1.6;
+}
+.summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    margin: 18px 0;
+}
+.summary-cell {
+    padding: 12px 14px;
+    background: #f7fafc;
+    border-left: 3px solid #14A89E;
+}
+.summary-cell .num {
+    font-size: 22pt;
+    font-weight: 700;
+    color: #1a365d;
+    margin: 0;
+}
+.summary-cell .label {
+    font-size: 9.5pt;
+    color: #4a5568;
+    margin: 2px 0 0 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.section-h {
+    font-size: 13pt;
+    font-weight: 600;
+    color: #1a365d;
+    margin: 22px 0 8px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e2e8f0;
+}
+table.roster {
+    width: 100.000%;
+    border-collapse: collapse;
+    font-size: 10pt;
+}
+table.roster th, table.roster td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid #e2e8f0;
+    vertical-align: top;
+}
+table.roster th {
+    background: #edf2f7;
+    font-weight: 600;
+    color: #2d3748;
+}
+table.roster .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.subcontractor-block {
+    margin-top: 22px;
+    padding: 14px 16px;
+    background: #f0f9ff;
+    border-left: 3px solid #0284c7;
+    font-size: 10pt;
+    color: #2d3748;
+}
+.disclaimer {
+    margin-top: 22px;
+    font-size: 9pt;
+    color: #718096;
+    line-height: 1.4;
+}
+.disclaimer p { margin: 0 0 6px 0; }
+.empty-note {
+    color: #718096;
+    font-style: italic;
+    margin: 8px 0;
+}
+.attestation-block {
+    margin-top: 22px;
+    padding: 14px 16px;
+    background: #f7fafc;
+    border-left: 3px solid #14A89E;
+    font-size: 10pt;
+    color: #4a5568;
+}
+.attestation-block .label {
+    font-weight: 600;
+    color: #2d3748;
+}
+.attestation-block .hash {
+    font-family: 'Courier New', monospace;
+    font-size: 9pt;
+    word-break: break-all;
+}
+</style>
+</head>
+<body>
+
+<div class="letterhead">
+    <h1>BA Compliance Attestation</h1>
+    <p class="partner-name">{{ presenter_brand }}</p>
+    <p class="period">Issued {{ issued_at_human }} · Valid until {{ valid_until_human }}</p>
+</div>
+
+<div class="statement">
+    <p>
+        <strong>{{ presenter_brand }}</strong> is a Business Associate to the covered entities listed below under executed Business Associate Agreements (45 CFR §164.504(e)). {{ presenter_brand }} performs technical services on the OsirisCare compliance substrate as a Subcontractor under the OsirisCare→{{ presenter_brand }} Subcontractor BAA dated {{ subcontractor_baa_dated_at_human }}. Each downstream BAA below is recorded in {{ presenter_brand }}'s roster and referenced here for {{ presenter_brand }}'s own §164.504(e)(2)(ii) record of the chain.
+    </p>
+</div>
+
+<div class="summary-grid">
+    <div class="summary-cell">
+        <p class="num">{{ roster_count }}</p>
+        <p class="label">Active downstream BAAs</p>
+    </div>
+    <div class="summary-cell">
+        <p class="num">{{ onboarded_counterparty_count }}</p>
+        <p class="label">On OsirisCare substrate</p>
+    </div>
+    <div class="summary-cell">
+        <p class="num">{{ total_monitored_sites }}</p>
+        <p class="label">Monitored sites</p>
+    </div>
+</div>
+
+<h2 class="section-h">Downstream BAA Roster</h2>
+
+{% if roster %}
+<table class="roster">
+    <thead>
+        <tr>
+            <th>Counterparty</th>
+            <th>Executed</th>
+            <th>Expiry</th>
+            <th class="num">Monitored sites</th>
+            <th>Signer</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in roster %}
+        <tr>
+            <td>{{ r.counterparty_label }}{% if not r.is_osiris_onboarded %} <em>(non-OsirisCare)</em>{% endif %}</td>
+            <td>{{ r.executed_at_human }}</td>
+            <td>{{ r.expiry_at_human }}</td>
+            <td class="num">{{ r.monitored_site_count if r.is_osiris_onboarded else '—' }}</td>
+            <td>{{ r.signer_name }}, {{ r.signer_title }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-note">No downstream BAAs recorded yet. Add per-clinic BAAs to {{ presenter_brand }}'s roster from the partner portal.</p>
+{% endif %}
+
+<div class="subcontractor-block">
+    <strong>Subcontractor BAA (upstream):</strong>
+    OsirisCare→{{ presenter_brand }}, dated {{ subcontractor_baa_dated_at_human }}. The substrate operates as a Subcontractor to {{ presenter_brand }}; technical safeguard monitoring evidence (Ed25519-signed, hash-chained, OpenTimestamps-anchored) is preserved in OsirisCare's substrate evidence chain and is independently verifiable per the published check catalog and verify.sh distribution.
+</div>
+
+<div class="attestation-block">
+    <p><span class="label">Issued by:</span> {{ presenter_brand }}{{ presenter_contact_line }}</p>
+    <p><span class="label">Substrate:</span> OsirisCare</p>
+    <p><span class="label">Issuance:</span> {{ issued_at_human }} &nbsp;|&nbsp; <span class="label">Valid until:</span> {{ valid_until_human }}</p>
+    <p><span class="label">Attestation hash:</span> <span class="hash">{{ attestation_hash }}</span></p>
+    <p><span class="label">Verify:</span> {{ verify_phone }} or {{ verify_url_short }}/{{ attestation_hash[:32] }}</p>
+</div>
+
+<div class="disclaimer">
+    <p>This attestation is {{ presenter_brand }}'s own §164.504(e)(2)(ii) record of its downstream BAA chain. It is audit-supportive evidence; it is not a HIPAA §164.528 disclosure accounting and does not constitute a legal opinion. The roster reflects active downstream BAAs at issuance; verification by hash binds to the snapshot at that time.</p>
+    <p>To report a concern, contact compliance@osiriscare.com (best-effort acknowledgment within 7 business days; substantive response within 30 days) or the HHS Office for Civil Rights at hhs.gov/ocr/complaints.</p>
+</div>
+
+</body>
+</html>

@@ -166,6 +166,10 @@ def test_allowed_events_matches_expected_set():
         # an active designation. ALLOWED_EVENTS: 57.
         "client_org_privacy_officer_designated",
         "client_org_privacy_officer_revoked",
+        # P-F6 closure 2026-05-08 — partner BAA roster.
+        # Anchor: partner_org:<partner_id>. ALLOWED_EVENTS: 59.
+        "partner_baa_roster_added",
+        "partner_baa_roster_revoked",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"
