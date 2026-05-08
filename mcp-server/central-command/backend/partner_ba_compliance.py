@@ -442,13 +442,27 @@ async def issue_ba_compliance_attestation(
 
     # Canonical hash binding (for verify-by-hash; same shape as
     # F1/P-F5).
+    #
+    # Coach-ultrathink-sweep D-3 fix-up 2026-05-08: include
+    # support_email + support_phone snapshots so the canonical
+    # hash binds to the FROZEN-AT-ISSUE-TIME presenter contact
+    # info (Diane white-label-survivability contract). Pre-fix,
+    # mig 291 persisted these columns but the canonical hash
+    # didn't bind them — partners could edit support_email between
+    # issuances and the persisted snapshot would change without
+    # invalidating the hash, breaking the auditor narrative
+    # "snapshot is FROZEN at issuance." Version bumped to "1.1"
+    # so verify-by-hash callers can distinguish v1.0 (legacy,
+    # no contact binding) vs v1.1+ (contact-bound) attestations.
     attestation_facts = {
         "kind": "partner_ba_compliance_attestation",
-        "version": "1.0",
+        "version": "1.1",
         "partner_id": str(partner_id),
         "issued_at": now.isoformat(),
         "valid_until": valid_until.isoformat(),
         "presenter_brand": presenter_brand,
+        "support_email_snapshot": se or "",
+        "support_phone_snapshot": sp or "",
         "subcontractor_baa_dated_at": (
             osiris_baa_dated_at.isoformat() if osiris_baa_dated_at else None
         ),

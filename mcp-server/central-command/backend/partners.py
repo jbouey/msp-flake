@@ -5603,10 +5603,10 @@ async def issue_partner_weekly_digest_pdf(
     from fastapi.responses import Response
     try:
         from .shared import check_rate_limit
-        from .tenant_middleware import admin_connection
+        from .tenant_middleware import admin_transaction
     except ImportError:
         from shared import check_rate_limit  # type: ignore
-        from tenant_middleware import admin_connection  # type: ignore
+        from tenant_middleware import admin_transaction  # type: ignore
 
     pool = await get_pool()
     partner_id = str(partner["id"])
@@ -5637,7 +5637,16 @@ async def issue_partner_weekly_digest_pdf(
             headers={"Retry-After": str(retry_after_s)},
         )
 
-    async with admin_connection(pool) as conn:
+    # Coach-ultrathink-sweep D-2 fix-up 2026-05-08: Session 212 rule —
+    # `admin_transaction()` for multi-statement admin paths.
+    # render_weekly_digest issues 5+ admin queries (partner row,
+    # active_orders, alerts_triaged, escalations, mttr_median, top
+    # noisy sites). admin_connection allows PgBouncer to route the
+    # second+ query to a different backend without
+    # `app.is_admin='true'` (mig 234 default = false) → silent
+    # zero-row results in production. admin_transaction pins the
+    # SET LOCAL + queries to one backend.
+    async with admin_transaction(pool) as conn:
         result = await render_weekly_digest(
             conn=conn,
             partner_id=partner_id,
@@ -5852,7 +5861,7 @@ async def issue_partner_ba_compliance_attestation_pdf(
             html_to_pdf,
             BAComplianceError,
         )
-        from .tenant_middleware import admin_connection
+        from .tenant_middleware import admin_transaction
         from .shared import check_rate_limit
     except ImportError:
         from partner_ba_compliance import (  # type: ignore
@@ -5860,7 +5869,7 @@ async def issue_partner_ba_compliance_attestation_pdf(
             html_to_pdf,
             BAComplianceError,
         )
-        from tenant_middleware import admin_connection  # type: ignore
+        from tenant_middleware import admin_transaction  # type: ignore
         from shared import check_rate_limit  # type: ignore
     from fastapi.responses import Response
 
@@ -5882,7 +5891,13 @@ async def issue_partner_ba_compliance_attestation_pdf(
             headers={"Retry-After": str(retry_after_s)},
         )
 
-    async with admin_connection(pool) as conn:
+    # Coach-ultrathink-sweep D-2 fix-up 2026-05-08: Session 212 rule.
+    # issue_ba_compliance_attestation issues 5+ admin queries
+    # (partner row, agreements, roster, per-roster site_count +
+    # client_orgs lookup, INSERT, UPDATE supersede) — admin_connection
+    # was at risk of PgBouncer routing pathology (silent zero-row
+    # second queries). admin_transaction pins SET LOCAL + queries.
+    async with admin_transaction(pool) as conn:
         try:
             result = await issue_ba_compliance_attestation(
                 conn=conn,
@@ -5940,7 +5955,7 @@ async def render_partner_incident_timeline_pdf(
             html_to_pdf,
             IncidentTimelineError,
         )
-        from .tenant_middleware import admin_connection
+        from .tenant_middleware import admin_transaction
         from .shared import check_rate_limit
     except ImportError:
         from partner_incident_timeline import (  # type: ignore
@@ -5948,7 +5963,7 @@ async def render_partner_incident_timeline_pdf(
             html_to_pdf,
             IncidentTimelineError,
         )
-        from tenant_middleware import admin_connection  # type: ignore
+        from tenant_middleware import admin_transaction  # type: ignore
         from shared import check_rate_limit  # type: ignore
     from fastapi.responses import Response
 
@@ -5981,7 +5996,12 @@ async def render_partner_incident_timeline_pdf(
             headers={"Retry-After": str(retry_after_s)},
         )
 
-    async with admin_connection(pool) as conn:
+    # Coach-ultrathink-sweep D-2 fix-up 2026-05-08: Session 212 rule.
+    # render_incident_timeline issues 4+ admin queries (incident
+    # row + ownership JOIN, partner row, execution_telemetry rows,
+    # plus internal admin_audit_log future-reads). admin_transaction
+    # closes the PgBouncer routing-pathology window.
+    async with admin_transaction(pool) as conn:
         try:
             result = await render_incident_timeline(
                 conn=conn,

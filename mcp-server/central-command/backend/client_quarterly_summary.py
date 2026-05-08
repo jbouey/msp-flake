@@ -50,10 +50,22 @@ LOAD-BEARING PRECONDITIONS:
 
 DETERMINISM:
   Canonical JSON uses sort_keys=True + compact separators (matches
-  the auditor-kit determinism contract). Re-rendering an issued row
-  reproduces the same hash. PDF byte-determinism is the WeasyPrint
-  template's responsibility — F3 inherits the same Jinja2 strict-
-  undefined posture as F1.
+  the auditor-kit determinism contract). The contract is "the
+  attestation_hash is BYTE-STABLE for a given persisted row" —
+  re-fetching the same row via /api/verify/quarterly/{hash}
+  reproduces the same hash and the same canonical payload.
+  Re-ISSUING a quarterly summary (e.g. a corrected re-issue) by
+  contrast produces a NEW row + NEW wall-clock issued_at + NEW
+  hash; the old row is superseded via partial-unique-idx pattern
+  (mig 292 idx_qpcs_one_active_per_org_quarter). PDF byte-
+  determinism is the WeasyPrint template's responsibility — F3
+  inherits the same Jinja2 strict-undefined posture as F1.
+
+  (Coach-ultrathink-sweep D-5 fix-up 2026-05-08: clarified the
+  byte-determinism contract — pre-fix the docstring read as if
+  re-issuing produced the same hash, which is not the design
+  contract. The chain-anchored issuance shape requires a fresh
+  hash on every issuance.)
 """
 from __future__ import annotations
 

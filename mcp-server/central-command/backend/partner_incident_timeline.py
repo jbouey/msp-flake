@@ -127,12 +127,26 @@ async def render_incident_timeline(
         )
 
     site_id = incident_row["site_id"]
-    incident_type = incident_row["incident_type"] or "unknown"
-    severity = incident_row["severity"] or "—"
-    status = incident_row["status"] or "—"
+    # Coach-ultrathink-sweep D-4 fix-up 2026-05-08: sanitize every
+    # string that interpolates into the rendered template. Even
+    # though incident_type / severity / status / resolution_tier
+    # come from substrate-controlled tables (incidents,
+    # execution_telemetry), Maya P0 defense-in-depth: every
+    # interpolation passes through `_sanitize_partner_text`. The
+    # cost is bounded (60-char-cap on each); the upside is the
+    # XSS-class regression class can't reappear via a future
+    # column added by a migration that lets user-controlled text
+    # leak into these fields.
+    incident_type = _sanitize_partner_text(
+        incident_row["incident_type"], max_len=60
+    ) or "unknown"
+    severity = _sanitize_partner_text(incident_row["severity"], max_len=20) or "—"
+    status = _sanitize_partner_text(incident_row["status"], max_len=20) or "—"
     created_at = incident_row["created_at"]
     resolved_at = incident_row["resolved_at"]
-    resolution_tier = incident_row["resolution_tier"]
+    resolution_tier = _sanitize_partner_text(
+        incident_row["resolution_tier"], max_len=20
+    )
 
     # Fetch presenter brand snapshot.
     partner_row = await conn.fetchrow(
@@ -172,10 +186,18 @@ async def render_incident_timeline(
         site_id, incident_type, created_at, window_end,
     )
     for r in et_rows:
-        runbook_id = r["runbook_id"] or "(no runbook)"
+        # Coach D-4 fix-up: sanitize per-row strings before
+        # interpolation. runbook_id + status + resolution_level
+        # are substrate-controlled today, but the template's
+        # autoescape is OFF (templates/__init__.py:73 — the
+        # auditor-kit/.sh outputs require it), so EVERY
+        # interpolated string must be sanitized at the boundary.
+        runbook_id = _sanitize_partner_text(
+            r["runbook_id"], max_len=80
+        ) or "(no runbook)"
         succ = r.get("success")
-        status_label = r.get("status") or ""
-        tier = r.get("resolution_level") or ""
+        status_label = _sanitize_partner_text(r.get("status"), max_len=20) or ""
+        tier = _sanitize_partner_text(r.get("resolution_level"), max_len=20) or ""
         verified = r.get("verification_passed")
         duration = r.get("duration_seconds")
         duration_suffix = (

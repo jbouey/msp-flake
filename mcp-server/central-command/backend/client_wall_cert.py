@@ -74,14 +74,18 @@ async def _gather_ots_pct(
     progress signal — Maria's contractor wants to see "Bitcoin-
     anchored" on the framed certificate.
     """
+    # Coach-ultrathink-sweep D-1 fix-up 2026-05-08: real schema
+    # columns are `ots_status` (mig 011) + `ots_anchored_at` (mig 011).
+    # The earlier `ots_attestation` reference does not exist —
+    # first customer click on the Print Wall Certificate button
+    # would have raised UndefinedColumnError → 503. Sibling parity
+    # with partner_portfolio_attestation.py which uses the same
+    # `ots_status = 'anchored'` predicate.
     row = await conn.fetchrow(
         """
         SELECT
             COUNT(*) AS total,
-            COUNT(*) FILTER (
-                WHERE ots_attestation IS NOT NULL
-                  AND ots_attestation != ''
-            ) AS anchored
+            COUNT(*) FILTER (WHERE ots_status = 'anchored') AS anchored
           FROM compliance_bundles cb
           JOIN sites s ON s.site_id = cb.site_id
          WHERE s.client_org_id = $1

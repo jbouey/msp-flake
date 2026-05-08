@@ -8,7 +8,7 @@
     size: Letter;
     margin: 0.75in;
     @bottom-center {
-        content: "Issued by {{ presenter_brand }}.  Verify: {{ verify_phone }} or {{ verify_url_short }}.  Valid until {{ valid_until_human }}.";
+        content: "Issued by {{ presenter_brand }}.  Verify: {{ verify_phone }} or {{ verify_url_short }}/{{ attestation_hash[:32] }}.  Valid until {{ valid_until_human }}.";
         font-family: 'Helvetica', 'Arial', sans-serif;
         font-size: 9pt;
         color: #666;
