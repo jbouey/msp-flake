@@ -1,0 +1,69 @@
+area,file_line,label,endpoint,role_gate,d1_func,d2_auth,d3_failure,d4_loading,d5_orphan,d6_a11y,d7_banned,d8_csrf,d9_consistency,severity,finding,fix_action
+1-login,PartnerLogin.tsx:315,Verify (TOTP),POST /api/partner-auth/verify-totp,public(MFA token),PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,Clean MFA verify path with disabled+spinner+CSRF,none
+1-login,PartnerLogin.tsx:337,Back to login,client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,State-reset only,none
+1-login,PartnerLogin.tsx:440,Sign in with Microsoft,GET /api/partner-auth/microsoft (redirect),public,PASS,PASS,PASS,PASS,PASS,PASS,PASS,N/A(GET),PASS,NONE,window.location.href redirect to OAuth,none
+1-login,PartnerLogin.tsx:459,Sign in with Google,GET /api/partner-auth/google (redirect),public,PASS,PASS,PASS,PASS,PASS,PASS,PASS,N/A(GET),PASS,NONE,window.location.href redirect to OAuth,none
+1-login,PartnerLogin.tsx:490,Email and Password tab,client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,role=tab + aria-selected,none
+1-login,PartnerLogin.tsx:503,API Key tab,client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,role=tab + aria-selected,none
+1-login,PartnerLogin.tsx:548,Sign In (email),POST /api/partner-auth/email-login-api,public,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,disabled when fields empty + CSRF,none
+1-login,PartnerLogin.tsx:573,Sign In (api key),POST via login(),public,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,disabled when empty + ctx.login,none
+1-login,PartnerLogin.tsx:588,Request a partner account,client-only(opens form),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,toggles signup form,none
+1-login,PartnerLogin.tsx:646,Request Account,POST /api/partner-auth/email-signup,public,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,disabled state + CSRF + success render,none
+1-login,PartnerLogin.tsx:654,Back to login (signup form),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,resets signup form,none
+1-login,PartnerLogin.tsx:auto,Magic-link auto-handler,POST /api/partners/auth/magic,public(token-bound),PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,POST token in body not URL,none
+2-dash,PartnerDashboard.tsx:299,Welcome guide (?icon),client-only(localStorage),n/a,PASS,N/A,N/A,N/A,PASS,FAIL,PASS,N/A,PASS,MINOR,No aria-label/title visible only on hover,Add aria-label=Show welcome guide
+2-dash,PartnerDashboard.tsx:311,Sign Out,client-only(ctx logout),n/a,PASS,PASS,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,navigate to login after logout,none
+2-dash,PartnerDashboard.tsx:403-543,Tab buttons (13 tabs),client-only,n/a,PASS,N/A,N/A,N/A,PASS,FAIL,PASS,N/A,PASS,MINOR,No role=tab/aria-selected on tablist,Add role=tablist + aria-selected
+2-dash,PartnerDashboard.tsx:534,Appliances tab nav,navigate /partner/appliances,client-only,PASS,PASS,N/A,N/A,PASS,FAIL,PASS,N/A,PASS,MINOR,Tab styled as button but routes,Same as above
+2-dash,PartnerDashboard.tsx:539,Security tab nav,navigate /partner/security,client-only,PASS,PASS,N/A,N/A,PASS,FAIL,PASS,N/A,PASS,MINOR,Same,Same
+2-dash,PartnerDashboard.tsx:571,Create Provision Code (empty state),client-only(opens modal),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,opens modal,none
+2-dash,PartnerDashboard.tsx:634,Security Checks (per-site),client-only(swap to drift config),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,opens PartnerDriftConfig inline,none
+2-dash,PartnerDashboard.tsx:659,Bulk Upload (CSV),client-only(opens modal),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,opens bulk modal,none
+2-dash,PartnerDashboard.tsx:668,New Provision Code,client-only(opens modal),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,opens modal,none
+2-dash,PartnerDashboard.tsx:705,Close (bulk modal),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,resets modal state,none
+2-dash,PartnerDashboard.tsx:711,Create Codes (bulk),POST /api/partners/me/provisions/bulk,admin tech billing,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,disabled+inflight+errors,none
+2-dash,PartnerDashboard.tsx:742,Cancel (single provision modal),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,resets state,none
+2-dash,PartnerDashboard.tsx:751,Create Code (single),POST /api/partners/me/provisions,admin tech billing,PASS,PASS,FAIL,PASS,PASS,PASS,PASS,PASS,PASS,MINOR,No error toast on failure (silent console.error),Add setError + visible error block
+2-dash,PartnerDashboard.tsx:808,Copy Code (clipboard),client-only(navigator.clipboard),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,MINOR,No success feedback to user (silent),Show Copied toast
+2-dash,PartnerDashboard.tsx:819,Done (QR modal),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,closes modal,none
+2-dash,PartnerDashboard.tsx:877,QR (per-provision),client-only(open QR modal),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,opens QR modal,none
+2-dash,PartnerDashboard.tsx:889,Yes (revoke confirm),DELETE /api/partners/me/provisions/{id},admin tech billing,PASS,PASS,FAIL,PASS,PASS,PASS,PASS,PASS,PASS,MINOR,No error toast on failure,Add error handling
+2-dash,PartnerDashboard.tsx:895,No (revoke confirm),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,resets confirm,none
+2-dash,PartnerDashboard.tsx:903,Revoke (per-provision),client-only(opens confirm),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,opens inline confirm,none
+2-dash,PartnerDashboard.tsx:993,Site selector (SSO tab),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,sets ssoConfigSite,none
+2-dash,PartnerHomeDashboard.tsx:174,Open arrow (per-attention),navigate /partner/site/{id},NO ROUTE,FAIL,N/A,FAIL,PASS,FAIL,PASS,PASS,N/A,FAIL,CRITICAL,Orphan action: route does not exist; falls through to PartnerLogin catch-all,Either add route or change navigate target to existing surface (e.g. /partner/dashboard with ?site=)
+2-dash,PartnerWeeklyRollup.tsx:152,QBR (download),GET /api/partners/me/sites/{id}/qbr,admin tech billing,FAIL,PASS,FAIL,FAIL,PASS,PASS,PASS,N/A(GET),FAIL,MAJOR,a href download bypasses error UX; rate-limit 429 silent,Convert to JS fetch->blob with toast on 401/429
+2-dash,PartnerWeeklyRollup.tsx:162,Mesh (per-site),navigate /partner/site/{id}/topology,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,routed,none
+2-dash,PartnerWeeklyRollup.tsx:169,Consent (per-site),navigate /partner/site/{id}/consent,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,routed,none
+2-dash,PartnerWeeklyRollup.tsx:175,Open arrow (per-rollup-row),navigate /partner/site/{id},NO ROUTE,FAIL,N/A,FAIL,PASS,FAIL,PASS,PASS,N/A,FAIL,CRITICAL,Same orphan as HomeDashboard:174,Same fix
+2-dash,PartnerHomeDashboard.tsx:236,Drifts detected label,display-only,n/a,PASS,N/A,N/A,N/A,N/A,PASS,FAIL,N/A,FAIL,MINOR,Session 199 drift-is-dead: should be Findings or Compliance issues,Replace with Findings detected
+2-dash,PartnerDashboard.tsx:1125,non-compliant badge,display-only(devices),n/a,PASS,N/A,N/A,N/A,N/A,PASS,PASS,N/A,FAIL,MINOR,Coach: client portal uses Failing not non-compliant (consistency),Replace with Failing or use status.ts mapping
+2-dash,PartnerDashboard.tsx:1153,Retry (error boundary),client-only(reset state),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,clears boundary error,none
+3-baa,P-F5 portfolio attestation download,GET /api/partners/me/portfolio-attestation,admin,FAIL,N/A,FAIL,N/A,FAIL,N/A,N/A,N/A(GET),FAIL,CRITICAL,Backend endpoint exists with NO frontend UI to invoke (P-F5 was backend-only),Add Issue Portfolio Attestation button to PartnerHomeDashboard or new PartnerAttestations tab
+3-baa,P-F6 BAA roster GET,GET /api/partners/me/ba-roster,admin tech,FAIL,N/A,FAIL,N/A,FAIL,N/A,N/A,N/A(GET),FAIL,CRITICAL,Backend endpoint exists with NO frontend UI; partners cannot see their roster,Add BAA Roster tab/page to PartnerDashboard
+3-baa,P-F6 BAA roster ADD,POST /api/partners/me/ba-roster,admin,FAIL,N/A,FAIL,N/A,FAIL,N/A,N/A,N/A,FAIL,CRITICAL,Backend endpoint exists with NO frontend UI; partners cannot add BAAs,Add Add BAA button + form
+3-baa,P-F6 BAA roster REVOKE,DELETE /api/partners/me/ba-roster/{id},admin,FAIL,N/A,FAIL,N/A,FAIL,N/A,N/A,N/A,FAIL,CRITICAL,Backend endpoint exists with NO frontend UI,Add Revoke button per row
+3-baa,P-F6 BA Compliance Letter download,GET /api/partners/me/ba-attestation,admin,FAIL,N/A,FAIL,N/A,FAIL,N/A,N/A,N/A(GET),FAIL,CRITICAL,Backend endpoint exists with NO frontend UI,Add Issue BA Compliance Letter button
+4-users,PartnerUsersScreen.tsx:213,Invite user,client-only(opens modal),n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,opens invite modal,none
+4-users,PartnerUsersScreen.tsx:220,Manage admin transfer,client-only(opens modal),n/a,PASS,FAIL,N/A,N/A,PASS,PASS,PASS,N/A,PASS,MAJOR,No client-side role gate; modal does NOT receive partnerRole/callerUserId props,Pass partnerRole + callerUserId from PartnerContext
+4-users,PartnerUsersScreen.tsx:284,Role select,PATCH /api/partners/me/users/{id}/role,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,MINOR,Uses window.prompt for reason (UX scrappy),Replace with inline modal
+4-users,PartnerUsersScreen.tsx:303,Deactivate,DELETE /api/partners/me/users/{id},admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,MINOR,window.prompt x2 confirm-phrase scrappy,Replace with proper confirm modal
+4-users,PartnerUsersScreen.tsx:334,Close (invite modal),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,aria-label=Close present,none
+4-users,PartnerUsersScreen.tsx:383,Cancel (invite),client-only,n/a,PASS,N/A,N/A,N/A,PASS,PASS,PASS,N/A,PASS,NONE,clears form,none
+4-users,PartnerUsersScreen.tsx:390,Invite (submit),POST /api/partners/me/users,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,disabled-during-submit + portalFetch CSRF,none
+4-users,PartnerAdminTransferModal.tsx:varies,Initiate transfer,POST /api/partners/me/admin-transfer/initiate,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,phrase + reason gates + CSRF via portalFetch,none
+4-users,PartnerAdminTransferModal.tsx:varies,Accept transfer,POST /api/partners/me/admin-transfer/accept,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,phrase gate + CSRF via portalFetch,none
+4-users,PartnerAdminTransferModal.tsx:varies,Cancel transfer,POST /api/partners/me/admin-transfer/cancel,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,reason gate + CSRF via portalFetch,none
+4-users,PartnerSecurity.tsx:varies,TOTP setup,POST /api/partner-auth/me/totp/setup,authenticated partner_user,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,fetchWithAuth includes CSRF,none
+4-users,PartnerSecurity.tsx:varies,TOTP verify,POST /api/partner-auth/me/totp/verify,authenticated partner_user,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,fetchWithAuth includes CSRF,none
+4-users,PartnerSecurity.tsx:varies,TOTP disable,DELETE /api/partner-auth/me/totp,authenticated partner_user,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,fetchWithAuth includes CSRF,none
+4-users,PartnerBilling.tsx:118,Subscribe (Stripe),POST /api/billing/checkout,admin billing,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,buildAuthedHeaders + redirect Stripe,none
+4-users,PartnerBilling.tsx:143,Manage Billing (portal),POST /api/billing/portal,admin billing,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,buildAuthedHeaders + redirect Stripe,none
+4-users,PartnerBilling.tsx:167,Cancel subscription,POST /api/billing/subscription/cancel,admin billing,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,MINOR,Uses window.confirm() instead of inline modal,Replace with modal
+4-users,PartnerBilling.tsx:193,Reactivate subscription,POST /api/billing/subscription/reactivate,admin billing,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,buildAuthedHeaders,none
+4-users,PartnerComplianceSettings.tsx:119,Save defaults,PUT /api/partners/me/compliance/defaults,admin tech,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,csrfHeaders + setSuccess+setError,none
+4-users,PartnerComplianceSettings.tsx:148,Apply preset,POST /api/partners/me/sites/{id}/compliance/apply-preset,admin tech,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,csrfHeaders + setSuccess+setError,none
+4-users,PartnerComplianceSettings.tsx:172,Save site compliance,PUT /api/partners/me/sites/{id}/compliance,admin tech,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,csrfHeaders + setSuccess+setError,none
+4-users,PartnerInvites.tsx:123,Create clinic invite,POST /api/partners/invites/create,admin tech,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,buildAuthedHeaders + 428 missing-agreements path,none
+4-users,PartnerInvites.tsx:163,Revoke clinic invite,POST /api/partners/invites/{id}/revoke,admin,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS,NONE,buildAuthedHeaders,none
+4-users,PartnerOnboarding.tsx:77,Trigger checkin,POST /api/partners/me/sites/{id}/trigger-checkin,admin tech billing,PASS,PASS,FAIL,PASS,PASS,PASS,PASS,PASS,PASS,MINOR,Silent catch on failure (Trigger checkin failed silently comment),Surface error
