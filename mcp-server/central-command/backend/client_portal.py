@@ -5166,3 +5166,192 @@ async def submit_client_credentials(
         )
 
         return {"status": "ok", "credential_id": cred_id}
+
+
+# =============================================================================
+# Privacy Officer Designation (F2 — round-table 2026-05-06)
+# =============================================================================
+# Janet's customer-round-table finding: "if you're going to print my
+# name on a federal-looking document I need a checkbox at signup that
+# says 'Janet Walsh accepts Privacy Officer designation, here's the
+# 2-paragraph explainer of what that means.'" The Compliance
+# Attestation Letter (F1) pulls the Privacy Officer name from a SIGNED
+# ACCEPTANCE attestation row, not a profile field. Without an active
+# designation, F1 refuses to render — Carol's "never print a stale
+# signature" contract.
+
+@auth_router.get("/privacy-officer")
+async def get_privacy_officer_designation(
+    user: dict = Depends(require_client_user),
+):
+    """Return the org's currently-active Privacy Officer designation,
+    or {"designation": null} if none has been made yet (or revoked
+    without replacement). All authenticated client users may read."""
+    try:
+        from .client_privacy_officer import get_current
+    except ImportError:
+        from client_privacy_officer import get_current  # type: ignore
+    pool = await get_pool()
+    org_id = user["org_id"]
+    async with org_connection(pool, org_id=org_id) as conn:
+        designation = await get_current(conn, org_id)
+    if designation is None:
+        return {"designation": None}
+    return {
+        "designation": {
+            "id": str(designation["id"]),
+            "name": designation["name"],
+            "title": designation["title"],
+            "email": designation["email"],
+            "accepted_at": designation["accepted_at"].isoformat(),
+            "accepting_user_email": designation["accepting_user_email"],
+            "explainer_version": designation["explainer_version"],
+            "attestation_bundle_id": (
+                str(designation["attestation_bundle_id"])
+                if designation.get("attestation_bundle_id")
+                else None
+            ),
+        }
+    }
+
+
+@auth_router.post("/privacy-officer/designate")
+async def designate_privacy_officer(
+    request: Request,
+    user: dict = Depends(require_client_owner),
+):
+    """Owner-only. Designate (or replace) the Privacy Officer.
+
+    Body: name, title, email, acceptance_acknowledgement (≥50 chars,
+    the verbatim §164.308(a)(2) explainer text the wizard displayed).
+
+    Replaces any active designation atomically. Writes a chain-
+    anchored Ed25519 attestation bundle
+    (`client_org_privacy_officer_designated`) AND a client_audit_log
+    row for §164.308(a)(1)(ii)(D) parity."""
+    try:
+        from .client_privacy_officer import designate, PrivacyOfficerError
+    except ImportError:
+        from client_privacy_officer import designate, PrivacyOfficerError  # type: ignore
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    title = (body.get("title") or "").strip()
+    email = (body.get("email") or "").strip()
+    ack = (body.get("acceptance_acknowledgement") or "").strip()
+
+    pool = await get_pool()
+    org_id = user["org_id"]
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent", "")[:500]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        try:
+            new_designation = await designate(
+                conn=conn,
+                client_org_id=org_id,
+                name=name,
+                title=title,
+                email=email,
+                accepting_user_id=user["user_id"],
+                accepting_user_email=user["email"],
+                ip_address=client_ip,
+                user_agent=user_agent,
+                acceptance_acknowledgement=ack,
+            )
+        except PrivacyOfficerError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        await _audit_client_action(
+            conn, user,
+            action="PRIVACY_OFFICER_DESIGNATED",
+            target=str(new_designation["id"]),
+            details={
+                "designation_id": str(new_designation["id"]),
+                "designee_name": new_designation["name"],
+                "designee_email": new_designation["email"],
+                "explainer_version": new_designation["explainer_version"],
+                "attestation_bundle_id": (
+                    str(new_designation.get("attestation_bundle_id"))
+                    if new_designation.get("attestation_bundle_id")
+                    else None
+                ),
+            },
+            request=request,
+        )
+
+    return {
+        "status": "ok",
+        "designation_id": str(new_designation["id"]),
+        "attestation_bundle_id": (
+            str(new_designation.get("attestation_bundle_id"))
+            if new_designation.get("attestation_bundle_id")
+            else None
+        ),
+    }
+
+
+@auth_router.post("/privacy-officer/revoke")
+async def revoke_privacy_officer(
+    request: Request,
+    user: dict = Depends(require_client_owner),
+):
+    """Owner-only. Revoke the current Privacy Officer designation
+    WITHOUT replacement. Writes
+    `client_org_privacy_officer_revoked` to the chain. F1's
+    attestation-letter render path will REFUSE to render once
+    revocation is in effect — owner must designate a new Privacy
+    Officer to resume document generation.
+
+    Body: reason (≥20 chars; describes the transition)."""
+    try:
+        from .client_privacy_officer import revoke, PrivacyOfficerError
+    except ImportError:
+        from client_privacy_officer import revoke, PrivacyOfficerError  # type: ignore
+    body = await request.json()
+    reason = (body.get("reason") or "").strip()
+
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        try:
+            revoked = await revoke(
+                conn=conn,
+                client_org_id=org_id,
+                revoking_user_id=user["user_id"],
+                revoking_user_email=user["email"],
+                reason=reason,
+            )
+        except PrivacyOfficerError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        if revoked is None:
+            return {"status": "noop", "message": "No active designation to revoke."}
+
+        await _audit_client_action(
+            conn, user,
+            action="PRIVACY_OFFICER_REVOKED",
+            target=str(revoked["id"]),
+            details={
+                "designation_id": str(revoked["id"]),
+                "revoked_designee_name": revoked["name"],
+                "revoked_designee_email": revoked["email"],
+                "reason": reason,
+                "attestation_bundle_id": (
+                    str(revoked.get("revoked_attestation_bundle_id"))
+                    if revoked.get("revoked_attestation_bundle_id")
+                    else None
+                ),
+            },
+            request=request,
+        )
+
+    return {
+        "status": "ok",
+        "revoked_designation_id": str(revoked["id"]),
+        "attestation_bundle_id": (
+            str(revoked.get("revoked_attestation_bundle_id"))
+            if revoked.get("revoked_attestation_bundle_id")
+            else None
+        ),
+    }

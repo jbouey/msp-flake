@@ -220,6 +220,19 @@ ALLOWED_EVENTS = {
     #   2. admin_audit_log row written on every toggle.
     # Both are forensically recoverable; the asymmetry vs
     # ALLOWED_EVENTS is intentional and documented here.
+    # F2 closure 2026-05-06 — Privacy Officer designation flow
+    # (round-table 2026-05-06 customer-iterated spec). The
+    # Compliance Attestation Letter (F1) pulls the Privacy Officer
+    # name from a SIGNED ACCEPTANCE attestation, not a profile
+    # field. §164.308(a)(2) requires identifying the security
+    # official; a chain-anchored signed acceptance is the
+    # auditor-respected evidence shape. Anchor: org's primary
+    # site_id (per Anchor-namespace convention, Session 216). NOT
+    # in PRIVILEGED_ORDER_TYPES — admin-API class (settings page,
+    # not fleet_order). 2 events: designation + revocation
+    # (revocation = replacement; new designation must follow).
+    "client_org_privacy_officer_designated",
+    "client_org_privacy_officer_revoked",
 }
 
 

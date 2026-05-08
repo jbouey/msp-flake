@@ -159,7 +159,13 @@ def test_allowed_events_matches_expected_set():
         # `enable_cross_org_site_relocate` was DROPPED at RT21 Gate 2
         # (Marcus FK finding) — the flag flip's audit trail lives in
         # feature_flags table (append-only via DELETE trigger) +
-        # admin_audit_log. ALLOWED_EVENTS: 55.
+        # admin_audit_log.
+        # F2 closure 2026-05-06 — Privacy Officer designation flow
+        # (round-table 2026-05-06 customer-iterated spec). Anchor at
+        # org's primary site_id. Letter (F1) refuses render without
+        # an active designation. ALLOWED_EVENTS: 57.
+        "client_org_privacy_officer_designated",
+        "client_org_privacy_officer_revoked",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

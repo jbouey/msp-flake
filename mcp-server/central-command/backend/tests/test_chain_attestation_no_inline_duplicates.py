@@ -55,6 +55,17 @@ ALLOWED_DIRECT_CALL_MODULES = {
                                   # underlying create directly.
     "fleet_cli.py",               # operator-class fleet ops.
     "breakglass_api.py",          # break-glass; admin-class.
+    "client_privacy_officer.py",  # F2 round-table 2026-05-06 — Privacy
+                                  # Officer designation. Specialized
+                                  # state-machine transition (designate +
+                                  # revoke) where the chain-anchored
+                                  # attestation IS the cryptographic
+                                  # evidence the Letter (F1) embeds.
+                                  # Same posture as client_owner_transfer
+                                  # (org-state class) — direct call is
+                                  # the right shape; the helper would
+                                  # add an indirection that obscures
+                                  # the evidence-chain link.
 }
 
 # Modules permitted to compose the chain-gap pattern inline (P0-CHAIN-GAP +
