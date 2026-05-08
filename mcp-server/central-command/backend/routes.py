@@ -61,7 +61,7 @@ from .models import (
     L2ConfigResponse,
 )
 from .fleet import get_fleet_overview as _get_real_fleet_overview, get_client_detail as _get_real_client_detail
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .metrics import calculate_health_from_raw
 from .db_queries import (
     get_incidents_from_db,
@@ -5452,7 +5452,10 @@ async def get_admin_compliance_health(
     from .fleet import get_pool
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet drive-down 2026-05-08: 8-query handler.
+    # Session 212 routing-pathology rule — admin_transaction pins
+    # SET LOCAL + queries to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         site = await conn.fetchrow(
             "SELECT site_id, clinic_name FROM sites WHERE site_id = $1", site_id
         )
@@ -6224,7 +6227,10 @@ async def export_site_data(
     from .fleet import get_pool
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet drive-down 2026-05-08: 11-query handler
+    # (highest in routes.py). admin_transaction pins SET LOCAL +
+    # queries to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # Verify site exists
         site = await conn.fetchrow(
             "SELECT * FROM sites WHERE site_id = $1", site_id
@@ -6614,7 +6620,10 @@ async def decommission_site(
     now = datetime.now(timezone.utc)
     actions_taken = []
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet drive-down 2026-05-08: 7-query handler.
+    # decommission_site does multiple writes + reads — admin_transaction
+    # pins them to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # 1. Validate site exists and is not already inactive
         site = await conn.fetchrow(
             "SELECT site_id, clinic_name, status, wg_ip FROM sites WHERE site_id = $1",
@@ -8464,7 +8473,9 @@ async def generate_site_compliance_packet(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet drive-down 2026-05-08: 11-query handler
+    # (compliance packet generation). admin_transaction.
+    async with admin_transaction(pool) as conn:
         # Verify site exists
         site = await conn.fetchrow("""
             SELECT s.site_id, s.clinic_name, s.status, s.created_at,
@@ -8746,7 +8757,9 @@ async def generate_org_compliance_packet(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet drive-down 2026-05-08: 9-query handler
+    # (org compliance packet). admin_transaction.
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow("SELECT id, name, practice_type FROM client_orgs WHERE id = $1", org_id)
         if not org:
             raise HTTPException(404, "Organization not found")
