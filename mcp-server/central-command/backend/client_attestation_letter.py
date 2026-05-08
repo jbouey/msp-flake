@@ -18,8 +18,12 @@ Customer-iterated wording from the prime-customer round-table:
     every letter. /verify endpoint returns is_expired=true past the
     window so a forwarded stale letter is detectable.
   - Diane (CPA): "BAA reference + vendor continuity clause" →
-    footer references baa_signatures row + the 7-year
-    post-termination verification commitment.
+    footer references baa_signatures row + the wind-down-period
+    verification commitment (Carol BLOCK-2 downgrade —
+    "supported through the term of the relationship plus a
+    commercially reasonable wind-down period; the practice
+    retains independent copies for §164.530(j) compliance" —
+    NOT the prior unbacked 7-year SLA).
   - Diane: "white-label survivability" → presenter_brand +
     presenter_contact_line are FROZEN at issue time. Switching MSPs
     does not retroactively re-skin historical letters.
