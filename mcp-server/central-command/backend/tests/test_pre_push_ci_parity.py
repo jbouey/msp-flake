@@ -197,7 +197,18 @@ def test_pre_push_allowlist_only_references_git_tracked_files():
     Skipped if the test runner can't shell out to git (e.g. CI image
     without git binary). The on-disk test above remains as fallback.
     """
+    import os
     import subprocess
+    # Strip inherited GIT_* env vars. When the pre-push hook runs this
+    # test under `git push`, git sets GIT_DIR / GIT_WORK_TREE in the
+    # subprocess env pointing at the outer repo — which can confuse
+    # `git ls-files` when cwd=_BACKEND (the parent worktree's pathing
+    # diverges from a clean ls-files invocation). Symptom 2026-05-08:
+    # `git ls-files` returned an empty/truncated set, falsely flagging
+    # every allowlist entry as untracked. Sanitizing the env yields
+    # the same result `git ls-files tests/test_*.py` produces from a
+    # plain shell.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     try:
         result = subprocess.run(
             ["git", "ls-files", "tests/test_*.py"],
@@ -205,6 +216,7 @@ def test_pre_push_allowlist_only_references_git_tracked_files():
             capture_output=True,
             text=True,
             timeout=10,
+            env=env,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pytest.skip("git binary unavailable; on-disk test is the fallback")

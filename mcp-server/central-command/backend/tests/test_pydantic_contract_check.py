@@ -378,12 +378,24 @@ def test_diff_class_rename_skips_empty_signature():
 # ---------------------------------------------------------------------------
 
 def _git(repo: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
-    # Fixed identity so `git commit` works in CI containers without config
+    # Fixed identity so `git commit` works in CI containers without config.
+    #
+    # Strip inherited GIT_* env vars (except identity ones we set below).
+    # When the pre-push hook runs this test under `git push`, git sets
+    # GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE in the subprocess env —
+    # those POINT AT THE OUTER REPO and cause _git() calls intended for
+    # the tmp_path repo to instead mutate the developer's working repo
+    # (committing "init" / "announce deprecation of b" garbage onto
+    # the active branch). Symptom observed 2026-05-08 during sprint-N+1
+    # gate-2 push: HEAD was reset 14 reflog entries deep by leaked
+    # commits before this fix landed.
     env = {
-        **os.environ,
+        k: v for k, v in os.environ.items() if not k.startswith("GIT_")
+    }
+    env.update({
         "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
         "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
-    }
+    })
     return subprocess.run(
         ["git", *args], cwd=repo, capture_output=True, text=True, env=env, check=False,
     )
