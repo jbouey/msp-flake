@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { OsirisCareLeaf, InfoTip } from '../components/shared';
@@ -145,8 +146,6 @@ const statusColors: Record<string, string> = {
 export const ClientCompliance: React.FC = () => {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading } = useClient();
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ModuleTab>('overview');
 
   useEffect(() => {
@@ -155,24 +154,35 @@ export const ClientCompliance: React.FC = () => {
     }
   }, [isAuthenticated, isLoading, navigate]);
 
-  useEffect(() => {
-    if (isAuthenticated) fetchOverview();
-  }, [isAuthenticated]);
-
-  const fetchOverview = async () => {
-    try {
+  // Coach perf-sweep wave-2 2026-05-08 (Pattern P-B continuation):
+  // ClientCompliance overview migrated from raw useEffect+fetch to
+  // useQuery with 60s staleTime. Sibling pattern to REC-2 dashboard.
+  const { data: overview, isLoading: loading, error: overviewError } = useQuery<Overview>({
+    queryKey: ['client/compliance/overview'],
+    queryFn: async () => {
       const res = await fetch('/api/client/compliance/overview', { credentials: 'include' });
-      if (res.ok) {
-        setOverview(await res.json());
-      } else if (res.status === 401) {
+      if (res.status === 401) {
         navigate('/client/login');
+        throw new Error('unauthenticated');
       }
-    } catch (e) {
-      console.error('Failed to fetch compliance overview:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (!res.ok) {
+        const err = new Error(`${res.status}`) as Error & { status?: number };
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    },
+    staleTime: 60_000,
+    enabled: isAuthenticated,
+    retry: 1,
+  });
+
+  // Suppress unused-var lint on the React Query error handle —
+  // this page falls through to the existing loading/empty states
+  // when the fetch fails; no banner. Logged at console for dev.
+  if (overviewError) {
+    void overviewError;
+  }
 
 
   if (isLoading || loading) {

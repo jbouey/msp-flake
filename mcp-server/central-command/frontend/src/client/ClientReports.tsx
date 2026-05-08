@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { getScoreStatus } from '../constants';
@@ -60,10 +61,12 @@ export const ClientReports: React.FC = () => {
   // with "Auditor Kit" — the per-site signed-ZIP entry point auditors
   // actually need. Monthly Reports tab unchanged.
   const [activeTab, setActiveTab] = useState<'auditor' | 'monthly'>('auditor');
-  const [reports, setReports] = useState<MonthlyReport[]>([]);
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  // Coach perf-sweep wave-2 2026-05-08 (Pattern P-B continuation):
+  // ClientReports migrated to useQuery for the two list/snapshot
+  // reads. Snapshot data shares the same /api/client/reports/current
+  // endpoint that hits backend perf_cache (REC-1, 60s TTL) — frontend
+  // 60s staleTime aligns with backend cache window so navigation
+  // back paints from local cache without re-fetching.
   const [error, setError] = useState<string | null>(null);
   const [downloadingKit, setDownloadingKit] = useState<string | null>(null);
 
@@ -73,45 +76,51 @@ export const ClientReports: React.FC = () => {
     }
   }, [isAuthenticated, isLoading, navigate]);
 
+  // useQuery: monthly reports list. 5-min staleTime — monthly
+  // reports change at-most monthly; aggressive cache is safe.
+  const {
+    data: reportsData,
+    isLoading: reportsLoading,
+    error: reportsError,
+  } = useQuery<{ reports: MonthlyReport[] }>({
+    queryKey: ['client/reports/monthly'],
+    queryFn: async () => {
+      const response = await fetch('/api/client/reports/monthly', {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to load reports');
+      return response.json();
+    },
+    staleTime: 5 * 60_000,
+    enabled: isAuthenticated,
+    retry: 1,
+  });
+  const reports: MonthlyReport[] = reportsData?.reports || [];
+  const loading = reportsLoading;
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchReports();
-      fetchSnapshot();
+    if (reportsError) {
+      setError(
+        reportsError instanceof Error ? reportsError.message : 'Failed to load reports',
+      );
     }
-  }, [isAuthenticated]);
+  }, [reportsError]);
 
-  const fetchReports = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/client/reports/monthly', { credentials: 'include' });
-      if (response.ok) {
-        const data = await response.json();
-        setReports(data.reports || []);
-      } else {
-        setError('Failed to load reports');
-      }
-    } catch (e) {
-      console.error('Failed to fetch reports:', e);
-      setError('Failed to load reports');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchSnapshot = async () => {
-    setSnapshotLoading(true);
-    try {
-      const response = await fetch('/api/client/reports/current', { credentials: 'include' });
-      if (response.ok) {
-        setSnapshot(await response.json());
-      }
-    } catch (e) {
-      console.error('Failed to fetch snapshot:', e);
-    } finally {
-      setSnapshotLoading(false);
-    }
-  };
+  // useQuery: current snapshot. 60s staleTime aligns with REC-1
+  // backend cache for /api/client/reports/current (compute_compliance
+  // _score). Frontend cache + backend cache share the same window.
+  const { data: snapshot, isLoading: snapshotLoading } = useQuery<Snapshot>({
+    queryKey: ['client/reports/current'],
+    queryFn: async () => {
+      const response = await fetch('/api/client/reports/current', {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`${response.status}`);
+      return response.json();
+    },
+    staleTime: 60_000,
+    enabled: isAuthenticated,
+    retry: 1,
+  });
 
   // Round-table 31 P1: kit download routes through portalFetch.fetchBlob
   // so 401/429/500 surface as actionable copy. Round-table 32 closure:

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { formatTimeAgo } from '../constants';
@@ -99,20 +100,29 @@ export const ClientAuditLog: React.FC = () => {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading } = useClient();
 
-  const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [actionFilter, setActionFilter] = useState<string | null>(null);
   const [days, setDays] = useState(90);
   const [page, setPage] = useState(0);
 
   const offset = page * PAGE_SIZE;
 
-  const fetchEvents = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      navigate('/client/login', { replace: true });
+    }
+  }, [isAuthenticated, isLoading, navigate]);
+
+  // Coach perf-sweep wave-2 2026-05-08 (Pattern P-B continuation):
+  // ClientAuditLog migrated from useState+useCallback+useEffect+fetch
+  // to useQuery. Pagination/filter params land in queryKey so each
+  // (days, offset, actionFilter) tuple gets its own cache entry —
+  // page-back works instantly. 60s staleTime — audit log is append-
+  // only; new events arrive on the order of minutes.
+  const { data, isLoading: loading, error, refetch: fetchEvents } = useQuery<
+    AuditLogResponse
+  >({
+    queryKey: ['client/audit-log', { days, offset, actionFilter }],
+    queryFn: async () => {
       const params = new URLSearchParams({
         days: String(days),
         limit: String(PAGE_SIZE),
@@ -127,27 +137,15 @@ export const ClientAuditLog: React.FC = () => {
       if (!res.ok) {
         throw new Error(`Failed to load audit log (${res.status})`);
       }
-      const data: AuditLogResponse = await res.json();
-      setEvents(data.events);
-      setTotal(data.total);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [days, offset, actionFilter]);
-
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      navigate('/client/login', { replace: true });
-    }
-  }, [isAuthenticated, isLoading, navigate]);
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchEvents();
-    }
-  }, [isAuthenticated, fetchEvents]);
+      return res.json();
+    },
+    staleTime: 60_000,
+    enabled: isAuthenticated,
+    retry: 1,
+    placeholderData: (prev) => prev, // keep prior page during pagination
+  });
+  const events: AuditEvent[] = data?.events || [];
+  const total: number = data?.total || 0;
 
   const handleFilterChange = useCallback((value: string | null) => {
     setActionFilter(value);
@@ -287,7 +285,7 @@ export const ClientAuditLog: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={fetchEvents}
+              onClick={() => { void fetchEvents(); }}
               className="px-3 py-1.5 text-xs font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200"
             >
               Refresh
@@ -302,7 +300,9 @@ export const ClientAuditLog: React.FC = () => {
           )}
 
           {error && !loading && (
-            <div className="px-4 py-12 text-center text-red-700">{error}</div>
+            <div className="px-4 py-12 text-center text-red-700">
+              {error instanceof Error ? error.message : String(error)}
+            </div>
           )}
 
           {!loading && !error && events.length === 0 && (

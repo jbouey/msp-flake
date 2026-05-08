@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { formatTimeAgo } from '../constants';
@@ -62,14 +63,18 @@ export const ClientHealingLogs: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabKey>('logs');
 
   // Healing logs state
-  const [logs, setLogs] = useState<HealingLog[]>([]);
-  const [logsTotal, setLogsTotal] = useState(0);
+  // Coach perf-sweep wave-2 2026-05-08 (Pattern P-B continuation):
+  // ClientHealingLogs migrated to useQuery for both reads (logs +
+  // promotion candidates). 30s staleTime on logs (telemetry arrives
+  // continuously); 60s on candidates (promotion eligibility flips
+  // less often). The forward/approve/reject mutations stay as raw
+  // POST fetches (CSRF posture preserved); they invalidate the
+  // candidates queryKey on success so the list refreshes.
   const [logsOffset, setLogsOffset] = useState(0);
-  const [logsLoading, setLogsLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   // Promotion candidates state
-  const [candidates, setCandidates] = useState<PromotionCandidate[]>([]);
-  const [candidatesLoading, setCandidatesLoading] = useState(true);
+  // candidates state moves to useQuery below.
 
   // Forward form state
   const [forwardingId, setForwardingId] = useState<string | null>(null);
@@ -93,49 +98,66 @@ export const ClientHealingLogs: React.FC = () => {
     }
   }, [isAuthenticated, isLoading, navigate]);
 
-  const fetchLogs = useCallback(async (offset = 0) => {
-    setLogsLoading(true);
-    try {
+  // useQuery: paginated healing logs. (offset) lands in queryKey
+  // so page-back is instant; placeholderData prevents UI flash.
+  const { data: logsData, isLoading: logsLoading } = useQuery<{
+    logs: HealingLog[];
+    total: number;
+  }>({
+    queryKey: ['client/healing-logs', { limit: PAGE_SIZE, offset: logsOffset }],
+    queryFn: async () => {
       const res = await fetch(
-        `/api/client/healing-logs?limit=${PAGE_SIZE}&offset=${offset}`,
-        { credentials: 'include' }
+        `/api/client/healing-logs?limit=${PAGE_SIZE}&offset=${logsOffset}`,
+        { credentials: 'include' },
       );
-      if (res.ok) {
-        const data = await res.json();
-        setLogs(data.logs || []);
-        setLogsTotal(data.total || 0);
-        setLogsOffset(offset);
-      }
-    } catch {
-      // Healing log fetch failed silently
-    } finally {
-      setLogsLoading(false);
-    }
-  }, []);
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+    staleTime: 30_000,
+    enabled: isAuthenticated,
+    retry: 1,
+    placeholderData: (prev) => prev,
+  });
+  const logs: HealingLog[] = logsData?.logs || [];
+  const logsTotal: number = logsData?.total || 0;
 
-  const fetchCandidates = useCallback(async () => {
-    setCandidatesLoading(true);
-    try {
+  // useQuery: promotion candidates list. 60s staleTime — promotion
+  // eligibility flips infrequently. Mutations below invalidate this
+  // queryKey on success so the list refreshes after forward/approve/
+  // reject.
+  const { data: candidatesData, isLoading: candidatesLoading } = useQuery<{
+    candidates: PromotionCandidate[];
+  }>({
+    queryKey: ['client/promotion-candidates'],
+    queryFn: async () => {
       const res = await fetch('/api/client/promotion-candidates', {
         credentials: 'include',
       });
-      if (res.ok) {
-        const data = await res.json();
-        setCandidates(data.candidates || []);
-      }
-    } catch {
-      // Promotion candidates fetch failed silently
-    } finally {
-      setCandidatesLoading(false);
-    }
-  }, []);
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+    staleTime: 60_000,
+    enabled: isAuthenticated,
+    retry: 1,
+  });
+  const candidates: PromotionCandidate[] = candidatesData?.candidates || [];
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchLogs(0);
-      fetchCandidates();
-    }
-  }, [isAuthenticated, fetchLogs, fetchCandidates]);
+  // Compatibility shim: existing handlers call `fetchLogs(0)` +
+  // `fetchCandidates()` after mutations to refresh the list. Map
+  // both to React Query invalidation.
+  const fetchLogs = useCallback(
+    async (offset = 0) => {
+      setLogsOffset(offset);
+      await queryClient.invalidateQueries({
+        queryKey: ['client/healing-logs'],
+      });
+    },
+    [queryClient],
+  );
+  // fetchCandidates compatibility shim removed — callers now use
+  // optimistic queryClient.setQueryData updates inline in each
+  // mutation handler. The invalidate-on-explicit-refresh pattern
+  // can be added back when a Refresh button is wired (none today).
 
   const handleForward = async (candidateId: string) => {
     setForwarding(true);
@@ -150,10 +172,19 @@ export const ClientHealingLogs: React.FC = () => {
         }
       );
       if (res.ok) {
-        setCandidates((prev) =>
-          prev.map((c) =>
-            c.id === candidateId ? { ...c, client_endorsed: true } : c
-          )
+        // Optimistic update via setQueryData; the next refetch
+        // confirms.
+        queryClient.setQueryData<{ candidates: PromotionCandidate[] }>(
+          ['client/promotion-candidates'],
+          (prev) => prev
+            ? {
+                candidates: prev.candidates.map((c) =>
+                  c.id === candidateId
+                    ? { ...c, client_endorsed: true }
+                    : c,
+                ),
+              }
+            : prev,
         );
         setForwardSuccess(candidateId);
         setForwardingId(null);
@@ -180,10 +211,17 @@ export const ClientHealingLogs: React.FC = () => {
         }
       );
       if (res.ok) {
-        setCandidates((prev) =>
-          prev.map((c) =>
-            c.id === candidateId ? { ...c, approval_status: 'approved' } : c
-          )
+        queryClient.setQueryData<{ candidates: PromotionCandidate[] }>(
+          ['client/promotion-candidates'],
+          (prev) => prev
+            ? {
+                candidates: prev.candidates.map((c) =>
+                  c.id === candidateId
+                    ? { ...c, approval_status: 'approved' }
+                    : c,
+                ),
+              }
+            : prev,
         );
         setApproveSuccess(candidateId);
         setApprovingId(null);
@@ -214,10 +252,17 @@ export const ClientHealingLogs: React.FC = () => {
         }
       );
       if (res.ok) {
-        setCandidates((prev) =>
-          prev.map((c) =>
-            c.id === candidateId ? { ...c, approval_status: 'rejected' } : c
-          )
+        queryClient.setQueryData<{ candidates: PromotionCandidate[] }>(
+          ['client/promotion-candidates'],
+          (prev) => prev
+            ? {
+                candidates: prev.candidates.map((c) =>
+                  c.id === candidateId
+                    ? { ...c, approval_status: 'rejected' }
+                    : c,
+                ),
+              }
+            : prev,
         );
         setRejectingId(null);
         setRejectReason('');

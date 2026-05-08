@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
 import { useClient } from './ClientContext';
 import { DisclaimerFooter } from '../components/composed';
@@ -55,9 +56,6 @@ export const ClientEvidence: React.FC = () => {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading } = useClient();
 
-  const [evidence, setEvidence] = useState<EvidenceBundle[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
   const [filter, setFilter] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -69,30 +67,32 @@ export const ClientEvidence: React.FC = () => {
     }
   }, [isAuthenticated, isLoading, navigate]);
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchEvidence();
-    }
-  }, [isAuthenticated, offset, filter]);
-
-  const fetchEvidence = async () => {
-    setLoading(true);
-    try {
+  // Coach perf-sweep wave-2 2026-05-08 (Pattern P-B continuation):
+  // ClientEvidence migrated to useQuery. Pagination + filter params
+  // land in queryKey so each (offset, filter) tuple gets its own
+  // cache entry — page-back is instant. 60s staleTime — evidence
+  // bundles arrive on the order of minutes; older pages are stable.
+  // placeholderData keeps the prior page visible during pagination
+  // transition (no UI flash to empty state).
+  const { data, isLoading: loading } = useQuery<{
+    evidence: EvidenceBundle[];
+    total: number;
+  }>({
+    queryKey: ['client/evidence', { limit, offset, filter }],
+    queryFn: async () => {
       let url = `/api/client/evidence?limit=${limit}&offset=${offset}`;
       if (filter) url += `&result=${filter}`;
-
       const response = await fetch(url, { credentials: 'include' });
-      if (response.ok) {
-        const data = await response.json();
-        setEvidence(data.evidence);
-        setTotal(data.total);
-      }
-    } catch (e) {
-      console.error('Failed to fetch evidence:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (!response.ok) throw new Error(`${response.status}`);
+      return response.json();
+    },
+    staleTime: 60_000,
+    enabled: isAuthenticated,
+    retry: 1,
+    placeholderData: (prev) => prev,
+  });
+  const evidence: EvidenceBundle[] = data?.evidence || [];
+  const total: number = data?.total || 0;
 
   const handleDownload = async (bundleId: string) => {
     try {
