@@ -2323,7 +2323,10 @@ async def get_flywheel_spine(
     from dashboard_api.tenant_middleware import admin_connection
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-2 2026-05-08: 9-query handler — admin
+    # flywheel-spine dashboard read; silent zero-rows wipes the
+    # learning-pipeline UI. admin_transaction.
+    async with admin_transaction(pool) as conn:
         # Distribution across lifecycle states
         try:
             dist_rows = await conn.fetch("""

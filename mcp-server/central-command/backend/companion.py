@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from .auth import require_companion
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
 from .hipaa_modules import (
     SRACreate, SRAResponseBatch, PolicyCreate, PolicyUpdate,
     TrainingRecord, BAARecord, IRPlanCreate, BreachRecord,
@@ -360,7 +360,10 @@ async def get_client_overview(
 async def get_companion_stats(user: dict = Depends(require_companion)):
     """Get aggregate stats across all clients."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-2 2026-05-08: 13-query handler (highest
+    # in remaining ratchet baseline). Companion-grade aggregate stats;
+    # silent zero-rows would wipe the dashboard. admin_transaction.
+    async with admin_transaction(pool) as conn:
         total_clients = await conn.fetchval(
             "SELECT COUNT(*) FROM client_orgs WHERE status = 'active'"
         )

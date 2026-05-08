@@ -862,11 +862,16 @@ async def _check_mesh_isolation():
     """
     import json as _json
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-2 2026-05-08: 9-query substrate-
+    # invariant check. _check_mesh_isolation runs every 60s as part
+    # of the substrate health-watch loop; a routing miss would
+    # silently flap the invariant. admin_transaction pins SET LOCAL
+    # + queries to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # Find sites with 2+ online appliances
         multi_sites = await conn.fetch("""
             SELECT site_id, COUNT(*) as online_count

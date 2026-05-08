@@ -169,7 +169,10 @@ async def claim_provision_code(claim: ProvisionClaimRequest, request: Request):
     pool = await get_pool()
     code = claim.provision_code.upper().strip()
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-2 2026-05-08: 10-query handler (operator
+    # provisioning flow — multi-step appliance claim). A routing miss
+    # could half-provision an appliance. admin_transaction.
+    async with admin_transaction(pool) as conn:
         # Find and validate provision code
         provision = await conn.fetchrow("""
             SELECT ap.id, ap.partner_id, ap.target_site_id, ap.client_name,

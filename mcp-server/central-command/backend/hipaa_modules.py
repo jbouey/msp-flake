@@ -30,7 +30,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
 from .client_portal import require_client_user
 from .hipaa_templates import (
     SRA_QUESTIONS,
@@ -158,7 +158,9 @@ async def get_compliance_overview(user: dict = Depends(require_client_user)):
     pool = await get_pool()
     org_id = user["org_id"]
 
-    async with admin_connection(pool) as conn:
+    # Coach-sweep ratchet wave-2 2026-05-08: 12-query handler (HIPAA
+    # compliance overview — admin dashboard read). admin_transaction.
+    async with admin_transaction(pool) as conn:
         # SRA
         sra_row = await conn.fetchrow("""
             SELECT status, overall_risk_score, expires_at, findings_count
