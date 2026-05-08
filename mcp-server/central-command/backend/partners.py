@@ -1058,6 +1058,15 @@ async def get_my_partner(request: Request, partner: dict = require_partner_role(
                 'claimed': provision_stats['claimed'] if provision_stats else 0,
             },
             'created_at': row['created_at'].isoformat(),
+            # MAJ-2 fix (audit 2026-05-08): expose the caller's
+            # partner_user role + id so PartnerAdminTransferModal
+            # (Session 216) can defensively gate the initiate form
+            # on the client side. Backend gates remain authoritative
+            # (require_partner_role("admin")); this is UX defense
+            # in depth — non-admins should not see a form that the
+            # server will reject.
+            'user_role': partner.get('user_role'),
+            'partner_user_id': partner.get('partner_user_id'),
         }
 
 

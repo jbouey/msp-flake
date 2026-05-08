@@ -210,19 +210,26 @@ export const PartnerUsersScreen: React.FC = () => {
             </div>
           </div>
           <div className="flex gap-2">
-            <button
-              onClick={() => setInviteOpen(true)}
-              className="px-4 py-2 text-sm rounded-lg text-white hover:brightness-110"
-              style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}
-            >
-              Invite user
-            </button>
-            <button
-              onClick={() => setShowAdminTransfer(true)}
-              className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
-            >
-              Manage admin transfer
-            </button>
+            {/* MAJ-2 fix: client-gate by role so non-admins don't see
+                actions that backend will reject. Backend gates remain
+                authoritative (require_partner_role("admin")). */}
+            {partner?.user_role === 'admin' && (
+              <button
+                onClick={() => setInviteOpen(true)}
+                className="px-4 py-2 text-sm rounded-lg text-white hover:brightness-110"
+                style={{ background: 'linear-gradient(135deg, #14A89E 0%, #3CBCB4 100%)' }}
+              >
+                Invite user
+              </button>
+            )}
+            {partner?.user_role === 'admin' && (
+              <button
+                onClick={() => setShowAdminTransfer(true)}
+                className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
+              >
+                Manage admin transfer
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -405,6 +412,12 @@ export const PartnerUsersScreen: React.FC = () => {
         isOpen={showAdminTransfer}
         onClose={() => setShowAdminTransfer(false)}
         onResolved={() => fetchUsers()}
+        // MAJ-2 fix (audit 2026-05-08): pass caller role + user_id so
+        // the modal's defensive isAdmin / isInitiator gates work. Backend
+        // require_partner_role("admin") stays authoritative; this is UX
+        // defense in depth.
+        partnerRole={partner?.user_role || undefined}
+        callerUserId={partner?.partner_user_id || undefined}
       />
     </div>
   );

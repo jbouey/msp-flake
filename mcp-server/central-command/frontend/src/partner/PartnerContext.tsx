@@ -20,6 +20,10 @@ interface Partner {
     pending: number;
     claimed: number;
   };
+  // MAJ-2 (audit 2026-05-08): server returns these on /api/partners/me
+  // so PartnerAdminTransferModal can client-gate the initiate form.
+  user_role?: 'admin' | 'tech' | 'billing' | string | null;
+  partner_user_id?: string | null;
 }
 
 interface PartnerContextType {
