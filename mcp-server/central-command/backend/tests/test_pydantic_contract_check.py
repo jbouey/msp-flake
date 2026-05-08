@@ -411,9 +411,14 @@ def _make_repo(tmp_path: pathlib.Path) -> pathlib.Path:
 
 
 def _run_check(repo: pathlib.Path) -> subprocess.CompletedProcess:
+    # Same GIT_* env sanitization as `_git()` — the contract-check
+    # script invokes `git diff` / `git ls-files` internally; under
+    # `git push` parent, GIT_DIR is inherited and points the script
+    # at the outer worktree instead of `repo`.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     return subprocess.run(
         ["python3", str(SCRIPT)],
-        cwd=repo, capture_output=True, text=True, check=False,
+        cwd=repo, capture_output=True, text=True, check=False, env=env,
     )
 
 
@@ -453,7 +458,10 @@ def test_integration_breaking_acknowledgment_allows_removal(tmp_path):
     target.write_text("from pydantic import BaseModel\nclass Foo(BaseModel):\n    a: int\n")
     _git(repo, "add", str(target))
 
-    env = {**os.environ, "PYDANTIC_CONTRACT_BREAKING": "1"}
+    # Strip GIT_* (parent `git push` inheritance) before adding the
+    # contract-check bypass var — same isolation as `_run_check`.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["PYDANTIC_CONTRACT_BREAKING"] = "1"
     result = subprocess.run(
         ["python3", str(SCRIPT)], cwd=repo,
         capture_output=True, text=True, check=False, env=env,
