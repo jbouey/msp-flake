@@ -121,6 +121,39 @@ STALE_THRESHOLD_DAYS = 7
 DEFAULT_WINDOW_DAYS = 30
 
 
+# Coach perf-sweep 2026-05-08 (REC-1): TTL cache for the canonical
+# helper. Three customer-facing surfaces (dashboard / reports /
+# per-site) all call this with the same args; pre-fix each paid the
+# full 2.4s cost independently. 60s TTL means warm-cache hits return
+# in ~50ms; cold-cache stampede is coalesced by per-key asyncio.Lock.
+# AUDITOR-EXPORT BYPASS: when window_days=None (all-time chain read),
+# we DO NOT cache — auditor exports need fresh chain reads + are
+# infrequent + would pollute cache with one-off all-time results.
+_SCORE_CACHE_TTL_SECONDS = 60.0
+
+
+def _should_cache_score(window_days: Optional[int]) -> bool:
+    """Cache the bounded-window paths only. Auditor-export
+    `window_days=None` bypasses — fresh chain read every time."""
+    return window_days is not None
+
+
+def _score_cache_key(
+    site_ids: List[str],
+    include_incidents: bool,
+    window_days: Optional[int],
+) -> tuple:
+    """Cache key MUST include the tenant scope (site_ids tuple) so RLS
+    isolation is preserved at the cache layer. Sorted for stability;
+    site_ids list ordering is otherwise undefined."""
+    return (
+        "compute_compliance_score",
+        tuple(sorted(site_ids)),
+        bool(include_incidents),
+        window_days,
+    )
+
+
 async def compute_compliance_score(
     conn,
     site_ids: List[str],
@@ -177,6 +210,19 @@ async def compute_compliance_score(
             by_site=[],
             window_description=window_description,
         )
+
+    # Coach perf-sweep 2026-05-08 (REC-1): cache check.
+    # Auditor-export `window_days=None` paths bypass — fresh chain
+    # read every time. Bounded-window paths share a 60s TTL across
+    # dashboard / reports / per-site surfaces.
+    _cache_enabled = _should_cache_score(window_days)
+    _cache_key = None
+    if _cache_enabled:
+        from .perf_cache import cache_get, cache_set
+        _cache_key = _score_cache_key(site_ids, include_incidents, window_days)
+        _cached_result = cache_get(_cache_key)
+        if _cached_result is not None:
+            return _cached_result
 
     # Latest result per (site, check_type, hostname) across all bundles
     # the caller can see under their RLS context. Bounded by window_days
@@ -357,7 +403,7 @@ async def compute_compliance_score(
             "stale_count": bucket["stale_count"],
         })
 
-    return ComplianceScore(
+    _result = ComplianceScore(
         overall_score=overall_score,
         status=overall_status,
         counts={
@@ -371,3 +417,7 @@ async def compute_compliance_score(
         by_site=by_site_serialized,
         window_description=window_description,
     )
+    # Coach perf-sweep REC-1: cache the bounded-window result for 60s.
+    if _cache_enabled and _cache_key is not None:
+        cache_set(_cache_key, _result, _SCORE_CACHE_TTL_SECONDS)
+    return _result
