@@ -134,6 +134,16 @@ The 2026-05-08 partner-portal adversarial audit (`.agent/plans/35`) found two or
 
 **Verdict: 3 APPROVE + 1 NEEDS-DISCUSSION on chain-attestation shape.** Sprint-N+2 must answer Coach's question before engineering starts.
 
+**RESOLVED 2026-05-08 — chain-attested via ALLOWED_EVENTS.** User decision locked. Sprint-N+2 engineering scope additions:
+- Add `partner_client_portal_link_minted` entry to `privileged_access_attestation::ALLOWED_EVENTS` (3-list lockstep with `fleet_cli.PRIVILEGED_ORDER_TYPES` MUST stay unchanged — this is a partner-action event, NOT a fleet order; verify via `test_privileged_chain_allowed_events_lockstep.py` adjusts for the new event).
+- Anchor namespace `partner_org:<partner_id>` (Session 216 convention).
+- Mint endpoint writes an Ed25519-signed `compliance_bundles` attestation row at the partner_org anchor (chain-anchored to the partner's prior attestation hash).
+- admin_audit_log row alongside (NOT instead of) — both layers fire, parallel structure with the privileged_access_attestation pattern in P-F6.
+- DangerousActionModal tier-2 invocation BEFORE the mint, copy revised per Carol: "Open this site's client portal as the practice owner. This action is logged to the cryptographic audit chain and the link expires in 15 minutes."
+- Maya conditions a/b/c/d remain in force. Single-use magic link (verify endpoint shape); admin_audit_log row carries (partner_user_id, client_org_id, site_id, magic_link_id, ip_address, ttl_seconds); chain entry carries the attestation_hash + signature.
+
+D4 engineering scope adjustment: **+0.25 day** for the ALLOWED_EVENTS entry + chain-attestation row write + lockstep test adjustment. Total Sprint-N+2 scope: **3.25-4.25 engineer-days**.
+
 ---
 
 ### D5 — Activity timeline: scope + retention
@@ -170,7 +180,7 @@ The 2026-05-08 partner-portal adversarial audit (`.agent/plans/35`) found two or
 | D1 — Separate route | ✅ ALL APPROVE | `/partner/site/:siteId` |
 | D2 — Component composition | ✅ ALL APPROVE w/ 2 reservations | Selective reuse; CI gates pushed to N+3 |
 | D3 — Sub-routes | ✅ ALL APPROVE | 3 added (agents/devices/drift-config) + 2 existing (topology/consent) |
-| D4 — Cross-portal magic link | 🟡 3 APPROVE + 1 NEEDS-DISCUSSION | Chain-attestation shape requires round-table answer before engineering |
+| D4 — Cross-portal magic link | ✅ ALL APPROVE (D4 resolved 2026-05-08) | Chain-attested via ALLOWED_EVENTS; user decision locked |
 | D5 — Activity timeline | ✅ ALL APPROVE | 30 days + partner-scoped |
 
 **Engineering scope estimate (post-round-table-answer):**
@@ -187,13 +197,9 @@ The 2026-05-08 partner-portal adversarial audit (`.agent/plans/35`) found two or
 
 ---
 
-## Open round-table item — D4 chain-attestation shape
+## D4 RESOLVED — chain-attested
 
-The single open question: **is the partner→client-portal magic-link mint a chain-attested privileged-access event (parallels P-F6 BAA-roster events) or an audit-log-only operational event?**
-
-Coach recommends chain-attested. Maya conditions support chain-attested (the audit-log-only path is harder to audit cryptographically). The cost of chain-attestation is small (1 new ALLOWED_EVENTS entry + anchor at `partner_org:<partner_id>` + attestation row at mint).
-
-**Sprint-N+2 cannot start until this is answered.** Bring to next round-table.
+User decision 2026-05-08: **chain-attested via ALLOWED_EVENTS**. Coach + Maya verdicts locked in. Sprint-N+2 engineering can start.
 
 ---
 
