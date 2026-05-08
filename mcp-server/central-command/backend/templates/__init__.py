@@ -308,6 +308,36 @@ _KWARGS_SECURITY_ALLOWLIST = frozenset({
     "site_label",
     "events",
     "generated_at_human",
+    # quarterly_summary context (F3, sprint 2026-05-08). Maria's last
+    # owner-side P1 deferred from Friday: a calendar-quarter Practice
+    # Compliance Summary the Privacy Officer signs each quarter and
+    # the practice owner files for HIPAA §164.530(j) records-retention
+    # compliance. Aggregate, frozen-at-issue snapshot fields. Maya-
+    # grade review: NO patient_*, NO mrn, NO diagnosis, NO provider_
+    # npi. The surface owner is the same client_org that pulls the
+    # report — so the practice_name / privacy_officer_* / appliance
+    # counts are the same posture as F1 (already allow-listed above)
+    # and are reused. The kwargs listed BELOW are the F3-novel
+    # additions:
+    #   * period_year / period_quarter — calendar-quarter coordinates
+    #     ("Q1 2026"). Pure numeric; no PHI shape.
+    #   * drift_detected_count / drift_resolved_count — distinct
+    #     (check_type, appliance) opens / closes within the period.
+    #     Counts only; no incident details, no host names.
+    #   * mean_score_str — stringified rolling-mean compliance score
+    #     ("94" or "—" when no_data). Numeric or sentinel.
+    #   * monitored_check_types_count — count of is_scored=true rows
+    #     in check_type_registry. Public catalog metadata.
+    #   * sites_count — F1 used "sites_covered_count"; F3 standardizes
+    #     on the shorter "sites_count" (matches the JSON payload
+    #     attestation_facts shape). Aggregate count only.
+    "period_year",
+    "period_quarter",
+    "drift_detected_count",
+    "drift_resolved_count",
+    "mean_score_str",
+    "monitored_check_types_count",
+    "sites_count",
 })
 
 
@@ -407,3 +437,4 @@ from . import partner_portfolio_attestation  # noqa: F401, E402
 from . import partner_weekly_digest  # noqa: F401, E402
 from . import partner_ba_compliance  # noqa: F401, E402
 from . import partner_incident_timeline  # noqa: F401, E402
+from . import quarterly_summary  # noqa: F401, E402

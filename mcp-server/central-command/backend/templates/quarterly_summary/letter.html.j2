@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quarterly Practice Compliance Summary — {{ practice_name }} — Q{{ period_quarter }} {{ period_year }}</title>
+<style>
+@page {
+    size: Letter;
+    margin: 0.75in;
+    @bottom-center {
+        content: "Issued by {{ presenter_brand }}.  Verify: {{ verify_phone }} or {{ verify_url_short }}.  Valid until {{ valid_until_human }}.";
+        font-family: 'Helvetica', 'Arial', sans-serif;
+        font-size: 9pt;
+        color: #666;
+    }
+}
+body {
+    font-family: 'Helvetica', 'Arial', sans-serif;
+    color: #222;
+    line-height: 1.5;
+    font-size: 11pt;
+}
+.letterhead {
+    border-bottom: 2px solid #14A89E;
+    padding-bottom: 16px;
+    margin-bottom: 22px;
+}
+.letterhead h1 {
+    font-size: 24pt;
+    font-weight: 700;
+    color: #1a365d;
+    margin: 0 0 4px 0;
+    letter-spacing: -0.5px;
+}
+.letterhead .practice-name {
+    font-size: 16pt;
+    font-weight: 600;
+    color: #2d3748;
+    margin: 0 0 6px 0;
+}
+.letterhead .period {
+    font-size: 11pt;
+    color: #4a5568;
+    margin: 0;
+}
+.statement {
+    margin: 18px 0;
+    font-size: 11pt;
+    line-height: 1.55;
+}
+.statement p {
+    margin: 0 0 12px 0;
+}
+.summary-grid {
+    width: 7.0in;
+    border-collapse: collapse;
+    margin: 14px 0 18px 0;
+    font-size: 10.5pt;
+}
+.summary-grid th, .summary-grid td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid #e2e8f0;
+}
+.summary-grid th {
+    color: #4a5568;
+    font-weight: 600;
+    width: 60%;
+}
+.summary-grid td {
+    color: #1a365d;
+    font-weight: 600;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.signoff {
+    margin-top: 22px;
+    padding-top: 16px;
+    border-top: 1px solid #e2e8f0;
+}
+.signoff .role-line {
+    font-size: 11pt;
+    color: #2d3748;
+    margin: 0 0 6px 0;
+}
+.signoff .signed-by {
+    font-size: 10.5pt;
+    color: #2d3748;
+    margin: 0;
+}
+.signoff .signature-row {
+    margin-top: 22px;
+    display: block;
+}
+.signoff .signature-line {
+    display: inline-block;
+    width: 60%;
+    border-bottom: 1px solid #2d3748;
+    height: 22px;
+}
+.signoff .signature-label {
+    font-size: 9.5pt;
+    color: #718096;
+    margin-top: 4px;
+    display: block;
+}
+.attestation-block {
+    margin-top: 20px;
+    padding: 12px 14px;
+    background: #f7fafc;
+    border-left: 3px solid #14A89E;
+    font-size: 9.5pt;
+    color: #4a5568;
+}
+.attestation-block .label {
+    font-weight: 600;
+    color: #2d3748;
+}
+.attestation-block .hash {
+    font-family: 'Courier New', monospace;
+    font-size: 8.5pt;
+    word-break: break-all;
+}
+.disclaimer {
+    margin-top: 18px;
+    font-size: 9pt;
+    color: #718096;
+    line-height: 1.4;
+}
+.disclaimer p { margin: 0 0 6px 0; }
+</style>
+</head>
+<body>
+
+<div class="letterhead">
+    <h1>Quarterly Practice Compliance Summary</h1>
+    <p class="practice-name">{{ practice_name }}</p>
+    <p class="period">Q{{ period_quarter }} {{ period_year }} &nbsp;|&nbsp; {{ period_start_human }} through {{ period_end_human }}</p>
+</div>
+
+<div class="statement">
+    <p>
+        This summary documents that <strong>{{ practice_name }}</strong> operated a HIPAA Security Rule technical-safeguard monitoring program for the calendar quarter above. From {{ period_start_human }} through {{ period_end_human }}, the practice's technical safeguards were monitored on a continuous automated schedule across {{ sites_count }} site{{ 's' if sites_count != 1 else '' }}, {{ appliances_count }} compliance appliance{{ 's' if appliances_count != 1 else '' }}, and {{ workstations_count }} workstation{{ 's' if workstations_count != 1 else '' }}. Cryptographically signed evidence bundles ({{ bundle_count }} for the period) were captured and chained, supporting the practice's §164.308(a)(1)(ii)(D) information-system-activity-review obligation. The full check catalog is available on request.
+    </p>
+    <p>
+        This document is intended for the practice's §164.530(j) records-retention archive. The Privacy Officer reviews the quarterly summary and signs below to attest that the period's evidence has been reviewed.
+    </p>
+</div>
+
+<table class="summary-grid">
+    <tr>
+        <th>Signed evidence bundles captured</th>
+        <td>{{ bundle_count }}</td>
+    </tr>
+    <tr>
+        <th>OpenTimestamps anchor coverage</th>
+        <td>{{ ots_anchored_pct_str }}%</td>
+    </tr>
+    <tr>
+        <th>Compliance issues detected (period)</th>
+        <td>{{ drift_detected_count }}</td>
+    </tr>
+    <tr>
+        <th>Compliance issues resolved (period)</th>
+        <td>{{ drift_resolved_count }}</td>
+    </tr>
+    <tr>
+        <th>Mean compliance score (period)</th>
+        <td>{{ mean_score_str }}</td>
+    </tr>
+    <tr>
+        <th>Monitored check types</th>
+        <td>{{ monitored_check_types_count }}</td>
+    </tr>
+</table>
+
+<div class="signoff">
+    <p class="role-line">Reviewed and attested by <strong>{{ privacy_officer_name }}</strong>, {{ privacy_officer_title }} — Privacy Officer designation.</p>
+    <p class="signed-by">Email: {{ privacy_officer_email }}</p>
+    <span class="signature-row">
+        <span class="signature-line"></span>
+        <span class="signature-label">Privacy Officer signature &nbsp;·&nbsp; Date</span>
+    </span>
+</div>
+
+<div class="attestation-block">
+    <p><span class="label">Issued by:</span> {{ presenter_brand }}{{ presenter_contact_line }}</p>
+    <p><span class="label">Issuance:</span> {{ issued_at_human }} &nbsp;|&nbsp; <span class="label">Valid until:</span> {{ valid_until_human }} (365 days)</p>
+    <p><span class="label">Attestation hash:</span> <span class="hash">{{ attestation_hash }}</span></p>
+    <p><span class="label">Verify:</span> {{ verify_phone }} or {{ verify_url_short }}/{{ attestation_hash[:32] }}</p>
+</div>
+
+<div class="disclaimer">
+    <p>This summary is audit-supportive technical evidence; it is not a HIPAA §164.528 disclosure accounting and does not constitute a legal opinion. It contains no patient-identifying information and is not part of any designated record set under §164.524. Detailed technical evidence (cryptographically signed bundles + chain + OpenTimestamps anchors) is available on request to the practice's carrier, legal counsel, or auditor. To report a concern, contact compliance@osiriscare.com (best-effort acknowledgment within 7 business days; substantive response within 30 days) or the HHS Office for Civil Rights at hhs.gov/ocr/complaints.</p>
+    <p>The practice retains independent copies of this summary for §164.530(j) records-retention compliance. Attestation-hash verification is supported through the term of the {{ presenter_brand }} relationship plus a commercially reasonable wind-down period.</p>
+</div>
+
+</body>
+</html>

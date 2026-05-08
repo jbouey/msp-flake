@@ -5520,6 +5520,122 @@ async def issue_attestation_letter_pdf(
 
 
 # =============================================================================
+# F5 — Wall Certificate (sprint 2026-05-08)
+# =============================================================================
+# Maria's customer-round-table finding: "I want a one-page certificate
+# I can hang in the clinic showing we're monitored." F5 is an alternate
+# RENDER of an existing F1 attestation row — landscape Letter paper,
+# big stylized type, the same Ed25519-signed payload. NO new state
+# machine: looks up the F1 row by attestation_hash within the org's
+# RLS context, re-renders through the wall_cert/letter template, and
+# returns the PDF. NO INSERT, NO UPDATE, NO DELETE, NO new chain
+# attestation — pinned by tests/test_client_wall_cert.py.
+
+@auth_router.get("/attestation-letter/{attestation_hash}/wall-cert.pdf")
+async def issue_wall_cert_pdf(
+    attestation_hash: str,
+    request: Request,
+    user: dict = Depends(require_client_admin),
+):
+    """Re-render an existing F1 attestation row as a wall
+    certificate (landscape Letter PDF). Auth: org_admin (owner +
+    admin). The hash MUST already exist for this org — RLS scopes
+    the read so a hash from a different tenant returns 404.
+
+    Per-(org, user) rate limit: 10/hr — wall cert is a pure re-
+    render, no signing, no DB write.
+
+    Returns: application/pdf (the rendered wall certificate).
+    """
+    try:
+        from .client_wall_cert import (
+            render_wall_cert, html_to_pdf, WallCertError,
+        )
+    except ImportError:
+        from client_wall_cert import (  # type: ignore
+            render_wall_cert, html_to_pdf, WallCertError,
+        )
+    from fastapi.responses import Response
+
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    # Per-(org, user) rate limit (mirrors F1 5/hr but more generous
+    # since this is a pure re-render — no Ed25519 signing, no DB
+    # write, no chain mutation).
+    try:
+        from .shared import check_rate_limit
+    except ImportError:
+        from shared import check_rate_limit  # type: ignore
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=str(org_id),
+        action="wall_cert_render",
+        window_seconds=3600,
+        max_requests=10,
+        caller_key=f"client_user:{user['user_id']}",
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Wall certificate rendering is rate-limited (10/hr "
+                f"per user). Retry in {retry_after_s}s."
+            ),
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        try:
+            result = await render_wall_cert(
+                conn=conn,
+                client_org_id=org_id,
+                attestation_hash=attestation_hash,
+            )
+        except WallCertError as e:
+            reason = str(e)
+            if reason == "not_found":
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "No attestation letter found for this hash in "
+                        "your organization. Issue a Compliance Attestation "
+                        "Letter first; the wall certificate is an alternate "
+                        "render of that signed payload."
+                    ),
+                )
+            if reason.startswith("malformed_hash"):
+                raise HTTPException(status_code=400, detail=reason)
+            # WeasyPrint missing in unusual envs — surface as 503.
+            raise HTTPException(status_code=503, detail=reason)
+
+    # Steve P1-A parity (round-table 2026-05-06): WeasyPrint render
+    # is synchronous (100-500ms). Wrap in asyncio.to_thread so the
+    # event loop stays responsive — concurrent wall-cert renders
+    # don't starve health checks or other endpoints.
+    import asyncio as _asyncio
+    pdf_bytes = await _asyncio.to_thread(html_to_pdf, result["html"])
+    safe_practice = "".join(
+        c if c.isalnum() or c in "-_" else "-"
+        for c in (result["practice_name"] or "wall-cert")
+    )[:80]
+    issue_date = (
+        result["issued_at"].strftime("%Y-%m-%d")
+        if result["issued_at"]
+        else "unknown"
+    )
+    filename = f"wall-cert-{safe_practice}-{issue_date}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Attestation-Hash": result["attestation_hash"],
+        },
+    )
+
+
+# =============================================================================
 # F4 — Public /verify/{hash} endpoint (round-table 2026-05-06)
 # =============================================================================
 # Brian-the-agent: "I will not scan QRs from a PDF, that's how you
@@ -5661,5 +5777,292 @@ async def public_verify_attestation_letter(
         "baa_practice_name": row["baa_practice_name"],
         "presenter_brand": row["presenter_brand"],
         "overall_score": row["overall_score"],
+    }
+
+
+# =============================================================================
+# F3 — Quarterly Practice Compliance Summary (sprint 2026-05-08)
+# =============================================================================
+# Maria's last owner-side P1 deferred from Friday. F3 produces a
+# one-page printable PDF the practice's Privacy Officer signs each
+# quarter and the practice owner files for HIPAA §164.530(j)
+# records-retention compliance.
+#
+# Distinction from F1: F1 is a CURRENT-STATE attestation valid 90
+# days; F3 is a TIME-WINDOWED summary for a completed calendar
+# quarter, valid 365 days, frozen-at-issue. Maria files F3 in the
+# §164.530(j) retention archive — it does NOT mutate post-issue.
+#
+# PRECONDITIONS (Carol contracts):
+#   - Active Privacy Officer designation (F2 row, revoked_at IS NULL)
+#   - Quarter must be in the past (period_end <= now())
+# Either missing → 409 Conflict with a specific reason. Never 500.
+
+@auth_router.post("/quarterly-summary")
+async def issue_quarterly_summary_pdf(
+    request: Request,
+    user: dict = Depends(require_client_user),
+):
+    """Issue + stream the F3 PDF in a single request. Each call
+    issues a NEW summary for the requested (year, quarter); a re-
+    issue of the same quarter SUPERSEDES the prior. Per-issue rate-
+    limit: 5/hour per (org, user) — summaries are expensive to render
+    and the §164.530(j) archive doesn't need a fresh one per minute.
+
+    Body (JSON):
+      { "year": 2026, "quarter": 1 }
+
+    Returns: application/pdf (the rendered summary).
+    """
+    try:
+        from .client_quarterly_summary import (
+            issue_quarterly_summary,
+            html_to_pdf as quarterly_html_to_pdf,
+            QuarterlySummaryError,
+        )
+    except ImportError:
+        from client_quarterly_summary import (  # type: ignore
+            issue_quarterly_summary,
+            html_to_pdf as quarterly_html_to_pdf,
+            QuarterlySummaryError,
+        )
+    from fastapi.responses import Response
+
+    # Parse + validate body. Hand-rolled to keep the failure-mode copy
+    # identical to F1 (HTTPException 400 / 409 / 429, never 422 from
+    # pydantic — Maria sees the message we wrote, not framework jargon).
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body must be JSON.")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object.")
+    try:
+        year = int(body.get("year"))
+        quarter = int(body.get("quarter"))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="Body must include integer 'year' and 'quarter' (1-4).",
+        )
+
+    pool = await get_pool()
+    org_id = user["org_id"]
+
+    # Per-(org, user) rate limit (matches F1's 5/hr posture).
+    try:
+        from .shared import check_rate_limit
+    except ImportError:
+        from shared import check_rate_limit  # type: ignore
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=str(org_id),
+        action="quarterly_summary_issue",
+        window_seconds=3600,
+        max_requests=5,
+        caller_key=f"client:{user['user_id']}",
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Quarterly summary issuance is rate-limited (5/hr "
+                f"per user). Retry in {retry_after_s}s."
+            ),
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    async with org_connection(pool, org_id=org_id) as conn:
+        try:
+            result = await issue_quarterly_summary(
+                conn=conn,
+                client_org_id=org_id,
+                issued_by_user_id=user["user_id"],
+                issued_by_email=user["email"],
+                year=year,
+                quarter=quarter,
+            )
+        except QuarterlySummaryError as e:
+            # Carol contract: 409, not 500. The customer needs to
+            # know WHICH precondition failed (PO? past-quarter?).
+            raise HTTPException(status_code=409, detail=str(e))
+        except Exception as e:
+            # Steve P2-A carry-over: concurrent issuances race past
+            # the supersede-prior + insert-new transaction; the
+            # second INSERT trips idx_qpcs_one_active_per_org_quarter
+            # and raises UniqueViolationError. Convert to 409.
+            cls_name = type(e).__name__
+            if "UniqueViolation" in cls_name or "IntegrityError" in cls_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Another quarterly summary issuance is in "
+                        "flight for this organization and quarter. "
+                        "Retry in a moment."
+                    ),
+                )
+            raise
+
+        await _audit_client_action(
+            conn, user,
+            action="QUARTERLY_SUMMARY_ISSUED",
+            target=result["summary_id"],
+            details={
+                "summary_id": result["summary_id"],
+                "attestation_hash": result["attestation_hash"],
+                "valid_until": result["valid_until"].isoformat(),
+                "practice_name": result["practice_name"],
+                "period_year": result["period_year"],
+                "period_quarter": result["period_quarter"],
+            },
+            request=request,
+        )
+
+    # Steve P1-A carry-over: WeasyPrint render is synchronous; wrap
+    # in asyncio.to_thread so the event loop stays responsive under
+    # concurrent load.
+    import asyncio as _asyncio
+    pdf_bytes = await _asyncio.to_thread(
+        quarterly_html_to_pdf, result["html"]
+    )
+    safe_practice = "".join(
+        c if c.isalnum() or c in "-_" else "-"
+        for c in result["practice_name"]
+    )[:80]
+    filename = (
+        f"quarterly-summary-{safe_practice}-Q{result['period_quarter']}"
+        f"-{result['period_year']}.pdf"
+    )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Attestation-Hash": result["attestation_hash"],
+            "X-Summary-Valid-Until": result["valid_until"].isoformat(),
+        },
+    )
+
+
+# =============================================================================
+# F3 public /verify/quarterly/{hash} endpoint (sprint 2026-05-08)
+# =============================================================================
+# Mirrors F4 (F1's public verify endpoint). Insurance carriers, OCR
+# investigators, and auditors hit this endpoint with the hash printed
+# on the F3 PDF; we return the OCR-grade payload via SECURITY DEFINER
+# function. NO auth — that's the point.
+
+@public_verify_router.get("/quarterly/{attestation_hash}")
+async def public_verify_quarterly_summary(
+    attestation_hash: str,
+    request: Request,
+):
+    """Public endpoint — NO AUTH. Returns OCR-grade payload for the
+    given F3 attestation hash, or {"valid": false} if unknown /
+    malformed. Same shape contract as F4 (Steve P1-D + Maya P1-A):
+    32-char floor, ambiguity detection, X-Forwarded-For per-IP rate-
+    limit (60/hr).
+    """
+    # 1. Shape check — accept full 64-char hash or 32-char prefix.
+    h = attestation_hash.strip().lower()
+    if not all(c in "0123456789abcdef" for c in h):
+        return {"valid": False, "reason": "malformed_hash"}
+    if len(h) not in (32, 64):
+        return {"valid": False, "reason": "malformed_hash_minimum_32_hex_chars"}
+
+    # 2. Per-IP rate-limit using X-Forwarded-For (Steve P1-C).
+    try:
+        from .shared import check_rate_limit
+    except ImportError:
+        from shared import check_rate_limit  # type: ignore
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    allowed, retry_after_s = await check_rate_limit(
+        site_id=client_ip,
+        action="public_verify_quarterly_summary",
+        window_seconds=3600,
+        max_requests=60,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Verification rate limit reached. Retry in {retry_after_s}s.",
+            headers={"Retry-After": str(retry_after_s)},
+        )
+
+    # 3. Lookup. SECURITY DEFINER function bypasses RLS for the
+    #    hash-keyed read; only OCR-grade fields returned.
+    try:
+        from .client_quarterly_summary import get_quarterly_by_hash
+    except ImportError:
+        from client_quarterly_summary import get_quarterly_by_hash  # type: ignore
+    pool = await get_pool()
+
+    try:
+        from .tenant_middleware import admin_connection
+    except ImportError:
+        from tenant_middleware import admin_connection  # type: ignore
+
+    async with admin_connection(pool) as conn:
+        if len(h) == 64:
+            row = await get_quarterly_by_hash(conn, h)
+        else:
+            # 32-char prefix — also detect ambiguity (Steve P1-D
+            # defense in depth).
+            full_rows = await conn.fetch(
+                """
+                SELECT attestation_hash
+                  FROM quarterly_practice_compliance_summaries
+                 WHERE attestation_hash LIKE $1 || '%'
+                 LIMIT 2
+                """,
+                h,
+            )
+            if len(full_rows) > 1:
+                return {
+                    "valid": False,
+                    "reason": "ambiguous_prefix_supply_full_64_hex_hash",
+                }
+            if not full_rows:
+                row = None
+            else:
+                row = await get_quarterly_by_hash(
+                    conn, full_rows[0]["attestation_hash"]
+                )
+
+    if not row:
+        return {"valid": False, "reason": "not_found"}
+
+    # 4. Compose OCR-grade payload. Mirrors the SECURITY DEFINER
+    #    function's RETURNS TABLE — no client_org_id, no PO email,
+    #    no ed25519_signature, no issued_by_*. NEVER leak internals.
+    return {
+        "valid": True,
+        "attestation_hash": row["attestation_hash"],
+        "issued_at": row["issued_at"].isoformat() if row["issued_at"] else None,
+        "valid_until": row["valid_until"].isoformat() if row["valid_until"] else None,
+        "is_expired": bool(row["is_expired"]),
+        "is_superseded": bool(row["is_superseded"]),
+        "period_year": row["period_year"],
+        "period_quarter": row["period_quarter"],
+        "period_start": row["period_start"].isoformat() if row["period_start"] else None,
+        "period_end": row["period_end"].isoformat() if row["period_end"] else None,
+        "bundle_count": row["bundle_count"],
+        "ots_anchored_pct": float(row["ots_anchored_pct"]) if row["ots_anchored_pct"] is not None else None,
+        "drift_detected_count": row["drift_detected_count"],
+        "drift_resolved_count": row["drift_resolved_count"],
+        "mean_score": row["mean_score"],
+        "sites_count": row["sites_count"],
+        "appliances_count": row["appliances_count"],
+        "workstations_count": row["workstations_count"],
+        "monitored_check_types_count": row["monitored_check_types_count"],
+        "privacy_officer": {
+            "name": row["privacy_officer_name"],
+            "title": row["privacy_officer_title"],
+        },
+        "presenter_brand": row["presenter_brand"],
+        "practice_name": row["practice_name"],
     }
 
