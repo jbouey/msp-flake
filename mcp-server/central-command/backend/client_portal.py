@@ -192,7 +192,9 @@ async def get_client_user_from_session(session_token: str, pool):
 
     token_hash = hash_token(session_token)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-23): get_client_user_from_session issues
+    # 3 admin statements (idle check, UPDATE last_activity, user fetch).
+    async with admin_transaction(pool) as conn:
         # Check idle timeout before updating last_activity_at
         idle_check = await conn.fetchrow("""
             SELECT last_activity_at FROM client_sessions
@@ -360,7 +362,9 @@ async def request_magic_link(request: ClientMagicLinkRequest, http_request: Requ
     pool = await get_pool()
     email = request.email.lower()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-23): request_magic_link issues 3 admin
+    # statements (user lookup, token INSERT, audit log).
+    async with admin_transaction(pool) as conn:
         # Find user
         user = await conn.fetchrow("""
             SELECT cu.id, cu.name, cu.is_active, cu.client_org_id,

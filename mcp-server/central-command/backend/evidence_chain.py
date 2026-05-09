@@ -3809,8 +3809,12 @@ async def get_chain_health(
     from .auth import require_auth
     await require_auth(request)
 
-    pool, admin_connection = await _get_admin_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-23): get_chain_health issues 3 admin
+    # reads (per-site stats, witness stats, OTS pending counts).
+    from .fleet import get_pool
+    from .tenant_middleware import admin_transaction
+    pool = await get_pool()
+    async with admin_transaction(pool) as conn:
         # Per-site bundle + signature stats
         site_rows = await conn.fetch(
             """

@@ -819,7 +819,9 @@ async def export_audit_bundle(
         raise HTTPException(status_code=403, detail="Admin only")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-23): export_audit_bundle issues 3 admin
+    # reads (org, sites, audit-bundle metadata).
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             "SELECT id, name, compliance_framework, baa_effective_date, baa_expiration_date FROM client_orgs WHERE id = $1::uuid",
             org_id,
@@ -1397,7 +1399,9 @@ async def cross_org_relocate_readiness(
         raise HTTPException(status_code=403, detail="Admin only")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-23): cross_org_relocate_readiness issues
+    # 3 admin reads (feature flag, source/target org, audit history).
+    async with admin_transaction(pool) as conn:
         flag = await conn.fetchrow(
             """
             SELECT enabled, enabled_at, enabled_by_email, enable_reason,
