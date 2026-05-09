@@ -55,11 +55,14 @@ CREATE INDEX IF NOT EXISTS idx_enumeration_results_site_id_created
 CREATE INDEX IF NOT EXISTS idx_go_agent_orders_site_id_created
     ON go_agent_orders (site_id, created_at DESC);
 
+-- go_agent_status_events has `transitioned_at` not `created_at`
+-- (audit verified 2026-05-09 against information_schema).
 CREATE INDEX IF NOT EXISTS idx_go_agent_status_events_site_id_created
-    ON go_agent_status_events (site_id, created_at DESC);
+    ON go_agent_status_events (site_id, transitioned_at DESC);
 
+-- liveness_claims has `claimed_at` not `created_at`.
 CREATE INDEX IF NOT EXISTS idx_liveness_claims_site_id_created
-    ON liveness_claims (site_id, created_at DESC);
+    ON liveness_claims (site_id, claimed_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_ots_batch_jobs_site_id_created
     ON ots_batch_jobs (site_id, created_at DESC);
