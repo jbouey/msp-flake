@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .auth import require_admin
 from .privileged_access_attestation import (
     create_privileged_access_attestation,
@@ -164,7 +164,9 @@ async def list_relocations(
     spelunking after a physical move.
     """
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-21): list_relocations issues 3 admin
+    # reads (appliance lookup, relocations history, current site).
+    async with admin_transaction(pool) as conn:
         sa = await conn.fetchrow(
             "SELECT site_id FROM site_appliances WHERE appliance_id = $1 AND deleted_at IS NULL",
             appliance_id,

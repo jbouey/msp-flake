@@ -259,7 +259,9 @@ async def get_profile(
     pool = await get_pool()
     pid = _parse_uuid(profile_id, "profile ID")
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-21): get_profile issues 3 admin reads
+    # (site access, profile row, assets/rules join).
+    async with admin_transaction(pool) as conn:
         await require_site_access(conn, user, site_id)
         row = await conn.fetchrow(
             "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",

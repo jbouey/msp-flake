@@ -387,7 +387,9 @@ async def get_sra_assessment(assessment_id: str, user: dict = Depends(require_cl
 @router.put("/sra/{assessment_id}/responses")
 async def save_sra_responses(assessment_id: str, body: SRAResponseBatch, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-21): save_sra_responses issues 3 admin
+    # statements (owner check, response upserts, audit log).
+    async with admin_transaction(pool) as conn:
         # Verify ownership
         owner = await conn.fetchval("""
             SELECT org_id FROM hipaa_sra_assessments WHERE id = $1

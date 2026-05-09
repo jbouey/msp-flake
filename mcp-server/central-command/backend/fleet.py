@@ -113,7 +113,9 @@ async def _get_appliance_health(
     last_checkin: Optional[datetime],
 ) -> HealthMetrics:
     """Calculate health metrics for a single appliance."""
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-21): _get_appliance_health issues 3
+    # admin reads (incidents + drift + tickets).
+    async with admin_transaction(pool) as conn:
         # Get incident stats
         incident_stats = await conn.fetchrow("""
             SELECT
@@ -270,7 +272,9 @@ async def get_client_detail(site_id: str) -> Optional[ClientDetail]:
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-21): get_client_detail issues 3 admin
+    # reads (appliances, health metrics, recent incidents).
+    async with admin_transaction(pool) as conn:
         # Get all appliances for this site.
         # ip_addresses is jsonb array; take first entry as the singular ip_address
         # the Appliance model expects. Tier is no longer an appliance attribute —
