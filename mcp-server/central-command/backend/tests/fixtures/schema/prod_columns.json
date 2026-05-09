@@ -330,6 +330,7 @@
     "claimed_hardware_id",
     "client_contact_email",
     "client_name",
+    "client_org_id",
     "created_at",
     "expires_at",
     "id",

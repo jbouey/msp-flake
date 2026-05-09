@@ -100,14 +100,26 @@ async def _get_current_baa(
     conn: asyncpg.Connection, client_org_id: str
 ) -> Optional[Dict[str, Any]]:
     """Return the most recent baa_signatures row for the org's
-    primary email. baa_signatures is keyed by email (signer_email);
-    the org's primary_email is the canonical link."""
+    primary email. baa_signatures is keyed by email; the org's
+    primary_email is the canonical link.
+
+    SQL aliases (`AS id`, `AS signer_email`) preserve the historical
+    dict-key contract this module's downstream consumers rely on
+    (`baa["id"]`, `baa["signer_email"]`). The live column names on
+    Migration 224's baa_signatures are `signature_id` + `email`; the
+    pre-2026-05-09 query referenced the wrong identifiers and 500'd
+    every self-serve-signed BAA org's first letter download. Cold-
+    onboarding adversarial walkthrough P0 #2 closure.
+    """
     row = await conn.fetchrow(
         """
-        SELECT s.id, s.signer_email, s.signer_name, s.signed_at,
-               c.name AS practice_name
+        SELECT s.signature_id   AS id,
+               s.email           AS signer_email,
+               s.signer_name,
+               s.signed_at,
+               c.name            AS practice_name
           FROM baa_signatures s
-          JOIN client_orgs c ON LOWER(c.primary_email) = LOWER(s.signer_email)
+          JOIN client_orgs c ON LOWER(c.primary_email) = LOWER(s.email)
          WHERE c.id = $1
          ORDER BY s.signed_at DESC
          LIMIT 1

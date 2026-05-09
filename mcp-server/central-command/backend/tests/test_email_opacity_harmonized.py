@@ -57,6 +57,13 @@ _RELOCATE = _BACKEND / "cross_org_site_relocate.py"
 _PORTAL = _BACKEND / "portal.py"
 _SITES = _BACKEND / "sites.py"
 _BG_TASKS = _BACKEND / "background_tasks.py"
+# Cold-onboarding 2026-05-09 P0 #1+#3+#4 closure: self-serve Stripe
+# webhook now sends the onboarding email when a customer's first
+# tenant is materialized. Customer-facing class — opaque required
+# (recipient may be a freshly-created mailbox or a forwarded address;
+# org identity should appear only inside the authenticated portal
+# session).
+_CLIENT_SIGNUP = _BACKEND / "client_signup.py"
 
 _OPAQUE_MODULES = (
     _OWNER_TRANSFER,
@@ -67,6 +74,7 @@ _OPAQUE_MODULES = (
     _PORTAL,
     _SITES,
     _BG_TASKS,
+    _CLIENT_SIGNUP,
 )
 
 # Forbidden parameter names in opaque-mode helpers (drop verbose-mode

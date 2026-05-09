@@ -36,7 +36,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 try:
     from .shared import check_rate_limit
@@ -480,8 +480,21 @@ async def handle_checkout_completed_for_signup(event_data: Dict[str, Any]) -> No
     """On checkout.session.completed for a signup flow:
       - mark signup_sessions.completed_at
       - upsert subscriptions row
-      - trigger site provisioning (TODO — wiring depends on existing
-        site-creation flow; for now we log and let ops take over)
+      - (self-serve cold path, partner-less) materialize a
+        `client_orgs` row (status=pending) + owner `client_users` row
+        + magic-link, send opaque onboarding email, issue an
+        `appliance_provisions` claim code, write a
+        `client_org_created` event into the per-org Ed25519
+        attestation chain, and (on subsequent BAA confirmation
+        upstream) flip status pending → active.
+
+    Cold-onboarding adversarial-walkthrough P0 #1+#3+#4 closure
+    (2026-05-09). The previous TODO-marked stub left the customer at
+    a dead-end: they paid and got nothing. Now the webhook returns
+    only after a fully-shaped tenant exists.
+
+    Partner-invited signups skip the cold-path side-effects — the
+    partner provisions the customer through the partner workflow.
     """
     session = event_data.get("object", {})
     metadata = session.get("metadata") or {}
@@ -519,7 +532,27 @@ async def handle_checkout_completed_for_signup(event_data: Dict[str, Any]) -> No
     )
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # Cold-onboarding (2026-05-09): admin_transaction() pins SET LOCAL
+    # app.is_admin + the multi-statement webhook work to a single
+    # PgBouncer backend (CLAUDE.md inviolable rule for multi-statement
+    # admin paths).
+    async with admin_transaction(pool) as conn:
+        # Pull signup_session row up front — we need email +
+        # practice_name + billing_contact_name later for the
+        # client_orgs materialization.
+        signup_row = await conn.fetchrow(
+            "SELECT email, practice_name, billing_contact_name, state, "
+            "       baa_signature_id "
+            "  FROM signup_sessions WHERE signup_id = $1",
+            signup_id,
+        )
+        if signup_row is None:
+            logger.error(
+                "checkout_completed for unknown signup_id=%s — webhook noop",
+                signup_id,
+            )
+            return
+
         # Mark signup completed (idempotent) + clear the plaintext token
         # so it isn't sitting in the DB after consumption.
         await conn.execute(
@@ -585,7 +618,298 @@ async def handle_checkout_completed_for_signup(event_data: Dict[str, Any]) -> No
                 pilot_end, now, resolved_partner_id,
             )
 
+        # ─── Cold-path side-effects (self-serve only) ─────────────
+        # Partner-invited signups are provisioned by the partner via
+        # the partner workflow (existing path), so we skip the
+        # client_orgs materialization + provision-code issuance for
+        # them. Self-serve only (resolved_partner_id is None) gets
+        # the wire-through that closes audit P0 #1 + #3 + #4.
+        provision_code: Optional[str] = None
+        client_org_id: Optional[str] = None
+        attestation_failed = False
+        if resolved_partner_id is None:
+            (
+                client_org_id,
+                provision_code,
+                attestation_failed,
+            ) = await _materialize_self_serve_tenant(
+                conn=conn,
+                signup_id=signup_id,
+                signup_row=dict(signup_row),
+                customer_id=customer_id,
+                plan=plan,
+            )
+
+    # ─── Side-effects outside the DB transaction ─────────────────
+    # Email + operator alert run AFTER the transaction commits.
+    # Failure of either MUST NOT block the customer's account
+    # materialization — the chain row is already on disk.
+    if resolved_partner_id is None and client_org_id is not None:
+        await _send_self_serve_onboarding_email(
+            recipient=signup_row["email"],
+            signup_id=signup_id,
+            provision_code=provision_code,
+        )
+        # Operator-visibility alert (Session 216 chain-gap escalation
+        # pattern). attestation_failed=True escalates severity and
+        # appends [ATTESTATION-MISSING] to subject.
+        from .chain_attestation import send_chain_aware_operator_alert
+        send_chain_aware_operator_alert(
+            event_type="client_org_created",
+            severity="P2",
+            summary="self-serve cold-onboarding tenant materialized",
+            details={
+                "signup_id": signup_id,
+                "client_org_id": client_org_id,
+                "plan": plan,
+            },
+            actor_email=None,  # Stripe webhook — no human actor
+            site_id=f"client_org:{client_org_id}",
+            attestation_failed=attestation_failed,
+        )
+
     logger.info(
-        "signup_completed signup_id=%s customer=%s plan=%s mode=%s",
+        "signup_completed signup_id=%s customer=%s plan=%s mode=%s "
+        "client_org_id=%s provision_code=%s",
         signup_id, customer_id, plan, mode,
+        client_org_id, "[issued]" if provision_code else None,
     )
+
+
+# ─── Cold-onboarding helpers (2026-05-09 audit P0 #1+#3+#4) ───────
+
+async def _materialize_self_serve_tenant(
+    *,
+    conn,
+    signup_id: str,
+    signup_row: Dict[str, Any],
+    customer_id: Optional[str],
+    plan: str,
+) -> tuple[Optional[str], Optional[str], bool]:
+    """Wire-through the self-serve cold-onboarding spine.
+
+    Creates (idempotently):
+      1. `client_orgs` row, `status='pending'` until BAA confirmed.
+         When `signup_sessions.baa_signature_id IS NOT NULL`, the
+         BAA is already on file → status flips straight to 'active'.
+      2. Owner `client_users` row, role='owner' + magic-link token.
+      3. `appliance_provisions` claim code, scoped to client_org_id
+         (no partner_id; mig 296 makes that legal).
+      4. `client_org_created` event into the per-org Ed25519
+         attestation chain. Anchors at synthetic
+         `client_org:<id>` namespace (Session 216 convention) since
+         no site exists yet.
+      5. If BAA already signed at signup-time, also writes a
+         `baa_signed` chain event (P1-5 from the audit).
+
+    Returns ``(client_org_id, provision_code, attestation_failed)``.
+    All work runs inside the caller's admin_transaction so the
+    webhook is atomic. Returns ``(None, None, False)`` on
+    unrecoverable error.
+    """
+    email = signup_row.get("email")
+    practice_name = signup_row.get("practice_name") or (email or "Practice")
+    billing_state = signup_row.get("state")
+    baa_signature_id = signup_row.get("baa_signature_id")
+
+    # 1. client_orgs — idempotent on (primary_email).
+    org_status = "active" if baa_signature_id else "pending"
+    org_row = await conn.fetchrow(
+        """
+        INSERT INTO client_orgs (
+            name, primary_email, billing_email, state,
+            stripe_customer_id, status, onboarded_at
+        )
+        VALUES ($1, $2, $2, $3, $4, $5,
+                CASE WHEN $5 = 'active' THEN NOW() ELSE NULL END)
+        ON CONFLICT (primary_email) DO UPDATE SET
+            stripe_customer_id = COALESCE(client_orgs.stripe_customer_id, EXCLUDED.stripe_customer_id),
+            -- Promote pending → active when BAA confirmed; never demote.
+            status = CASE
+                WHEN client_orgs.status = 'pending' AND EXCLUDED.status = 'active'
+                    THEN 'active'
+                ELSE client_orgs.status
+            END,
+            onboarded_at = COALESCE(client_orgs.onboarded_at,
+                                    CASE WHEN EXCLUDED.status = 'active'
+                                         THEN NOW() ELSE NULL END),
+            updated_at = NOW()
+        RETURNING id, status
+        """,
+        practice_name, email, billing_state, customer_id, org_status,
+    )
+    if org_row is None:
+        logger.error(
+            "client_orgs upsert returned no row for signup_id=%s — webhook abort",
+            signup_id,
+        )
+        return None, None, False
+    client_org_id = str(org_row["id"])
+
+    # 2. Owner client_users row + magic-link.
+    magic_token = secrets.token_urlsafe(32)
+    magic_token_hash = hashlib.sha256(magic_token.encode()).hexdigest()
+    from datetime import timedelta
+    magic_expires = datetime.now(timezone.utc) + timedelta(days=7)
+    await conn.execute(
+        """
+        INSERT INTO client_users (
+            client_org_id, email, name,
+            magic_token, magic_token_expires_at,
+            role, is_active, email_verified
+        )
+        VALUES ($1, $2, $3, $4, $5, 'owner', true, false)
+        ON CONFLICT (email) DO UPDATE SET
+            magic_token = EXCLUDED.magic_token,
+            magic_token_expires_at = EXCLUDED.magic_token_expires_at,
+            updated_at = NOW()
+        """,
+        client_org_id, email,
+        signup_row.get("billing_contact_name"),
+        magic_token_hash, magic_expires,
+    )
+
+    # 3. appliance_provisions — issue a claim code for the customer
+    # to flash + boot a USB. Self-serve provision: client_org_id set,
+    # partner_id NULL. Mig 296 makes this legal via the
+    # appliance_provisions_partner_or_org_ck CHECK.
+    from datetime import timedelta as _td
+    provision_code = secrets.token_urlsafe(12).replace("_", "").replace("-", "")[:16].upper()
+    target_site_id_hint = (
+        practice_name.lower().replace(" ", "-")[:32] + "-" + secrets.token_hex(3)
+    )
+    await conn.execute(
+        """
+        INSERT INTO appliance_provisions (
+            partner_id, client_org_id, provision_code,
+            target_site_id, client_name,
+            status, expires_at
+        )
+        VALUES (NULL, $1::uuid, $2, $3, $4, 'pending', NOW() + INTERVAL '30 days')
+        ON CONFLICT (provision_code) DO NOTHING
+        """,
+        client_org_id, provision_code, target_site_id_hint, practice_name,
+    )
+
+    # 4. client_org_created chain event. Anchor synthetic per Session
+    # 216 convention (no site exists yet for the brand-new org).
+    from .chain_attestation import (
+        emit_privileged_attestation,
+        resolve_client_anchor_site_id,
+    )
+    anchor = await resolve_client_anchor_site_id(conn, client_org_id)
+    failed_create, _ = await emit_privileged_attestation(
+        conn,
+        anchor_site_id=anchor,
+        event_type="client_org_created",
+        actor_email=email or "unknown@stripe-webhook",
+        reason=(
+            f"Stripe webhook materialized self-serve client_org from "
+            f"signup_id={signup_id} plan={plan}"
+        ),
+    )
+
+    # 5. baa_signed chain event (P1-5). Only if BAA was actually
+    # signed at signup-time (the BAA gate runs BEFORE checkout in
+    # client_signup.sign_baa).
+    failed_baa = False
+    if baa_signature_id:
+        failed_baa, _ = await emit_privileged_attestation(
+            conn,
+            anchor_site_id=anchor,
+            event_type="baa_signed",
+            actor_email=email or "unknown@stripe-webhook",
+            reason=(
+                f"BAA signature on file at checkout — signature_id="
+                f"{baa_signature_id} signup_id={signup_id}"
+            ),
+        )
+
+    return client_org_id, provision_code, (failed_create or failed_baa)
+
+
+# Subject literal MUST be a plain string (Session 218 task #42 +
+# test_email_opacity_harmonized.py). Do NOT introduce f-string
+# subjects or interpolate org/clinic/actor names.
+_ONBOARDING_SUBJECT = "Your OsirisCare account is ready"
+
+
+async def _send_self_serve_onboarding_email(
+    *,
+    recipient: Optional[str],
+    signup_id: str,
+    provision_code: Optional[str],
+) -> None:
+    """Customer-facing onboarding email. Opaque mode (Session 218
+    task #42 harmonization): no clinic/org/actor names in subject or
+    body. Identity context is served by authenticated portal session.
+
+    The provision_code IS in the body — it's not identifying context
+    (it's a 30-day, single-use bootstrap secret tied to the
+    customer's account, scoped to their client_org_id). The opacity
+    gate's FORBIDDEN_BODY_TOKENS list intentionally excludes
+    provision codes; they are operational onboarding material, not
+    PHI/clinic context.
+
+    Best-effort. SMTP failure is logged at ERROR but MUST NOT block
+    the response path — the customer's tenant is already
+    materialized; ops can re-send the email manually.
+    """
+    if not recipient:
+        logger.error(
+            "onboarding email skipped — no recipient for signup_id=%s",
+            signup_id,
+        )
+        return
+    if not provision_code:
+        logger.error(
+            "onboarding email skipped — no provision_code for signup_id=%s",
+            signup_id,
+        )
+        return
+    try:
+        # email_service.send_email delegates to
+        # email_alerts._send_smtp_with_retry — no inline SMTP code
+        # (CLAUDE.md inviolable rule).
+        from .email_service import send_email
+        portal_url = os.getenv(
+            "CLIENT_PORTAL_URL", "https://portal.osiriscare.net"
+        )
+        signup_ref = signup_id[:8]
+        # Inline f-string body so test_email_opacity_harmonized.py
+        # can resolve it to a literal at AST time. None of the
+        # interpolated tokens ({portal_url}, {provision_code},
+        # {signup_ref}) are in FORBIDDEN_BODY_TOKENS.
+        body = (
+            f"Hello,\n"
+            f"\n"
+            f"Your OsirisCare account is provisioned. To complete setup:\n"
+            f"\n"
+            f"1. Sign in to the customer portal:\n"
+            f"     {portal_url}\n"
+            f"2. Download the appliance installer ISO from the portal.\n"
+            f"3. Flash the ISO to a USB stick (16GB+) and boot the target\n"
+            f"   hardware.\n"
+            f"4. When prompted, enter the provision code below:\n"
+            f"\n"
+            f"     PROVISION CODE: {provision_code}\n"
+            f"\n"
+            f"Reference: signup-{signup_ref}\n"
+            f"Provision code expires in 30 days.\n"
+            f"\n"
+            f"Why this email omits identifying information:\n"
+            f"We minimize identifying information in unauthenticated channels\n"
+            f"(email transit, third-party SMTP relays). Full account context\n"
+            f"is visible only inside the authenticated portal session.\n"
+            f"\n"
+            f"If you did not just sign up for OsirisCare, do not follow these\n"
+            f"instructions. Reply to this email so we can investigate.\n"
+            f"\n"
+            f"---\n"
+            f"OsirisCare — substrate-level account onboarding notice"
+        )
+        await send_email(recipient, _ONBOARDING_SUBJECT, body)
+    except Exception:
+        logger.error(
+            "onboarding_email_failed signup_id=%s", signup_id, exc_info=True,
+        )

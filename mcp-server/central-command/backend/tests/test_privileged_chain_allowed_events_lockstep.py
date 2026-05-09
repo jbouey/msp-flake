@@ -177,6 +177,15 @@ def test_allowed_events_matches_expected_set():
         # NOT in PRIVILEGED_ORDER_TYPES (admin-API class, not
         # fleet_order). ALLOWED_EVENTS: 60.
         "partner_client_portal_link_minted",
+        # 2026-05-09 cold-onboarding adversarial-walkthrough P0 #1 +
+        # P1-5. Self-serve cold path: customer pays via Stripe →
+        # webhook materializes a `client_orgs` row + writes a
+        # `client_org_created` chain event anchored at synthetic
+        # `client_org:<id>`. When BAA is on file at checkout-time,
+        # also writes a `baa_signed` chain event. Both admin-API
+        # class — NOT in PRIVILEGED_ORDER_TYPES. ALLOWED_EVENTS: 62.
+        "client_org_created",
+        "baa_signed",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

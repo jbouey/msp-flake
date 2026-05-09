@@ -253,6 +253,19 @@ ALLOWED_EVENTS = {
     # partner-org events). Round-table .agent/plans/37-partner-
     # per-site-drill-down-roundtable-2026-05-08.md D4 RESOLVED.
     "partner_client_portal_link_minted",
+    # 2026-05-09 cold-onboarding adversarial-walkthrough closure (P0 #1
+    # + P1-5). Self-serve cold-path: customer pays via Stripe →
+    # signup webhook materializes a `client_orgs` row (status=pending
+    # until BAA confirmed) and an owner `client_users` row. The
+    # creation event is chain-anchored at the synthetic
+    # `client_org:<id>` namespace (Session 216 anchor convention)
+    # because no site exists yet. The BAA signature event closes the
+    # chain — its presence is what flips client_orgs.status pending →
+    # active. Both are admin-API class (Stripe webhook handler), NOT
+    # fleet_orders → ALLOWED_EVENTS-only (asymmetry permitted by
+    # lockstep checker: ALLOWED_EVENTS ⊇ PRIVILEGED_ORDER_TYPES).
+    "client_org_created",
+    "baa_signed",
 }
 
 
