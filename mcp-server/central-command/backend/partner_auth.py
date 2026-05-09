@@ -272,7 +272,9 @@ async def get_partner_from_session(session_token: str, pool):
 
     token_hash = hash_session_token(session_token)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-24): get_partner_from_session issues 3
+    # admin statements (idle check, UPDATE last_used, partner fetch).
+    async with admin_transaction(pool) as conn:
         # Check idle timeout before updating last_used_at
         idle_check = await conn.fetchrow("""
             SELECT last_used_at FROM partner_sessions

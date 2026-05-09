@@ -1589,7 +1589,9 @@ async def get_site_activity(
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-24): get_site_activity issues 3 admin
+    # reads (admin actions, fleet orders, evidence bundles).
+    async with admin_transaction(pool) as conn:
         # 1) Admin actions targeting this site
         admin_rows = await conn.fetch(
             """
@@ -2748,7 +2750,9 @@ async def acknowledge_order(order_id: str, request: Request, auth_site_id: str =
                     "acknowledged_at": now.isoformat()
                 }
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-24): acknowledge_order issues 3 admin
+    # statements (UPDATE order, audit log, telemetry).
+    async with admin_transaction(pool) as conn:
         # Update the order status
         result = await conn.fetchrow("""
             UPDATE admin_orders

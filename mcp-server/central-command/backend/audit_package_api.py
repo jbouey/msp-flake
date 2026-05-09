@@ -271,7 +271,9 @@ async def send_to_auditor(
     Actual email send integrates with email_alerts in a future iteration.
     """
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-24): send_to_auditor issues 3 admin
+    # statements (package read, UPDATE delivered, INSERT delivery row).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT package_id, site_id FROM audit_packages WHERE package_id = $1::uuid",
             package_id,

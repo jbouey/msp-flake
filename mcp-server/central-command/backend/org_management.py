@@ -1492,7 +1492,9 @@ async def get_org_health_dashboard(
     auth_module._check_org_access(user, org_id)
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-24): get_org_health_dashboard issues 3
+    # admin reads (org, sites, alerts/incidents counts).
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             """
             SELECT id, name, status, compliance_framework,
