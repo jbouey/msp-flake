@@ -1051,11 +1051,36 @@ async def submit_evidence(
                    "/var/lib/msp/agent-signing-key"
         )
 
-    # Multi-appliance key resolution: check per-appliance keys first, then site-level fallback
+    # Multi-appliance key resolution: per-appliance only.
+    #
+    # Session 196 rule + 2026-05-08 audit F-P1-1: signing keys live on
+    # `site_appliances.agent_public_key` (per-appliance). Site-level
+    # `sites.agent_public_key` is a legacy column being deprecated;
+    # multi-appliance sites silently bind to the wrong key when the
+    # site-level fallback is honored.
+    #
+    # Resolution order:
+    #   1. Match the submitted key against ANY site_appliances row.
+    #      If matched → use that registered key (verified below).
+    #   2. If unmatched but submitted key is well-formed (64 hex
+    #      chars), self-verify with the submitted key. If the
+    #      signature validates, the post-accept path at the
+    #      `auto_register_per_appliance` block (~line 1180) will
+    #      register the key onto the most-recently-checked-in
+    #      appliance row for the site.
+    #   3. No key anywhere → 401 REJECT. The appliance must `/checkin`
+    #      first so its row exists in site_appliances.
+    #
+    # The legacy steps 3-4 (sites.agent_public_key fallback +
+    # site-level auto-register) are REMOVED. Auditor-kit consumers
+    # always validate against per-appliance keys today; this closes
+    # the silent-validation-against-wrong-key class.
     registered_key = None
     matched_appliance_id = None
 
-    # 1. Check per-appliance keys (supports multiple appliances with different keys)
+    # 1. Per-appliance match (the only path that produces a
+    #    matched_appliance_id; required for accept-counter +
+    #    heartbeat update against the correct row).
     if bundle.agent_public_key and len(bundle.agent_public_key) == 64:
         appliance_result = await db.execute(text("""
             SELECT appliance_id, agent_public_key
@@ -1068,37 +1093,29 @@ async def submit_evidence(
             registered_key = appliance_row.agent_public_key
             matched_appliance_id = appliance_row.appliance_id
 
-    # 2. If no per-appliance match, try the submitted key directly (self-verify)
-    #    Auto-register on the appliance if the signature is valid
+    # 2. Self-verify with submitted key (bootstraps a new appliance
+    #    that has checked in but not yet had its key registered).
     if not registered_key and bundle.agent_public_key and len(bundle.agent_public_key) == 64:
-        registered_key = bundle.agent_public_key  # Will verify below
+        registered_key = bundle.agent_public_key
 
-    # 3. Fall back to site-level key (legacy single-appliance sites)
+    # 3. No key anywhere → reject. The site-level fallback used to
+    #    sit here; F-P1-1 removed it.
     if not registered_key:
-        registered_key = site_row.agent_public_key
-
-    # 4. Auto-register if no key exists anywhere
-    if not registered_key:
-        if bundle.agent_public_key and len(bundle.agent_public_key) == 64:
-            try:
-                await db.execute(
-                    text("UPDATE sites SET agent_public_key = :key WHERE site_id = :sid"),
-                    {"key": bundle.agent_public_key, "sid": site_id}
-                )
-                await db.commit()
-                registered_key = bundle.agent_public_key
-                logger.info(f"Auto-registered agent public key from evidence for site={site_id}")
-            except Exception as e:
-                logger.error(f"Failed to auto-register key: {e}")
-
-        if not registered_key:
-            logger.warning(f"Evidence submission rejected: no public key registered for site={site_id}")
-            raise HTTPException(
-                status_code=401,
-                detail="Site has no registered agent public key. "
-                       "The appliance must checkin at least once to register its "
-                       "signing key before submitting evidence."
-            )
+        logger.warning(
+            "Evidence submission rejected: no per-appliance public key registered",
+            extra={"site_id": site_id},
+        )
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "No per-appliance signing key registered for this site. "
+                "The appliance must complete at least one /api/appliances/checkin "
+                "to create its site_appliances row, AND a prior evidence "
+                "submission with a valid signature must have auto-registered "
+                "its agent_public_key. If this is a fresh appliance, retry "
+                "after the next checkin cycle."
+            ),
+        )
 
     # Verify the Ed25519 signature
     if bundle.signed_data:
@@ -1153,7 +1170,14 @@ async def submit_evidence(
                         f"Not incrementing per-appliance counter."
                     )
             except Exception as e:
-                logger.warning(f"Evidence rejection tracking failed for site {site_id}: {e}")
+                # CLAUDE.md "no silent write failures" — DB-write failure
+                # in the attestation hot path MUST log at ERROR with
+                # exc_info so operators can see it during incident review.
+                logger.error(
+                    "evidence_rejection_tracking_failed",
+                    extra={"site_id": site_id, "exception_class": type(e).__name__},
+                    exc_info=True,
+                )
 
             detail = "Evidence signature verification failed."
             if key_match is False:
@@ -1187,8 +1211,17 @@ async def submit_evidence(
                             ORDER BY last_checkin DESC NULLS LAST LIMIT 1
                           )
                     """), {"site_id": site_id, "key": bundle.agent_public_key})
-                except Exception:
-                    pass
+                except Exception as e:
+                    # CLAUDE.md "no silent write failures" — agent_public_key
+                    # auto-register is best-effort but a swallowed exception
+                    # here means future submissions for this appliance will
+                    # ALSO fail signature verification with no observable
+                    # cause. Log at ERROR with exc_info.
+                    logger.error(
+                        "agent_public_key_auto_register_failed",
+                        extra={"site_id": site_id, "exception_class": type(e).__name__},
+                        exc_info=True,
+                    )
 
             # Track acceptance + heartbeat per-appliance if matched, else site-wide
             try:
@@ -1214,8 +1247,21 @@ async def submit_evidence(
                             offline_notified = false
                         WHERE site_id = :site_id
                     """), {"site_id": site_id})
-            except Exception:
-                pass
+            except Exception as e:
+                # CLAUDE.md "no silent write failures" — heartbeat-on-evidence
+                # accept is the per-appliance liveness signal; a silent
+                # swallow here means an appliance that IS submitting evidence
+                # appears offline on the dashboard. Log at ERROR with
+                # exc_info so the regression is observable.
+                logger.error(
+                    "evidence_accept_heartbeat_update_failed",
+                    extra={
+                        "site_id": site_id,
+                        "matched_appliance_id": matched_appliance_id,
+                        "exception_class": type(e).__name__,
+                    },
+                    exc_info=True,
+                )
     else:
         logger.warning(f"No agent signature for evidence from site={site_id}")
 

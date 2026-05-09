@@ -287,7 +287,40 @@ def _canonical(payload: Dict[str, Any]) -> str:
 
 
 async def _get_prev_bundle(conn: asyncpg.Connection, site_id: str) -> Optional[Dict[str, Any]]:
-    """Return the most recent bundle for this site (for hash-chain linkage)."""
+    """Return the most recent bundle for this site (for hash-chain linkage).
+
+    Race-hardened (audit F-P2-3, 2026-05-08): two concurrent privileged
+    attestations on the same site previously read the same prev_hash
+    and could produce two bundles with identical (chain_position,
+    prev_hash). compliance_bundles.PRIMARY KEY is (id, created_at) on
+    the partitioned table, NOT (site_id, chain_position) — so the
+    duplicate slipped past the DB and was only detected on chain-walk
+    verify (auditor-visible "verify.sh diverges" credibility hit).
+
+    Fix: take a per-site advisory transaction lock at the START of the
+    chain-mutation flow. The lock is released automatically at COMMIT
+    or ROLLBACK. Two concurrent attestations on the same site now
+    serialize through this lock; reads on different sites are
+    unaffected.
+
+    `pg_advisory_xact_lock` requires being inside an explicit
+    transaction. The caller passes a `conn` already inside an admin
+    transaction (per the cross-org/owner-transfer/privileged-access
+    flows that all use admin_transaction). Acquiring the lock
+    OUTSIDE a transaction returns immediately with no serialization
+    semantics, which would defeat the purpose; the assertion below
+    catches that misuse loudly.
+    """
+    # `hashtext()` produces a stable int4 from the site_id string;
+    # advisory locks take int8 keys so we widen via two int4s. The
+    # second key (`hashtext('attest')`) namespaces the lock so it
+    # cannot collide with other advisory-lock callers using the same
+    # site_id for an unrelated purpose.
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtext($1)::bigint, hashtext('attest')::bigint)",
+        site_id,
+    )
+
     row = await conn.fetchrow(
         "SELECT bundle_id, bundle_hash, chain_position, chain_hash "
         "FROM compliance_bundles "
@@ -467,8 +500,15 @@ async def create_privileged_access_attestation(
         )
     except Exception as e:
         # Audit-log mirror is secondary; the attestation bundle IS the
-        # canonical record. Log but don't fail the attestation.
-        logger.warning(f"admin_audit_log mirror failed for {bundle_id}: {e}")
+        # canonical record. Log at ERROR (with exc_info) per the
+        # "no silent write failures" inviolable rule (CLAUDE.md), but
+        # don't fail the attestation. Operators tail ERROR; WARNING
+        # gets filtered out of incident reviews.
+        logger.error(
+            "admin_audit_log_mirror_failed",
+            extra={"bundle_id": bundle_id, "exception_class": type(e).__name__},
+            exc_info=True,
+        )
 
     logger.info(
         "privileged_access_attestation_written",

@@ -120,9 +120,10 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Appliance status (gauge) ---
             try:
-                rows = await conn.fetch(
-                    "SELECT last_checkin FROM site_appliances"
-                )
+                async with conn.transaction():
+                    rows = await conn.fetch(
+                        "SELECT last_checkin FROM site_appliances"
+                    )
                 counts = {"online": 0, "stale": 0, "offline": 0}
                 for row in rows:
                     lc = row["last_checkin"]
@@ -150,14 +151,15 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # Emit 1.0 for each appliance currently offline so Prom rules
             # can page with the display_name + site_id attached.
             try:
-                offline_rows = await conn.fetch("""
-                    SELECT appliance_id, site_id,
-                           COALESCE(display_name, hostname, appliance_id) AS label,
-                           EXTRACT(EPOCH FROM (NOW() - last_checkin))::int AS since_sec
-                    FROM site_appliances
-                    WHERE status = 'offline'
-                      AND deleted_at IS NULL
-                """)
+                async with conn.transaction():
+                    offline_rows = await conn.fetch("""
+                        SELECT appliance_id, site_id,
+                               COALESCE(display_name, hostname, appliance_id) AS label,
+                               EXTRACT(EPOCH FROM (NOW() - last_checkin))::int AS since_sec
+                        FROM site_appliances
+                        WHERE status = 'offline'
+                          AND deleted_at IS NULL
+                    """)
                 sections.append(_gauge(
                     "osiriscare_appliance_offline",
                     "1 if appliance is currently offline (labels: site_id, appliance_id, display_name, since_sec)",
@@ -181,11 +183,12 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # Session 206 redesign: single source of truth for flywheel
             # health. Every alert fires off this metric family.
             try:
-                lifecycle_rows = await conn.fetch("""
-                    SELECT lifecycle_state, COUNT(*) AS n
-                    FROM promoted_rules
-                    GROUP BY lifecycle_state
-                """)
+                async with conn.transaction():
+                    lifecycle_rows = await conn.fetch("""
+                        SELECT lifecycle_state, COUNT(*) AS n
+                        FROM promoted_rules
+                        GROUP BY lifecycle_state
+                    """)
                 # Always emit all known states so dashboards don't render
                 # as "no data" when there are zero rules in a state.
                 all_states = [
@@ -207,14 +210,15 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Flywheel Spine: event volume by type, last 1h ---
             try:
-                evt_rows = await conn.fetch("""
-                    SELECT event_type,
-                           COUNT(*) FILTER (WHERE outcome = 'success') AS ok,
-                           COUNT(*) FILTER (WHERE outcome = 'failed') AS failed
-                    FROM promoted_rule_events
-                    WHERE created_at > NOW() - INTERVAL '1 hour'
-                    GROUP BY event_type
-                """)
+                async with conn.transaction():
+                    evt_rows = await conn.fetch("""
+                        SELECT event_type,
+                               COUNT(*) FILTER (WHERE outcome = 'success') AS ok,
+                               COUNT(*) FILTER (WHERE outcome = 'failed') AS failed
+                        FROM promoted_rule_events
+                        WHERE created_at > NOW() - INTERVAL '1 hour'
+                        GROUP BY event_type
+                    """)
                 all_types = [
                     "pattern_detected", "shadow_evaluated", "promotion_approved",
                     "rollout_issued", "rollout_acked", "first_execution",
@@ -246,16 +250,17 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # request tokens — all labeled by class_id so the SRE
             # dashboard can spot per-class trends.
             try:
-                consent_events = await conn.fetch("""
-                    SELECT
-                        COALESCE(SUBSTR(rule_id, 9, POSITION('@' IN rule_id) - 9), '?') AS class_id,
-                        event_type,
-                        COUNT(*) AS n
-                    FROM promoted_rule_events
-                    WHERE event_type LIKE 'runbook.%'
-                      AND created_at > NOW() - INTERVAL '7 days'
-                    GROUP BY 1, 2
-                """)
+                async with conn.transaction():
+                    consent_events = await conn.fetch("""
+                        SELECT
+                            COALESCE(SUBSTR(rule_id, 9, POSITION('@' IN rule_id) - 9), '?') AS class_id,
+                            event_type,
+                            COUNT(*) AS n
+                        FROM promoted_rule_events
+                        WHERE event_type LIKE 'runbook.%'
+                          AND created_at > NOW() - INTERVAL '7 days'
+                        GROUP BY 1, 2
+                    """)
                 if consent_events:
                     grants = [
                         ({"class_id": r["class_id"]}, float(r["n"]))
@@ -293,16 +298,17 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 logger.exception("metrics: consent events query failed")
 
             try:
-                # Tokens that expired unconsumed — delivery health signal
-                expired_tokens = await conn.fetchval("""
-                    SELECT COUNT(*) FROM consent_request_tokens
-                    WHERE consumed_at IS NULL AND expires_at < NOW()
-                      AND expires_at > NOW() - INTERVAL '7 days'
-                """)
-                pending_tokens = await conn.fetchval("""
-                    SELECT COUNT(*) FROM consent_request_tokens
-                    WHERE consumed_at IS NULL AND expires_at > NOW()
-                """)
+                async with conn.transaction():
+                    # Tokens that expired unconsumed — delivery health signal
+                    expired_tokens = await conn.fetchval("""
+                        SELECT COUNT(*) FROM consent_request_tokens
+                        WHERE consumed_at IS NULL AND expires_at < NOW()
+                          AND expires_at > NOW() - INTERVAL '7 days'
+                    """)
+                    pending_tokens = await conn.fetchval("""
+                        SELECT COUNT(*) FROM consent_request_tokens
+                        WHERE consumed_at IS NULL AND expires_at > NOW()
+                    """)
                 sections.append(_gauge(
                     "osiriscare_consent_token_expired_7d",
                     "Consent request tokens that expired unconsumed in last 7d",
@@ -325,13 +331,14 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # sample per active violation, or a single zero-value sentinel
             # if the fleet is clean — dashboards don't render as "no data".
             try:
-                sv_rows = await conn.fetch("""
-                    SELECT invariant_name,
-                           severity,
-                           COALESCE(site_id, '') AS site_id,
-                           minutes_open::float  AS minutes_open
-                      FROM v_substrate_violations_active
-                """)
+                async with conn.transaction():
+                    sv_rows = await conn.fetch("""
+                        SELECT invariant_name,
+                               severity,
+                               COALESCE(site_id, '') AS site_id,
+                               minutes_open::float  AS minutes_open
+                          FROM v_substrate_violations_active
+                    """)
                 if sv_rows:
                     sections.append(_gauge(
                         "osiriscare_substrate_violations_active",
@@ -379,17 +386,18 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Flywheel Spine: stuck rules + operator_ack_required ---
             try:
-                stuck = await conn.fetchval("""
-                    SELECT COUNT(*) FROM promoted_rules
-                    WHERE lifecycle_state IN
-                          ('proposed', 'shadow', 'approved', 'rolling_out')
-                      AND lifecycle_state_updated_at < NOW() - INTERVAL '3 days'
-                """)
-                ack_pending = await conn.fetchval("""
-                    SELECT COUNT(*) FROM promoted_rules
-                    WHERE operator_ack_required = TRUE
-                      AND operator_ack_at IS NULL
-                """)
+                async with conn.transaction():
+                    stuck = await conn.fetchval("""
+                        SELECT COUNT(*) FROM promoted_rules
+                        WHERE lifecycle_state IN
+                              ('proposed', 'shadow', 'approved', 'rolling_out')
+                          AND lifecycle_state_updated_at < NOW() - INTERVAL '3 days'
+                    """)
+                    ack_pending = await conn.fetchval("""
+                        SELECT COUNT(*) FROM promoted_rules
+                        WHERE operator_ack_required = TRUE
+                          AND operator_ack_at IS NULL
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_stuck_rules",
                     "Rules stuck in non-terminal state > 3 days",
@@ -405,13 +413,14 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Open incidents by severity (gauge) ---
             try:
-                rows = await conn.fetch("""
-                    SELECT LOWER(COALESCE(severity, 'medium')) AS sev,
-                           COUNT(*) AS cnt
-                    FROM incidents
-                    WHERE status != 'resolved'
-                    GROUP BY LOWER(COALESCE(severity, 'medium'))
-                """)
+                async with conn.transaction():
+                    rows = await conn.fetch("""
+                        SELECT LOWER(COALESCE(severity, 'medium')) AS sev,
+                               COUNT(*) AS cnt
+                        FROM incidents
+                        WHERE status != 'resolved'
+                        GROUP BY LOWER(COALESCE(severity, 'medium'))
+                    """)
                 sev_map = {r["sev"]: r["cnt"] for r in rows}
                 values = [
                     ({"severity": sev}, float(sev_map.get(sev, 0)))
@@ -435,11 +444,12 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # so metrics dashboards silently lost healing counters
             # for 48h+.
             try:
-                rows = await conn.fetch("""
-                    SELECT resolution_level AS tier, success, COUNT(*) AS cnt
-                    FROM execution_telemetry
-                    GROUP BY resolution_level, success
-                """)
+                async with conn.transaction():
+                    rows = await conn.fetch("""
+                        SELECT resolution_level AS tier, success, COUNT(*) AS cnt
+                        FROM execution_telemetry
+                        GROUP BY resolution_level, success
+                    """)
                 values = []
                 for row in rows:
                     tier = row["tier"] or "unknown"
@@ -461,9 +471,10 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Evidence bundles (counter) ---
             try:
-                row = await conn.fetchrow(
-                    "SELECT COUNT(*) AS cnt FROM evidence_bundles"
-                )
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT COUNT(*) AS cnt FROM evidence_bundles"
+                    )
                 sections.append(_counter(
                     "osiriscare_evidence_bundles_total",
                     "Total evidence bundles collected",
@@ -474,9 +485,10 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Fleet orders pending (gauge) ---
             try:
-                row = await conn.fetchrow(
-                    "SELECT COUNT(*) AS cnt FROM fleet_orders WHERE status = 'active'"
-                )
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT COUNT(*) AS cnt FROM fleet_orders WHERE status = 'active'"
+                    )
                 sections.append(_gauge(
                     "osiriscare_fleet_orders_pending",
                     "Number of pending/active fleet orders",
@@ -488,11 +500,12 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # --- Checkin rate last hour (gauge) ---
             try:
                 one_hour_ago = now - timedelta(hours=1)
-                row = await conn.fetchrow(
-                    "SELECT COUNT(*) AS cnt FROM site_appliances "
-                    "WHERE last_checkin >= $1",
-                    one_hour_ago,
-                )
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT COUNT(*) AS cnt FROM site_appliances "
+                        "WHERE last_checkin >= $1",
+                        one_hour_ago,
+                    )
                 sections.append(_gauge(
                     "osiriscare_checkin_rate_1h",
                     "Number of appliance checkins in the last hour",
@@ -503,9 +516,10 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Log entries total (counter) ---
             try:
-                row = await conn.fetchrow(
-                    "SELECT COUNT(*) AS cnt FROM log_entries"
-                )
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT COUNT(*) AS cnt FROM log_entries"
+                    )
                 sections.append(_counter(
                     "osiriscare_log_entries_total",
                     "Total log entries ingested",
@@ -516,16 +530,17 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Learning system metrics (gauge) ---
             try:
-                row = await conn.fetchrow("""
-                    SELECT
-                        (SELECT COUNT(*) FROM aggregated_pattern_stats
-                         WHERE promotion_eligible = true) as eligible_patterns,
-                        (SELECT COUNT(*) FROM learning_promotion_candidates
-                         WHERE approval_status = 'pending') as pending_promotions,
-                        (SELECT COUNT(*) FROM learning_promotion_candidates
-                         WHERE approval_status = 'approved'
-                           AND approved_at > NOW() - INTERVAL '30 days') as recent_promotions
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT
+                            (SELECT COUNT(*) FROM aggregated_pattern_stats
+                             WHERE promotion_eligible = true) as eligible_patterns,
+                            (SELECT COUNT(*) FROM learning_promotion_candidates
+                             WHERE approval_status = 'pending') as pending_promotions,
+                            (SELECT COUNT(*) FROM learning_promotion_candidates
+                             WHERE approval_status = 'approved'
+                               AND approved_at > NOW() - INTERVAL '30 days') as recent_promotions
+                    """)
                 sections.append(_gauge(
                     "osiriscare_learning_eligible_patterns",
                     "Patterns eligible for L2-to-L1 promotion",
@@ -546,13 +561,14 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Escalation queue metrics (gauge) ---
             try:
-                rows = await conn.fetch("""
-                    SELECT status, COUNT(*) as cnt,
-                           EXTRACT(EPOCH FROM AVG(NOW() - created_at)) as avg_age_secs
-                    FROM escalation_tickets
-                    WHERE status NOT IN ('resolved', 'closed')
-                    GROUP BY status
-                """)
+                async with conn.transaction():
+                    rows = await conn.fetch("""
+                        SELECT status, COUNT(*) as cnt,
+                               EXTRACT(EPOCH FROM AVG(NOW() - created_at)) as avg_age_secs
+                        FROM escalation_tickets
+                        WHERE status NOT IN ('resolved', 'closed')
+                        GROUP BY status
+                    """)
                 ticket_values = []
                 age_values = []
                 for row in rows:
@@ -574,13 +590,14 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Device discovery metrics (gauge) ---
             try:
-                row = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) as total_devices,
-                        COUNT(*) FILTER (WHERE last_seen_at > NOW() - INTERVAL '24 hours') as active_24h,
-                        COUNT(*) FILTER (WHERE last_seen_at < NOW() - INTERVAL '7 days') as stale_7d
-                    FROM discovered_devices
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as total_devices,
+                            COUNT(*) FILTER (WHERE last_seen_at > NOW() - INTERVAL '24 hours') as active_24h,
+                            COUNT(*) FILTER (WHERE last_seen_at < NOW() - INTERVAL '7 days') as stale_7d
+                        FROM discovered_devices
+                    """)
                 sections.append(_gauge(
                     "osiriscare_discovered_devices_total",
                     "Total discovered devices",
@@ -601,13 +618,14 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- CVE watch metrics (gauge) ---
             try:
-                row = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) as total_cves,
-                        COUNT(*) FILTER (WHERE severity = 'critical') as critical_cves,
-                        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') as new_7d
-                    FROM cve_entries
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as total_cves,
+                            COUNT(*) FILTER (WHERE severity = 'critical') as critical_cves,
+                            COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') as new_7d
+                        FROM cve_entries
+                    """)
                 sections.append(_gauge(
                     "osiriscare_cve_total",
                     "Total tracked CVEs",
@@ -629,24 +647,25 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # --- Organization health (gauge) ---
             try:
                 # Per-org counts
-                org_stats = await conn.fetch("""
-                    SELECT
-                        co.id::text as org_id,
-                        co.name,
-                        co.status,
-                        co.max_sites,
-                        co.max_users,
-                        (SELECT COUNT(*) FROM sites WHERE client_org_id = co.id) as site_count,
-                        (SELECT COUNT(*) FROM client_users WHERE client_org_id = co.id) as user_count,
-                        (SELECT COUNT(*) FROM incidents i
-                         JOIN sites s ON s.site_id = i.site_id
-                         WHERE s.client_org_id = co.id
-                           AND i.reported_at > NOW() - INTERVAL '24 hours') as incidents_24h,
-                        co.baa_expiration_date,
-                        co.deprovisioned_at
-                    FROM client_orgs co
-                    WHERE co.deprovisioned_at IS NULL
-                """)
+                async with conn.transaction():
+                    org_stats = await conn.fetch("""
+                        SELECT
+                            co.id::text as org_id,
+                            co.name,
+                            co.status,
+                            co.max_sites,
+                            co.max_users,
+                            (SELECT COUNT(*) FROM sites WHERE client_org_id = co.id) as site_count,
+                            (SELECT COUNT(*) FROM client_users WHERE client_org_id = co.id) as user_count,
+                            (SELECT COUNT(*) FROM incidents i
+                             JOIN sites s ON s.site_id = i.site_id
+                             WHERE s.client_org_id = co.id
+                               AND i.reported_at > NOW() - INTERVAL '24 hours') as incidents_24h,
+                            co.baa_expiration_date,
+                            co.deprovisioned_at
+                        FROM client_orgs co
+                        WHERE co.deprovisioned_at IS NULL
+                    """)
 
                 if org_stats:
                     sections.append(_gauge(
@@ -683,19 +702,20 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                         ))
 
                 # BAA expiration alerts
-                baa_expiring = await conn.fetchval("""
-                    SELECT COUNT(*) FROM client_orgs
-                    WHERE baa_expiration_date IS NOT NULL
-                      AND baa_expiration_date <= CURRENT_DATE + INTERVAL '30 days'
-                      AND baa_expiration_date > CURRENT_DATE
-                      AND deprovisioned_at IS NULL
-                """)
-                baa_expired = await conn.fetchval("""
-                    SELECT COUNT(*) FROM client_orgs
-                    WHERE baa_expiration_date IS NOT NULL
-                      AND baa_expiration_date <= CURRENT_DATE
-                      AND deprovisioned_at IS NULL
-                """)
+                async with conn.transaction():
+                    baa_expiring = await conn.fetchval("""
+                        SELECT COUNT(*) FROM client_orgs
+                        WHERE baa_expiration_date IS NOT NULL
+                          AND baa_expiration_date <= CURRENT_DATE + INTERVAL '30 days'
+                          AND baa_expiration_date > CURRENT_DATE
+                          AND deprovisioned_at IS NULL
+                    """)
+                    baa_expired = await conn.fetchval("""
+                        SELECT COUNT(*) FROM client_orgs
+                        WHERE baa_expiration_date IS NOT NULL
+                          AND baa_expiration_date <= CURRENT_DATE
+                          AND deprovisioned_at IS NULL
+                    """)
                 sections.append(_gauge(
                     "osiriscare_org_baa_expiring_30d",
                     "Orgs with BAA expiring in next 30 days",
@@ -708,9 +728,10 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 ))
 
                 # Deprovisioned orgs (audit trail)
-                deprov = await conn.fetchval("""
-                    SELECT COUNT(*) FROM client_orgs WHERE deprovisioned_at IS NOT NULL
-                """)
+                async with conn.transaction():
+                    deprov = await conn.fetchval("""
+                        SELECT COUNT(*) FROM client_orgs WHERE deprovisioned_at IS NOT NULL
+                    """)
                 sections.append(_gauge(
                     "osiriscare_orgs_deprovisioned",
                     "Orgs in deprovisioning/retention state",
@@ -722,13 +743,14 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # --- Flywheel promotion pipeline health (gauge) ---
             try:
                 # Candidate pipeline stages
-                cand = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) FILTER (WHERE approval_status = 'pending') as pending,
-                        COUNT(*) FILTER (WHERE approval_status = 'approved') as approved,
-                        COUNT(*) FILTER (WHERE approval_status = 'rejected') as rejected
-                    FROM learning_promotion_candidates
-                """)
+                async with conn.transaction():
+                    cand = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE approval_status = 'pending') as pending,
+                            COUNT(*) FILTER (WHERE approval_status = 'approved') as approved,
+                            COUNT(*) FILTER (WHERE approval_status = 'rejected') as rejected
+                        FROM learning_promotion_candidates
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_candidates",
                     "Learning promotion candidates by status",
@@ -740,13 +762,14 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 ))
 
                 # Promoted rules by source
-                pr_source = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) as total,
-                        COUNT(*) FILTER (WHERE status = 'active') as active,
-                        COUNT(*) FILTER (WHERE status = 'disabled') as disabled
-                    FROM promoted_rules
-                """)
+                async with conn.transaction():
+                    pr_source = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) as total,
+                            COUNT(*) FILTER (WHERE status = 'active') as active,
+                            COUNT(*) FILTER (WHERE status = 'disabled') as disabled
+                        FROM promoted_rules
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_promoted_rules",
                     "Promoted rules by status",
@@ -757,11 +780,12 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 ))
 
                 # L1 rules by source
-                l1_src = await conn.fetch("""
-                    SELECT source, COUNT(*) as cnt
-                    FROM l1_rules WHERE enabled = true
-                    GROUP BY source
-                """)
+                async with conn.transaction():
+                    l1_src = await conn.fetch("""
+                        SELECT source, COUNT(*) as cnt
+                        FROM l1_rules WHERE enabled = true
+                        GROUP BY source
+                    """)
                 if l1_src:
                     sections.append(_gauge(
                         "osiriscare_flywheel_l1_rules_by_source",
@@ -770,13 +794,14 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                     ))
 
                 # Stuck candidates (approved but no promoted_rules row) — ALERT metric
-                stuck_count = await conn.fetchval("""
-                    SELECT COUNT(*) FROM learning_promotion_candidates lpc
-                    LEFT JOIN promoted_rules pr
-                        ON pr.pattern_signature = lpc.pattern_signature
-                        AND pr.site_id = lpc.site_id
-                    WHERE lpc.approval_status = 'approved' AND pr.rule_id IS NULL
-                """)
+                async with conn.transaction():
+                    stuck_count = await conn.fetchval("""
+                        SELECT COUNT(*) FROM learning_promotion_candidates lpc
+                        LEFT JOIN promoted_rules pr
+                            ON pr.pattern_signature = lpc.pattern_signature
+                            AND pr.site_id = lpc.site_id
+                        WHERE lpc.approval_status = 'approved' AND pr.rule_id IS NULL
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_stuck_candidates",
                     "Approved candidates with no promoted_rules row (alert if >0)",
@@ -784,10 +809,11 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 ))
 
                 # Eligibility pipeline: how many patterns awaiting manual approval
-                eligible_waiting = await conn.fetchval("""
-                    SELECT COUNT(*) FROM aggregated_pattern_stats
-                    WHERE promotion_eligible = true
-                """)
+                async with conn.transaction():
+                    eligible_waiting = await conn.fetchval("""
+                        SELECT COUNT(*) FROM aggregated_pattern_stats
+                        WHERE promotion_eligible = true
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_eligible_waiting",
                     "Patterns eligible for promotion but not yet promoted",
@@ -795,12 +821,13 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 ))
 
                 # Promotion rate (promotions per day last 7d)
-                promo_rate = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) FILTER (WHERE promoted_at > NOW() - INTERVAL '24 hours') as last_24h,
-                        COUNT(*) FILTER (WHERE promoted_at > NOW() - INTERVAL '7 days') as last_7d
-                    FROM promoted_rules
-                """)
+                async with conn.transaction():
+                    promo_rate = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE promoted_at > NOW() - INTERVAL '24 hours') as last_24h,
+                            COUNT(*) FILTER (WHERE promoted_at > NOW() - INTERVAL '7 days') as last_7d
+                        FROM promoted_rules
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_promotion_rate_24h",
                     "New promotions in the last 24 hours",
@@ -813,10 +840,11 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 ))
 
                 # Pipeline stall detector — time since last promotion
-                stall = await conn.fetchval("""
-                    SELECT EXTRACT(EPOCH FROM (NOW() - MAX(promoted_at)))
-                    FROM promoted_rules
-                """)
+                async with conn.transaction():
+                    stall = await conn.fetchval("""
+                        SELECT EXTRACT(EPOCH FROM (NOW() - MAX(promoted_at)))
+                        FROM promoted_rules
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_last_promotion_age_seconds",
                     "Seconds since the most recent promotion (alert if >604800 = 7d)",
@@ -828,26 +856,27 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # --- Mesh health (gauge) ---
             try:
                 # Per-site mesh state: ring size, peers, assignment coverage
-                rows = await conn.fetch("""
-                    SELECT
-                        site_id,
-                        COUNT(*) as appliance_count,
-                        COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online_count,
-                        AVG(
-                            CASE WHEN daemon_health IS NOT NULL
-                                THEN (daemon_health->>'mesh_ring_size')::int
-                                ELSE NULL END
-                        ) as avg_ring_size,
-                        AVG(
-                            CASE WHEN daemon_health IS NOT NULL
-                                THEN (daemon_health->>'mesh_peer_count')::int
-                                ELSE NULL END
-                        ) as avg_peer_count
-                    FROM site_appliances
-                    WHERE last_checkin > NOW() - INTERVAL '10 minutes'
-                    GROUP BY site_id
-                    HAVING COUNT(*) > 1
-                """)
+                async with conn.transaction():
+                    rows = await conn.fetch("""
+                        SELECT
+                            site_id,
+                            COUNT(*) as appliance_count,
+                            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online_count,
+                            AVG(
+                                CASE WHEN daemon_health IS NOT NULL
+                                    THEN (daemon_health->>'mesh_ring_size')::int
+                                    ELSE NULL END
+                            ) as avg_ring_size,
+                            AVG(
+                                CASE WHEN daemon_health IS NOT NULL
+                                    THEN (daemon_health->>'mesh_peer_count')::int
+                                    ELSE NULL END
+                            ) as avg_peer_count
+                        FROM site_appliances
+                        WHERE last_checkin > NOW() - INTERVAL '10 minutes'
+                        GROUP BY site_id
+                        HAVING COUNT(*) > 1
+                    """)
                 if rows:
                     sections.append(_gauge(
                         "osiriscare_mesh_appliance_count",
@@ -871,20 +900,21 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                     ))
 
                 # Assignment drift: ring_size vs online_count mismatch
-                drift_row = await conn.fetchrow("""
-                    SELECT COUNT(DISTINCT site_id) as drift_sites
-                    FROM (
-                        SELECT site_id,
-                               COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online,
-                               AVG((daemon_health->>'mesh_ring_size')::int) as ring
-                        FROM site_appliances
-                        WHERE last_checkin > NOW() - INTERVAL '10 minutes'
-                          AND daemon_health IS NOT NULL
-                        GROUP BY site_id
-                        HAVING COUNT(*) > 1
-                    ) s
-                    WHERE s.online != s.ring
-                """)
+                async with conn.transaction():
+                    drift_row = await conn.fetchrow("""
+                        SELECT COUNT(DISTINCT site_id) as drift_sites
+                        FROM (
+                            SELECT site_id,
+                                   COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online,
+                                   AVG((daemon_health->>'mesh_ring_size')::int) as ring
+                            FROM site_appliances
+                            WHERE last_checkin > NOW() - INTERVAL '10 minutes'
+                              AND daemon_health IS NOT NULL
+                            GROUP BY site_id
+                            HAVING COUNT(*) > 1
+                        ) s
+                        WHERE s.online != s.ring
+                    """)
                 sections.append(_gauge(
                     "osiriscare_mesh_drift_sites",
                     "Sites where ring size disagrees with online appliance count (alert if >0)",
@@ -894,23 +924,24 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 # Coverage gaps: targets with wrong number of assignments
                 # (should be exactly 1 owner per target in a healthy mesh)
                 try:
-                    gap_row = await conn.fetchrow("""
-                        WITH all_targets AS (
-                            SELECT site_id,
-                                   jsonb_array_elements_text(assigned_targets) as target
-                            FROM site_appliances
-                            WHERE assigned_targets IS NOT NULL
-                              AND last_checkin > NOW() - INTERVAL '10 minutes'
-                        )
-                        SELECT
-                            COUNT(*) FILTER (WHERE assignment_count > 1) as overlaps,
-                            COUNT(*) FILTER (WHERE assignment_count = 0) as orphans
-                        FROM (
-                            SELECT site_id, target, COUNT(*) as assignment_count
-                            FROM all_targets
-                            GROUP BY site_id, target
-                        ) t
-                    """)
+                    async with conn.transaction():
+                        gap_row = await conn.fetchrow("""
+                            WITH all_targets AS (
+                                SELECT site_id,
+                                       jsonb_array_elements_text(assigned_targets) as target
+                                FROM site_appliances
+                                WHERE assigned_targets IS NOT NULL
+                                  AND last_checkin > NOW() - INTERVAL '10 minutes'
+                            )
+                            SELECT
+                                COUNT(*) FILTER (WHERE assignment_count > 1) as overlaps,
+                                COUNT(*) FILTER (WHERE assignment_count = 0) as orphans
+                            FROM (
+                                SELECT site_id, target, COUNT(*) as assignment_count
+                                FROM all_targets
+                                GROUP BY site_id, target
+                            ) t
+                        """)
                     sections.append(_gauge(
                         "osiriscare_mesh_target_overlaps",
                         "Targets assigned to multiple appliances (duplicate scans, alert if >0)",
@@ -925,11 +956,12 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                     pass
 
                 # Audit log rate (assignments changing per hour)
-                audit_row = await conn.fetchrow("""
-                    SELECT COUNT(*) as changes_1h
-                    FROM mesh_assignment_audit
-                    WHERE created_at > NOW() - INTERVAL '1 hour'
-                """)
+                async with conn.transaction():
+                    audit_row = await conn.fetchrow("""
+                        SELECT COUNT(*) as changes_1h
+                        FROM mesh_assignment_audit
+                        WHERE created_at > NOW() - INTERVAL '1 hour'
+                    """)
                 sections.append(_gauge(
                     "osiriscare_mesh_assignment_changes_1h",
                     "Mesh assignment changes in last hour (high rate = instability)",
@@ -944,20 +976,21 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 # call directly — `EXTRACT(...) FILTER (...)` is a
                 # syntax error because EXTRACT is scalar. Move the
                 # FILTER inside, attached to MIN()/MAX().
-                row = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) FILTER (WHERE status = 'anchored') as anchored,
-                        COUNT(*) FILTER (WHERE status = 'pending') as pending,
-                        COUNT(*) FILTER (WHERE status = 'expired') as expired,
-                        COUNT(*) FILTER (WHERE status = 'verified') as verified,
-                        EXTRACT(EPOCH FROM (
-                            NOW() - MIN(submitted_at) FILTER (WHERE status = 'pending')
-                        )) as oldest_pending_age_seconds,
-                        EXTRACT(EPOCH FROM (
-                            NOW() - MAX(anchored_at) FILTER (WHERE status = 'anchored')
-                        )) as latest_anchor_age_seconds
-                    FROM ots_proofs
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE status = 'anchored') as anchored,
+                            COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                            COUNT(*) FILTER (WHERE status = 'expired') as expired,
+                            COUNT(*) FILTER (WHERE status = 'verified') as verified,
+                            EXTRACT(EPOCH FROM (
+                                NOW() - MIN(submitted_at) FILTER (WHERE status = 'pending')
+                            )) as oldest_pending_age_seconds,
+                            EXTRACT(EPOCH FROM (
+                                NOW() - MAX(anchored_at) FILTER (WHERE status = 'anchored')
+                            )) as latest_anchor_age_seconds
+                        FROM ots_proofs
+                    """)
                 sections.append(_gauge(
                     "osiriscare_ots_proofs",
                     "OTS proofs by status",
@@ -986,16 +1019,17 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # --- OTS calendar health (gauge) ---
             try:
                 # Per-calendar anchor counts in last 24h
-                rows = await conn.fetch("""
-                    SELECT
-                        calendar_url,
-                        COUNT(*) FILTER (WHERE status = 'anchored') as anchored,
-                        COUNT(*) as total
-                    FROM ots_proofs
-                    WHERE submitted_at > NOW() - INTERVAL '24 hours'
-                      AND calendar_url IS NOT NULL
-                    GROUP BY calendar_url
-                """)
+                async with conn.transaction():
+                    rows = await conn.fetch("""
+                        SELECT
+                            calendar_url,
+                            COUNT(*) FILTER (WHERE status = 'anchored') as anchored,
+                            COUNT(*) as total
+                        FROM ots_proofs
+                        WHERE submitted_at > NOW() - INTERVAL '24 hours'
+                          AND calendar_url IS NOT NULL
+                        GROUP BY calendar_url
+                    """)
                 if rows:
                     sections.append(_gauge(
                         "osiriscare_ots_calendar_success_24h",
@@ -1012,14 +1046,15 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # --- Pattern sync health (gauge) ---
             try:
-                row = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) FILTER (WHERE sync_status = 'success') as success,
-                        COUNT(*) FILTER (WHERE sync_status = 'partial') as partial,
-                        COUNT(*) FILTER (WHERE sync_status = 'failed') as failed
-                    FROM appliance_pattern_sync
-                    WHERE synced_at > NOW() - INTERVAL '24 hours'
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE sync_status = 'success') as success,
+                            COUNT(*) FILTER (WHERE sync_status = 'partial') as partial,
+                            COUNT(*) FILTER (WHERE sync_status = 'failed') as failed
+                        FROM appliance_pattern_sync
+                        WHERE synced_at > NOW() - INTERVAL '24 hours'
+                    """)
                 sections.append(_gauge(
                     "osiriscare_pattern_sync_24h",
                     "Pattern sync results in last 24 hours",
@@ -1043,14 +1078,15 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # 3) orphan_runbooks > 0 means promoted L1 rules reference a
             #    runbook_id that doesn't exist — they will fail on execution.
             try:
-                l2_row = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) FILTER (WHERE success) as successes,
-                        COUNT(*) as total
-                    FROM execution_telemetry
-                    WHERE resolution_level = 'L2'
-                      AND created_at > NOW() - INTERVAL '24 hours'
-                """)
+                async with conn.transaction():
+                    l2_row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE success) as successes,
+                            COUNT(*) as total
+                        FROM execution_telemetry
+                        WHERE resolution_level = 'L2'
+                          AND created_at > NOW() - INTERVAL '24 hours'
+                    """)
                 total = float(l2_row["total"] or 0)
                 successes = float(l2_row["successes"] or 0)
                 ratio = (successes / total) if total > 0 else 1.0
@@ -1068,11 +1104,12 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 logger.exception("metrics: L2 success ratio query failed")
 
             try:
-                row = await conn.fetchrow("""
-                    SELECT COALESCE(SUM(deployment_count), 0) as deployments
-                    FROM promoted_rules
-                    WHERE last_deployed_at > NOW() - INTERVAL '7 days'
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT COALESCE(SUM(deployment_count), 0) as deployments
+                        FROM promoted_rules
+                        WHERE last_deployed_at > NOW() - INTERVAL '7 days'
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_promotions_deployed_7d",
                     "Total promoted-rule deployments to appliances in last 7 days",
@@ -1082,14 +1119,15 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                 logger.exception("metrics: promotion deployment query failed")
 
             try:
-                row = await conn.fetchrow("""
-                    SELECT COUNT(*) as orphans
-                    FROM l1_rules l
-                    LEFT JOIN runbooks r ON r.runbook_id = l.runbook_id
-                    WHERE l.promoted_from_l2 = true
-                      AND l.enabled = true
-                      AND r.runbook_id IS NULL
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT COUNT(*) as orphans
+                        FROM l1_rules l
+                        LEFT JOIN runbooks r ON r.runbook_id = l.runbook_id
+                        WHERE l.promoted_from_l2 = true
+                          AND l.enabled = true
+                          AND r.runbook_id IS NULL
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_orphan_runbooks",
                     "Promoted L1 rules referencing a runbook_id missing from runbooks library",
@@ -1101,12 +1139,13 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # Phase 14 T2: notifier queue depth. > 0 for more than a few
             # minutes means email delivery is stuck — investigate SMTP.
             try:
-                row = await conn.fetchrow("""
-                    SELECT COUNT(*) AS n FROM compliance_bundles
-                    WHERE check_type = 'privileged_access'
-                      AND notified_at IS NULL
-                      AND checked_at > NOW() - INTERVAL '1 day'
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT COUNT(*) AS n FROM compliance_bundles
+                        WHERE check_type = 'privileged_access'
+                          AND notified_at IS NULL
+                          AND checked_at > NOW() - INTERVAL '1 day'
+                    """)
                 sections.append(_gauge(
                     "osiriscare_privileged_notifier_queue_depth",
                     "Unnotified privileged-access bundles (last 24h)",
@@ -1119,14 +1158,15 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # This is the cryptographic floor. If 0, the DB's enforcement
             # layer is missing — PAGE immediately.
             try:
-                row = await conn.fetchrow("""
-                    SELECT COUNT(*) AS n FROM pg_trigger
-                    WHERE tgname IN (
-                        'trg_enforce_privileged_chain',
-                        'trg_enforce_privileged_immutability'
-                    )
-                    AND NOT tgisinternal
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT COUNT(*) AS n FROM pg_trigger
+                        WHERE tgname IN (
+                            'trg_enforce_privileged_chain',
+                            'trg_enforce_privileged_immutability'
+                        )
+                        AND NOT tgisinternal
+                    """)
                 sections.append(_gauge(
                     "osiriscare_privileged_chain_triggers_installed",
                     "Count of privileged-chain enforcement triggers (should be 2)",
@@ -1140,18 +1180,19 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # are alert conditions. Source of truth = compliance_bundles
             # (same as every other evidence class).
             try:
-                row = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '7 days')
-                            AS events_7d,
-                        COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '24 hours')
-                            AS events_24h,
-                        COUNT(DISTINCT site_id) FILTER (
-                            WHERE checked_at > NOW() - INTERVAL '24 hours'
-                        ) AS sites_24h
-                    FROM compliance_bundles
-                    WHERE check_type = 'privileged_access'
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '7 days')
+                                AS events_7d,
+                            COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '24 hours')
+                                AS events_24h,
+                            COUNT(DISTINCT site_id) FILTER (
+                                WHERE checked_at > NOW() - INTERVAL '24 hours'
+                            ) AS sites_24h
+                        FROM compliance_bundles
+                        WHERE check_type = 'privileged_access'
+                    """)
                 sections.append(_gauge(
                     "osiriscare_privileged_access_events_7d",
                     "Fleet-wide privileged-access attestation events in last 7 days",
@@ -1189,13 +1230,14 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                     _current_fp = _sk.verify_key.encode(encoder=HexEncoder).decode()[:16]
                 except Exception:
                     _current_fp = None
-                row = await conn.fetchrow("""
-                    SELECT
-                      COUNT(*) FILTER (WHERE server_pubkey_fingerprint_seen IS DISTINCT FROM $1) AS divergent,
-                      COUNT(*) AS total
-                    FROM site_appliances
-                    WHERE deleted_at IS NULL
-                """, _current_fp)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT
+                          COUNT(*) FILTER (WHERE server_pubkey_fingerprint_seen IS DISTINCT FROM $1) AS divergent,
+                          COUNT(*) AS total
+                        FROM site_appliances
+                        WHERE deleted_at IS NULL
+                    """, _current_fp)
                 sections.append(_gauge(
                     "osiriscare_appliance_server_pubkey_divergence",
                     "Appliances whose last-seen server pubkey fingerprint diverges from current signing key",
@@ -1218,35 +1260,38 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
             # for scraper-side alerting; a Prom rule can page on
             # `sum(osiriscare_install_gate_failing) > 0 for 10m`.
             try:
-                col_exists = await conn.fetchval(
-                    """
-                    SELECT 1
-                      FROM information_schema.columns
-                     WHERE table_name = 'install_sessions'
-                       AND column_name = 'first_outbound_success_at'
-                     LIMIT 1
-                    """
-                )
-                if col_exists:
-                    gate_rows = await conn.fetch(
+                async with conn.transaction():
+                    col_exists = await conn.fetchval(
                         """
-                        SELECT iss.site_id,
-                               iss.mac_address,
-                               COALESCE(iss.hostname, iss.mac_address) AS label
-                          FROM install_sessions iss
-                          LEFT JOIN site_appliances sa
-                            ON UPPER(sa.mac_address) = UPPER(iss.mac_address)
-                           AND sa.site_id = iss.site_id
-                           AND sa.deleted_at IS NULL
-                         WHERE iss.last_seen > NOW() - INTERVAL '1 hour'
-                           AND iss.checkin_count >= 3
-                           AND iss.first_outbound_success_at IS NULL
-                           AND (
-                                 sa.last_checkin IS NULL
-                              OR sa.last_checkin < NOW() - INTERVAL '15 minutes'
-                           )
+                        SELECT 1
+                          FROM information_schema.columns
+                         WHERE table_name = 'install_sessions'
+                           AND column_name = 'first_outbound_success_at'
+                         LIMIT 1
                         """
                     )
+                    gate_rows = []
+                    if col_exists:
+                        gate_rows = await conn.fetch(
+                            """
+                            SELECT iss.site_id,
+                                   iss.mac_address,
+                                   COALESCE(iss.hostname, iss.mac_address) AS label
+                              FROM install_sessions iss
+                              LEFT JOIN site_appliances sa
+                                ON UPPER(sa.mac_address) = UPPER(iss.mac_address)
+                               AND sa.site_id = iss.site_id
+                               AND sa.deleted_at IS NULL
+                             WHERE iss.last_seen > NOW() - INTERVAL '1 hour'
+                               AND iss.checkin_count >= 3
+                               AND iss.first_outbound_success_at IS NULL
+                               AND (
+                                     sa.last_checkin IS NULL
+                                  OR sa.last_checkin < NOW() - INTERVAL '15 minutes'
+                               )
+                            """
+                        )
+                if col_exists:
                     sections.append(_gauge(
                         "osiriscare_install_gate_failing",
                         "1 per MAC with installed-system network gate failing. Labels: site_id, mac_address, label (hostname or MAC). v40 FIX-15.",
@@ -1267,14 +1312,15 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
 
             # Phase 6: regime change events in the last 7 days (unacknowledged)
             try:
-                row = await conn.fetchrow("""
-                    SELECT
-                        COUNT(*) FILTER (WHERE severity = 'warning')  AS warnings,
-                        COUNT(*) FILTER (WHERE severity = 'critical') AS criticals
-                    FROM l1_rule_regime_events
-                    WHERE detected_at > NOW() - INTERVAL '7 days'
-                      AND acknowledged_at IS NULL
-                """)
+                async with conn.transaction():
+                    row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE severity = 'warning')  AS warnings,
+                            COUNT(*) FILTER (WHERE severity = 'critical') AS criticals
+                        FROM l1_rule_regime_events
+                        WHERE detected_at > NOW() - INTERVAL '7 days'
+                          AND acknowledged_at IS NULL
+                    """)
                 sections.append(_gauge(
                     "osiriscare_flywheel_regime_changes_7d",
                     "L1 rule regime-change events (7d, unacknowledged) by severity",

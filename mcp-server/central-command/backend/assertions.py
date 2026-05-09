@@ -430,6 +430,144 @@ async def _check_phantom_detector_healthy(conn: asyncpg.Connection) -> List[Viol
     return []
 
 
+async def _check_pre_mig175_privileged_unattested(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev3 — INFORMATIONAL — pre-mig-175 privileged orders without attestation.
+
+    The Privileged-Access Chain-of-Custody rule (CLAUDE.md INVIOLABLE)
+    requires every privileged fleet_orders row to carry
+    `parameters->>'attestation_bundle_id'` linking to a real
+    compliance_bundles row with check_type='privileged_access'.
+    Migration 175 added a pre-INSERT trigger
+    `trg_enforce_privileged_chain` that REJECTS any new violation.
+
+    Three rows on `north-valley-branch-2` pre-date the trigger
+    (by 49h, 2h21m, and 2h21m respectively). The 2026-05-08
+    round-table chose disclosure over backfill (forgery risk);
+    a SECURITY_ADVISORY ships in `docs/security/`. This invariant
+    keeps the gap visible on the substrate dashboard so future
+    operators see it without archaeology.
+
+    Sev3 because: (1) prevention is in place — zero new violations
+    possible; (2) the affected orders never executed (terminal
+    states `expired`/`cancelled`); (3) disclosure is the
+    resolution, not auto-heal. The invariant exists for OPERATOR
+    VISIBILITY, not for action.
+
+    Resolves when: the rows are deleted (NEVER — fleet_orders is
+    in the audit-class set) OR a future migration explicitly
+    grandfathers them in (requires round-table approval).
+    """
+    rows = await conn.fetch(
+        """
+        SELECT id::text AS order_id,
+               order_type,
+               created_at,
+               status
+          FROM fleet_orders
+         WHERE order_type IN (
+                 'enable_emergency_access',
+                 'disable_emergency_access',
+                 'bulk_remediation',
+                 'signing_key_rotation'
+             )
+           AND (parameters->>'attestation_bundle_id') IS NULL
+         ORDER BY created_at ASC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=None,  # Pre-mig-175 rows lack a site anchor; the
+                            # advisory file names the affected sites.
+            details={
+                "order_id": r["order_id"],
+                "order_type": r["order_type"],
+                "created_at": r["created_at"].isoformat(),
+                "status": r["status"],
+                "advisory_ref": (
+                    "docs/security/"
+                    "SECURITY_ADVISORY_2026-04-13_PRIVILEGED_PRE_TRIGGER.md"
+                ),
+                "interpretation": (
+                    f"Pre-mig-175 privileged fleet_orders row "
+                    f"`{r['order_id']}` ({r['order_type']}, status="
+                    f"{r['status']}, created {r['created_at'].isoformat()}) "
+                    f"carries no attestation_bundle_id. This row "
+                    f"pre-dates the chain-of-custody trigger and is "
+                    f"covered by public security advisory "
+                    f"OSIRIS-2026-04-13-PRIVILEGED-PRE-TRIGGER. INFORMATIONAL: "
+                    f"new violations are blocked by trg_enforce_privileged_chain."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_merkle_batch_stalled(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev1 — Merkle batch worker has not anchored evidence in >6h.
+
+    Background: `compliance_bundles` rows transition `ots_status` like:
+
+        'pending' (just inserted) → 'batching' (queued for next Merkle run)
+                                  → 'pending' on the proof  (root submitted to OTS)
+                                  → 'anchored' (Bitcoin block confirms)
+
+    `_merkle_batch_loop` runs hourly and walks every site with rows
+    in `ots_status='batching'` to build a Merkle tree + submit the
+    root to OpenTimestamps.
+
+    The 2026-05-08 audit (audit/coach-e2e-attestation-audit-2026-05-08.md
+    F-P0-1) found 2,669 rows pinned in `ots_status='batching'` for 18
+    days on the only paying customer site — the loop was RLS-blind
+    (PgBouncer-routed asyncpg pool inherits app.is_admin='false', mig
+    234 default) and silently iterated over zero sites. The structural
+    fix shipped commit 7db2faab (admin_transaction). This invariant is
+    the runtime-defense layer: if the structural fix ever regresses
+    OR a different fault stalls the batcher, fire sev1 in 60s — not
+    18 days.
+
+    Threshold: oldest `ots_status='batching'` row older than 6h is
+    sev1 (loop runs hourly; 6h = ~6 missed cycles). Per-site row so
+    operators see WHICH site is stuck.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT site_id,
+               COUNT(*) AS stuck_count,
+               MIN(created_at) AS oldest_stuck_at,
+               EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) / 3600 AS oldest_hours
+          FROM compliance_bundles
+         WHERE ots_status = 'batching'
+           AND created_at < NOW() - INTERVAL '6 hours'
+         GROUP BY site_id
+         ORDER BY oldest_stuck_at ASC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "stuck_count": int(r["stuck_count"]),
+                "oldest_stuck_at": r["oldest_stuck_at"].isoformat(),
+                "oldest_hours": round(float(r["oldest_hours"]), 1),
+                "interpretation": (
+                    f"Site `{r['site_id']}` has {int(r['stuck_count'])} "
+                    f"compliance_bundles rows pinned at "
+                    f"ots_status='batching' for "
+                    f"{round(float(r['oldest_hours']), 1)}+ hours. The "
+                    f"hourly _merkle_batch_loop has not transitioned "
+                    f"these rows toward Bitcoin OTS anchoring. §164.312"
+                    f"(c)(1) integrity controls + the customer-facing "
+                    f"tamper-evidence promise depend on this loop firing."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
 async def _check_compliance_packets_stalled(conn: asyncpg.Connection) -> List[Violation]:
     """Sev1 — HIPAA monthly attestations missing (Block 4 P1).
 
@@ -1717,6 +1855,18 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_compliance_packets_stalled(c),
     ),
     Assertion(
+        name="pre_mig175_privileged_unattested",
+        severity="sev3",
+        description="INFORMATIONAL — surfaces 3 pre-migration-175 privileged fleet_orders rows on north-valley-branch-2 that lack attestation_bundle_id. New violations are STRUCTURALLY blocked by trg_enforce_privileged_chain (mig 175). Disclosure path chosen over backfill per round-table 2026-05-08 RT-1.2 (4-of-4 Carol/Sarah/Steve/Maya); see docs/security/SECURITY_ADVISORY_2026-04-13_PRIVILEGED_PRE_TRIGGER.md. Sev3 — operator visibility, not action.",
+        check=lambda c: _check_pre_mig175_privileged_unattested(c),
+    ),
+    Assertion(
+        name="merkle_batch_stalled",
+        severity="sev1",
+        description="One or more compliance_bundles rows have been pinned at ots_status='batching' for >6 hours. The hourly _merkle_batch_loop has not transitioned them toward Bitcoin OTS anchoring. §164.312(c)(1) integrity controls + customer-facing tamper-evidence promise depend on this loop. Pre-fix on 2026-05-08 (commit 7db2faab) the loop was RLS-blind via bare pool.acquire() — 2,669 bundles stuck 18 days on the only paying site. Structural fix in place + CI gate (test_bg_loop_admin_context.py) prevents regression of the RLS class; THIS invariant is the runtime detector for any OTHER stall cause (calendar outage, asyncpg pool exhaustion, code-bug in process_merkle_batch). Round-table 2026-05-08 RT-1.1 (c) close.",
+        check=lambda c: _check_merkle_batch_stalled(c),
+    ),
+    Assertion(
         name="partition_maintainer_dry",
         severity="sev1",
         description="A critical partitioned table (compliance_bundles, portal_access_log, appliance_heartbeats, promoted_rule_events) has NO partition for next month. INSERTs land in the _default partition (bloats it + degrades query plans) or fail if no default exists. Indicates partition_maintainer_loop / heartbeat_partition_maintainer_loop are wedged. Round-table 2026-05-01 Block 4 P1 closure.",
@@ -2361,6 +2511,46 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "tier override per <ticket>'. RT-DM Issue #2 hardening "
             "(non-consensus, 2026-05-06). Pinned by "
             "tests/test_l2_canonical_view_used.py."
+        ),
+    },
+    "pre_mig175_privileged_unattested": {
+        "display_name": "Pre-mig-175 privileged orders unattested (disclosed)",
+        "recommended_action": (
+            "INFORMATIONAL ONLY. Three privileged fleet_orders rows "
+            "on north-valley-branch-2 pre-date migration 175's "
+            "chain-of-custody trigger. New violations are "
+            "structurally impossible. Disclosure path chosen over "
+            "backfill (round-table 2026-05-08 RT-1.2). Auditors "
+            "have public security advisory "
+            "OSIRIS-2026-04-13-PRIVILEGED-PRE-TRIGGER on file in the "
+            "auditor kit's disclosures/ folder. NO ACTION REQUIRED — "
+            "this invariant exists for operator visibility so future "
+            "operators see the disclosure without archaeology. The "
+            "rows themselves are append-only; resolution is not "
+            "deletion but documented disclosure."
+        ),
+    },
+    "merkle_batch_stalled": {
+        "display_name": "Merkle batch worker stalled — evidence not anchoring",
+        "recommended_action": (
+            "compliance_bundles rows pinned at ots_status='batching' "
+            "for >6 hours indicate the hourly _merkle_batch_loop is "
+            "not transitioning evidence toward OTS anchoring. "
+            "Investigate: (1) `docker logs mcp-server | grep -E "
+            "'Merkle batch|merkle_batch'` — is the loop firing? "
+            "Look for `bg_task_started task=merkle_batch` AND a "
+            "subsequent `Merkle batch created` line. (2) Check the "
+            "OTS calendar: `curl -sS https://alice.btc.calendar.opentimestamps.org/`"
+            " — if the calendar is down, OTS submissions silently "
+            "fail (process_merkle_batch returns batched=0 with "
+            "error=ots_submission_failed). (3) Verify admin context "
+            "is reaching the loop: `docker exec mcp-server python -c "
+            "'import asyncio; from dashboard_api.fleet import get_pool; "
+            "from dashboard_api.tenant_middleware import admin_transaction; "
+            "asyncio.run(...)'`. (4) Manual unstall — see runbook "
+            "audit/round-table-closeout-2026-05-08.md §RT-1.1. "
+            "Sev1 because a stalled batcher means evidence is not "
+            "tamper-evidenced — auditors will catch the gap."
         ),
     },
     "orders_stuck_acknowledged": {

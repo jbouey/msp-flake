@@ -204,6 +204,17 @@ SOURCE_LEVEL_TESTS=(
     # 25432114856. Includes a self-test that constructs the bug
     # synthetically and asserts the gate flags it.
     "tests/test_migration_view_columns_exist.py"
+    # 2026-05-08 E2E attestation audit follow-on (RT-1.1/1.3/2.1):
+    # bg-loop admin-context gate (catches the RLS-blind background-
+    # loop class that produced 18d Merkle stall on the only paying
+    # customer site), prometheus_metrics savepoint gate (RT-1.3 —
+    # closes the 171 InFailedSQLTransactionError class), and the
+    # silent-DB-write-swallow gate (RT-2.1 — bans `except Exception:
+    # pass` after conn.execute / db.execute, ratchet baseline 14).
+    # All three are static-source AST gates with no backend deps.
+    "tests/test_bg_loop_admin_context.py"
+    "tests/test_prometheus_metrics_uses_savepoints.py"
+    "tests/test_no_silent_db_write_swallow.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
