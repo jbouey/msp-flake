@@ -27,7 +27,7 @@ import uuid as _uuid
 
 from .fleet import get_pool
 from .auth import require_admin
-from .tenant_middleware import tenant_connection, admin_connection
+from .tenant_middleware import tenant_connection, admin_connection, admin_transaction
 from .partner_auth import hash_session_token
 from .db_utils import _uid
 from .partner_activity_logger import (
@@ -396,7 +396,8 @@ async def claim_provision_code(claim: ProvisionClaim):
     """Claim a provision code (called by appliance during setup)."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-5): 5 admin reads/writes must pin to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # Find and validate provision code
         provision = await conn.fetchrow("""
             SELECT id, partner_id, target_site_id, client_name, status, expires_at
@@ -1743,7 +1744,8 @@ async def partner_consent_request(
         raise HTTPException(status_code=400, detail="partner contact_email must be set to request consent")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-5): 5 admin reads/writes must pin to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # Site ownership — same contract as the rest of /me/sites/{id}
         own = await conn.fetchval(
             "SELECT 1 FROM sites WHERE site_id = $1 AND partner_id = $2",
@@ -2537,7 +2539,8 @@ async def get_partner_org_devices(
 ):
     """Aggregate device inventory across all sites in a partner's org."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-5): 5 admin reads must pin to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
             org_id, partner['id']
@@ -2721,7 +2724,8 @@ async def get_partner_org_witnesses(
 ):
     """Witness attestation stats for a partner's org."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-5): 5 admin reads must pin to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
             org_id, partner['id']

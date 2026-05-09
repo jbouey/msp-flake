@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from .auth import require_auth
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +196,8 @@ async def get_audit_readiness(org_id: int, user: dict = Depends(require_auth)):
     pool = await get_pool()
 
     try:
-        async with admin_connection(pool) as conn:
+        # admin_transaction (wave-5): 6 admin reads must pin to one PgBouncer backend.
+        async with admin_transaction(pool) as conn:
             # Verify org exists and get org-level fields
             org = await conn.fetchrow(
                 "SELECT id, name, baa_on_file, next_audit_date FROM client_orgs WHERE id = $1",
