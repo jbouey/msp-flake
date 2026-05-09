@@ -182,13 +182,13 @@ async def upload_journal_batch(
                         VALUES (
                             'system',
                             'JOURNAL_UPLOAD_UNSCRUBBED',
-                            $1,
+                            $1::text,
                             jsonb_build_object(
-                                'site_id', $2,
-                                'appliance_id', $3,
+                                'site_id', $2::text,
+                                'appliance_id', $3::text,
                                 'batch_start', $4::text,
                                 'batch_end', $5::text,
-                                'line_count', $6,
+                                'line_count', $6::int,
                                 'reason', 'appliance-side sed scrubber lacks full phiscrub parity (3 patterns vs 14)'
                             ),
                             NOW()
