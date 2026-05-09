@@ -1620,7 +1620,8 @@ async def submit_evidence(
 @router.get("/sites/{site_id}/signing-status")
 async def get_signing_status(
     site_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
     """Get evidence signing status for a site (partner dashboard).
 
@@ -2860,7 +2861,8 @@ async def get_blockchain_status(
 @router.get("/sites/{site_id}/summary")
 async def get_evidence_summary(
     site_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
     """Get evidence summary statistics for a site."""
     result = await db.execute(text("""
@@ -2893,7 +2895,8 @@ async def get_evidence_summary(
 @router.get("/ots/status/{site_id}", response_model=OTSStatusResponse)
 async def get_ots_status(
     site_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
     """Get OTS anchoring status for a site."""
     result = await db.execute(text("""
@@ -3369,7 +3372,8 @@ async def generate_compliance_packet(
     month: Optional[int] = None,
     year: Optional[int] = None,
     framework: str = "hipaa",
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
     """
     Generate a monthly compliance packet from real evidence data.
@@ -3435,6 +3439,7 @@ async def get_org_evidence_bundle(
     org_id: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
+    _auth: Dict[str, Any] = Depends(require_evidence_view_access),
 ):
     """Download a cross-site evidence bundle ZIP for an organization.
 
