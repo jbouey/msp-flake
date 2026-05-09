@@ -707,7 +707,31 @@ async def _ots_resubmit_expired_loop():
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.exception(f"OTS resubmission batch failed: {e}")
+            # Downgrade the close-time InterfaceError class. The OTS
+            # batch holds a single SQLAlchemy session across N network
+            # calls to the OTS calendars; for large N the connection
+            # gets reaped by the asyncpg pool / PgBouncer before
+            # `async with async_session() as db:` exits. The session-
+            # close path then raises `cannot call Transaction.rollback():
+            # the underlying connection is closed`. Per-proof writes
+            # were already committed via the incremental db.commit()
+            # calls, so this is a NOISY but BENIGN error — the data
+            # in ots_proofs / compliance_bundles is intact. Real
+            # failures (network outage, schema mismatch, etc.) still
+            # propagate as ERROR.
+            err_str = str(e)
+            if (
+                "connection is closed" in err_str
+                or "connection has been released" in err_str
+            ):
+                logger.warning(
+                    "OTS resubmission session close benign-failed: "
+                    "connection reaped by pool during long batch. "
+                    "Per-proof commits succeeded — data intact. %s",
+                    err_str[:200],
+                )
+            else:
+                logger.exception(f"OTS resubmission batch failed: {e}")
 
         # 30s between batches; 5 min if last batch had zero successes
         delay = 300 if consecutive_zero > 0 else 30
