@@ -1309,10 +1309,13 @@ async def cross_incident_correlation_loop():
         _hb("cross_incident_correlation")
         try:
             from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
+            from dashboard_api.tenant_middleware import admin_transaction
 
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # admin_transaction (wave-20): cross_incident_correlation_loop
+            # issues 3 admin statements (A→B pair scan, registry filter,
+            # INSERT correlation).
+            async with admin_transaction(pool) as conn:
                 # Find A→B pairs: A resolved, B created within 10 min.
                 # Count DISTINCT A instances (each A may precede multiple B types
                 # — without DISTINCT, confidence can exceed 1.0).

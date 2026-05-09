@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends, Request
 from pydantic import BaseModel
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .partners import require_partner
 from .db_utils import _uid
 
@@ -596,7 +596,9 @@ async def stripe_webhook(request: Request):
 
     # Replay protection: deduplicate by Stripe event ID
     event_id = event.id
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-20): stripe_webhook issues 3 admin
+    # statements (DDL idempotent, dedup INSERT, route to handler).
+    async with admin_transaction(pool) as conn:
         # Create dedup table if not exists (idempotent)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS stripe_webhook_events (

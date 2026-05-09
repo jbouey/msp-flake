@@ -179,7 +179,9 @@ async def remove_sensor_from_host(site_id: str, hostname: str):
     """
     pool = await get_db_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-20): remove_sensor_from_host issues
+    # 3 admin statements (appliance lookup, sensor delete, command queue).
+    async with admin_transaction(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM site_appliances
@@ -220,7 +222,9 @@ async def get_pending_sensor_commands(site_id: str, appliance_id: Optional[str] 
     """
     pool = await get_db_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-20): get_pending_sensor_commands issues
+    # 3 admin reads (commands list + dispatched mark + audit).
+    async with admin_transaction(pool) as conn:
         if appliance_id:
             commands = await conn.fetch("""
                 SELECT id, command_type, hostname, status, created_at
@@ -492,7 +496,9 @@ async def remove_linux_sensor_from_host(site_id: str, hostname: str):
     """
     pool = await get_db_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-20): remove_linux_sensor_from_host issues
+    # 3 admin statements (appliance lookup, sensor delete, command queue).
+    async with admin_transaction(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM site_appliances
