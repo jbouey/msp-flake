@@ -1161,7 +1161,8 @@ async def get_site_device_summary(site_id: str, user: dict = Depends(require_aut
     scanned = compliant + drifted  # Only devices that have been checked
 
     # Coverage stats
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-15): 4 admin reads for coverage stats.
+    async with admin_transaction(pool) as conn:
         agent_count = await conn.fetchval(
             "SELECT COUNT(DISTINCT hostname) FROM go_agents WHERE site_id = $1",
             site_id,

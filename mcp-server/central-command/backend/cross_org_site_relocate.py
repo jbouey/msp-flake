@@ -61,7 +61,7 @@ from .auth import require_admin
 from .chain_attestation import emit_privileged_attestation
 from .client_portal import _audit_client_action, get_client_user_from_session
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 # Frontend URL for magic-link redemption. Mirrors the pattern in
 # client_owner_transfer.py BASE_URL — same env-var, same default.
@@ -592,7 +592,11 @@ async def initiate_cross_org_relocate(
     if not actor_email:
         raise HTTPException(403, "Admin actor email is required.")
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-15): initiate_cross_org_relocate issues
+    # 4+ admin statements (feature flag, site lookup, target org
+    # lookup, INSERT request row, audit log). Pin SET LOCAL to one
+    # backend so flag check + write share the same backend.
+    async with admin_transaction(pool) as conn:
         await _require_feature_enabled(conn)
 
         # Resolve site → source_org. The site MUST exist and have a

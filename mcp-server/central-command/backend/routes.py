@@ -5244,7 +5244,10 @@ async def get_organization_devices(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-15): get_organization_devices issues
+    # 4 admin statements (sites list, devices fetch, summary
+    # aggregation, last_seen timestamps).
+    async with admin_transaction(pool) as conn:
         site_ids = [r['site_id'] for r in await conn.fetch(
             "SELECT site_id FROM sites WHERE client_org_id = $1", org_id
         )]

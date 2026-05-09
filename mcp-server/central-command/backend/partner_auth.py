@@ -397,7 +397,9 @@ async def upsert_partner_from_oauth(
     # Get OAuth config for approval settings
     config = await get_oauth_config(pool)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-15): upsert_partner_from_oauth issues
+    # 4 admin statements (lookup + insert/update + audit + session).
+    async with admin_transaction(pool) as conn:
         # Check if partner exists with this OAuth identity
         existing = await conn.fetchrow("""
             SELECT id, name, slug, status, pending_approval FROM partners
@@ -1067,7 +1069,10 @@ async def email_login(request: Request, body: EmailLoginRequest):
 
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-15): email_login issues 4 admin
+    # statements (partner lookup, lockout state, password update,
+    # session insert). Pin SET LOCAL + queries to one backend.
+    async with admin_transaction(pool) as conn:
         partner = await conn.fetchrow("""
             SELECT id, name, slug, password_hash, status, pending_approval
             FROM partners
@@ -1515,7 +1520,10 @@ async def partner_verify_totp(request: Request, body: PartnerVerifyTOTPRequest):
     partner_id = pending["partner_id"]
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-15): partner_verify_totp issues 4
+    # admin statements (mfa lookup, backup-code consume, session
+    # insert, audit log).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT mfa_secret, mfa_backup_codes FROM partners WHERE id = $1",
             partner_id
