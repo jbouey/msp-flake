@@ -374,6 +374,8 @@ jobs:
         # untouched on the VPS where setup created it.
         # Static env vars only; no untrusted input.
         run: |
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} \
+            "mkdir -p ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer"
           rsync -avz \
             mcp-server/pgbouncer/pgbouncer.ini \
             ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/pgbouncer.ini
