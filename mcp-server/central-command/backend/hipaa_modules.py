@@ -435,7 +435,8 @@ async def save_sra_responses(assessment_id: str, body: SRAResponseBatch, user: d
 @router.post("/sra/{assessment_id}/complete")
 async def complete_sra_assessment(assessment_id: str, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # wave-11: PgBouncer routing-pathology fix — pin SET LOCAL + 4 calls to one backend
+    async with admin_transaction(pool) as conn:
         owner = await conn.fetchval("""
             SELECT org_id FROM hipaa_sra_assessments WHERE id = $1
         """, _uid(assessment_id))

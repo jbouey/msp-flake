@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 import asyncpg
 
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 from .models import (
     Appliance,
@@ -183,7 +183,8 @@ async def get_fleet_overview() -> List[ClientOverview]:
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # wave-11: PgBouncer routing-pathology fix — pin SET LOCAL + 4 calls to one backend
+    async with admin_transaction(pool) as conn:
         # Get all unique sites with appliance counts (exclude decommissioned)
         sites = await conn.fetch("""
             SELECT

@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
@@ -198,7 +198,8 @@ async def report_discovery_results(report: DiscoveryReport):
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # wave-11: PgBouncer routing-pathology fix — pin SET LOCAL + 4 calls to one backend
+    async with admin_transaction(pool) as conn:
         # Verify scan exists and get site internal ID
         scan = await conn.fetchrow("""
             SELECT ds.id, ds.site_id, s.site_id as site_id_str

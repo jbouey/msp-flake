@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends
 import asyncpg
 
+from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sensors", tags=["sensors"])
@@ -358,7 +360,8 @@ async def get_site_dual_mode_status(site_id: str):
     now = datetime.now(timezone.utc)
     timeout_threshold = now - timedelta(seconds=SENSOR_TIMEOUT)
 
-    async with admin_connection(pool) as conn:
+    # wave-11: PgBouncer routing-pathology fix — pin SET LOCAL + 4 calls to one backend
+    async with admin_transaction(pool) as conn:
         # Get all Windows targets for site
         credentials = await conn.fetch("""
             SELECT hostname, credential_type

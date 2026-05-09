@@ -312,10 +312,11 @@ async def temporal_decay_loop():
         _hb("temporal_decay")
         try:
             from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
+            from dashboard_api.tenant_middleware import admin_transaction
 
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # wave-11: PgBouncer routing-pathology fix — pin SET LOCAL + 4 calls to one backend
+            async with admin_transaction(pool) as conn:
                 # Load per-type config + default
                 cfg_rows = await conn.fetch(
                     "SELECT incident_type, half_life_days, decay_enabled, min_count_floor "
