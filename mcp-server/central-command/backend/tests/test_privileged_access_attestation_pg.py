@@ -124,8 +124,16 @@ async def setup(tmp_path, monkeypatch):
 async def conn(setup):
     c = await asyncpg.connect(PG_TEST_URL)
     try:
+        # Schema setup OUTSIDE the transaction (DDL behavior + so the
+        # tables are visible to subsequent calls).
         await c.execute(PREREQ_SCHEMA)
-        yield c, setup
+        # Test body runs INSIDE an explicit transaction so it mirrors
+        # production semantics where create_privileged_access_attestation
+        # is always called under admin_transaction(pool). Required after
+        # the 2026-05-09 P1-1 audit fix that added an
+        # `assert conn.is_in_transaction()` to _get_prev_bundle().
+        async with c.transaction():
+            yield c, setup
     finally:
         await c.execute("""
             DROP TABLE IF EXISTS admin_audit_log CASCADE;
