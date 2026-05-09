@@ -556,3 +556,68 @@ def test_rendered_readme_contains_round_table_sections():
             f"Banned legal-language word `{banned.strip()}` in rendered "
             f"README (CLAUDE.md Session 199 hard rule)."
         )
+
+
+def test_jinja2_strict_undefined_aborts_on_missing_var():
+    """Round-table 2026-05-06 T1.1-T1.4 closure gate: prove the new
+    Jinja2-with-StrictUndefined render path FAILS LOUDLY on any
+    missing kwarg, so a future template edit that introduces a
+    `{{ new_var }}` reference without a matching kwarg surfaces at
+    boot-smoke / unit-test time, NEVER at customer download time.
+
+    This is the behavioural opposite of the .format()-era bug: the
+    old `{bundle_id}` was a SILENT placeholder waiting to KeyError
+    on a customer; StrictUndefined raises before a single byte
+    leaves the function.
+
+    Two assertions:
+      1. The required-kwargs guard in render_template() raises
+         TypeError when a declared required kwarg is absent.
+      2. Jinja2 StrictUndefined raises UndefinedError when the
+         template body references a var that wasn't in the
+         supplied kwargs (modeled by injecting an ad-hoc test
+         template with a stray reference).
+    """
+    import sys, pathlib as _pl
+    backend = _pl.Path(__file__).resolve().parent.parent
+    if str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    from templates import render_template, _env  # type: ignore
+    from jinja2 import UndefinedError
+
+    # (1) required-kwargs guard.
+    try:
+        render_template(
+            "auditor_kit/README",
+            site_id="x",
+            clinic_name="x",
+            generated_at="x",
+            presenter_brand="x",
+            # presenter_contact_line intentionally omitted
+        )
+    except TypeError as e:
+        assert "presenter_contact_line" in str(e), (
+            f"TypeError did not name the missing kwarg: {e!r}"
+        )
+    else:
+        raise AssertionError(
+            "render_template() did not raise on a missing required "
+            "kwarg — guard is broken."
+        )
+
+    # (2) Jinja2 StrictUndefined contract — render an ad-hoc string
+    # template through the SAME environment that customer templates
+    # use, so we exercise the actual StrictUndefined wiring rather
+    # than re-asserting a Jinja2 unit.
+    tmpl = _env.from_string("hello {{ unsupplied_kwarg_xyz }}")
+    try:
+        tmpl.render()
+    except UndefinedError:
+        pass
+    else:
+        raise AssertionError(
+            "_env.from_string did NOT raise UndefinedError on a "
+            "missing var — StrictUndefined wiring is broken; future "
+            "stray-placeholder bugs would silent-fall-through to "
+            "customer downloads."
+        )
