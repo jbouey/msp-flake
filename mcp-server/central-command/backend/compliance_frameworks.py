@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .partners import require_partner
 from .auth import require_auth, require_site_access
 
@@ -743,7 +743,9 @@ async def apply_industry_preset(
     pool = await get_pool()
 
     # Get partner's presets (or use defaults)
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-22): apply_industry_preset issues 3
+    # admin statements (presets fetch, framework apply UPDATE, audit).
+    async with admin_transaction(pool) as conn:
         partner_row = await conn.fetchrow("""
             SELECT industry_presets FROM partners WHERE id = $1
         """, partner['id'])

@@ -777,7 +777,9 @@ async def create_from_template(
     pool = await get_pool()
     tid = _parse_uuid(template_id, "template ID")
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-22): create_from_template issues 3 admin
+    # statements (site access, template fetch, profile INSERT).
+    async with admin_transaction(pool) as conn:
         await require_site_access(conn, user, site_id)
         tmpl = await conn.fetchrow(
             "SELECT * FROM app_profile_templates WHERE id = $1", tid

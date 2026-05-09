@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from .fleet import get_pool
 from .auth import require_auth
-from .tenant_middleware import tenant_connection, admin_connection
+from .tenant_middleware import tenant_connection, admin_connection, admin_transaction
 from .sites import require_appliance_auth
 
 logger = logging.getLogger(__name__)
@@ -343,7 +343,9 @@ async def export_logs(
 async def maintain_log_partitions(pool):
     """Create future partitions and drop old ones (>90 days)."""
     try:
-        async with admin_connection(pool) as conn:
+        # admin_transaction (wave-22): maintain_log_partitions issues
+        # 3+ admin DDL statements (CREATE/DROP partitions in loop).
+        async with admin_transaction(pool) as conn:
             # Create partitions for next 2 months
             for i in range(3):
                 await conn.execute(f"""

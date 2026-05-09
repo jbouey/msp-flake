@@ -270,7 +270,9 @@ async def list_releases(
 async def create_release(release: ReleaseCreate, user: dict = Depends(require_admin)):
     """Create a new update release."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-22): create_release issues 3 admin
+    # statements (dup check, INSERT release, audit log).
+    async with admin_transaction(pool) as conn:
         # Check for duplicate version
         existing = await conn.fetchrow(
             "SELECT id FROM update_releases WHERE version = $1",
@@ -1169,7 +1171,9 @@ async def cancel_fleet_order(order_id: str, user: dict = Depends(require_admin))
 async def get_fleet_order_delivery(order_id: str, user: dict = Depends(require_admin)):
     """Get delivery status for a fleet order across all appliances."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-22): get_fleet_order_delivery issues 3
+    # admin reads (order, completions, delivery counts).
+    async with admin_transaction(pool) as conn:
         order = await conn.fetchrow(
             "SELECT order_type, status, created_at, expires_at FROM fleet_orders WHERE id = $1",
             UUID(order_id),
