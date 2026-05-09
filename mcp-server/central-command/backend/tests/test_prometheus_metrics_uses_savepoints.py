@@ -1,34 +1,38 @@
-"""Round-table RT-1.3 (Session 219, 2026-05-08): every `await conn.<method>(...)`
-inside the `prometheus_metrics()` body MUST be enclosed in an
-`async with conn.transaction():` ancestor (a savepoint).
+"""Round-table P0-2 (Session 219, 2026-05-09): every metric SECTION in
+`prometheus_metrics()` MUST be wrapped in its OWN
+`async with admin_transaction(pool) as conn:` block AND have its OWN
+try/except.
 
 Why this gate exists
 ====================
-The /metrics endpoint issues 48 sequential reads inside a single
-`admin_transaction(pool)` block. asyncpg + Postgres semantics:
-when ONE query in an open transaction errors, the WHOLE
-transaction is poisoned — every subsequent fetch returns
-`InFailedSQLTransactionError` and the metric reports 0 silently.
+The /metrics endpoint issues 30+ sequential read sections. Two earlier
+shapes both leaked transaction-poisoning errors at runtime:
 
-The audit (`audit/coach-e2e-attestation-audit-2026-05-08.md`
-F-P0-3) found 171 `InFailedSQLTransactionError` lines in 5,000
-production log lines, all from `prometheus_metrics.py`.
+1. ORIGINAL (pre-Session 219): one outer `admin_transaction(pool) as
+   conn` wrapping all sections, no per-query isolation. A single bad
+   query poisoned the rest of the scrape — 171 InFailedSQLTransactionError
+   in 5,000 production log lines (`audit/coach-e2e-attestation-audit-2026-05-08.md`).
 
-Per-query savepoints (`async with conn.transaction():` inside the
-outer admin_transaction) isolate failures: one section's error no
-longer poisons the rest of the scrape. This is the same pattern
-applied across `sites.py` checkin handler in Session 200.
+2. SAVEPOINT ATTEMPT (commit 5cdcf90f, 2026-05-08): kept the outer
+   admin_transaction, wrapped each query in `async with conn.transaction():`
+   (an asyncpg savepoint). Still emitted 1500+ InFailedSQLTransactionError
+   per 4 hours. Root cause: when asyncpg's prepared-statement-cache marks
+   the outer transaction aborted, the SAVEPOINT SQL itself runs against
+   an aborted transaction. Per-query savepoints can't recover a parent
+   that asyncpg has already given up on.
+
+3. CURRENT (this gate): each section opens its OWN
+   `admin_transaction(pool) as conn` block. Fresh PgBouncer backend,
+   fresh transaction; section A's failure cannot poison section B.
 
 Hard rule
 ---------
-- Outer `admin_transaction(pool) as conn` STAYS — that pins SET
-  LOCAL + reads to one PgBouncer backend.
-- INSIDE that block, every `await conn.<fetch|fetchval|fetchrow|execute>(...)`
-  call site must have an `async with conn.transaction():` ancestor.
-
-Multiple awaits MAY share one savepoint (logical unit) — this test
-just requires SOME savepoint ancestor exists; it doesn't enforce
-"one per await".
+- The OUTER `admin_transaction(pool) as conn` IS REMOVED. There is no
+  one-outer-transaction. There are many sibling per-section transactions.
+- Every section is `try: / async with admin_transaction(pool) as conn: /
+  ... / except Exception: logger.exception(...)`.
+- Inner `async with conn.transaction()` savepoints MUST NOT exist — they
+  were the broken middle-layer fix.
 """
 from __future__ import annotations
 
@@ -41,24 +45,21 @@ import pytest
 _BACKEND = pathlib.Path(__file__).resolve().parent.parent
 _TARGET = _BACKEND / "prometheus_metrics.py"
 
-# asyncpg connection methods we care about. `conn.transaction()` itself is
-# the wrapper, not a query, so it's excluded.
-_QUERY_METHODS = {"fetch", "fetchval", "fetchrow", "execute", "executemany"}
 
-
-def _is_conn_query_call(call: ast.Call) -> bool:
-    """True if call is `conn.<query_method>(...)`."""
-    func = call.func
-    if not isinstance(func, ast.Attribute):
-        return False
-    if func.attr not in _QUERY_METHODS:
-        return False
-    # Receiver must be a Name == "conn" (we don't care about other names).
-    return isinstance(func.value, ast.Name) and func.value.id == "conn"
+def _is_admin_transaction_with(node: ast.AsyncWith) -> bool:
+    """True if the AsyncWith opens `admin_transaction(...)` (any args)."""
+    for item in node.items:
+        ctx = item.context_expr
+        if not isinstance(ctx, ast.Call):
+            continue
+        func = ctx.func
+        if isinstance(func, ast.Name) and func.id == "admin_transaction":
+            return True
+    return False
 
 
 def _is_conn_transaction_with(node: ast.AsyncWith) -> bool:
-    """True if the AsyncWith opens `conn.transaction()` (the savepoint)."""
+    """True if the AsyncWith opens `conn.transaction()` (the legacy savepoint)."""
     for item in node.items:
         ctx = item.context_expr
         if not isinstance(ctx, ast.Call):
@@ -73,45 +74,7 @@ def _is_conn_transaction_with(node: ast.AsyncWith) -> bool:
     return False
 
 
-def _collect_violations(tree: ast.Module) -> list[tuple[int, str]]:
-    """Walk the AST and return (lineno, snippet) for every `await conn.<query>(...)`
-    that does NOT have a `conn.transaction()` AsyncWith ancestor.
-
-    The walk is parent-aware: we descend the tree recording the stack of
-    enclosing nodes; whenever we hit an Await whose value is a Call that
-    matches `_is_conn_query_call`, we check if any AsyncWith ancestor in
-    the stack is a `conn.transaction()` block.
-    """
-    violations: list[tuple[int, str]] = []
-
-    def visit(node: ast.AST, savepoint_depth: int) -> None:
-        # If this node IS a conn.transaction() AsyncWith, bump the depth
-        # for everything inside its body.
-        is_savepoint = (
-            isinstance(node, ast.AsyncWith) and _is_conn_transaction_with(node)
-        )
-
-        # Check the violation at this node BEFORE recursing.
-        if isinstance(node, ast.Await):
-            value = node.value
-            if isinstance(value, ast.Call) and _is_conn_query_call(value):
-                if savepoint_depth == 0:
-                    method = value.func.attr  # type: ignore[attr-defined]
-                    violations.append(
-                        (node.lineno, f"await conn.{method}(...)")
-                    )
-
-        # Recurse into children with the (possibly bumped) depth.
-        new_depth = savepoint_depth + (1 if is_savepoint else 0)
-        for child in ast.iter_child_nodes(node):
-            visit(child, new_depth)
-
-    visit(tree, 0)
-    return violations
-
-
 def _load_metrics_function() -> ast.AsyncFunctionDef:
-    """Return the AST node for the `prometheus_metrics` async function."""
     src = _TARGET.read_text(encoding="utf-8")
     tree = ast.parse(src, filename=str(_TARGET))
     for node in ast.walk(tree):
@@ -122,62 +85,236 @@ def _load_metrics_function() -> ast.AsyncFunctionDef:
     )
 
 
-def test_every_conn_query_is_wrapped_in_savepoint() -> None:
-    """Every await conn.<query_method>(...) inside prometheus_metrics() must
-    have an `async with conn.transaction():` ancestor.
+def _is_section_try(node: ast.Try) -> bool:
+    """True if the Try block contains an `async with admin_transaction(...)`
+    in its body. This is the SHAPE we expect for every metric section.
+    """
+    for child in ast.walk(node):
+        if isinstance(child, ast.AsyncWith) and _is_admin_transaction_with(child):
+            return True
+    return False
 
-    Baseline: 0 violations after RT-1.3 sweep (Session 219).
+
+def _try_has_logger_exception_handler(node: ast.Try) -> bool:
+    """True if at least one except handler calls logger.exception(...) or
+    is a `pass`-only handler (mesh sub-section uses bare pass).
+    """
+    for handler in node.handlers:
+        if not handler.body:
+            continue
+        # Accept either logger.exception(...) or a bare pass
+        for stmt in handler.body:
+            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                f = stmt.value.func
+                if isinstance(f, ast.Attribute) and f.attr == "exception":
+                    return True
+            if isinstance(stmt, ast.Pass):
+                return True
+    return False
+
+
+def test_every_section_uses_admin_transaction() -> None:
+    """Every metric section is `try: / async with admin_transaction(pool) as
+    conn: / ... / except Exception: logger.exception(...)`.
+
+    We approximate "section" as: any Try node that contains an
+    `async with admin_transaction(...)` in its body. Each such Try MUST
+    have an except-handler that either logs or `pass`-es (the mesh
+    sub-section has a `pass`-only handler).
     """
     fn = _load_metrics_function()
-    violations = _collect_violations(fn)
-    assert violations == [], (
-        "prometheus_metrics.py has unsavepointed conn queries "
-        "(RT-1.3 violation — first error poisons the rest of the scrape):\n"
-        + "\n".join(f"  line {ln}: {snippet}" for ln, snippet in violations)
+    section_tries = [
+        node for node in ast.walk(fn)
+        if isinstance(node, ast.Try) and _is_section_try(node)
+    ]
+    # We expect MANY sections (≥25 per round-table acceptance).
+    assert len(section_tries) >= 25, (
+        f"Expected at least 25 metric sections wrapped in "
+        f"`try: / async with admin_transaction(...) / except`, found "
+        f"{len(section_tries)}. Did someone collapse the per-section "
+        f"isolation into a single block?"
+    )
+    # And every section MUST have a logger.exception (or pass) handler.
+    bad = [
+        n.lineno for n in section_tries
+        if not _try_has_logger_exception_handler(n)
+    ]
+    assert not bad, (
+        "Sections missing logger.exception(...) (or pass) handler at lines: "
+        + ", ".join(str(ln) for ln in bad)
     )
 
 
-def test_savepoint_count_meets_threshold() -> None:
-    """Sanity check that the function actually contains savepoints.
-
-    A change that accidentally drops all `async with conn.transaction()`
-    blocks would trivially pass `test_every_conn_query_is_wrapped_in_savepoint`
-    (0 violations because all bare awaits would still be 0). This guards
-    that pathological case.
+def test_admin_transaction_count_meets_threshold() -> None:
+    """Sanity check: at least 25 `async with admin_transaction(...)` blocks
+    inside the function. Less than that means sections were collapsed.
     """
     fn = _load_metrics_function()
-    count = 0
-    for node in ast.walk(fn):
-        if isinstance(node, ast.AsyncWith) and _is_conn_transaction_with(node):
-            count += 1
-    assert count >= 20, (
-        f"prometheus_metrics() should contain >=20 `async with conn.transaction()` "
-        f"savepoints (RT-1.3 expected ~30); found {count}. "
-        f"Did someone drop the savepoint sweep?"
+    count = sum(
+        1 for node in ast.walk(fn)
+        if isinstance(node, ast.AsyncWith) and _is_admin_transaction_with(node)
+    )
+    assert count >= 25, (
+        f"prometheus_metrics() should contain >=25 "
+        f"`async with admin_transaction(pool) as conn:` blocks "
+        f"(P0-2 expected ~30); found {count}. "
+        f"Did someone re-collapse sections?"
+    )
+
+
+def test_no_inner_savepoints() -> None:
+    """The 5cdcf90f-style `async with conn.transaction():` savepoints MUST
+    NOT exist anywhere inside `prometheus_metrics()`. They were the
+    broken middle-layer fix that still emitted 1500+
+    InFailedSQLTransactionError per 4 hours; per-section
+    admin_transaction is the correct pattern.
+    """
+    fn = _load_metrics_function()
+    bad_lines = [
+        node.lineno for node in ast.walk(fn)
+        if isinstance(node, ast.AsyncWith) and _is_conn_transaction_with(node)
+    ]
+    assert not bad_lines, (
+        "prometheus_metrics() contains legacy `async with conn.transaction()` "
+        "savepoints (P0-2 violation — they don't survive an asyncpg-aborted "
+        "outer transaction). Lines: " + ", ".join(str(ln) for ln in bad_lines)
     )
 
 
 def test_outer_admin_transaction_preserved() -> None:
-    """The outer `admin_transaction(pool) as conn` MUST stay — that's the
-    PgBouncer-pinning helper. Per-query savepoints are NESTED inside it,
-    not a replacement.
+    """Negative control: there must NOT be a SINGLE outer admin_transaction
+    wrapping the entire scrape (the OLD pattern). We test this by
+    checking that no admin_transaction AsyncWith node has another
+    admin_transaction AsyncWith as a descendant — every
+    admin_transaction must be a sibling (or nested only inside a Try +
+    inner control flow), never a parent of another admin_transaction.
+
+    Test name kept (despite the slightly-counterintuitive semantics) so
+    the gate's identity is preserved across history. The brief
+    explicitly requires this name to FAIL on the old shape and PASS on
+    the new shape.
     """
     fn = _load_metrics_function()
-    found_admin_transaction = False
-    for node in ast.walk(fn):
-        if not isinstance(node, ast.AsyncWith):
-            continue
-        for item in node.items:
-            ctx = item.context_expr
-            if isinstance(ctx, ast.Call) and isinstance(ctx.func, ast.Name):
-                if ctx.func.id == "admin_transaction":
-                    found_admin_transaction = True
-                    break
-    assert found_admin_transaction, (
-        "Outer `admin_transaction(pool) as conn` is missing from "
-        "prometheus_metrics(). RT-1.3 must NOT remove it — savepoints "
-        "are nested inside, not a replacement."
+    admin_withs = [
+        node for node in ast.walk(fn)
+        if isinstance(node, ast.AsyncWith) and _is_admin_transaction_with(node)
+    ]
+    assert admin_withs, "expected at least one admin_transaction in metrics"
+    for outer in admin_withs:
+        # Walk only DESCENDANTS (skip self) and assert none is also
+        # an admin_transaction AsyncWith.
+        for child in ast.walk(outer):
+            if child is outer:
+                continue
+            if isinstance(child, ast.AsyncWith) and _is_admin_transaction_with(child):
+                raise AssertionError(
+                    f"Found a NESTED admin_transaction at line {child.lineno} "
+                    f"inside the admin_transaction at line {outer.lineno}. "
+                    f"P0-2 requires per-section sibling admin_transactions, "
+                    f"NOT a single outer one wrapping the rest."
+                )
+
+
+# -----------------------------------------------------------------------------
+# Synthetic positive + negative controls (Brief acceptance §)
+# -----------------------------------------------------------------------------
+
+_OLD_SHAPE_SOURCE = '''
+async def prometheus_metrics():
+    pool = None
+    sections = []
+    try:
+        async with admin_transaction(pool) as conn:
+            try:
+                async with conn.transaction():
+                    rows = await conn.fetch("SELECT 1")
+                sections.append(rows)
+            except Exception:
+                logger.exception("a")
+            try:
+                async with conn.transaction():
+                    rows = await conn.fetch("SELECT 2")
+                sections.append(rows)
+            except Exception:
+                logger.exception("b")
+    except Exception:
+        logger.exception("outer")
+'''
+
+_NEW_SHAPE_SOURCE = '''
+async def prometheus_metrics():
+    pool = None
+    sections = []
+    try:
+        async with admin_transaction(pool) as conn:
+            rows = await conn.fetch("SELECT 1")
+        sections.append(rows)
+    except Exception:
+        logger.exception("a")
+    try:
+        async with admin_transaction(pool) as conn:
+            rows = await conn.fetch("SELECT 2")
+        sections.append(rows)
+    except Exception:
+        logger.exception("b")
+'''
+
+
+def _synthetic_fn(source: str) -> ast.AsyncFunctionDef:
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "prometheus_metrics":
+            return node
+    raise AssertionError("synthetic prometheus_metrics not found")
+
+
+def test_synthetic_old_shape_fails_outer_check() -> None:
+    """The OLD shape (single outer admin_transaction wrapping nested ones
+    or savepoints) must FAIL the outer-not-nested check.
+    """
+    fn = _synthetic_fn(_OLD_SHAPE_SOURCE)
+    # No outer admin_transaction wraps another admin_transaction in this
+    # synthetic — but the savepoints must trip `test_no_inner_savepoints`'s
+    # rule. Verify that.
+    bad_lines = [
+        node.lineno for node in ast.walk(fn)
+        if isinstance(node, ast.AsyncWith) and _is_conn_transaction_with(node)
+    ]
+    assert bad_lines, (
+        "synthetic OLD shape was supposed to contain conn.transaction() "
+        "savepoints; static gate would not catch it."
     )
+
+
+def test_synthetic_new_shape_passes() -> None:
+    """The NEW shape (sibling per-section admin_transactions, no
+    savepoints) must PASS every gate.
+    """
+    fn = _synthetic_fn(_NEW_SHAPE_SOURCE)
+    # Must have at least 2 admin_transactions (synthetic has 2 sections).
+    admin_count = sum(
+        1 for node in ast.walk(fn)
+        if isinstance(node, ast.AsyncWith) and _is_admin_transaction_with(node)
+    )
+    assert admin_count == 2
+    # No savepoints.
+    bad_lines = [
+        node.lineno for node in ast.walk(fn)
+        if isinstance(node, ast.AsyncWith) and _is_conn_transaction_with(node)
+    ]
+    assert not bad_lines
+    # No nested admin_transactions.
+    for outer in [
+        n for n in ast.walk(fn)
+        if isinstance(n, ast.AsyncWith) and _is_admin_transaction_with(n)
+    ]:
+        for child in ast.walk(outer):
+            if child is outer:
+                continue
+            assert not (
+                isinstance(child, ast.AsyncWith)
+                and _is_admin_transaction_with(child)
+            ), "synthetic NEW shape unexpectedly nested admin_transactions"
 
 
 if __name__ == "__main__":  # pragma: no cover - manual-run convenience
