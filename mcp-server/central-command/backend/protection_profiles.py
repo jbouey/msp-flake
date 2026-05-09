@@ -17,7 +17,7 @@ from fastapi import APIRouter, Query, HTTPException, Depends, Path
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .order_signing import sign_admin_order
 from .auth import require_auth, require_site_access
 
@@ -418,7 +418,10 @@ async def trigger_discovery(
     pool = await get_pool()
     pid = _parse_uuid(profile_id, "profile ID")
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): 6 admin statements — site access
+    # check + profile read + appliance lookup + signed-order build +
+    # fleet_orders INSERT + audit log. Mixed read+write must pin.
+    async with admin_transaction(pool) as conn:
         await require_site_access(conn, user, site_id)
         profile = await conn.fetchrow(
             "SELECT * FROM app_protection_profiles WHERE id = $1 AND site_id = $2",

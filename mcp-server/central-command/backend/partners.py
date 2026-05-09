@@ -3658,7 +3658,9 @@ async def get_partner(partner_id: str, admin: dict = Depends(require_admin)):
     """Get partner details (admin only)."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): 6 admin reads — partner row +
+    # users + sites + recent activity + billing snapshot.
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow("""
             SELECT id, name, slug, contact_email, contact_phone,
                    brand_name, logo_url, primary_color,

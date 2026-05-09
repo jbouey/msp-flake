@@ -2904,10 +2904,11 @@ async def get_flywheel_intelligence(db: AsyncSession = Depends(get_db), user: di
     promotions increasing, correlations discovered."
     """
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): 6 admin reads.
+    async with admin_transaction(pool) as conn:
         # Recurrence velocity — chronic patterns
         try:
             chronic = await conn.fetch("""
@@ -7811,7 +7812,9 @@ async def get_system_health(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): 6 admin reads — DB stats,
+    # appliance counts, incident summary, partition health, etc.
+    async with admin_transaction(pool) as conn:
         # Database stats
         db_size = await conn.fetchval("SELECT pg_size_pretty(pg_database_size(current_database()))")
         conn_stats = await conn.fetch(

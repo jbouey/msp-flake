@@ -824,7 +824,10 @@ async def update_appliance_status(appliance_id: str, status_update: ApplianceUpd
     appliance_id can be either UUID or site_id.
     """
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): update_appliance_status writes
+    # update_status row + writes appliance_update_history + lookup
+    # appliance + audit. 6 admin statements; mixed read+write.
+    async with admin_transaction(pool) as conn:
         # Try to parse as UUID first, otherwise look up by site_id
         try:
             app_uuid = UUID(appliance_id)
