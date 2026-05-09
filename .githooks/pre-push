@@ -221,6 +221,14 @@ SOURCE_LEVEL_TESTS=(
     # any caller pre-fix (commit 10a82b73). Sibling-parity AST gate
     # prevents the next regression of the same class.
     "tests/test_evidence_endpoints_auth_coverage.py"
+    # 2026-05-09 partner-portal runtime adversarial audit P1-2:
+    # AST gate asserting every /me/* GET handler reading from a
+    # site-scoped table contains a literal `partner_id` reference
+    # OR is in an explicit allowlist with rationale. Sibling to
+    # test_partner_mutations_role_gated.py (writes); this covers
+    # READS. Also pins mig 297 helper STABLE marker + table
+    # apply-list + partner_connection() helper presence.
+    "tests/test_partner_endpoints_filter_partner_id.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."

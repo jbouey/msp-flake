@@ -253,6 +253,56 @@ async def org_connection(
             yield conn
 
 
+@asynccontextmanager
+async def partner_connection(
+    pool: asyncpg.Pool,
+    partner_id: str,
+):
+    """Acquire a connection with partner-level tenant context for RLS.
+
+    Round-table 2026-05-09 partner-portal runtime adversarial audit
+    (P1-1). Mirrors `org_connection` for the partner side.
+
+    Sets app.is_admin='false' and app.current_partner_id=partner_id.
+    Migration 297 added the parallel `tenant_partner_isolation`
+    policy on site-scoped tables (site_appliances, compliance_bundles,
+    incidents, execution_telemetry, site_credentials, admin_orders)
+    that admits rows whose site rolls up to the partner via
+    `rls_site_belongs_to_current_partner(site_id::text)`. Without
+    this helper, every partner-portal endpoint that wanted DB-level
+    last-line defense would have to inline the SET LOCAL pattern.
+
+    Today partners.py uses admin_connection for most endpoints — this
+    helper is the canonical migration target as endpoints are converted
+    to RLS-enforced reads. New endpoints SHOULD prefer this over
+    admin_connection when they only need partner-scoped data, so the
+    DB enforces the partner_id boundary instead of trusting the
+    application WHERE filter alone.
+
+    Usage (illustrative — real callsites use `WHERE … AND
+    deleted_at IS NULL`; the example string below is docstring prose,
+    not executed code):
+
+        # noqa: site-appliances-deleted-include — docstring example only
+        async with partner_connection(pool, partner_id=partner["id"]) as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM site_appliances "
+                "WHERE deleted_at IS NULL"
+            )
+            # RLS filters to appliances under sites with partner_id=X
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            safe_partner = _validated_org_id(partner_id)
+            await conn.execute(
+                f"SET LOCAL app.current_partner_id = '{safe_partner}'"
+            )
+            await conn.execute("SET LOCAL app.is_admin = 'false'")
+            await conn.execute("SET LOCAL app.current_tenant = ''")
+            await conn.execute("SET LOCAL app.current_org = ''")
+            yield conn
+
+
 async def set_tenant_context(
     conn: asyncpg.Connection,
     site_id: Optional[str] = None,
