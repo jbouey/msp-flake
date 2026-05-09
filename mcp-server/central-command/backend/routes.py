@@ -5777,7 +5777,9 @@ async def get_devices_at_risk(
         for ct in types:
             reverse_map[ct] = cat
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-26): get_devices_at_risk issues 3 admin
+    # reads (site verify, devices at risk, category aggregation).
+    async with admin_transaction(pool) as conn:
         # Verify site exists
         site = await conn.fetchrow(
             "SELECT site_id FROM sites WHERE site_id = $1", site_id
@@ -7397,7 +7399,9 @@ async def rotate_vpn_key(site_id: str, user: dict = Depends(auth_module.require_
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-26): rotate_vpn_key issues 3 admin
+    # statements (site lookup, INSERT fleet order, audit log).
+    async with admin_transaction(pool) as conn:
         site = await conn.fetchrow(
             "SELECT wg_ip FROM sites WHERE site_id = $1", site_id
         )
@@ -7951,7 +7955,9 @@ async def get_substrate_violations(
         )
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-26): substrate-health endpoint issues 3
+    # admin reads (active violations, history, advisories).
+    async with admin_transaction(pool) as conn:
         rows = await conn.fetch("SELECT * FROM v_substrate_violations_active")
         rollup = await conn.fetch(
             """
@@ -8032,7 +8038,10 @@ async def get_installation_sla(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-26): get_installation_sla issues 3
+    # admin reads (column-presence guard, distributions p50/p95/p99,
+    # auth_up timing).
+    async with admin_transaction(pool) as conn:
         # FIX-15 + plan v40-complete-iso §FIX-15 follow-up: guard
         # on column presence so code shipped before migration 239
         # applies doesn't blow up the endpoint (substrate panel
@@ -8160,7 +8169,9 @@ async def get_fleet_update_health(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-26): get_fleet_update_health issues 3
+    # admin reads (nixos_rebuild, update_daemon, daemon version dist).
+    async with admin_transaction(pool) as conn:
         nixos_row = await conn.fetchrow(
             """
             SELECT
