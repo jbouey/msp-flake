@@ -1651,7 +1651,9 @@ async def get_partner_site_consents(
     pool = await get_pool()
     partner_id = partner["id"]
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-17): get_partner_site_consents issues 3
+    # admin reads (ownership, consents, history).
+    async with admin_transaction(pool) as conn:
         # Ownership check.
         own = await conn.fetchval(
             "SELECT 1 FROM sites WHERE site_id = $1 AND partner_id = $2",
@@ -1857,7 +1859,9 @@ async def get_partner_site_topology(
     pool = await get_pool()
     partner_id = partner["id"]
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-17): get_partner_site_topology issues 3
+    # admin reads (site ownership, appliances, devices).
+    async with admin_transaction(pool) as conn:
         site = await conn.fetchrow(
             """
             SELECT s.site_id, s.clinic_name
@@ -2679,7 +2683,9 @@ async def get_partner_org_agents(
 ):
     """Aggregate Go agent status across all sites in a partner's org."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-17): get_partner_org_agents issues 3
+    # admin reads (org check, sites, agents).
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
             org_id, partner['id']
@@ -3281,7 +3287,9 @@ async def get_my_commission(
     }
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-17): get_my_commission issues 3 admin
+    # reads (subscriptions, paid invoices, downstream commissions).
+    async with admin_transaction(pool) as conn:
         subs = await conn.fetch(
             """
             SELECT plan, status, current_period_start, current_period_end,
@@ -3995,7 +4003,9 @@ async def delete_partner(request: Request, partner_id: str, admin: dict = Depend
     """Delete a partner (admin only). Cascades to sessions, provisions, etc."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-17): delete_partner issues 3 admin
+    # statements (lookup, sites unlink, partner DELETE + audit log).
+    async with admin_transaction(pool) as conn:
         # Get partner info for audit log before deleting
         partner = await conn.fetchrow(
             "SELECT id, name, slug FROM partners WHERE id = $1",
