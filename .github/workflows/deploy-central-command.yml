@@ -360,15 +360,23 @@ jobs:
       - name: Deploy pgbouncer config to release
         # Phase 1 multi-tenant audit P0 fix (2026-05-09): the prior
         # CI/CD only rsynced backend + frontend; pgbouncer.ini changes
-        # in source were ignored at deploy time. The 25→50 pool bump
-        # shipped to git on 2026-05-09 (commit 81194a9b) but live
-        # `SHOW CONFIG` confirmed pool_size=25 still in effect. This
-        # step closes that drift class.
+        # in source were ignored at deploy time.
+        #
+        # OUTAGE FIX (2026-05-09 06:25 UTC): the FIRST cut of this
+        # step rsynced the ENTIRE pgbouncer/ directory — including
+        # userlist.txt which is a TEMPLATE in git (placeholder
+        # `REPLACE_WITH_ACTUAL_PASSWORD`) and contains real SCRAM-SHA-256
+        # verifiers in production. That overwrote prod userlist with
+        # the template, breaking pgbouncer auth and putting mcp-server
+        # into a restart loop until userlist was restored from
+        # pg_authid. This second cut rsyncs ONLY pgbouncer.ini
+        # explicitly (NOT the directory), so userlist.txt is left
+        # untouched on the VPS where setup created it.
         # Static env vars only; no untrusted input.
         run: |
-          rsync -avz --delete \
-            mcp-server/pgbouncer/ \
-            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/
+          rsync -avz \
+            mcp-server/pgbouncer/pgbouncer.ini \
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/pgbouncer.ini
 
       - name: Deploy security advisories to release
         # P0-1 fix from the 2026-05-09 15-commit adversarial audit:
@@ -443,23 +451,21 @@ jobs:
             rsync -a --delete ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/ /opt/mcp-server/frontend_dist/
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend/nginx.conf /opt/mcp-server/frontend/nginx.conf
 
-            # Phase 1 multi-tenant audit P0 fix (2026-05-09): pgbouncer
-            # config (pool sizes, limits, ssl) was source-of-truth in
-            # git but never deployed. Detect changes by checksum and
-            # restart pgbouncer ONLY when the file actually changed —
-            # avoids needless restart on every deploy.
-            if [ -d "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer" ]; then
-              CHANGED=0
-              for f in pgbouncer.ini userlist.txt; do
-                if [ -f "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/\$f" ]; then
-                  if ! cmp -s "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/\$f" "/opt/mcp-server/pgbouncer/\$f" 2>/dev/null; then
-                    CHANGED=1
-                  fi
-                fi
-              done
-              rsync -a "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/" "/opt/mcp-server/pgbouncer/"
-              if [ "\$CHANGED" -eq 1 ]; then
-                echo "pgbouncer config changed — restarting"
+            # Phase 1 multi-tenant audit P0 fix (2026-05-09): pgbouncer.ini
+            # changes in git now reach prod via this atomic-switch rsync.
+            #
+            # IMPORTANT: rsync ONLY pgbouncer.ini (one specific file).
+            # NEVER rsync the directory — userlist.txt holds production
+            # SCRAM-SHA-256 verifiers in /opt/mcp-server/pgbouncer/ that
+            # are NOT in git (the git copy is a placeholder template).
+            # The 2026-05-09 outage cascade was caused by an earlier
+            # version of this step that rsynced the directory + clobbered
+            # userlist.txt with the template. This narrow rsync prevents
+            # that class.
+            if [ -f "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/pgbouncer.ini" ]; then
+              if ! cmp -s "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/pgbouncer.ini" "/opt/mcp-server/pgbouncer/pgbouncer.ini" 2>/dev/null; then
+                rsync -a "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/pgbouncer.ini" "/opt/mcp-server/pgbouncer/pgbouncer.ini"
+                echo "pgbouncer.ini changed — restarting"
                 cd /opt/mcp-server && docker compose restart pgbouncer
                 cd /
               fi
