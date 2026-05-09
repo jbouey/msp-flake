@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from .fleet import get_pool
 from .auth import require_auth
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .order_signing import sign_fleet_order
 
 logger = structlog.get_logger(__name__)
@@ -312,7 +312,8 @@ async def get_remediation_status(cve_id: str, user: dict = Depends(require_auth)
 async def remediate_cve(cve_id: str, body: CVERemediateRequest, user: dict = Depends(require_auth)):
     """Dispatch fleet healing orders for a CVE across specified sites."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-8 (Session 219): 5 admin DB calls (CVE+runbook validate, site fetch, fleet-order INSERT, audit log); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         # 1. Validate CVE exists
         cve = await conn.fetchrow(
             "SELECT id FROM cve_entries WHERE cve_id = $1", cve_id

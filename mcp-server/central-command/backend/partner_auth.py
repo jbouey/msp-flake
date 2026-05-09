@@ -37,7 +37,7 @@ import httpx
 from typing import Dict
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .auth import require_admin
 from .db_utils import _uid
 from .oauth_login import encrypt_secret, decrypt_secret
@@ -1190,7 +1190,8 @@ async def email_login_api(request: Request, body: EmailLoginRequest):
 
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-8 (Session 219): 5 admin DB calls (partner lookup, lockout check+update, session insert, audit log); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         partner = await conn.fetchrow("""
             SELECT id, name, slug, password_hash, status, pending_approval,
                    failed_login_attempts, locked_until

@@ -162,11 +162,12 @@ async def flywheel_reconciliation_loop():
         _hb("flywheel_reconciliation")
         try:
             from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
+            from dashboard_api.tenant_middleware import admin_transaction
             from dashboard_api.flywheel_promote import promote_candidate
 
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # admin_transaction wave-8 (Session 219): 5 admin DB calls (stuck+orphan+promotion checks); pin SET LOCAL app.is_admin to one PgBouncer backend
+            async with admin_transaction(pool) as conn:
                 # Check 1: Stuck approved candidates
                 stuck = await conn.fetch("""
                     SELECT lpc.id, lpc.site_id, lpc.pattern_signature,

@@ -48,7 +48,7 @@ async def healing_sla_loop():
 async def _compute_hourly_sla():
     """Single pass: compute healing rate for the last hour per active site."""
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
     from dashboard_api.email_alerts import send_critical_alert
 
     pool = await get_pool()
@@ -56,7 +56,8 @@ async def _compute_hourly_sla():
     period_end = now.replace(minute=0, second=0, microsecond=0)
     period_start = period_end - timedelta(hours=1)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-8 (Session 219): 5 admin DB calls (sites + per-site healing-rate fetches + breach insert); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         # Get all active sites
         sites = await conn.fetch("""
             SELECT s.site_id, s.clinic_name

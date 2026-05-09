@@ -104,7 +104,7 @@ async def health_monitor_loop():
 async def _check_appliance_health():
     """Single pass: detect newly offline, notify at thresholds, clear recovered."""
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     pool = await get_pool()
     now = datetime.now(timezone.utc)
@@ -112,7 +112,8 @@ async def _check_appliance_health():
     threshold_warn = now - timedelta(minutes=30)
     threshold_critical = now - timedelta(hours=2)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-8 (Session 219): 5 admin DB calls (mark-offline, threshold notify, recovery clear); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         # --- Step 1: Mark newly offline appliances ---
         newly_offline = await conn.fetch("""
             UPDATE site_appliances
