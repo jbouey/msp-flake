@@ -8325,7 +8325,9 @@ async def get_evidence_witness_status(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-16): get_evidence_witness_status issues 4
+    # admin reads (total + by_witness + by_appliance + recent).
+    async with admin_transaction(pool) as conn:
         # Total attestations
         total = await conn.fetchval("SELECT count(*) FROM witness_attestations")
 

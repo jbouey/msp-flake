@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .shared import require_appliance_bearer
 
 logger = logging.getLogger(__name__)
@@ -172,7 +172,10 @@ async def rebalance_expired_assignments(site_id: str) -> Dict[str, int]:
     """
     pool = await get_pool()
     stats = {"expired": 0, "reassigned": 0, "orphaned": 0}
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-16): rebalance_expired_assignments issues
+    # 4 admin statements (live lookup, expired select, UPDATE reassign,
+    # UPDATE orphan). Pin SET LOCAL to one backend.
+    async with admin_transaction(pool) as conn:
         # Live appliances = those with heartbeats in the last 5 min.
         live_rows = await conn.fetch(
             """

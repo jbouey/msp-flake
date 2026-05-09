@@ -612,7 +612,9 @@ async def self_create_partner_user(
     # users with no self-service path back. Inactive rows now reactivate
     # via UPDATE; active rows still 400 (duplicate). Idempotent +
     # audited the same way as fresh-create.
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-16): self_create_partner_user issues 3
+    # admin statements (lookup, INSERT/UPDATE, audit log).
+    async with admin_transaction(pool) as conn:
         existing = await conn.fetchrow(
             """
             SELECT id::text, status, role FROM partner_users
@@ -1007,7 +1009,9 @@ async def get_my_partner(request: Request, partner: dict = require_partner_role(
     """Get current partner's info (self-service)."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-16): get_my_partner issues 3 admin reads
+    # (partner row, sites count, transfer prefs).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow("""
             SELECT id, name, slug, contact_email, contact_phone,
                    brand_name, logo_url, primary_color,
@@ -1500,7 +1504,9 @@ async def partner_global_search(
     partner_id = partner["id"]
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-16): partner_global_search issues 3
+    # admin reads (sites, devices, incidents).
+    async with admin_transaction(pool) as conn:
         site_rows = await conn.fetch(
             """
             SELECT site_id, clinic_name
