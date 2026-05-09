@@ -32,7 +32,7 @@ from uuid import uuid4
 import aiohttp
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -499,7 +499,11 @@ class EscalationEngine:
         """
         pool = await self._get_pool()
 
-        async with admin_connection(pool) as conn:
+        # admin_transaction (Session 212): create_escalation issues 7
+        # admin statements (site lookup, partner lookup, ticket INSERT,
+        # notification INSERT, etc.). Mixed-read+write must pin to one
+        # backend so the post-INSERT rows are visible to the next read.
+        async with admin_transaction(pool) as conn:
             # Get site and partner info
             site = await conn.fetchrow("""
                 SELECT s.id, s.site_id, s.clinic_name, s.partner_id, s.status,

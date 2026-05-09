@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from . import auth as auth_module
 from .auth import check_site_access_sa
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dashboard/admin/orgs", tags=["org-management"])
@@ -702,7 +702,10 @@ async def export_org_data(
         raise HTTPException(status_code=403, detail="Admin only")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): export_org_data issues 7 admin
+    # reads across org / sites / users / audit_log / billing tables —
+    # all need consistent admin context for the export snapshot.
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             "SELECT * FROM client_orgs WHERE id = $1::uuid", org_id,
         )

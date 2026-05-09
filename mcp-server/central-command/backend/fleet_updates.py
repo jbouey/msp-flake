@@ -941,7 +941,9 @@ async def update_appliance_status(appliance_id: str, status_update: ApplianceUpd
 async def get_fleet_update_stats(user: dict = Depends(require_admin)):
     """Get overall fleet update statistics."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): 7 admin reads for stats
+    # aggregations across releases / rollouts / appliances tables.
+    async with admin_transaction(pool) as conn:
         releases = await conn.fetchrow(
             "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE is_active) as active FROM update_releases"
         )

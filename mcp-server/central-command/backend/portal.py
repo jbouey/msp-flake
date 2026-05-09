@@ -26,7 +26,7 @@ from io import BytesIO
 import sys
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .sites import ManualDeviceAdd, NetworkDeviceAdd, _add_manual_device, _add_network_device
 from .db_queries import (
     get_site_info,
@@ -2099,7 +2099,9 @@ async def get_client_org_overview(
     await validate_session(site_id, portal_session, token)
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): get_client_org_overview issues
+    # 7 admin reads (org lookup, sites list, score, incidents, etc.).
+    async with admin_transaction(pool) as conn:
         # Look up org from site
         org_row = await conn.fetchrow("""
             SELECT co.id, co.name, co.practice_type

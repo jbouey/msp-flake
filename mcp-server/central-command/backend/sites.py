@@ -2869,7 +2869,11 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site
         if isinstance(_nested, str) and _nested.strip():
             err_msg_for_column = _nested
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): complete_order issues 8 admin
+    # statements across admin_orders + fleet_orders + retry chain.
+    # The post-UPDATE fetch + sibling-table fallback path require
+    # one-backend pin so the writes are visible to the next read.
+    async with admin_transaction(pool) as conn:
         # Try admin_orders first
         result = await conn.fetchrow("""
             UPDATE admin_orders
