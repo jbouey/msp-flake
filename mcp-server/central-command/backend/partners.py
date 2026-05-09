@@ -4169,7 +4169,9 @@ async def create_partner_user(
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-18): create_partner_user issues 3 admin
+    # statements (partner check, INSERT user, audit log).
+    async with admin_transaction(pool) as conn:
         # Verify partner exists
         partner = await conn.fetchval("SELECT 1 FROM partners WHERE id = $1", _uid(partner_id))
         if not partner:
@@ -5391,7 +5393,9 @@ async def validate_magic_link(request: MagicTokenValidate):
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-18): validate_magic_link issues 3 admin
+    # statements (token lookup, consume, session insert).
+    async with admin_transaction(pool) as conn:
         # Find user with this magic token
         user = await conn.fetchrow("""
             SELECT pu.id, pu.partner_id, pu.email, pu.name, pu.role,

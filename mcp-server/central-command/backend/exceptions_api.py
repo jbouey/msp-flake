@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Path
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .partners import require_partner
 
 logger = logging.getLogger(__name__)
@@ -217,7 +217,9 @@ async def create_exception(
 
     partner_email = partner.get("email", partner.get("name", "unknown"))
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-18): create_exception issues 3 admin
+    # statements (site access check, dup check, INSERT exception).
+    async with admin_transaction(pool) as conn:
         # SECURITY: Verify partner owns this site
         await require_site_access(conn, partner, request.site_id)
 

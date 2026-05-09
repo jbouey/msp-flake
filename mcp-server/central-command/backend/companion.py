@@ -478,7 +478,9 @@ async def get_sra(org_id: str, assessment_id: str, user: dict = Depends(require_
 async def save_sra_responses(org_id: str, assessment_id: str, body: SRAResponseBatch, request: Request, user: dict = Depends(require_companion)):
     pool = await get_pool()
     await _verify_org(pool, _uid(org_id))
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-18): save_sra_responses issues 3+ admin
+    # statements (owner check, INSERT/UPDATE responses loop).
+    async with admin_transaction(pool) as conn:
         owner = await conn.fetchval("SELECT org_id FROM hipaa_sra_assessments WHERE id = $1", _uid(assessment_id))
         if str(owner) != str(org_id):
             raise HTTPException(status_code=403, detail="Access denied")
@@ -512,7 +514,9 @@ async def save_sra_responses(org_id: str, assessment_id: str, body: SRAResponseB
 async def complete_sra(org_id: str, assessment_id: str, request: Request, user: dict = Depends(require_companion)):
     pool = await get_pool()
     await _verify_org(pool, _uid(org_id))
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-18): complete_sra issues 3 admin
+    # statements (owner check, finalize, audit log).
+    async with admin_transaction(pool) as conn:
         owner = await conn.fetchval("SELECT org_id FROM hipaa_sra_assessments WHERE id = $1", _uid(assessment_id))
         if str(owner) != str(org_id):
             raise HTTPException(status_code=403, detail="Access denied")
