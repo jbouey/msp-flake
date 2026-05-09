@@ -3631,8 +3631,11 @@ async def verify_bundle_full(
     from .auth import require_auth
     await require_auth(request)
 
-    pool, admin_connection = await _get_admin_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-13 (Session 212 routing-pathology rule): 4 admin DB calls (bundle fetch, prev-bundle, next-bundle, server-pubkey lookups); pin SET LOCAL app.is_admin to one PgBouncer backend
+    from .fleet import get_pool
+    from .tenant_middleware import admin_transaction
+    pool = await get_pool()
+    async with admin_transaction(pool) as conn:
         # 1. Fetch the bundle
         bundle = await conn.fetchrow(
             """

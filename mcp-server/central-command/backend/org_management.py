@@ -1088,7 +1088,8 @@ async def get_org_compliance_packet(
     period_start = _date(year, mo, 1)
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-13 (Session 212 routing-pathology rule): 4 admin DB calls (org fetch, per-site rollup, totals, incidents) — pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             "SELECT id, name, compliance_framework, primary_email FROM client_orgs WHERE id = $1::uuid",
             org_id,

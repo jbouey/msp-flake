@@ -438,7 +438,8 @@ async def validate_magic_link(request: Request, body: MagicLinkValidate):
     """Validate magic link and create session."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-13 (Session 212 routing-pathology rule): 4 admin DB calls (token-redeem UPDATE, org status fetch, MFA flag fetch, session INSERT) — pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         # Find and validate token (single-use: delete on fetch)
         # Token is hashed before comparison (stored hashed since migration 071)
         token_lookup = hash_token(body.token)
@@ -3348,7 +3349,8 @@ async def client_verify_totp(request: Request, body: ClientVerifyTOTPRequest):
     user_id = pending["user_id"]
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-13 (Session 212 routing-pathology rule): 4 admin DB calls (mfa_secret fetch, backup-code update, session INSERT, last_login UPDATE) — pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT mfa_secret, mfa_backup_codes FROM client_users WHERE id = $1",
             user_id

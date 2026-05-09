@@ -467,13 +467,14 @@ async def _check_oauth_health():
     """
     import json
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     pool = await get_pool()
     now = datetime.now(timezone.utc)
     stale_threshold = now - timedelta(hours=24)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-13 (Session 212 routing-pathology rule): 4 admin DB calls (fetch integrations, update health_status, dedup-check, insert notification); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         try:
             rows = await conn.fetch("""
                 SELECT id, site_id, provider, name, health_status,
