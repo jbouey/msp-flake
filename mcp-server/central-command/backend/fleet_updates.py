@@ -1415,7 +1415,11 @@ async def get_fleet_orders_for_appliance(conn, appliance_id: str, agent_version:
                     ON CONFLICT DO NOTHING
                 """, row["id"], appliance_id)
             except Exception:
-                pass
+                logger.error(
+                    "fleet_order_skipped_completion_insert_failed",
+                    extra={"fleet_order_id": str(row["id"]), "appliance_id": appliance_id},
+                    exc_info=True,
+                )
             continue
 
         params = row["parameters"] if isinstance(row["parameters"], dict) else json.loads(row["parameters"] or "{}")

@@ -1165,7 +1165,13 @@ async def _check_client_portal_zero_evidence_with_data(
                 await conn.execute("ROLLBACK TO SAVEPOINT client_rls_sim")
                 await conn.execute("SET LOCAL app.is_admin = 'true'")
             except Exception:
-                pass
+                # Best-effort recovery on a poisoned tenant transaction;
+                # surface for visibility but don't block the assertion run.
+                logger.error(
+                    "client_rls_sim_savepoint_recovery_failed",
+                    extra={"client_org_id": org_id},
+                    exc_info=True,
+                )
             continue
 
     return violations

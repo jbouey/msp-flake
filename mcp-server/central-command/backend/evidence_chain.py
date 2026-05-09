@@ -800,7 +800,13 @@ async def mark_proof_anchored(
             }),
         })
     except Exception:
-        pass  # Audit log failure must not block proof anchoring
+        # Audit log failure must not block proof anchoring — but it
+        # MUST surface in logs so operators see chain-gap risk.
+        logger.error(
+            "ots_proof_anchored_audit_log_failed",
+            extra={"bundle_id": bundle_id, "bitcoin_block": block_height},
+            exc_info=True,
+        )
 
     logger.info(f"OTS anchored: {bundle_id[:8]}... block={block_height}")
 

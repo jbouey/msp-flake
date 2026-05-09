@@ -126,7 +126,9 @@ async def load_monitoring_only_from_registry(db) -> None:
             MONITORING_ONLY_CHECKS = {r.check_name for r in rows}
             logger.info(f"MONITORING_ONLY_CHECKS loaded from registry: {len(MONITORING_ONLY_CHECKS)} checks")
     except Exception:
-        pass  # Table doesn't exist yet, use hardcoded fallback
+        # Table doesn't exist yet, use hardcoded fallback — log so
+        # operators see when registry-load fell back to in-source defaults.
+        logger.error("monitoring_only_checks_registry_load_failed", exc_info=True)
 
 
 # The 11 check types that touch Windows via WinRM. When migration 164's
@@ -2897,7 +2899,13 @@ async def agent_sync_rules(
                         db_rules.append(rule_json)
                         continue
                 except Exception:
-                    pass
+                    # Best-effort protection-profile rule load; falls
+                    # through to the generic incident_pattern parser.
+                    logger.error(
+                        "app_profile_rule_load_failed",
+                        extra={"rule_id": row[0]},
+                        exc_info=True,
+                    )
 
             pattern = row[1]
             if isinstance(pattern, list):

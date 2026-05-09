@@ -473,7 +473,8 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
             global_disabled_by_site.setdefault(r.site_id, set()).add(r.check_type)
         global_default_disabled = global_disabled_by_site.get('__defaults__', set())
     except Exception:
-        pass  # If table doesn't exist yet, skip
+        # If table doesn't exist yet, skip — log for visibility.
+        logger.error("site_drift_config_load_failed_global", exc_info=True)
 
     comp_result = await db.execute(text("""
         SELECT cb.site_id, c->>'check' as check_type, c->>'status' as check_status
@@ -629,7 +630,8 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
             dc_rows = dc_result.fetchall()
         disabled_checks = {r.check_type for r in dc_rows}
     except Exception:
-        pass  # If table doesn't exist yet, skip
+        # If table doesn't exist yet, skip — log for visibility.
+        logger.error("site_drift_config_load_failed_per_site", extra={"site_id": site_id}, exc_info=True)
 
     # Get compliance bundles from last 24 hours. Staleness cutoff ensures
     # offline hosts don't carry stale "pass" results indefinitely.
@@ -851,7 +853,8 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
             disabled_by_site.setdefault(r.site_id, set()).add(r.check_type)
         default_disabled = disabled_by_site.get('__defaults__', set())
     except Exception:
-        pass  # If table doesn't exist yet, skip
+        # If table doesn't exist yet, skip — log for visibility.
+        logger.error("site_drift_config_load_failed_all_sites", exc_info=True)
 
     result = await db.execute(text("""
         SELECT site_id, checks FROM (
@@ -973,7 +976,8 @@ async def get_all_compliance_scores(db: AsyncSession) -> Dict[str, Dict[str, Any
                 scores[sid]["agent_compliance"] = round(agent_score, 1)
                 scores[sid]["_bundle_check_count"] = 0
     except Exception:
-        pass  # If table doesn't exist yet, skip gracefully
+        # If table doesn't exist yet, skip gracefully — log for visibility.
+        logger.error("site_go_agent_summaries_blend_failed", exc_info=True)
 
     # Clean up internal fields before caching
     for sid in scores:

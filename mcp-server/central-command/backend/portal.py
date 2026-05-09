@@ -1359,7 +1359,7 @@ async def get_portal_home(
         # Best-effort. If settings table not readable, omit the field
         # rather than block the home payload — graceful-degrade per
         # the round-table-documented "200 even when partial" rule.
-        pass
+        logger.error("fleet_healing_state_lookup_failed", exc_info=True)
 
     # Carol P0 (round-table 2026-05-06): "protected" is on
     # CLAUDE.md banned-words list (Session 199 legal-language

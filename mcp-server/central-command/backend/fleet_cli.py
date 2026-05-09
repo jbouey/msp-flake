@@ -364,8 +364,15 @@ async def cmd_create(args: argparse.Namespace) -> None:
                     "WHERE (details->>'bundle_id') = $2",
                     str(row["id"]), attestation["bundle_id"],
                 )
-            except Exception:
-                pass  # audit cross-link is best-effort
+            except Exception as e:
+                # audit cross-link is best-effort — surface to stderr so
+                # the operator running the CLI sees the chain-gap risk.
+                print(
+                    f"WARNING: fleet_order audit cross-link failed "
+                    f"(fleet_order_id={row['id']}, bundle_id="
+                    f"{attestation['bundle_id']}): {e}",
+                    file=sys.stderr,
+                )
 
         print(f"Fleet order created:")
         print(f"  ID:         {row['id']}")

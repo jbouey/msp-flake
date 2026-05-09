@@ -267,8 +267,15 @@ async def cmd_up(target: Optional[str] = None) -> int:
         if locked:
             try:
                 await conn.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_ID})")
-            except Exception:
-                pass  # Connection close below releases the session-level lock anyway
+            except Exception as e:
+                # Connection close below releases the session-level lock
+                # anyway — surface to stderr so operators see the cleanup
+                # path didn't fire cleanly.
+                print(
+                    f"WARNING: pg_advisory_unlock cleanup failed "
+                    f"(lock_id={_MIGRATION_LOCK_ID}): {e}",
+                    file=sys.stderr,
+                )
         await conn.close()
 
 

@@ -147,18 +147,17 @@ def _collect_violations() -> list[str]:
 # Ratchet baseline as of 2026-05-08 — the audit's 4 named sites
 # (privileged_access_attestation.py:471, evidence_chain.py:1156,
 # evidence_chain.py:1190, evidence_chain.py:1217) are FIXED in the
-# same commit as this gate. The 14 remaining violations below are
-# legacy sites in routes that the audit did not adversarially
-# inspect — they are tracked for incremental drive-down. New
-# violations MUST NOT exceed the baseline; legacy violations
-# migrated to logger.error / re-raise SHOULD drop the baseline
-# in the same commit.
+# commit that introduced this gate. The 14 legacy violations that
+# pre-dated the gate were bulk-migrated to `logger.error(..., exc_info=True)`
+# in a follow-up commit (silent-swallow ratchet drive-down 14 → 0).
+# Baseline is now 0 — any new violation MUST be fixed at the source,
+# not bumped here.
 #
 # Sibling pattern: tests/test_admin_connection_no_multi_query.py
 # ADMIN_CONN_MULTI_BASELINE_MAX (Session 212 P0 #2). Same enterprise
 # ratchet shape: fail-loud BLOCK on new violations, fail-loud
 # DOWNWARD on bug fixes that should drop the constant.
-SILENT_SWALLOW_BASELINE_MAX = 14
+SILENT_SWALLOW_BASELINE_MAX = 0
 
 
 def test_no_silent_db_write_swallow():

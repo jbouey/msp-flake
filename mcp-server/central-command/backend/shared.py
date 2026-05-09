@@ -525,7 +525,13 @@ async def require_appliance_bearer(request: Request) -> str:
                           AND auth_failure_count > 0
                     """, row.appliance_id)
             except Exception:
-                pass  # Non-critical
+                # Non-critical — clearing the auth-failure counter is
+                # cosmetic for the dashboard; surface for visibility.
+                logger.error(
+                    "auth_failure_counter_reset_failed",
+                    extra={"appliance_id": row.appliance_id},
+                    exc_info=True,
+                )
         return row.site_id
 
     # Auth failed — try to identify the appliance so we can track

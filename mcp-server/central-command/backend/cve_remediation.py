@@ -356,7 +356,11 @@ async def process_new_cve_matches(conn) -> Dict:
                     WHERE id = $1
                 """, match_id)
             except Exception:
-                pass  # Best effort status update
+                logger.error(
+                    "cve_fleet_match_status_update_failed",
+                    extra={"match_id": match_id, "cve_id": cve_id_str},
+                    exc_info=True,
+                )
 
     logger.info(
         f"CVE remediation processing complete: "
