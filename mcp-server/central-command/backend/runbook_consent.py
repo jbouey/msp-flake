@@ -389,6 +389,23 @@ async def _write_consent_bundle(
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
 
+    # Per-site advisory lock for chain-mutation race safety
+    # (Phase 0 multi-tenant audit P0-2, 2026-05-09). Without this,
+    # this consent-bundle append racing `evidence_chain.submit_evidence`
+    # (which DID hold the lock at line 1384) on the same site would
+    # bifurcate the chain — both writers reading the same prev_hash
+    # and producing two bundles with identical (chain_position,
+    # prev_hash). Detected only at chain-walk verify; auditor-visible
+    # credibility hit. Two-arg pg_advisory_xact_lock takes (int, int)
+    # NOT (bigint, bigint); hashtext() returns int4 natively, do NOT
+    # cast to ::bigint (Session 218 P1-1 lesson).
+    await db.execute(
+        _sql_text(
+            "SELECT pg_advisory_xact_lock(hashtext(:sid), hashtext('attest'))"
+        ),
+        {"sid": site_id},
+    )
+
     # Prev-bundle lookup — chain linkage is single-threaded per site
     # (any gap is detectable). This matches privileged_access_attestation.
     prev_result = await db.execute(

@@ -97,6 +97,32 @@ def _sign_bundle_hash(bundle_hash_hex: str) -> Optional[str]:
 async def _get_prev_bundle(
     conn: asyncpg.Connection, site_id: str
 ) -> Optional[Dict[str, Any]]:
+    """Read the most recent bundle for chain linkage.
+
+    Race-hardened (Phase 0 multi-tenant audit P0-2, 2026-05-09):
+    takes a per-site advisory lock at the start of the chain-mutation
+    flow. Two concurrent appliance-relocation events on the same site
+    previously could read the same prev_hash and produce duplicate
+    (chain_position, prev_hash) bundles. Mirrors the
+    privileged_access_attestation._get_prev_bundle pattern shipped
+    in commit 60049d99.
+
+    `pg_advisory_xact_lock` requires being inside an explicit
+    transaction. Caller MUST pass a conn already inside an
+    admin_transaction; the assertion below catches misuse loudly.
+    """
+    assert conn.is_in_transaction(), (
+        "_get_prev_bundle() requires the caller to be inside an "
+        "explicit transaction (admin_transaction). pg_advisory_xact_"
+        "lock has no serialization semantics outside a transaction."
+    )
+    # Two-arg form takes (int, int) NOT (bigint, bigint); hashtext()
+    # returns int4 natively, do NOT cast to ::bigint.
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtext($1), hashtext('attest'))",
+        site_id,
+    )
+
     row = await conn.fetchrow(
         "SELECT bundle_id, bundle_hash, chain_position "
         "FROM compliance_bundles "
