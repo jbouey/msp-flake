@@ -62,18 +62,23 @@ BEGIN;
 -- is enum-validated against PLAN_CATALOG in client_signup.py).
 -- A `status` column was not added to that table in mig 224 — the
 -- shape there is "rows live until expires_at, then prune." Use
--- expires_at + completed_at as the active-set predicate so the
--- partial UNIQUE matches the lifecycle (active = NOT expired AND
--- NOT completed).
+-- completed_at as the partial-index predicate (`completed_at IS NULL`
+-- = "active" row); the expired-row culling happens via a separate
+-- `prune_signup_sessions()` worker rather than baked into the
+-- index predicate. Postgres rejects NOW() in partial-index predicates
+-- (must be IMMUTABLE) — that bit migration 276 last week and is
+-- now a known-class mistake (CLAUDE.md). Active-set is enforced at
+-- the prune-job level, not the index level.
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_signup_sessions_email_plan
     ON signup_sessions (email, plan)
- WHERE completed_at IS NULL
-   AND expires_at > NOW();
+ WHERE completed_at IS NULL;
 COMMENT ON INDEX uniq_signup_sessions_email_plan IS
     'Cold-onboarding P1-6: a single email cannot have two concurrently-'
-    'active signup_sessions for the same plan. Completed + expired rows '
-    'fall out of the partial index so a new attempt is allowed once '
-    'either has fired.';
+    'active signup_sessions (completed_at IS NULL) for the same plan. '
+    'Completed rows fall out of the partial index so a new attempt is '
+    'allowed once the prior session finishes. Expired (uncompleted) '
+    'rows must be cleaned up by a prune worker — Postgres partial-index '
+    'predicates require IMMUTABLE expressions, NOW() is not IMMUTABLE.';
 
 
 -- ─── 2. baa_signatures email+version idempotency ─────────────────
