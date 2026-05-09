@@ -406,10 +406,12 @@ async def exemplar_miner_loop():
         _hb("exemplar_miner")
         try:
             from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
+            from dashboard_api.tenant_middleware import admin_transaction
 
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # admin_transaction (wave-19): exemplar_miner_loop issues 3
+            # admin reads/writes (candidate fetch, exemplar inserts, log).
+            async with admin_transaction(pool) as conn:
                 # Pull candidate exemplars: high-confidence L2 picks that
                 # succeeded at execution time (via execution_telemetry).
                 rows = await conn.fetch("""
@@ -508,9 +510,11 @@ async def threshold_tuner_loop():
         _hb("threshold_tuner")
         try:
             from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
+            from dashboard_api.tenant_middleware import admin_transaction
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # admin_transaction (wave-19): threshold_tuner_loop issues
+            # 3 admin statements (enrolled fetch, success-rate calc, UPDATE).
+            async with admin_transaction(pool) as conn:
                 # Pull incident types enrolled in auto-tune
                 enrolled = await conn.fetch(
                     "SELECT incident_type, min_success_rate, "
@@ -639,10 +643,12 @@ async def regime_change_detector_loop():
         _hb("regime_change_detector")
         try:
             from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
+            from dashboard_api.tenant_middleware import admin_transaction
 
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # admin_transaction (wave-19): regime_change_detector_loop
+            # issues 3 admin statements (rule scan, dedup check, INSERT).
+            async with admin_transaction(pool) as conn:
                 # Phase 15 closing: include rule age (created_at) + drop the
                 # n7 >= 10 HAVING so the absolute-floor branch can catch
                 # rules with as few as 20 samples. The delta branch still
@@ -884,10 +890,12 @@ async def l2_auto_candidate_loop():
         _hb("l2_auto_candidate")
         try:
             from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
+            from dashboard_api.tenant_middleware import admin_transaction
 
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # admin_transaction (wave-19): l2_auto_candidate_loop
+            # issues 3 admin statements (promotable scan, dedup, INSERT).
+            async with admin_transaction(pool) as conn:
                 # Find successful L2 patterns with 3+ occurrences
                 promotable = await conn.fetch("""
                     SELECT i.incident_type, i.site_id, rs.runbook_id,
@@ -1195,10 +1203,13 @@ async def recurrence_auto_promotion_loop():
         _hb("recurrence_auto_promotion")
         try:
             from dashboard_api.fleet import get_pool
-            from dashboard_api.tenant_middleware import admin_connection
+            from dashboard_api.tenant_middleware import admin_transaction
 
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # admin_transaction (wave-19): recurrence_auto_promotion_loop
+            # issues 3 admin statements (recurrence scan, no-recurrence
+            # filter, INSERT promotion).
+            async with admin_transaction(pool) as conn:
                 # Find recurrence-L2 decisions where:
                 # 1. escalation_reason = 'recurrence'
                 # 2. The decision had a runbook_id and confidence >= 0.6
