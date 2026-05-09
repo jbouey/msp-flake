@@ -1592,7 +1592,9 @@ async def get_partner_weekly_rollup(
     pool = await get_pool()
     partner_id = partner["id"]
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-28): get_partner_weekly_rollup issues 2
+    # admin reads (rollup view, latest computed_at).
+    async with admin_transaction(pool) as conn:
         # Guard against pre-migration deploys — endpoint shouldn't 500 if
         # the view hasn't been created yet. Pick the latest computed_at
         # across partner's sites as the rollup's logical timestamp.

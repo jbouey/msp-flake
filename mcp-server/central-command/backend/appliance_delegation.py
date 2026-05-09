@@ -427,7 +427,9 @@ async def sync_audit_trail(
     synced_ids = []
     failed_ids = []
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-28): sync_audit_trail issues 2+ admin
+    # statements per entry (verify, INSERT) in a loop.
+    async with admin_transaction(pool) as conn:
         for entry in request.entries:
             try:
                 # Verify entry hash
@@ -512,7 +514,9 @@ async def get_audit_trail(
 ):
     """Get synced audit trail for an appliance."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-28): get_audit_trail issues 2 admin
+    # reads (filtered list, count for pagination).
+    async with admin_transaction(pool) as conn:
         # Build query
         conditions = ["appliance_id = $1"]
         params = [appliance_id]
@@ -575,7 +579,9 @@ async def process_urgent_escalations(
     escalated_to_l3 = []
     failed_ids = []
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-28): process_urgent_escalations issues
+    # 2+ admin statements per escalation in a loop (verify, route).
+    async with admin_transaction(pool) as conn:
         for escalation in request.escalations:
             try:
                 # Check if already processed
@@ -660,7 +666,9 @@ async def get_escalation_history(
 ):
     """Get escalation history for an appliance."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-28): get_escalation_history issues 2
+    # admin reads (appliance lookup, escalation history filter).
+    async with admin_transaction(pool) as conn:
         # Get appliance's site for filtering
         # Note: appliance_id can be legacy UUID, canonical appliance_id, or site_id
         appliance = await conn.fetchrow("""
