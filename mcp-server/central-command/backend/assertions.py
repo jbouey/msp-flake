@@ -430,6 +430,88 @@ async def _check_phantom_detector_healthy(conn: asyncpg.Connection) -> List[Viol
     return []
 
 
+async def _check_substrate_sla_breach(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev2 — META — a substrate invariant has been open beyond its SLA.
+
+    The 2026-05-08 audit (audit/coach-e2e-attestation-audit-2026-05-08.md)
+    found that 4 substrate violations had been open for a cumulative
+    >32,500 minutes (>22 days). The engine was healthy; the response
+    loop was not. CLAUDE.md feedback memory `feedback_substrate_*`
+    captures the principle: the engine catches drift in <60s, but
+    that signal is wasted if no one acts on it.
+
+    Per-severity SLA (process-defined; tunable):
+      sev1   ≤  4h  — alert if open longer
+      sev2   ≤ 24h  — alert if open longer
+      sev3   ≤ 30d  — alert if open longer (informational class
+                       like pre_mig175_privileged_unattested is
+                       intentionally long-open by design; sev3 SLA
+                       is generous)
+
+    This meta-invariant fires sev2 when ANY non-meta sev1/sev2 row
+    has been open beyond its SLA. The intentionally-long-open
+    informational invariants (`pre_mig175_privileged_unattested` —
+    sev3 disclosure surface) are excluded by name; if more get
+    added, they get added to the carve-out below.
+
+    The meta-invariant DOES NOT fire on itself (would create a
+    feedback loop with no termination).
+    """
+    # Carve-out: sev3 informational disclosure-surface invariants
+    # that are intentionally long-open by design. Adding to this
+    # list requires explicit round-table sign-off.
+    LONG_OPEN_BY_DESIGN = (
+        "pre_mig175_privileged_unattested",
+        "substrate_sla_breach",  # never alert on self
+    )
+
+    rows = await conn.fetch(
+        """
+        SELECT invariant_name, severity,
+               EXTRACT(EPOCH FROM (NOW() - detected_at))/60 AS open_minutes,
+               COUNT(*) OVER (PARTITION BY invariant_name) AS row_count
+          FROM substrate_violations
+         WHERE resolved_at IS NULL
+           AND invariant_name <> ALL($1::text[])
+         ORDER BY detected_at ASC
+        """,
+        list(LONG_OPEN_BY_DESIGN),
+    )
+    out: List[Violation] = []
+    for r in rows:
+        sev = r["severity"]
+        open_min = float(r["open_minutes"])
+        # Per-severity SLA in minutes
+        sla_min = {"sev1": 240, "sev2": 1440, "sev3": 43200}.get(sev, 1440)
+        if open_min <= sla_min:
+            continue
+        out.append(
+            Violation(
+                site_id=None,
+                details={
+                    "breached_invariant": r["invariant_name"],
+                    "breached_severity": sev,
+                    "open_minutes": round(open_min, 1),
+                    "open_hours": round(open_min / 60, 1),
+                    "sla_minutes": sla_min,
+                    "interpretation": (
+                        f"Substrate invariant `{r['invariant_name']}` "
+                        f"({sev}) has been open for "
+                        f"{round(open_min/60, 1)}h, exceeding its "
+                        f"{sla_min}-minute SLA. The engine is firing "
+                        f"correctly; the response loop is not. Read "
+                        f"the runbook for the named invariant and "
+                        f"act, OR if the invariant is intentionally "
+                        f"long-open by design, add it to "
+                        f"_check_substrate_sla_breach.LONG_OPEN_BY_DESIGN "
+                        f"with round-table sign-off."
+                    ),
+                },
+            )
+        )
+    return out
+
+
 async def _check_pre_mig175_privileged_unattested(conn: asyncpg.Connection) -> List[Violation]:
     """Sev3 — INFORMATIONAL — pre-mig-175 privileged orders without attestation.
 
@@ -1855,6 +1937,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_compliance_packets_stalled(c),
     ),
     Assertion(
+        name="substrate_sla_breach",
+        severity="sev2",
+        description="META — any non-meta sev1/sev2 substrate invariant has been open beyond its per-severity SLA (sev1 ≤4h, sev2 ≤24h, sev3 ≤30d). Closes the 'engine works, response loop doesn't' class caught by the 2026-05-08 E2E audit (4 sev2 invariants had been open for cumulative >22 days). Skips self + intentional long-open carve-outs (currently `pre_mig175_privileged_unattested` — sev3 disclosure surface). Operations PM track. Round-table 2026-05-08 RT-3.3 close.",
+        check=lambda c: _check_substrate_sla_breach(c),
+    ),
+    Assertion(
         name="pre_mig175_privileged_unattested",
         severity="sev3",
         description="INFORMATIONAL — surfaces 3 pre-migration-175 privileged fleet_orders rows on north-valley-branch-2 that lack attestation_bundle_id. New violations are STRUCTURALLY blocked by trg_enforce_privileged_chain (mig 175). Disclosure path chosen over backfill per round-table 2026-05-08 RT-1.2 (4-of-4 Carol/Sarah/Steve/Maya); see docs/security/SECURITY_ADVISORY_2026-04-13_PRIVILEGED_PRE_TRIGGER.md. Sev3 — operator visibility, not action.",
@@ -2511,6 +2599,24 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "tier override per <ticket>'. RT-DM Issue #2 hardening "
             "(non-consensus, 2026-05-06). Pinned by "
             "tests/test_l2_canonical_view_used.py."
+        ),
+    },
+    "substrate_sla_breach": {
+        "display_name": "Substrate SLA breach — invariant open beyond response window",
+        "recommended_action": (
+            "META invariant. A non-meta sev1/sev2 invariant has been "
+            "open beyond its per-severity SLA (sev1 ≤4h, sev2 ≤24h, "
+            "sev3 ≤30d). The engine is firing correctly; the response "
+            "loop is not. Resolution: (1) read the runbook for the "
+            "breached invariant (named in details.breached_invariant); "
+            "(2) execute the operator action it documents; (3) if the "
+            "invariant is intentionally long-open by design, add it "
+            "to `_check_substrate_sla_breach.LONG_OPEN_BY_DESIGN` "
+            "with explicit round-table sign-off. NEVER add a carve-"
+            "out to silence an alert that should drive action — that "
+            "defeats the purpose of the SLA. Sev2 because: the engine "
+            "is the customer-facing trust signal; sustained alert "
+            "backlog erodes that trust."
         ),
     },
     "pre_mig175_privileged_unattested": {

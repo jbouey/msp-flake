@@ -3079,7 +3079,6 @@
     "appliance_id",
     "completed_at",
     "created_at",
-    "error_message",
     "expires_at",
     "id",
     "issued_at",

@@ -648,13 +648,25 @@ async def complete_order(
         result_json["duration_seconds"] = req.duration_seconds
     if req.result:
         result_json["result"] = req.result
+    # Schema-fixture audit (2026-05-08, F-P3-1): the `orders` table
+    # has NO top-level `error_message` column. Failure messages are
+    # stored inside `result->>'error_message'` (assertions.py:5031
+    # already documents this is the canonical home; the substrate
+    # invariant `unbridged_telemetry_runbook_ids` reads from the
+    # JSONB path). The pre-fix UPDATE wrote to a non-existent column
+    # which raised silently inside an asyncpg execute (no rowcount
+    # change but no Python exception in the happy path because the
+    # query was actually rejected at parse-time only after the fixture
+    # diverged). Putting err_msg into result_json keeps the data
+    # accessible AND in the right place per the existing convention.
+    if err_msg is not None:
+        result_json["error_message"] = err_msg
 
     update = await db.execute(
         text("""
             UPDATE orders SET
                 status = :new_status,
                 completed_at = :completed_at,
-                error_message = :error_message,
                 result = :result_json::jsonb
             WHERE order_id = :order_id
               AND status IN ('acknowledged', 'executing', 'pending')
@@ -664,7 +676,6 @@ async def complete_order(
             "order_id": req.order_id,
             "new_status": new_status,
             "completed_at": now,
-            "error_message": err_msg,
             "result_json": json.dumps(result_json),
         },
     )
