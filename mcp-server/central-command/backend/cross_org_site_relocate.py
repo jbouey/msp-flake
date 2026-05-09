@@ -833,7 +833,9 @@ async def source_release(body: SourceReleaseRequest, request: Request):
     pool = await get_pool()
     token_hash = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-25): source_release issues 3+ admin
+    # statements (feature flag, request lookup, UPDATE state, audit).
+    async with admin_transaction(pool) as conn:
         await _require_feature_enabled(conn)
 
         row = await conn.fetchrow(
@@ -971,7 +973,9 @@ async def target_accept(body: TargetAcceptRequest, request: Request):
     pool = await get_pool()
     token_hash = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-25): target_accept issues 3+ admin
+    # statements (feature flag, request lookup, UPDATE state, audit).
+    async with admin_transaction(pool) as conn:
         await _require_feature_enabled(conn)
 
         row = await conn.fetchrow(

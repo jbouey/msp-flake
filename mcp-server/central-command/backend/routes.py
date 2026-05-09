@@ -3124,9 +3124,11 @@ async def get_global_stats(db: AsyncSession = Depends(get_db), user: dict = Depe
     active_threats = 0
     try:
         from .fleet import get_pool
-        from .tenant_middleware import admin_connection
+        from .tenant_middleware import admin_transaction
         pool = await get_pool()
-        async with admin_connection(pool) as conn:
+        # admin_transaction (wave-25): get_global_stats issues 3 admin
+        # reads (agents, sites, incidents counts).
+        async with admin_transaction(pool) as conn:
             agent_row = await conn.fetchrow(
                 "SELECT COUNT(*) as cnt FROM go_agents WHERE status = 'connected'"
             )
@@ -5322,7 +5324,9 @@ async def get_organization_workstations(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-25): get_organization_workstations issues
+    # 3 admin reads (sites, agents, compliance).
+    async with admin_transaction(pool) as conn:
         site_ids = [r['site_id'] for r in await conn.fetch(
             "SELECT site_id FROM sites WHERE client_org_id = $1", org_id
         )]

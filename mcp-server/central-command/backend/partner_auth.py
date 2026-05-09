@@ -969,7 +969,9 @@ async def email_signup(request: Request, body: EmailSignupRequest):
 
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-25): email_signup issues 3 admin
+    # statements (existing check, INSERT partner, audit log).
+    async with admin_transaction(pool) as conn:
         # Check if partner already exists with this email
         existing = await conn.fetchrow("""
             SELECT id, pending_approval, status FROM partners
