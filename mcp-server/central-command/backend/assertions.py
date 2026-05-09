@@ -430,6 +430,115 @@ async def _check_phantom_detector_healthy(conn: asyncpg.Connection) -> List[Viol
     return []
 
 
+async def _check_compliance_bundles_trigger_disabled(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev1 — `compliance_bundles_no_delete` trigger MUST be in
+    `ENABLE ALWAYS` state (`tgenabled='A'`).
+
+    Phase 1 multi-tenant audit F-P1-3 (2026-05-09): adversarial
+    cleanup tests sometimes need to bypass the no-delete trigger
+    via `ALTER TABLE ... DISABLE TRIGGER`. If a test crashes
+    mid-execution OR an operator forgets to re-enable, the chain-
+    of-custody integrity guard goes silent and bulk-DELETEs become
+    possible without anyone noticing.
+
+    This invariant fires sev1 if `compliance_bundles_no_delete`
+    trigger is in any state other than 'A' (ALWAYS) on the parent
+    partitioned table OR any of its partitions. 'D' (disabled) is
+    explicitly NOT allowed — the only legitimate state is ALWAYS.
+
+    The cleanup convention going forward (encoded in
+    audit/multi-tenant-phase1-concurrent-write-stress-2026-05-09.md):
+    after any synthetic-data injection that requires DISABLE,
+    operators MUST `ALTER TABLE ... ENABLE ALWAYS TRIGGER` before
+    test exit. This invariant is the runtime defense if that
+    discipline ever slips.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT n.nspname AS schema_name,
+               c.relname AS table_name,
+               t.tgname AS trigger_name,
+               t.tgenabled::text AS state
+          FROM pg_trigger t
+          JOIN pg_class c ON c.oid = t.tgrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE t.tgname = 'compliance_bundles_no_delete'
+           AND NOT t.tgisinternal
+           AND t.tgenabled <> 'A'
+        """
+    )
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "schema": r["schema_name"],
+                "table": r["table_name"],
+                "trigger": r["trigger_name"],
+                "tgenabled_state": r["state"],
+                "interpretation": (
+                    f"`{r['schema_name']}.{r['table_name']}.{r['trigger_name']}` "
+                    f"is in tgenabled='{r['state']}' (expected 'A' = ALWAYS). "
+                    f"Chain-of-custody integrity guard is degraded. Run: "
+                    f"ALTER TABLE {r['schema_name']}.{r['table_name']} "
+                    f"ENABLE ALWAYS TRIGGER {r['trigger_name']};"
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_db_baseline_guc_drift(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev2 — load-bearing Postgres GUC defaults must match baseline.
+
+    Phase 1 multi-tenant audit F-P1-4 (2026-05-09): the substrate
+    relies on `app.is_admin` defaulting to 'false' (mig 234 tenant
+    safety) and `app.current_tenant`/`app.current_org`/
+    `app.current_partner_id` defaulting to '' (empty = no tenant).
+    If any of these drift to 'true' / non-empty, RLS posture
+    silently flips to permissive without anyone noticing.
+
+    Watches the 4 load-bearing GUCs on the database role. Fires
+    sev2 if any has drifted from the baseline.
+    """
+    BASELINE_GUCS = {
+        "app.is_admin": "false",
+        "app.current_tenant": "",
+        "app.current_org": "",
+        "app.current_partner_id": "",
+    }
+    out: List[Violation] = []
+    for guc, expected in BASELINE_GUCS.items():
+        actual = await conn.fetchval(
+            "SELECT current_setting($1, true)", guc
+        )
+        # `current_setting(name, missing_ok=true)` returns NULL when
+        # the GUC has never been set in this session. NULL is the
+        # SAME as the default in the running DB; we only flag drift
+        # when the setting is explicitly set AND differs from baseline.
+        if actual is None:
+            continue
+        if actual != expected:
+            out.append(
+                Violation(
+                    site_id=None,
+                    details={
+                        "guc": guc,
+                        "expected": expected,
+                        "actual": actual,
+                        "interpretation": (
+                            f"GUC `{guc}` is set to `{actual!r}` (expected "
+                            f"`{expected!r}`). RLS posture has drifted from "
+                            f"the tenant-safety baseline (mig 234). "
+                            f"Investigate which migration / hotfix set this; "
+                            f"if intentional, document + add to BASELINE_GUCS."
+                        ),
+                    },
+                )
+            )
+    return out
+
+
 async def _check_substrate_sla_breach(conn: asyncpg.Connection) -> List[Violation]:
     """Sev2 — META — a substrate invariant has been open beyond its SLA.
 
@@ -670,18 +779,27 @@ async def _check_compliance_packets_stalled(conn: asyncpg.Connection) -> List[Vi
     investigate within the workday + manually backfill via the admin
     endpoint if needed.
     """
+    # Phase 1 multi-tenant audit P2 fix (F-P1-2, 2026-05-09): the
+    # prior `EXTRACT(YEAR/MONTH FROM cb.created_at)` per-row predicate
+    # forces a sequential scan + can't use partition pruning on the
+    # monthly compliance_bundles partitions. Profiled at 162ms with
+    # 251K bundles, projects to ~5s at N=20. Range comparison
+    # `created_at >= start AND created_at < end` IS sargable + lets
+    # PG partition pruning eliminate every non-matching partition
+    # entirely + uses the (site_id, created_at) index.
     rows = await conn.fetch(
         """
         WITH prior_month AS (
-            SELECT EXTRACT(YEAR FROM (NOW() - INTERVAL '1 month'))::int AS y,
-                   EXTRACT(MONTH FROM (NOW() - INTERVAL '1 month'))::int AS m,
-                   date_trunc('month', NOW()) AS curr_month_start
+            SELECT date_trunc('month', NOW() - INTERVAL '1 month') AS prior_start,
+                   date_trunc('month', NOW())                       AS curr_month_start,
+                   EXTRACT(YEAR FROM (NOW() - INTERVAL '1 month'))::int AS y,
+                   EXTRACT(MONTH FROM (NOW() - INTERVAL '1 month'))::int AS m
         ),
         active_sites AS (
             SELECT DISTINCT cb.site_id
               FROM compliance_bundles cb, prior_month pm
-             WHERE EXTRACT(YEAR FROM cb.created_at) = pm.y
-               AND EXTRACT(MONTH FROM cb.created_at) = pm.m
+             WHERE cb.created_at >= pm.prior_start
+               AND cb.created_at <  pm.curr_month_start
         )
         SELECT a.site_id, p.y AS year, p.m AS month
           FROM active_sites a, prior_month p
@@ -1943,6 +2061,18 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_compliance_packets_stalled(c),
     ),
     Assertion(
+        name="compliance_bundles_trigger_disabled",
+        severity="sev1",
+        description="`compliance_bundles_no_delete` trigger is NOT in ENABLE ALWAYS state on the parent partitioned table or any partition. Chain-of-custody integrity guard is degraded — bulk-DELETEs become possible without alarm. Phase 1 multi-tenant audit F-P1-3 (2026-05-09) — adversarial cleanup tests can leave the trigger DISABLED if cleanup mid-aborts. Round-table 4-of-4 approved this runtime defense.",
+        check=lambda c: _check_compliance_bundles_trigger_disabled(c),
+    ),
+    Assertion(
+        name="db_baseline_guc_drift",
+        severity="sev2",
+        description="Load-bearing Postgres GUC has drifted from baseline. The substrate's tenant-safety posture depends on `app.is_admin` defaulting to 'false' (mig 234) and `app.current_tenant`/`app.current_org`/`app.current_partner_id` defaulting to ''. If any has drifted to a permissive value, RLS isolation silently flips. Phase 1 multi-tenant audit F-P1-4 (2026-05-09).",
+        check=lambda c: _check_db_baseline_guc_drift(c),
+    ),
+    Assertion(
         name="substrate_sla_breach",
         severity="sev2",
         description="META — any non-meta sev1/sev2 substrate invariant has been open beyond its per-severity SLA (sev1 ≤4h, sev2 ≤24h, sev3 ≤30d). Closes the 'engine works, response loop doesn't' class caught by the 2026-05-08 E2E audit (4 sev2 invariants had been open for cumulative >22 days). Skips self + intentional long-open carve-outs (currently `pre_mig175_privileged_unattested` — sev3 disclosure surface). Operations PM track. Round-table 2026-05-08 RT-3.3 close.",
@@ -2605,6 +2735,32 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "tier override per <ticket>'. RT-DM Issue #2 hardening "
             "(non-consensus, 2026-05-06). Pinned by "
             "tests/test_l2_canonical_view_used.py."
+        ),
+    },
+    "compliance_bundles_trigger_disabled": {
+        "display_name": "Chain-of-custody trigger DISABLED — integrity guard degraded",
+        "recommended_action": (
+            "compliance_bundles_no_delete trigger is in a non-ALWAYS state. "
+            "Run: ALTER TABLE <schema>.<table> ENABLE ALWAYS TRIGGER "
+            "compliance_bundles_no_delete; against the named table. The trigger "
+            "is the last-line defense against bulk-DELETE on the chain-of-"
+            "custody evidence table. If you DISABLED it for a one-shot "
+            "cleanup, RE-ENABLE it immediately. Sev1 because every minute "
+            "the trigger is off is a minute of customer-visible "
+            "tamper-evidence integrity risk."
+        ),
+    },
+    "db_baseline_guc_drift": {
+        "display_name": "DB GUC drift — RLS posture compromised",
+        "recommended_action": (
+            "A load-bearing GUC has drifted from the tenant-safety baseline. "
+            "Run psql `RESET <guc>` against the running database OR find the "
+            "migration that mistakenly altered the default. "
+            "Baseline: app.is_admin='false', app.current_tenant='', "
+            "app.current_org='', app.current_partner_id=''. If a permissive "
+            "value is intentional (rare!), document the rationale and add to "
+            "_check_db_baseline_guc_drift.BASELINE_GUCS with round-table "
+            "sign-off."
         ),
     },
     "substrate_sla_breach": {

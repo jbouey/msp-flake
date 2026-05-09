@@ -357,6 +357,19 @@ jobs:
             mcp-server/main.py \
             ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/app/
 
+      - name: Deploy pgbouncer config to release
+        # Phase 1 multi-tenant audit P0 fix (2026-05-09): the prior
+        # CI/CD only rsynced backend + frontend; pgbouncer.ini changes
+        # in source were ignored at deploy time. The 25→50 pool bump
+        # shipped to git on 2026-05-09 (commit 81194a9b) but live
+        # `SHOW CONFIG` confirmed pool_size=25 still in effect. This
+        # step closes that drift class.
+        # Static env vars only; no untrusted input.
+        run: |
+          rsync -avz --delete \
+            mcp-server/pgbouncer/ \
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/
+
       - name: Deploy security advisories to release
         # P0-1 fix from the 2026-05-09 15-commit adversarial audit:
         # _collect_security_advisories() walks parents of
@@ -429,6 +442,28 @@ jobs:
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/app/ /opt/mcp-server/app/
             rsync -a --delete ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend_dist/ /opt/mcp-server/frontend_dist/
             rsync -a ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/frontend/nginx.conf /opt/mcp-server/frontend/nginx.conf
+
+            # Phase 1 multi-tenant audit P0 fix (2026-05-09): pgbouncer
+            # config (pool sizes, limits, ssl) was source-of-truth in
+            # git but never deployed. Detect changes by checksum and
+            # restart pgbouncer ONLY when the file actually changed —
+            # avoids needless restart on every deploy.
+            if [ -d "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer" ]; then
+              CHANGED=0
+              for f in pgbouncer.ini userlist.txt; do
+                if [ -f "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/\$f" ]; then
+                  if ! cmp -s "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/\$f" "/opt/mcp-server/pgbouncer/\$f" 2>/dev/null; then
+                    CHANGED=1
+                  fi
+                fi
+              done
+              rsync -a "${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/pgbouncer/" "/opt/mcp-server/pgbouncer/"
+              if [ "\$CHANGED" -eq 1 ]; then
+                echo "pgbouncer config changed — restarting"
+                cd /opt/mcp-server && docker compose restart pgbouncer
+                cd /
+              fi
+            fi
 
             # Caddy serves /sitemap.xml and /robots.txt from /opt/mcp-server/static/,
             # NOT from frontend_dist/. If we only rsync frontend_dist these files
