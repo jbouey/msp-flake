@@ -311,6 +311,22 @@ async def _get_prev_bundle(conn: asyncpg.Connection, site_id: str) -> Optional[D
     semantics, which would defeat the purpose; the assertion below
     catches that misuse loudly.
     """
+    # P1-1 fix from 2026-05-09 15-commit audit: the docstring above
+    # claims an assertion catches caller-not-in-transaction. The
+    # assertion was missing. asyncpg.Connection exposes
+    # `is_in_transaction()` since 0.27 — explicit assert here makes
+    # the misuse fail loudly at the line of misuse instead of letting
+    # `pg_advisory_xact_lock` no-op silently outside a transaction
+    # (the lock auto-releases at statement end if not in a txn,
+    # which is functionally equivalent to "no lock at all").
+    assert conn.is_in_transaction(), (
+        "_get_prev_bundle() requires the caller to be inside an "
+        "explicit transaction (admin_transaction or admin_connection "
+        "wrapped in conn.transaction()). pg_advisory_xact_lock has no "
+        "serialization semantics outside a transaction — the lock "
+        "would release at statement end, defeating the race-fix."
+    )
+
     # `hashtext()` returns int4 natively; the two-arg
     # `pg_advisory_xact_lock(int, int)` overload takes int4+int4
     # (NOT int8+int8 — that signature does not exist). The second

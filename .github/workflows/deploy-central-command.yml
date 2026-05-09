@@ -357,6 +357,24 @@ jobs:
             mcp-server/main.py \
             ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/app/
 
+      - name: Deploy security advisories to release
+        # P0-1 fix from the 2026-05-09 15-commit adversarial audit:
+        # _collect_security_advisories() walks parents of
+        # evidence_chain.py looking for docs/security/. In the
+        # container that resolves to /app/dashboard_api/docs/security/.
+        # Without this rsync the directory does not exist, the function
+        # silently returns [], and the auditor-kit ZIP ships WITHOUT
+        # the SECURITY_ADVISORY disclosure files — even though the
+        # pre_mig175_privileged_unattested invariant emits an
+        # advisory_ref pointing at one. Closes RT-1.2 at runtime.
+        # All values below are static env vars, not user-controlled.
+        run: |
+          ssh ${{ env.VPS_USER }}@${{ env.VPS_HOST }} \
+            "mkdir -p ${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/dashboard_api/docs/security"
+          rsync -avz --delete \
+            docs/security/ \
+            ${{ env.VPS_USER }}@${{ env.VPS_HOST }}:${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}/dashboard_api/docs/security/
+
       - name: Deploy frontend to release
         run: |
           rsync -avz --delete \
