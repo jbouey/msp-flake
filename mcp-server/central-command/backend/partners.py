@@ -2307,7 +2307,9 @@ async def get_partner_org_drift_config(
     """Get drift config for all sites in an org (org-level view)."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-29): get_partner_org_drift_config issues
+    # 2 admin reads (org ownership, drift config join).
+    async with admin_transaction(pool) as conn:
         # Verify partner owns this org
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
@@ -2364,7 +2366,9 @@ async def update_partner_org_drift_config(
             f"These checks are required for HIPAA compliance monitoring.",
         )
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-29): update_partner_org_drift_config
+    # issues 2 admin statements (ownership verify, UPSERT config).
+    async with admin_transaction(pool) as conn:
         # Verify partner owns this org
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
@@ -2430,7 +2434,9 @@ async def get_partner_org_alert_config(
 ):
     """Return alert email config and per-site overrides for a partner org."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-29): get_partner_org_alert_config issues
+    # 2 admin reads (org alert config, per-site overrides).
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             """SELECT alert_email, cc_email, client_alert_mode
                FROM client_orgs
@@ -2482,7 +2488,9 @@ async def update_partner_org_alert_config(
         )
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-29): update_partner_org_alert_config
+    # issues 2 admin statements (ownership verify, UPDATE config).
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
             org_id, partner['id']
@@ -2525,7 +2533,9 @@ async def update_partner_site_alert_config(
         )
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-29): update_partner_site_alert_config
+    # issues 2 admin statements (site ownership, UPSERT override).
+    async with admin_transaction(pool) as conn:
         site = await conn.fetchrow(
             "SELECT site_id FROM sites WHERE site_id = $1 AND partner_id = $2",
             site_id, partner['id']
