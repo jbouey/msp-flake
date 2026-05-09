@@ -1329,19 +1329,30 @@ async def report_incident(
                     site_id=incident.site_id,
                 )
 
+                # Substrate invariant l2_resolution_without_decision_record
+                # (Session 219 mig 300): if record_l2_decision fails, we
+                # MUST NOT set resolution_tier='L2' — that produces a
+                # ghost-L2 incident with no LLM audit trail. Force L3
+                # escalation instead so the audit chain stays sound.
+                l2_decision_recorded = False
                 try:
                     await record_l2_decision(
                         db, incident_id, decision,
                         incident_type=incident.incident_type,
                         escalation_reason="recurrence" if recurrence_context else "normal",
                     )
+                    l2_decision_recorded = True
                 except Exception as e:
-                    logger.error(f"Failed to record L2 decision: {e}")
+                    logger.error(
+                        f"Failed to record L2 decision: {e}", exc_info=True,
+                    )
 
                 # Confidence floor moved to 0.7 (Session 205 audit). Below this
                 # the planner already nullifies runbook_id, but kept here as a
                 # belt-and-suspenders gate in case planner config diverges.
-                if decision.runbook_id and decision.confidence >= 0.7 and not decision.requires_human_review:
+                # `l2_decision_recorded` gate (Session 219): refuse to set L2
+                # without an l2_decisions row — substrate invariant.
+                if l2_decision_recorded and decision.runbook_id and decision.confidence >= 0.7 and not decision.requires_human_review:
                     runbook_id = decision.runbook_id
                     resolution_tier = "L2"
                     l2_succeeded = True

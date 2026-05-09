@@ -4526,11 +4526,18 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                         hipaa_controls=incident.hipaa_controls,
                     )
 
-                # Record L2 decision for data flywheel
+                # Record L2 decision for data flywheel.
+                # Substrate invariant l2_resolution_without_decision_record
+                # (Session 219 mig 300): if record fails, do NOT set
+                # resolution_tier='L2' below — escalate to L3 instead.
+                l2_decision_recorded = False
                 try:
                     await record_l2_decision(db, incident_id, decision)
+                    l2_decision_recorded = True
                 except Exception as e:
-                    logger.error(f"Failed to record L2 decision: {e}")
+                    logger.error(
+                        f"Failed to record L2 decision: {e}", exc_info=True,
+                    )
 
                 # Determine L2 result for attempt tracking
                 l2_result = "no_action"
@@ -4538,7 +4545,9 @@ async def report_incident(incident: IncidentReport, request: Request, db: AsyncS
                 l2_confidence = getattr(decision, 'confidence', None)
 
                 # If L2 found a runbook with sufficient confidence, create an order
-                if decision.runbook_id and decision.confidence >= 0.6 and not decision.requires_human_review:
+                # `l2_decision_recorded` gate (Session 219): refuse to set L2
+                # without an l2_decisions row — substrate invariant.
+                if l2_decision_recorded and decision.runbook_id and decision.confidence >= 0.6 and not decision.requires_human_review:
                     runbook_id = decision.runbook_id
                     resolution_tier = "L2"
                     l2_succeeded = True
