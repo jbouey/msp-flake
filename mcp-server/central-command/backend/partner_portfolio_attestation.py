@@ -181,10 +181,16 @@ async def _gather_aggregate_facts(
     # Control count from check_type_registry — substrate-wide
     # constant, NOT partner-specific. Operationally what's
     # monitored across the fleet.
+    # Schema drift fix (2026-05-09 partner-PDF runtime audit P0):
+    # column was renamed `monitoring_only` → `is_monitoring_only` in
+    # mig 157 (`check_type_registry`). Pre-fix every portfolio-
+    # attestation PDF returned 500 in prod. Caught only at runtime —
+    # exactly the class the runtime-evidence-required-at-closeout
+    # rule was written for.
     control_count = await conn.fetchval(
         """
         SELECT COUNT(*) FROM check_type_registry
-         WHERE COALESCE(monitoring_only, false) = false
+         WHERE COALESCE(is_monitoring_only, false) = false
         """,
     ) or 0
 

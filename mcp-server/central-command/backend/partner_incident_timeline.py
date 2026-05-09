@@ -107,11 +107,16 @@ async def render_incident_timeline(
     on missing or non-owned incident."""
 
     # Fetch + ownership check in one query.
+    # Schema drift fix (2026-05-09 partner-PDF runtime audit P0):
+    # `incidents` has NO top-level `hostname` column — hostname lives
+    # in the JSONB `details` payload (CLAUDE.md routes.py pattern:
+    # `i.details->>'hostname' AS hostname`). Pre-fix every incident-
+    # timeline PDF returned 500 in prod. Caught only at runtime.
     incident_row = await conn.fetchrow(
         """
         SELECT i.id, i.incident_type, i.severity, i.status,
-               i.site_id, i.hostname, i.created_at, i.resolved_at,
-               i.resolution_tier
+               i.site_id, i.details->>'hostname' AS hostname,
+               i.created_at, i.resolved_at, i.resolution_tier
           FROM incidents i
           JOIN sites s ON s.site_id = i.site_id
          WHERE i.id = $1

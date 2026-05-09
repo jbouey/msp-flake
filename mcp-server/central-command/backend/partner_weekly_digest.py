@@ -82,14 +82,24 @@ async def _gather_weekly_facts(
 ) -> Dict[str, Any]:
     """Compute the weekly operational facts for the partner."""
 
-    # Orders run — fleet_orders completed in window for partner's sites.
+    # Orders run — fleet_orders is FLEET-WIDE, the per-appliance scope
+    # is in the SIGNED `signed_payload` (CLAUDE.md). To count "orders
+    # run for this partner's sites" we MUST go through
+    # fleet_order_completions (which has appliance_id, scoped per
+    # completion event) → site_appliances → sites.
+    # Schema drift fix (2026-05-09 partner-PDF runtime audit P0):
+    # the prior `fo.target_site_id` JOIN refers to a column that has
+    # NEVER existed on fleet_orders. Pre-fix every weekly-digest PDF
+    # returned 500. Caught only at runtime.
     orders_run = await conn.fetchval(
         """
-        SELECT COUNT(*) FROM fleet_orders fo
-          JOIN sites s ON s.site_id = fo.target_site_id
+        SELECT COUNT(DISTINCT foc.fleet_order_id)
+          FROM fleet_order_completions foc
+          JOIN site_appliances sa ON sa.appliance_id = foc.appliance_id
+          JOIN sites s ON s.site_id = sa.site_id
          WHERE s.partner_id = $1
-           AND fo.status IN ('completed', 'delivered', 'acked')
-           AND fo.created_at >= $2 AND fo.created_at < $3
+           AND foc.status IN ('completed', 'delivered', 'acked')
+           AND foc.completed_at >= $2 AND foc.completed_at < $3
         """,
         partner_id, week_start, week_end,
     ) or 0
