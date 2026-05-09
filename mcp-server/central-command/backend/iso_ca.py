@@ -59,7 +59,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from . import iso_ca_helpers as helpers
 from . import identity_chain as chain
 
@@ -318,7 +318,9 @@ async def claim_v2(req: ClaimV2Request, request: Request) -> ClaimV2Response:
     appliance_id = f"{req.site_id}-{mac_norm}"
     client_ip = request.client.host if request.client else None
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-14): claim_v2 issues 4 admin reads/writes
+    # in sequence — must pin to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # 1. Validate the claim cert against the registered CA.
         validation = await _validate_claim_cert(conn, req.claim_cert)
         if not validation.ok:

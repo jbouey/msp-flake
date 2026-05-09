@@ -802,7 +802,9 @@ async def get_site_devices(
     query += f" ORDER BY d.last_seen_at DESC LIMIT ${param_idx} OFFSET ${param_idx + 1}"
     params.extend([limit, offset])
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-14): get_site_devices reads devices,
+    # agents, last_seen aggregations — 4 admin reads.
+    async with admin_transaction(pool) as conn:
         rows = await conn.fetch(query, *params)
 
         # Fetch agent coverage data for this site

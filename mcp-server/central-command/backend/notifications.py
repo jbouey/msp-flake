@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, EmailStr
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .partners import require_partner
 
 logger = logging.getLogger(__name__)
@@ -464,7 +464,9 @@ async def resolve_ticket(
     """Resolve an escalation ticket."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-14): resolve_ticket reads ticket, updates
+    # status, writes audit log + notification — 4 admin statements.
+    async with admin_transaction(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT * FROM escalation_tickets
             WHERE id = $1 AND partner_id = $2

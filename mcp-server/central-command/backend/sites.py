@@ -3089,7 +3089,10 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
     order_type = "enable_healing" if enabled else "disable_healing"
     action = "enabled" if enabled else "disabled"
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-14): _toggle_healing issues 4 admin
+    # statements (site lookup + signed-order build + fleet_orders
+    # INSERT + audit log). Mixed read+write must pin.
+    async with admin_transaction(pool) as conn:
         # Verify site exists
         site = await conn.fetchrow("SELECT site_id, clinic_name FROM sites WHERE site_id = $1", site_id)
         if not site:

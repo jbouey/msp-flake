@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, EmailStr
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .auth import require_auth
 from .audit_package import AuditPackage, PackagePeriod
 
@@ -146,7 +146,9 @@ async def download_audit_package(
     """Download the ZIP. Records the download in audit_package_downloads so
     the client has evidence of who fetched it."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-14): 4 admin statements — package read,
+    # download row INSERT, audit log, response stream prep.
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             """
             SELECT package_id, site_id, zip_path, zip_sha256, zip_size_bytes,
