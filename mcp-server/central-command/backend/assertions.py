@@ -508,14 +508,34 @@ async def _check_db_baseline_guc_drift(conn: asyncpg.Connection) -> List[Violati
         "app.current_partner_id": "",
     }
     out: List[Violation] = []
+    # Round-2 audit P0-RT2-B fix (2026-05-09): the prior version
+    # called `current_setting()` against the SESSION GUC. The
+    # `admin_connection` caller already SET LOCAL app.is_admin='true'
+    # to bypass RLS — so this invariant ALWAYS fired sev2 false-
+    # positive against its own caller's setting. Switched to reading
+    # the DATABASE-ROLE baseline via `pg_db_role_setting`, which is
+    # the actual ALTER DATABASE / ALTER ROLE persistent setting.
+    # If THAT drifts from baseline, RLS posture has actually flipped.
+    role_settings = await conn.fetch(
+        """
+        SELECT unnest(setconfig) AS kv
+          FROM pg_db_role_setting drs
+          JOIN pg_database d ON d.oid = drs.setdatabase
+         WHERE d.datname = current_database()
+           AND drs.setrole = 0  -- 0 = database-wide setting
+        """
+    )
+    db_role_gucs: Dict[str, str] = {}
+    for row in role_settings:
+        kv = row["kv"]
+        if "=" in kv:
+            key, _, val = kv.partition("=")
+            db_role_gucs[key.strip()] = val.strip()
+
     for guc, expected in BASELINE_GUCS.items():
-        actual = await conn.fetchval(
-            "SELECT current_setting($1, true)", guc
-        )
-        # `current_setting(name, missing_ok=true)` returns NULL when
-        # the GUC has never been set in this session. NULL is the
-        # SAME as the default in the running DB; we only flag drift
-        # when the setting is explicitly set AND differs from baseline.
+        # If the DB-role setting doesn't exist, the system default
+        # applies (which IS the baseline by construction — mig 234).
+        actual = db_role_gucs.get(guc)
         if actual is None:
             continue
         if actual != expected:
@@ -942,12 +962,16 @@ async def _check_cross_org_relocate_chain_orphan(
             violations.append(
                 Violation(
                     site_id=row["site_id"],
-                    detail=(
-                        f"site has prior_client_org_id={row['prior_org_id']} "
-                        f"and current client_org_id={row['current_org_id']} "
-                        f"but no completed cross_org_site_relocate_requests "
-                        f"row attests the move — chain-of-custody gap"
-                    ),
+                    details={
+                        "prior_org_id": str(row["prior_org_id"]),
+                        "current_org_id": str(row["current_org_id"]),
+                        "interpretation": (
+                            f"site has prior_client_org_id={row['prior_org_id']} "
+                            f"and current client_org_id={row['current_org_id']} "
+                            f"but no completed cross_org_site_relocate_requests "
+                            f"row attests the move — chain-of-custody gap"
+                        ),
+                    },
                 )
             )
     return violations
@@ -1005,14 +1029,19 @@ async def _check_cross_org_relocate_baa_receipt_unauthorized(
             violations.append(
                 Violation(
                     site_id=row["site_id"],
-                    detail=(
-                        f"completed relocate {row['relocate_id']} "
-                        f"executed_at={row['executed_at']} has target "
-                        f"org {row['target_org_id']} with NULL "
-                        f"baa_relocate_receipt_signature_id — counsel "
-                        f"approval condition #2 violated; the move "
-                        f"happened without recorded receipt-authorization"
-                    ),
+                    details={
+                        "relocate_id": str(row["relocate_id"]),
+                        "executed_at": row["executed_at"].isoformat() if row["executed_at"] else None,
+                        "target_org_id": str(row["target_org_id"]),
+                        "interpretation": (
+                            f"completed relocate {row['relocate_id']} "
+                            f"executed_at={row['executed_at']} has target "
+                            f"org {row['target_org_id']} with NULL "
+                            f"baa_relocate_receipt_signature_id — counsel "
+                            f"approval condition #2 violated; the move "
+                            f"happened without recorded receipt-authorization"
+                        ),
+                    },
                 )
             )
     return violations
@@ -1055,11 +1084,14 @@ async def _check_unbridged_telemetry_runbook_ids(
         violations.append(
             Violation(
                 site_id=None,
-                detail=(
-                    f"execution_telemetry.runbook_id={row['runbook_id']!r} "
-                    f"has no matching runbooks.agent_runbook_id (or "
-                    f"runbook_id). Add a bridge row in a migration."
-                ),
+                details={
+                    "runbook_id": row["runbook_id"],
+                    "interpretation": (
+                        f"execution_telemetry.runbook_id={row['runbook_id']!r} "
+                        f"has no matching runbooks.agent_runbook_id (or "
+                        f"runbook_id). Add a bridge row in a migration."
+                    ),
+                },
             )
         )
     return violations
@@ -1107,12 +1139,16 @@ async def _check_l2_resolution_without_decision_record(
         violations.append(
             Violation(
                 site_id=row.get("site_id"),
-                detail=(
-                    f"incident id={row['incident_pk']} "
-                    f"resolved_at={row['resolved_at']} carries "
-                    f"resolution_tier='L2' but no l2_decisions row "
-                    f"references it — L2 resolution without LLM record"
-                ),
+                details={
+                    "incident_pk": str(row["incident_pk"]),
+                    "resolved_at": row["resolved_at"].isoformat() if row["resolved_at"] else None,
+                    "interpretation": (
+                        f"incident id={row['incident_pk']} "
+                        f"resolved_at={row['resolved_at']} carries "
+                        f"resolution_tier='L2' but no l2_decisions row "
+                        f"references it — L2 resolution without LLM record"
+                    ),
+                },
             )
         )
     return violations
@@ -1154,12 +1190,17 @@ async def _check_orders_stuck_acknowledged(
         violations.append(
             Violation(
                 site_id=row.get("site_id"),
-                detail=(
-                    f"order order_id={row['order_id']} "
-                    f"status={row['status']} "
-                    f"acknowledged_at={row['acknowledged_at']} — "
-                    f"appliance never reported completion telemetry"
-                ),
+                details={
+                    "order_id": str(row["order_id"]),
+                    "status": row["status"],
+                    "acknowledged_at": row["acknowledged_at"].isoformat() if row["acknowledged_at"] else None,
+                    "interpretation": (
+                        f"order order_id={row['order_id']} "
+                        f"status={row['status']} "
+                        f"acknowledged_at={row['acknowledged_at']} — "
+                        f"appliance never reported completion telemetry"
+                    ),
+                },
             )
         )
     return violations
@@ -1219,41 +1260,39 @@ async def _check_client_portal_zero_evidence_with_data(
         bundle_count_7d = int(row["bundle_count_7d"])
 
         # Simulate the canonical query under this org's client RLS.
-        # Wrapped in a savepoint so a failure (e.g. invalid org_id)
-        # doesn't poison the outer assertion-loop transaction.
+        # Use asyncpg's `async with conn.transaction()` for the
+        # savepoint, NOT raw `SAVEPOINT` SQL — raw SAVEPOINT requires
+        # an outer transaction, and `admin_connection` (caller) only
+        # begins one when wrapped in `admin_transaction`. The
+        # context-manager form auto-detects savepoint-vs-toplevel.
+        # `SET LOCAL` is scoped to the savepoint; on exit the
+        # transaction-context releases it (no explicit RESET needed).
+        # Round-2 audit P0-RT2-A: prior raw `SAVEPOINT` was raising
+        # `NoActiveSQLTransactionError` ~102/hr in prod.
         try:
-            await conn.execute(
-                "SAVEPOINT client_rls_sim",
-            )
-            await conn.execute(
-                f"SET LOCAL app.current_org = '{org_id}'",
-            )
-            await conn.execute(
-                "SET LOCAL app.is_admin = 'false'",
-            )
-            await conn.execute(
-                "SET LOCAL app.current_tenant = ''",
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    f"SET LOCAL app.current_org = '{org_id}'",
+                )
+                await conn.execute(
+                    "SET LOCAL app.is_admin = 'false'",
+                )
+                await conn.execute(
+                    "SET LOCAL app.current_tenant = ''",
+                )
 
-            visible_count = await conn.fetchval(
-                """
-                SELECT COUNT(*) FROM compliance_bundles
-                 WHERE site_id IN (
-                     SELECT site_id FROM sites
-                      WHERE client_org_id::text = current_setting('app.current_org', true)
-                 )
-                   AND checked_at > NOW() - INTERVAL '7 days'
-                """
-            )
-            visible_count = int(visible_count or 0)
-
-            await conn.execute("ROLLBACK TO SAVEPOINT client_rls_sim")
-            await conn.execute(
-                "SET LOCAL app.current_org = ''",
-            )
-            await conn.execute(
-                "SET LOCAL app.is_admin = 'true'",
-            )
+                visible_count = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM compliance_bundles
+                     WHERE site_id IN (
+                         SELECT site_id FROM sites
+                          WHERE client_org_id::text = current_setting('app.current_org', true)
+                     )
+                       AND checked_at > NOW() - INTERVAL '7 days'
+                    """
+                )
+                visible_count = int(visible_count or 0)
+            # Savepoint committed on with-block exit; SET LOCAL released.
 
             if visible_count == 0:
                 violations.append(
@@ -1278,18 +1317,15 @@ async def _check_client_portal_zero_evidence_with_data(
                 )
         except Exception:
             # Best-effort — don't fail the entire assertion run on a
-            # single org's quirk. Log via the normal exception path.
-            try:
-                await conn.execute("ROLLBACK TO SAVEPOINT client_rls_sim")
-                await conn.execute("SET LOCAL app.is_admin = 'true'")
-            except Exception:
-                # Best-effort recovery on a poisoned tenant transaction;
-                # surface for visibility but don't block the assertion run.
-                logger.error(
-                    "client_rls_sim_savepoint_recovery_failed",
-                    extra={"client_org_id": org_id},
-                    exc_info=True,
-                )
+            # single org's quirk. The `async with conn.transaction()`
+            # context manager auto-rolls back the savepoint on
+            # exception; SET LOCAL settings are released with it.
+            # Just log and move to the next org.
+            logger.error(
+                "client_rls_sim_savepoint_recovery_failed",
+                extra={"client_org_id": org_id},
+                exc_info=True,
+            )
             continue
 
     return violations

@@ -229,6 +229,13 @@ SOURCE_LEVEL_TESTS=(
     # READS. Also pins mig 297 helper STABLE marker + table
     # apply-list + partner_connection() helper presence.
     "tests/test_partner_endpoints_filter_partner_id.py"
+    # 2026-05-09 round-2 coach audit P0-RT2-A: substrate engine had
+    # 5 broken Violation(detail=...) callsites + raw SAVEPOINT SQL
+    # outside conn.transaction() — ~105 TypeError + ~102
+    # NoActiveSQLTransactionError per hour in prod. Same code-true-
+    # runtime-false class as round-1's prometheus_metrics finding.
+    # AST gate prevents the regression structurally.
+    "tests/test_assertions_loop_runs_clean.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
