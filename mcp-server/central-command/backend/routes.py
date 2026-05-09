@@ -666,7 +666,10 @@ async def escalate_incident(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): 3 admin queries (read incident,
+    # insert escalation ticket, update incident) — must pin to one
+    # backend so the post-INSERT UPDATE sees the just-written row.
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow("""
             SELECT i.id, i.status, i.site_id, i.check_type,
                    i.details->>'hostname' AS hostname,
@@ -926,7 +929,12 @@ async def get_flywheel_health(
     from .fleet import get_pool
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212 routing-pathology rule): this
+    # handler issues 7 admin reads in sequence. Bare admin_connection
+    # under PgBouncer transaction-pool can split SET LOCAL across
+    # backends → silent zero-row reads. admin_transaction pins all
+    # 7 to one backend.
+    async with admin_transaction(pool) as conn:
         # Candidate stages
         cand_stats = await conn.fetchrow("""
             SELECT
@@ -2099,7 +2107,7 @@ async def get_kpi_trends(
         days = 90
 
     from .fleet import get_pool
-    from .tenant_middleware import admin_connection
+    from .tenant_middleware import admin_transaction
 
     pool = await get_pool()
 
@@ -2107,7 +2115,8 @@ async def get_kpi_trends(
     l1_per_day: list[float] = [0.0] * days
     clients_per_day: list[int] = [0] * days
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): 4 admin reads in sequence.
+    async with admin_transaction(pool) as conn:
         # 1) Incidents/day — group by created_at::date, last N days.
         try:
             rows = await conn.fetch(
@@ -2215,7 +2224,7 @@ async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)
     — the backend is the single source of truth.
     """
     from .fleet import get_pool
-    from .tenant_middleware import admin_connection
+    from .tenant_middleware import admin_transaction
 
     pool = await get_pool()
     healing_rate_24h: float | None = None
@@ -2223,7 +2232,8 @@ async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)
     online_appliances_pct: float | None = None
     mfa_coverage_pct: float | None = None
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): 4 admin reads in sequence.
+    async with admin_transaction(pool) as conn:
         # 1) Healing rate: successful L1/L2 executions over the last 24h.
         try:
             row = await conn.fetchrow("""
@@ -2651,7 +2661,7 @@ async def get_consent_rollout_dashboard(
     infra/ops change (env var + container restart) done outside this UI.
     """
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
     from dashboard_api.runbook_consent import get_enforce_classes, CONSENT_COPY_VERSION
 
     pool = await get_pool()
@@ -2659,7 +2669,8 @@ async def get_consent_rollout_dashboard(
     # sentinel '*' means "all classes enforced"
     enforce_all = "*" in enforce_set
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212): 6 admin reads in sequence.
+    async with admin_transaction(pool) as conn:
         total_active_sites = await conn.fetchval(
             "SELECT COUNT(*) FROM sites WHERE status != 'inactive'"
         ) or 0

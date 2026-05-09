@@ -80,7 +80,9 @@ class TestKPITrendsEndpoint:
         tree = ast.parse(src)
         fn = _get_func(tree, "get_kpi_trends")
         body = ast.get_source_segment(src, fn) or ""
-        assert "admin_connection" in body
+        # Wave-4 ratchet (2026-05-08): migrated to admin_transaction
+        # (Session 212 routing-pathology rule).
+        assert "admin_transaction" in body or "admin_connection" in body
 
     def test_response_has_computed_at(self):
         src = _load()

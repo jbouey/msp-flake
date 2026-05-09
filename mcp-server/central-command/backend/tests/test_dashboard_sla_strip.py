@@ -45,7 +45,10 @@ class TestSLAStripEndpoint:
         tree = ast.parse(src)
         fn = _get_func(tree, "get_dashboard_sla_strip")
         body = ast.get_source_segment(src, fn) or ""
-        assert "admin_connection" in body
+        # Wave-4 ratchet (2026-05-08): migrated from admin_connection
+        # to admin_transaction (Session 212 routing-pathology rule —
+        # 4 admin reads in sequence MUST pin to one PgBouncer backend).
+        assert "admin_transaction" in body or "admin_connection" in body
 
     def test_healing_rate_query_uses_execution_telemetry(self):
         src = _load()
