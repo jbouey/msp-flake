@@ -215,6 +215,12 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_bg_loop_admin_context.py"
     "tests/test_prometheus_metrics_uses_savepoints.py"
     "tests/test_no_silent_db_write_swallow.py"
+    # 2026-05-09 multi-tenant Phase 0 P0-1 follow-on: every
+    # @router-decorated function in evidence_chain.py MUST declare
+    # an auth Depends(). 5 unauth GETs leaked chain metadata to
+    # any caller pre-fix (commit 10a82b73). Sibling-parity AST gate
+    # prevents the next regression of the same class.
+    "tests/test_evidence_endpoints_auth_coverage.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
