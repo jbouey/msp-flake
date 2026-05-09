@@ -117,7 +117,8 @@ async def sso_authorize(body: SSOAuthorizeRequest, request: Request):
     pool = await get_pool()
     email = body.email.strip().lower()
 
-    async with admin_connection(pool) as conn:
+    # wave-12: SSO authorize — DELETE + lookups + INSERT state token; pin to single PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # Clean up expired state tokens
         await conn.execute(
             "DELETE FROM client_oauth_state WHERE expires_at < NOW()"

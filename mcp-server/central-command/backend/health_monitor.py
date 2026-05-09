@@ -356,11 +356,12 @@ async def _check_stuck_queues():
     """
     import json
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # wave-12: stuck-queue scan — fetch tickets + fetch L2 + dedup + INSERT notifications; pin to single PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # --- Escalation tickets stuck >24h ---
         try:
             stuck_tickets = await conn.fetch("""

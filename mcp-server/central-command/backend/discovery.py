@@ -409,7 +409,8 @@ async def get_asset_summary(site_id: str):
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # wave-12: 4-DB-call read pinned to single PgBouncer backend (Session 212 routing-pathology rule).
+    async with admin_transaction(pool) as conn:
         # Get site internal ID
         site = await conn.fetchrow("""
             SELECT id FROM sites WHERE site_id = $1

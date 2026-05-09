@@ -655,7 +655,8 @@ async def cancel_rollout(rollout_id: str, user: dict = Depends(require_admin)):
 async def advance_rollout_stage(rollout_id: str, user: dict = Depends(require_admin)):
     """Manually advance to the next rollout stage."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # wave-12: rollout-stage-advance multi-write path; pin to single PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         rollout = await conn.fetchrow(
             "SELECT current_stage, stages FROM update_rollouts WHERE id = $1",
             UUID(rollout_id)
@@ -1064,7 +1065,8 @@ async def create_fleet_order(order: FleetOrderCreate, user: dict = Depends(requi
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=order.expires_hours)
 
-    async with admin_connection(pool) as conn:
+    # wave-12: fleet-order INSERT + audit-log multi-write; pin to single PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO fleet_orders (order_type, parameters, skip_version, status, expires_at, created_by,
                                       nonce, signature, signed_payload)
