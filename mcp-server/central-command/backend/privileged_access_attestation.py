@@ -311,13 +311,14 @@ async def _get_prev_bundle(conn: asyncpg.Connection, site_id: str) -> Optional[D
     semantics, which would defeat the purpose; the assertion below
     catches that misuse loudly.
     """
-    # `hashtext()` produces a stable int4 from the site_id string;
-    # advisory locks take int8 keys so we widen via two int4s. The
-    # second key (`hashtext('attest')`) namespaces the lock so it
-    # cannot collide with other advisory-lock callers using the same
+    # `hashtext()` returns int4 natively; the two-arg
+    # `pg_advisory_xact_lock(int, int)` overload takes int4+int4
+    # (NOT int8+int8 — that signature does not exist). The second
+    # key (`hashtext('attest')`) namespaces the lock so it cannot
+    # collide with other advisory-lock callers using the same
     # site_id for an unrelated purpose.
     await conn.execute(
-        "SELECT pg_advisory_xact_lock(hashtext($1)::bigint, hashtext('attest')::bigint)",
+        "SELECT pg_advisory_xact_lock(hashtext($1), hashtext('attest'))",
         site_id,
     )
 
