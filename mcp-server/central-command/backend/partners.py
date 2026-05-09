@@ -1288,7 +1288,8 @@ async def get_partner_dashboard(
     pool = await get_pool()
     partner_id = partner["id"]
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-10): 4 admin reads — pin to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # ─── Attention list: risk-ordered ──────────────────────
         # Score per site: chronic_patterns*3 + open_l3*5 + ack_pending*2
         # + appliance_offline*4. Top 10.
@@ -2107,7 +2108,9 @@ async def get_partner_qbr_pdf(
         quarter_end = datetime(year, q_start_month + 3, 1, tzinfo=timezone.utc)
     quarter_label = f"{year}-Q{q_num}"
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-10): 4 admin reads (site, bundles, incidents,
+    # remediations) — pin to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # Verify partner owns this site (cross-partner isolation — same
         # contract as /me/dashboard, /me/search).
         site = await conn.fetchrow(
@@ -2605,7 +2608,9 @@ async def get_partner_org_workstations(
 ):
     """Aggregate workstation compliance across all sites in a partner's org."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-10): 4 admin reads (org, sites, workstations,
+    # workstation_alerts) — pin to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",
             org_id, partner['id']
@@ -3525,7 +3530,9 @@ async def list_partners(
     """List partners with pagination, search, and sorting (admin only)."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-10): 4 admin reads (count + page + status agg +
+    # site totals) — pin to one PgBouncer backend.
+    async with admin_transaction(pool) as conn:
         # Build WHERE clause
         conditions = []
         params: list = []

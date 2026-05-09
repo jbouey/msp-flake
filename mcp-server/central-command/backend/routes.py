@@ -7703,7 +7703,10 @@ async def generate_admin_report(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (Session 212 routing-pathology rule, wave-10): 5 admin
+    # reads (sites, compliance_bundles, incidents, fleet_orders, escalations) —
+    # pin to one PgBouncer backend so SET LOCAL app.is_admin sticks.
+    async with admin_transaction(pool) as conn:
         # Get site info
         site = await conn.fetchrow(
             "SELECT site_id, clinic_name FROM sites WHERE site_id = $1", site_id
