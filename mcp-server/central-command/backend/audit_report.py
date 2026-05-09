@@ -346,7 +346,9 @@ async def update_audit_config(org_id: int, body: AuditConfigUpdate, user: dict =
     pool = await get_pool()
 
     try:
-        async with admin_connection(pool) as conn:
+        # admin_transaction (wave-27): update_audit_config issues 2
+        # admin statements (org check, UPSERT config).
+        async with admin_transaction(pool) as conn:
             # Verify org exists
             org = await conn.fetchrow("SELECT id FROM client_orgs WHERE id = $1", org_id)
             if not org:

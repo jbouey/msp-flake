@@ -72,7 +72,9 @@ async def ack_mesh_targets(
     acked = 0
     unknown = 0
     reassigned = 0
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-27): ack_mesh_targets issues 3+ admin
+    # statements per target (lookup, UPDATE assignment, audit log).
+    async with admin_transaction(pool) as conn:
         for t in req.targets:
             key = t.get("target_key")
             ttype = t.get("target_type")

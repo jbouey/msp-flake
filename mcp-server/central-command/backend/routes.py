@@ -8409,7 +8409,9 @@ async def get_healing_telemetry(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-27): get_healing_telemetry issues 3
+    # admin reads (telemetry rows, summary, runbook lookup).
+    async with admin_transaction(pool) as conn:
         rows = await conn.fetch("""
             SELECT incident_type, runbook_id, success,
                    COUNT(*) AS attempts,

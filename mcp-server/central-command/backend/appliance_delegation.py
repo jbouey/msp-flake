@@ -25,7 +25,7 @@ except ImportError:
     NACL_AVAILABLE = False
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .auth import require_admin
 
 logger = logging.getLogger(__name__)
@@ -275,7 +275,9 @@ async def delegate_signing_key(
         raise HTTPException(status_code=500, detail="Signing not available")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-27): delegate_signing_key issues 2 admin
+    # statements (ownership verify, INSERT delegated key + audit).
+    async with admin_transaction(pool) as conn:
         # Verify appliance belongs to site
         if not await verify_appliance_ownership(conn, appliance_id, request.site_id):
             raise HTTPException(status_code=404, detail="Appliance not found for this site")
@@ -384,7 +386,9 @@ async def list_delegated_keys(
 ):
     """List all delegated keys for an appliance."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-27): list_delegated_keys issues 2 admin
+    # reads (filtered list, count summary).
+    async with admin_transaction(pool) as conn:
         if include_revoked:
             rows = await conn.fetch("""
                 SELECT key_id, site_id, scope, delegated_at, expires_at,
