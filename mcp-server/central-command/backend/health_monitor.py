@@ -571,10 +571,11 @@ async def _check_device_reachability():
     """Roll up device_unreachable incidents into partner notifications."""
     import json
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-9 (Session 219): 5 admin DB calls (fetch unreachable, fetch contacts, insert notifications); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         # Find sites with unreachable devices in last hour
         rows = await conn.fetch("""
             SELECT i.site_id, s.clinic_name,
@@ -656,10 +657,11 @@ async def _resolve_stale_incidents():
     on it and we leave it alone.
     """
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-9 (Session 219): 5 admin DB calls (find stale, mark resolved, audit insert); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         # Resolve open/resolving incidents >7d with no recent healing attempts
         result = await conn.fetch("""
             UPDATE incidents SET

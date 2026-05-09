@@ -7439,7 +7439,8 @@ async def get_compliance_report(
     from .fleet import get_pool
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-9 (Session 219): 5 admin DB calls (site lookup, control mappings, bundle counts, evidence rollup); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         # Verify site exists
         site = await conn.fetchrow(
             "SELECT site_id, clinic_name FROM sites WHERE site_id = $1", site_id
@@ -7613,7 +7614,8 @@ async def apply_industry_preset(
     primary = preset["primary"]
     enabled = [primary] + preset["additional"]
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-9 (Session 219): 5 admin DB calls (site verify, fetch frameworks, upsert config, audit insert); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         # Verify site exists
         site = await conn.fetchrow(
             "SELECT site_id FROM sites WHERE site_id = $1", site_id

@@ -745,7 +745,8 @@ async def rekey_appliance(req: RekeyRequest, request: Request):
             detail=f"Rekey rate limited. Retry in {remaining}s"
         )
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction wave-9 (Session 219): 5 admin DB calls (verify appliance, rotate api_key, update site_appliances, audit insert); pin SET LOCAL app.is_admin to one PgBouncer backend
+    async with admin_transaction(pool) as conn:
         # Verify appliance exists and was previously provisioned
         appliance = await conn.fetchrow("""
             SELECT sa.appliance_id, sa.site_id, sa.first_checkin, sa.mac_address,
