@@ -516,14 +516,25 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
         logger.exception("metrics: checkin rate query failed")
 
     # --- Log entries total (counter) ---
+    # Use planner statistics instead of COUNT(*). log_entries is
+    # partitioned (~4.2M rows in 2026-05) and a full count was timing
+    # out 50+ times/hr at /api/metrics, masking every other gauge.
+    # pg_class.reltuples is updated on each ANALYZE — for a Prometheus
+    # counter this approximation is sufficient (and the metric is
+    # documented as approximate via the help text).
     try:
         async with admin_transaction(pool) as conn:
             row = await conn.fetchrow(
-                "SELECT COUNT(*) AS cnt FROM log_entries"
+                """
+                SELECT COALESCE(SUM(reltuples), 0)::bigint AS cnt
+                  FROM pg_class
+                 WHERE relname LIKE 'log_entries%'
+                   AND relkind IN ('r', 'p')
+                """
             )
         sections.append(_counter(
             "osiriscare_log_entries_total",
-            "Total log entries ingested",
+            "Total log entries ingested (approx, planner reltuples)",
             [({}, float(row["cnt"]))],
         ))
     except Exception:
