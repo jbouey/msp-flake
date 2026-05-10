@@ -1283,7 +1283,9 @@ async def record_baa_receipt_authorization(
         raise HTTPException(403, "Admin actor email is required.")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-41): record_baa_receipt_authorization
+    # issues 2 admin statements (org check, UPDATE BAA receipt).
+    async with admin_transaction(pool) as conn:
         # Verify the org exists.
         org = await conn.fetchrow(
             "SELECT id, name, baa_on_file FROM client_orgs WHERE id = $1::uuid",

@@ -151,7 +151,9 @@ async def search_logs(
     user = await require_auth(request)
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-41): search_logs issues 2 admin reads
+    # (filtered logs, count for pagination).
+    async with admin_transaction(pool) as conn:
         # Build query dynamically
         conditions = ["site_id = $1"]
         params = [site_id]

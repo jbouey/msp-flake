@@ -630,7 +630,9 @@ async def update_partner_site_compliance(
 
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-41): update_partner_site_compliance issues
+    # 2 admin statements (ownership verify, UPDATE compliance config).
+    async with admin_transaction(pool) as conn:
         # Verify site belongs to partner
         site = await conn.fetchrow("""
             SELECT site_id, clinic_name FROM sites
@@ -677,7 +679,9 @@ async def get_partner_sites_compliance_summary(
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-41): get_partner_sites_compliance_summary
+    # issues 2 admin reads (sites + frameworks aggregation).
+    async with admin_transaction(pool) as conn:
         # Get all sites with their frameworks
         sites = await conn.fetch("""
             SELECT
