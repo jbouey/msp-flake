@@ -927,7 +927,9 @@ async def delete_baa(baa_id: str, user: dict = Depends(require_client_user)):
 @router.get("/ir-plan")
 async def get_ir_plan(user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-36): get_ir_plan issues 2 admin reads
+    # (latest plan, breach log).
+    async with admin_transaction(pool) as conn:
         plan = await conn.fetchrow("""
             SELECT * FROM hipaa_ir_plans
             WHERE org_id = $1 ORDER BY version DESC LIMIT 1
@@ -946,7 +948,9 @@ async def get_ir_plan(user: dict = Depends(require_client_user)):
 @router.post("/ir-plan")
 async def create_ir_plan(body: IRPlanCreate, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-36): create_ir_plan issues 2 admin
+    # statements (max version, INSERT new plan).
+    async with admin_transaction(pool) as conn:
         max_ver = await conn.fetchval("""
             SELECT COALESCE(MAX(version), 0) FROM hipaa_ir_plans WHERE org_id = $1
         """, user["org_id"])
@@ -1405,7 +1409,9 @@ async def list_documents(
     pool = await get_pool()
     org_id = str(user["org_id"])
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-36): list_documents issues 2 admin
+    # reads (filter by module_key OR all-org).
+    async with admin_transaction(pool) as conn:
         if module_key:
             rows = await conn.fetch("""
                 SELECT id::text, module_key, file_name, mime_type, size_bytes,
