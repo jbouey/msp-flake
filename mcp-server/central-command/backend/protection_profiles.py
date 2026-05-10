@@ -227,7 +227,9 @@ async def create_profile(body: ProfileCreate, user: Dict[str, Any] = Depends(req
     if body.template_id:
         template_id = _uuid.UUID(body.template_id)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-37): create_profile issues 2 admin
+    # statements (site access verify, INSERT profile).
+    async with admin_transaction(pool) as conn:
         await require_site_access(conn, user, body.site_id)
         try:
             created_by = user.get("username") or user.get("displayName") or str(user.get("id", ""))

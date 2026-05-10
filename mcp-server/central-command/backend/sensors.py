@@ -462,7 +462,9 @@ async def deploy_linux_sensor_to_host(site_id: str, hostname: str):
     """
     pool = await get_db_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-37): deploy_linux_sensor_to_host issues
+    # 2 admin statements (appliance lookup, INSERT command queue).
+    async with admin_transaction(pool) as conn:
         # Get appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id FROM site_appliances

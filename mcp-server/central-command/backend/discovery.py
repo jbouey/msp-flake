@@ -339,7 +339,9 @@ async def update_scan_status(status: ScanStatus):
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-37): update_scan_status issues 2 admin
+    # statements (UPDATE scan + audit log).
+    async with admin_transaction(pool) as conn:
         if status.status == "completed":
             result = await conn.execute("""
                 UPDATE discovery_scans

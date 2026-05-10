@@ -39,7 +39,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from .fleet import get_pool
 from .partner_agreements_api import require_active_partner_agreements
 from .partners import require_partner_role
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 try:
     from .shared import check_rate_limit
@@ -196,7 +196,9 @@ async def list_my_invites(
 ) -> Dict[str, Any]:
     """List a partner's invites (metadata only — no plaintext tokens)."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-37): list_my_invites issues 2 admin
+    # reads (filtered list — with/without consumed).
+    async with admin_transaction(pool) as conn:
         if include_consumed:
             rows = await conn.fetch(
                 """
