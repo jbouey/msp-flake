@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .auth import require_admin
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,9 @@ async def public_status(slug: str, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Not found")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-43): public_status issues 2 admin reads
+    # (site lookup + check counts).
+    async with admin_transaction(pool) as conn:
         site_row = await conn.fetchrow(
             """
             SELECT site_id, clinic_name

@@ -261,7 +261,9 @@ async def get_site_overrides(
     """Get notification overrides for a specific site."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-43): get_site_overrides issues 2 admin
+    # reads (site ownership, override fetch).
+    async with admin_transaction(pool) as conn:
         # Verify partner owns this site (use site_id column, not id)
         site = await conn.fetchrow("""
             SELECT * FROM sites WHERE site_id = $1 AND partner_id = $2
@@ -289,7 +291,9 @@ async def update_site_overrides(
     """Set notification overrides for a specific site."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-43): update_site_overrides issues 2
+    # admin statements (ownership verify, UPSERT override).
+    async with admin_transaction(pool) as conn:
         # Verify partner owns this site (use site_id column, not id)
         site = await conn.fetchrow("""
             SELECT * FROM sites WHERE site_id = $1 AND partner_id = $2
@@ -340,7 +344,9 @@ async def list_escalation_tickets(
     """List escalation tickets for partner."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-43): list_escalation_tickets issues 2
+    # admin reads (filtered list, count for pagination).
+    async with admin_transaction(pool) as conn:
         # Build query with filters
         query = """
             SELECT t.*, s.clinic_name as site_name
@@ -397,7 +403,9 @@ async def get_escalation_ticket(
     """Get details of a specific escalation ticket."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-43): get_escalation_ticket issues 2
+    # admin reads (ticket detail + comments/history).
+    async with admin_transaction(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT t.*, s.clinic_name as site_name
             FROM escalation_tickets t
