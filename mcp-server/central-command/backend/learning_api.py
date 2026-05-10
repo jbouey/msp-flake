@@ -437,12 +437,16 @@ async def approve_candidate(
         logger.error(f"Database pool unavailable: {e}")
         raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-35): approve_candidate previously used
+    # imperative `transaction = conn.transaction(); await transaction.start()`
+    # which provided isolation but defeated the
+    # test_admin_connection_no_multi_query matcher (it only recognizes
+    # `async with conn.transaction():`). Migrated to admin_transaction
+    # which gives SET LOCAL pinning + auto-rollback on exception via
+    # __aexit__. All explicit `transaction.rollback()` calls are
+    # dropped — raising HTTPException triggers the same rollback path.
+    async with admin_transaction(pool) as conn:
         partner_id = partner['id']
-
-        # Start explicit transaction
-        transaction = conn.transaction()
-        await transaction.start()
 
         try:
             # Step 1: Verify partner owns this candidate (read from view, no lock)
@@ -462,13 +466,11 @@ async def approve_candidate(
             """, partner_id, pattern_id)
 
             if not candidate:
-                await transaction.rollback()
                 raise HTTPException(status_code=404, detail="Candidate not found or not owned by partner")
 
             # Require minimum 3 successful L2 resolutions before eligible for promotion
             l2_count = candidate.get('l2_resolutions') or 0
             if l2_count < 3:
-                await transaction.rollback()
                 raise HTTPException(
                     status_code=400,
                     detail=f"Insufficient L2 evidence: {l2_count}/3 minimum resolutions required"
@@ -482,7 +484,6 @@ async def approve_candidate(
             """, candidate['site_id'], candidate['pattern_signature'])
 
             if not locked:
-                await transaction.rollback()
                 raise HTTPException(status_code=409, detail="Pattern no longer available")
 
             # Step 3: Check if already promoted (prevent duplicate)
@@ -492,12 +493,10 @@ async def approve_candidate(
             """, candidate['pattern_signature'], candidate['site_id'])
 
             if existing and existing['status'] == 'active':
-                await transaction.rollback()
                 raise HTTPException(status_code=409, detail=f"Pattern already promoted as {existing['rule_id']}")
 
             # Validate pattern signature format
             if not validate_pattern_signature(candidate['pattern_signature']):
-                await transaction.rollback()
                 raise HTTPException(status_code=400, detail="Invalid pattern signature format")
 
             # Generate rule for YAML format (partner path includes deployment commands)
@@ -545,9 +544,7 @@ async def approve_candidate(
                     WHERE rule_id = $2
                 """, deployed_count, rule['id'])
 
-            # Commit all changes atomically
-            await transaction.commit()
-
+            # admin_transaction commits on clean exit via __aexit__.
             logger.info(f"Pattern {candidate['pattern_signature'][:8]} promoted to rule {rule['id']} by partner {redact_partner_id(partner_id)}")
 
             await log_partner_learning_action(
@@ -571,17 +568,15 @@ async def approve_candidate(
             }
 
         except HTTPException:
-            # Re-raise HTTP exceptions (already rolled back)
+            # Re-raise HTTP exceptions; admin_transaction __aexit__
+            # rolls back on exception.
             raise
         except LockNotAvailableError:
-            await transaction.rollback()
             raise HTTPException(status_code=409, detail="Pattern is being promoted by another request, please retry")
         except PostgresError as e:
-            await transaction.rollback()
             logger.error(f"Database error during promotion: {e}")
             raise HTTPException(status_code=500, detail="Database error during promotion")
         except Exception as e:
-            await transaction.rollback()
             logger.error(f"Unexpected error during promotion: {e}")
             raise HTTPException(status_code=500, detail="Failed to promote pattern")
 
@@ -600,12 +595,11 @@ async def reject_candidate(
         logger.error(f"Database pool unavailable: {e}")
         raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-35): reject_candidate — same migration
+    # rationale as approve_candidate above (imperative-transaction
+    # pattern → admin_transaction with __aexit__ rollback semantics).
+    async with admin_transaction(pool) as conn:
         partner_id = partner['id']
-
-        # Start transaction
-        transaction = conn.transaction()
-        await transaction.start()
 
         try:
             # Verify ownership
@@ -616,7 +610,6 @@ async def reject_candidate(
             """, partner_id, pattern_id)
 
             if not candidate:
-                await transaction.rollback()
                 raise HTTPException(status_code=404, detail="Candidate not found or not owned by partner")
 
             # Update or insert rejection
@@ -636,7 +629,7 @@ async def reject_candidate(
                 request.reason
             )
 
-            await transaction.commit()
+            # admin_transaction commits on clean exit via __aexit__.
 
             # Don't log rejection reason (may contain PII)
             logger.info(f"Pattern {candidate['pattern_signature'][:8]} rejected by partner {redact_partner_id(partner_id)}")
@@ -658,11 +651,9 @@ async def reject_candidate(
         except HTTPException:
             raise
         except PostgresError as e:
-            await transaction.rollback()
             logger.error(f"Database error during rejection: {e}")
             raise HTTPException(status_code=500, detail="Database error")
         except Exception as e:
-            await transaction.rollback()
             logger.error(f"Unexpected error during rejection: {e}")
             raise HTTPException(status_code=500, detail="Failed to reject pattern")
 

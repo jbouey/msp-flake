@@ -142,7 +142,7 @@ def _check_block(
 #   2. Re-run this test — it will fail with new count.
 #   3. Drop ADMIN_CONN_MULTI_BASELINE_MAX in this file to match.
 #   4. Commit both changes together.
-ADMIN_CONN_MULTI_BASELINE_MAX = 70
+ADMIN_CONN_MULTI_BASELINE_MAX = 68
 
 
 def _collect_violations() -> list[str]:
