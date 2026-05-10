@@ -364,7 +364,9 @@ async def create_sra_assessment(body: SRACreate, user: dict = Depends(require_cl
 @router.get("/sra/{assessment_id}")
 async def get_sra_assessment(assessment_id: str, user: dict = Depends(require_client_user)):
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-34): get_sra_assessment issues 2 admin
+    # reads (assessment row, responses).
+    async with admin_transaction(pool) as conn:
         assessment = await conn.fetchrow("""
             SELECT * FROM hipaa_sra_assessments
             WHERE id = $1 AND org_id = $2
@@ -513,7 +515,9 @@ async def create_policy(body: PolicyCreate, user: dict = Depends(require_client_
 
     if template and not body.content:
         # Fill template placeholders
-        async with admin_connection(pool) as conn:
+        # admin_transaction (wave-34): create_policy template branch
+        # issues 2 admin reads (org name, officers).
+        async with admin_transaction(pool) as conn:
             org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", user["org_id"])
             officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
         officer_map = {r["role_type"]: r["name"] for r in officers}
@@ -525,7 +529,9 @@ async def create_policy(body: PolicyCreate, user: dict = Depends(require_client_
 
     hipaa_refs = template["hipaa_references"] if template else []
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-34): create_policy main branch issues 2
+    # admin statements (max version, INSERT new policy).
+    async with admin_transaction(pool) as conn:
         # Get next version
         max_ver = await conn.fetchval("""
             SELECT COALESCE(MAX(version), 0) FROM hipaa_policies
@@ -578,7 +584,9 @@ async def get_policy_template(template_key: str, user: dict = Depends(require_cl
         raise HTTPException(status_code=404, detail="Template not found")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-34): policy-template render issues 2
+    # admin reads (org name, officers — defensively try/except wrapped).
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", user["org_id"])
         try:
             officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
@@ -610,7 +618,9 @@ async def get_policy_template_html(template_key: str, user: dict = Depends(requi
         raise HTTPException(status_code=404, detail="Template not found")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-34): policy-template render issues 2
+    # admin reads (org name, officers — defensively try/except wrapped).
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", user["org_id"])
         try:
             officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", user["org_id"])
