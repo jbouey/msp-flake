@@ -366,7 +366,9 @@ async def get_expiring_exceptions(
 
     cutoff = datetime.now(timezone.utc) + timedelta(days=days)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-30): get_expiring_exceptions issues 2
+    # admin reads (site access verify, exceptions filter).
+    async with admin_transaction(pool) as conn:
         # SECURITY: Only get exceptions for sites this partner owns
         if site_id:
             # Verify partner owns this specific site
@@ -463,7 +465,9 @@ async def renew_exception(
     now = datetime.now(timezone.utc)
     expiration = now + timedelta(days=duration)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-30): renew_exception issues 2 admin
+    # statements (ownership verify, UPDATE renewal).
+    async with admin_transaction(pool) as conn:
         # SECURITY: Verify partner owns this exception
         existing = await verify_exception_ownership(conn, partner, exception_id)
 
@@ -502,7 +506,9 @@ async def revoke_exception(
 
     now = datetime.now(timezone.utc)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-30): revoke_exception issues 2 admin
+    # statements (ownership verify, UPDATE deactivate).
+    async with admin_transaction(pool) as conn:
         # SECURITY: Verify partner owns this exception
         existing = await verify_exception_ownership(conn, partner, exception_id)
 

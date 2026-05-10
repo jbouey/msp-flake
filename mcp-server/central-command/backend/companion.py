@@ -462,7 +462,9 @@ async def create_sra(org_id: str, body: SRACreate, request: Request, user: dict 
 async def get_sra(org_id: str, assessment_id: str, user: dict = Depends(require_companion)):
     pool = await get_pool()
     await _verify_org(pool, _uid(org_id))
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-30): get_sra issues 2 admin reads
+    # (assessment row, responses).
+    async with admin_transaction(pool) as conn:
         assessment = await conn.fetchrow("""
             SELECT * FROM hipaa_sra_assessments WHERE id = $1 AND org_id = $2
         """, _uid(assessment_id), _uid(org_id))
@@ -562,7 +564,9 @@ async def create_policy(org_id: str, body: PolicyCreate, request: Request, user:
     title = body.title or (template["title"] if template else body.policy_key)
     content = body.content or ""
     if template and not body.content:
-        async with admin_connection(pool) as conn:
+        # admin_transaction (wave-30): create_policy template-render
+        # branch issues 2 admin reads (org name, officers).
+        async with admin_transaction(pool) as conn:
             org = await conn.fetchrow("SELECT name FROM client_orgs WHERE id = $1", _uid(org_id))
             officers = await conn.fetch("SELECT role_type, name FROM hipaa_officers WHERE org_id = $1", _uid(org_id))
         officer_map = {r["role_type"]: r["name"] for r in officers}
