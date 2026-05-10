@@ -1087,11 +1087,13 @@ async def _check_install_loops():
     USB.
     """
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-40): _check_install_loops issues 2 admin
+    # statements (stuck-install scan + UPDATE alert state).
+    async with admin_transaction(pool) as conn:
         stuck = await conn.fetch(
             """
             SELECT session_id, site_id, mac_address, hostname,

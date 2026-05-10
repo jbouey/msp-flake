@@ -3897,8 +3897,12 @@ async def verify_batch(
     from .auth import require_auth
     await require_auth(request)
 
-    pool, admin_connection = await _get_admin_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-40): verify_batch issues 2 admin reads
+    # (bundle batch + signature verification audit row).
+    from .fleet import get_pool
+    from .tenant_middleware import admin_transaction
+    pool = await get_pool()
+    async with admin_transaction(pool) as conn:
         bundles = await conn.fetch(
             """
             SELECT bundle_id, bundle_hash, prev_hash, chain_position,

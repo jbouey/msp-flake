@@ -398,7 +398,9 @@ async def put_sso_config(org_id: str, body: SSOConfigRequest):
     pool = await get_pool()
     encrypted_secret = encrypt_secret(body.client_secret)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-40): put_sso_config issues 2 admin
+    # statements (org check, UPSERT SSO config).
+    async with admin_transaction(pool) as conn:
         # Verify org exists and belongs to this partner
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id::text = $1", org_id

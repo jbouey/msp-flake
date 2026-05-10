@@ -555,7 +555,9 @@ async def get_partner_site_compliance(
     """Get compliance configuration for a partner's site."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-40): get_partner_site_compliance issues
+    # 2 admin reads (site config, framework crosswalk).
+    async with admin_transaction(pool) as conn:
         site = await conn.fetchrow("""
             SELECT
                 s.site_id, s.clinic_name, s.tier, s.industry,
