@@ -576,7 +576,9 @@ async def create_policy(org_id: str, body: PolicyCreate, request: Request, user:
         content = content.replace("{{SECURITY_OFFICER}}", officer_map.get("security_officer", "[Not Designated]"))
         content = content.replace("{{PRIVACY_OFFICER}}", officer_map.get("privacy_officer", "[Not Designated]"))
     hipaa_refs = template["hipaa_references"] if template else []
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-31): create_policy main branch issues 2
+    # admin statements (max version, INSERT new policy row).
+    async with admin_transaction(pool) as conn:
         max_ver = await conn.fetchval("""
             SELECT COALESCE(MAX(version), 0) FROM hipaa_policies WHERE org_id = $1 AND policy_key = $2
         """, _uid(org_id),body.policy_key)
@@ -754,7 +756,9 @@ async def delete_baa(org_id: str, baa_id: str, request: Request, user: dict = De
 async def get_ir_plan(org_id: str, request: Request, user: dict = Depends(require_companion)):
     pool = await get_pool()
     await _verify_org(pool, _uid(org_id))
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-31): get_ir_plan issues 2 admin reads
+    # (latest plan, breach log).
+    async with admin_transaction(pool) as conn:
         plan = await conn.fetchrow("SELECT * FROM hipaa_ir_plans WHERE org_id = $1 ORDER BY version DESC LIMIT 1", _uid(org_id))
         breaches = await conn.fetch("SELECT * FROM hipaa_breach_log WHERE org_id = $1 ORDER BY incident_date DESC", _uid(org_id))
     await _log_activity(pool, user["id"], _uid(org_id),"viewed_ir_plan", "ir-plan", ip=request.client.host if request.client else None)
@@ -765,7 +769,9 @@ async def get_ir_plan(org_id: str, request: Request, user: dict = Depends(requir
 async def create_ir_plan(org_id: str, body: IRPlanCreate, request: Request, user: dict = Depends(require_companion)):
     pool = await get_pool()
     await _verify_org(pool, _uid(org_id))
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-31): create_ir_plan issues 2 admin
+    # statements (max version, INSERT new ir-plan).
+    async with admin_transaction(pool) as conn:
         max_ver = await conn.fetchval("SELECT COALESCE(MAX(version), 0) FROM hipaa_ir_plans WHERE org_id = $1", _uid(org_id))
         row = await conn.fetchrow("""
             INSERT INTO hipaa_ir_plans (org_id, title, content, version) VALUES ($1, $2, $3, $4) RETURNING *
@@ -1080,7 +1086,9 @@ async def update_note(note_id: str, body: NoteUpdate, request: Request, user: di
 @router.delete("/notes/{note_id}")
 async def delete_note(note_id: str, request: Request, user: dict = Depends(require_companion)):
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-31): delete_note issues 2 admin
+    # statements (ownership check, DELETE).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT org_id, module_key FROM companion_notes WHERE id = $1 AND companion_user_id = $2",
             _uid(note_id), _uid(user["id"])
@@ -1212,7 +1220,9 @@ async def list_alerts(
 ):
     pool = await get_pool()
     await _verify_org(pool, _uid(org_id))
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-31): list_alerts issues 2 admin reads
+    # (alert rows by module_key OR all-org filtered).
+    async with admin_transaction(pool) as conn:
         if module_key:
             rows = await conn.fetch("""
                 SELECT ca.*, au.display_name as companion_name
