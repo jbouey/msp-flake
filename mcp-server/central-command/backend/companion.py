@@ -1272,7 +1272,9 @@ async def update_alert(
     user: dict = Depends(require_companion),
 ):
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-32): update_alert issues 2 admin
+    # statements (ownership check, UPDATE alert).
+    async with admin_transaction(pool) as conn:
         existing = await conn.fetchrow(
             "SELECT * FROM companion_alerts WHERE id = $1 AND companion_user_id = $2",
             _uid(alert_id), _uid(user["id"]))
@@ -1323,7 +1325,9 @@ async def update_alert(
 @router.delete("/alerts/{alert_id}")
 async def delete_alert(alert_id: str, request: Request, user: dict = Depends(require_companion)):
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-32): delete_alert issues 2 admin
+    # statements (ownership check, DELETE).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT org_id, module_key FROM companion_alerts WHERE id = $1 AND companion_user_id = $2",
             _uid(alert_id), _uid(user["id"]))
@@ -1530,7 +1534,9 @@ async def list_all_activity(
     org_id: Optional[str] = None,
 ):
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-32): list_all_activity issues 2 admin
+    # reads (filtered list, count for pagination).
+    async with admin_transaction(pool) as conn:
         if org_id:
             rows = await conn.fetch("""
                 SELECT cal.*, au.display_name as companion_name, co.name as org_name
@@ -1584,7 +1590,9 @@ async def companion_list_documents(
     pool = await get_pool()
     oid = str(_uid(org_id))
     await _verify_org(pool, _uid(org_id))
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-32): companion_list_documents issues 2
+    # admin reads (filter by module_key OR all-org).
+    async with admin_transaction(pool) as conn:
         if module_key:
             rows = await conn.fetch("""
                 SELECT id::text, module_key, file_name, mime_type, size_bytes,
@@ -1710,7 +1718,9 @@ async def companion_delete_document(
     oid = str(_uid(org_id))
     await _verify_org(pool, _uid(org_id))
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-32): companion_delete_document issues 2
+    # admin statements (lookup, soft-delete UPDATE).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow("""
             SELECT file_name FROM hipaa_documents
             WHERE id = $1::uuid AND org_id = $2 AND deleted_at IS NULL
