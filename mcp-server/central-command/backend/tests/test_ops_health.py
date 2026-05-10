@@ -60,6 +60,7 @@ _fleet = sys.modules["dashboard_api.fleet"]
 _fleet.get_pool = lambda: None
 _tenant = sys.modules["dashboard_api.tenant_middleware"]
 _tenant.admin_connection = lambda p: None
+_tenant.admin_transaction = lambda p: None  # wave-44 migration parity
 
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if backend_dir not in sys.path:
