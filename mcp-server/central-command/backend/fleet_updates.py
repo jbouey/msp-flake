@@ -639,7 +639,9 @@ async def resume_rollout(rollout_id: str, user: dict = Depends(require_admin)):
 async def cancel_rollout(rollout_id: str, user: dict = Depends(require_admin)):
     """Cancel a rollout."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-39): cancel_rollout issues 2 admin
+    # statements (UPDATE rollout + audit log).
+    async with admin_transaction(pool) as conn:
         result = await conn.execute(
             """
             UPDATE update_rollouts
@@ -772,7 +774,9 @@ async def get_pending_update(appliance_id: str, user: dict = Depends(require_adm
     - site_id: String identifier like 'physical-appliance-pilot-1aea78'
     """
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-39): get_pending_update issues 2 admin
+    # reads (appliance lookup, pending update fetch).
+    async with admin_transaction(pool) as conn:
         # Try to parse as UUID first, otherwise look up by site_id
         try:
             app_uuid = UUID(appliance_id)
@@ -1126,7 +1130,9 @@ async def list_fleet_orders(
 ):
     """List fleet-wide orders with completion stats."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-39): list_fleet_orders issues 2 admin
+    # reads (orders, completion stats join).
+    async with admin_transaction(pool) as conn:
         rows = await conn.fetch("""
             SELECT fo.*,
                    (SELECT COUNT(*) FROM fleet_order_completions foc
@@ -1271,7 +1277,9 @@ async def get_dead_letter_orders(limit: int = Query(default=50, ge=1), user: dic
 async def retry_fleet_order(order_id: str, user: dict = Depends(require_admin)):
     """Re-activate an expired fleet order by extending its expiry."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-39): retry_fleet_order issues 2 admin
+    # statements (order lookup, UPDATE expiry).
+    async with admin_transaction(pool) as conn:
         order = await conn.fetchrow("SELECT * FROM fleet_orders WHERE id = $1", UUID(order_id))
         if not order:
             raise HTTPException(status_code=404, detail="Fleet order not found")

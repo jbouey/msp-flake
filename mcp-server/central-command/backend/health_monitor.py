@@ -809,12 +809,14 @@ async def _resolve_stale_incidents():
 async def _check_auth_failures():
     """Detect appliances with persistent auth failures and send alerts."""
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     pool = await get_pool()
     now = datetime.now(timezone.utc)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-39): _check_auth_failures issues 2 admin
+    # statements (failing scan + UPDATE alert state).
+    async with admin_transaction(pool) as conn:
         # Find appliances with 5+ auth failures that haven't been alerted yet
         failing = await conn.fetch("""
             SELECT sa.appliance_id, sa.site_id, sa.hostname,
