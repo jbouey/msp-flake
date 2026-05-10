@@ -1370,7 +1370,9 @@ async def approve_partner(partner_id: str, request: Request, user: Dict = Depend
     # Get admin user ID from authenticated user
     admin_user_id = user.get("id")
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-45): approve_partner issues 2 admin
+    # statements (partner lookup, UPDATE approved + audit).
+    async with admin_transaction(pool) as conn:
         # Check partner exists and is pending
         partner = await conn.fetchrow("""
             SELECT id, name, slug, oauth_email, pending_approval
@@ -1433,7 +1435,9 @@ async def reject_partner(partner_id: str, request: Request, user: Dict = Depends
     """Reject and delete a pending partner (admin only)."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-45): reject_partner issues 2 admin
+    # statements (partner lookup, DELETE + audit).
+    async with admin_transaction(pool) as conn:
         # Check partner exists and is pending
         partner = await conn.fetchrow("""
             SELECT id, name, slug, oauth_email, pending_approval
@@ -1631,7 +1635,9 @@ async def partner_totp_setup(partner: dict = Depends(_require_partner_session)):
     pool = await get_pool()
     partner_id = str(partner["id"])
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-45): partner_totp_setup issues 2 admin
+    # statements (existing mfa lookup + UPDATE pending secret).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT mfa_enabled, contact_email, oauth_email FROM partners WHERE id = $1",
             partner_id
@@ -1669,7 +1675,9 @@ async def partner_totp_verify(
     pool = await get_pool()
     partner_id = str(partner["id"])
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-45): partner_totp_verify issues 2 admin
+    # statements (password+mfa lookup + UPDATE enabled).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT password_hash, mfa_secret, mfa_enabled FROM partners WHERE id = $1",
             partner_id

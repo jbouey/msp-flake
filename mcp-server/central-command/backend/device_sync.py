@@ -1286,7 +1286,9 @@ async def get_device_compliance_details(site_id: str, device_id: int, user: dict
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-45): get_device_compliance_details issues
+    # 2 admin reads (device verify, check results join).
+    async with admin_transaction(pool) as conn:
         # Verify device belongs to site
         device = await conn.fetchrow(
             """
