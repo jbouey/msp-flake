@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from .auth import require_auth
 from .fleet import get_pool
 from .partners import require_partner_role
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -514,7 +514,9 @@ async def ops_health_org(
     """Org-scoped ops health — partner role required."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-44): ops_health_org issues 2 admin
+    # reads (org ownership verify, ops-health metrics).
+    async with admin_transaction(pool) as conn:
         # Verify the org belongs to this partner
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1 AND current_partner_id = $2",

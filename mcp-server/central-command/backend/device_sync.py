@@ -1238,7 +1238,9 @@ async def list_medical_devices(
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-44): list_medical_devices issues 2 admin
+    # reads (devices, compliance status join).
+    async with admin_transaction(pool) as conn:
         rows = await conn.fetch(
             """
             SELECT

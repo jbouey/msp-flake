@@ -438,7 +438,9 @@ async def acknowledge_ticket(
     """Acknowledge an escalation ticket."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-44): acknowledge_ticket issues 2 admin
+    # statements (ticket lookup, UPDATE ack).
+    async with admin_transaction(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT * FROM escalation_tickets
             WHERE id = $1 AND partner_id = $2
@@ -541,7 +543,9 @@ async def escalate_to_l4(
     the partner cannot resolve alone."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-44): escalate_to_l4 issues 2 admin
+    # statements (ticket lookup, UPDATE to L4 + audit).
+    async with admin_transaction(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT * FROM escalation_tickets
             WHERE id = $1 AND partner_id = $2
