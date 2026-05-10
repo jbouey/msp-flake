@@ -179,7 +179,9 @@ async def get_or_create_stripe_customer(partner_id: str, email: str, name: str) 
     """Get existing or create new Stripe customer for partner."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-33): get_or_create_stripe_customer issues
+    # 2 admin statements (lookup, UPDATE customer_id).
+    async with admin_transaction(pool) as conn:
         # Check if partner already has a Stripe customer ID
         row = await conn.fetchrow("""
             SELECT stripe_customer_id FROM partners WHERE id = $1

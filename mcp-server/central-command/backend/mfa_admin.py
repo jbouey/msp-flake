@@ -62,7 +62,7 @@ from .privileged_access_attestation import (
     PrivilegedAccessAttestationError,
     create_privileged_access_attestation,
 )
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -1171,7 +1171,9 @@ async def mfa_revocation_expiry_sweep_loop():
         try:
             record_heartbeat("mfa_revocation_expiry_sweep")
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # admin_transaction (wave-33): mfa_revocation_expiry_sweep_loop
+            # issues 2 admin statements (UPDATE expired + audit log).
+            async with admin_transaction(pool) as conn:
                 expired = await conn.fetch(
                     """
                     UPDATE mfa_revocation_pending

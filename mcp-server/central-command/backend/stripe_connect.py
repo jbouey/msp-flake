@@ -48,7 +48,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .partners import require_partner
 
 logger = logging.getLogger(__name__)
@@ -116,7 +116,9 @@ async def onboard_connect(
     partner_id = partner["id"]
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-33): onboard_connect issues 2 admin
+    # statements (partner lookup, UPDATE Stripe Connect status).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT stripe_connect_account_id, stripe_connect_status, contact_email "
             "FROM partners WHERE id = $1",
@@ -203,7 +205,9 @@ async def get_connect_status(
     partner_id = partner["id"]
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-33): get_connect_status issues 2 admin
+    # statements (lookup, UPDATE last_synced + capabilities cache).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT stripe_connect_account_id, stripe_connect_status, "
             "       stripe_connect_last_synced "
@@ -312,7 +316,9 @@ async def get_payout_history(
     partner_id = partner["id"]
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-33): get_payout_history issues 2 admin
+    # reads (status check, payout ledger).
+    async with admin_transaction(pool) as conn:
         ps = await conn.fetchrow(
             "SELECT stripe_connect_status FROM partners WHERE id = $1",
             partner_id,
