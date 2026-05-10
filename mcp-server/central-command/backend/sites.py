@@ -2950,7 +2950,7 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site
                     # L1 healing failed — try L2 LLM planner before escalating to L3
                     l2_handled = False
                     try:
-                        from .l2_planner import analyze_incident as l2_analyze, is_l2_available
+                        from .l2_planner import analyze_incident as l2_analyze, is_l2_available, record_l2_decision_asyncpg
                         if is_l2_available():
                             # Get incident details for L2 analysis
                             inc_row = await conn.fetchrow("""
@@ -2979,7 +2979,25 @@ async def complete_order(order_id: str, request: OrderCompleteRequest, auth_site
                                     pre_state=pre_state,
                                     hipaa_controls=inc_row['hipaa_controls'] or [],
                                 )
-                                if decision.runbook_id and decision.confidence >= 0.6 and not decision.requires_human_review:
+                                # Substrate invariant l2_resolution_without_decision_record
+                                # (Session 219 mig 300, sites.py callsite added 2026-05-10):
+                                # record the L2 decision BEFORE setting resolution_tier='L2'.
+                                # If the record write fails, we MUST escalate to L3 instead
+                                # of producing a ghost-L2 incident.
+                                l2_decision_recorded = False
+                                try:
+                                    await record_l2_decision_asyncpg(
+                                        conn, str(inc_row['id']), decision,
+                                        incident_type=inc_row['incident_type'],
+                                        escalation_reason="l1_failed_fallback",
+                                    )
+                                    l2_decision_recorded = True
+                                except Exception as e:
+                                    logger.error(
+                                        f"Failed to record L2 decision in L1-fallback path: {e}",
+                                        exc_info=True,
+                                    )
+                                if l2_decision_recorded and decision.runbook_id and decision.confidence >= 0.6 and not decision.requires_human_review:
                                     l2_handled = True
                                     await conn.execute("""
                                         UPDATE incidents SET resolution_tier = 'L2', status = 'resolving'

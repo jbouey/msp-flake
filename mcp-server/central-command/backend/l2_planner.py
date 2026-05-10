@@ -1450,6 +1450,76 @@ async def record_l2_decision(
         })
 
 
+async def record_l2_decision_asyncpg(
+    conn,
+    incident_id: str,
+    decision: "L2Decision",
+    incident_type: str = "unknown",
+    hypotheses: Optional[List[Dict[str, Any]]] = None,
+    escalation_reason: Optional[str] = None,
+) -> None:
+    """asyncpg-native sibling of record_l2_decision.
+
+    The SQLAlchemy version (above) uses `db.execute(text(...))` which
+    is incompatible with asyncpg connections directly. Some L2 entry
+    points (e.g. sites.py L1-failed → L2-fallback inside the order-
+    expiration handler) operate on raw asyncpg connections inside
+    an `admin_transaction` block; they need this variant.
+
+    Substrate invariant `l2_resolution_without_decision_record`
+    (Session 219 mig 300, gap added 2026-05-10): callers MUST gate
+    `resolution_tier='L2'` writes on this function returning without
+    raising. Same forward-fix shape as agent_api.py + main.py.
+
+    Args mirror record_l2_decision exactly.
+    """
+    await conn.execute(
+        """
+        INSERT INTO l2_decisions (
+            incident_id, runbook_id, reasoning, confidence,
+            pattern_signature, llm_model, llm_latency_ms,
+            requires_human_review, hypotheses, escalation_reason,
+            prompt_version, created_at
+        ) VALUES (
+            $1, $2, $3, $4,
+            $5, $6, $7,
+            $8, $9::jsonb, $10,
+            $11, $12
+        )
+        """,
+        incident_id,
+        decision.runbook_id,
+        decision.reasoning,
+        decision.confidence,
+        decision.pattern_signature,
+        decision.llm_model,
+        decision.llm_latency_ms,
+        decision.requires_human_review,
+        json.dumps(hypotheses) if hypotheses else None,
+        escalation_reason or "normal",
+        getattr(decision, "prompt_version", "system-v1"),
+        datetime.now(timezone.utc),
+    )
+
+    if decision.pattern_signature and decision.runbook_id:
+        await conn.execute(
+            """
+            INSERT INTO patterns (
+                pattern_id, pattern_signature, incident_type, runbook_id,
+                occurrences, status, first_seen, last_seen
+            ) VALUES ($1, $2, $3, $4, 1, 'pending', $5, $5)
+            ON CONFLICT (pattern_signature) DO UPDATE SET
+                occurrences = patterns.occurrences + 1,
+                last_seen = $5
+            """,
+            decision.pattern_signature,
+            decision.pattern_signature,
+            incident_type,
+            decision.runbook_id,
+            datetime.now(timezone.utc),
+        )
+
+
 async def lookup_cached_l2_decision(db, pattern_signature: str, max_age_hours: int = 72) -> Optional["L2Decision"]:
     """Look up a recent L2 decision with the same pattern_signature.
 

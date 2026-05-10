@@ -36,6 +36,7 @@ _REPO = _BACKEND.parent.parent.parent  # mcp-server/
 
 _FILES_TO_SCAN = [
     _BACKEND / "agent_api.py",
+    _BACKEND / "sites.py",  # Added 2026-05-10: L1-failed→L2 fallback
     _REPO / "main.py",
 ]
 

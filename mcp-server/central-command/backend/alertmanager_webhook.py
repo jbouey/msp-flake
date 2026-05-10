@@ -83,6 +83,39 @@ async def alertmanager_webhook(request: Request) -> dict[str, Any]:
     if not isinstance(alerts, list):
         raise HTTPException(400, detail="Payload.alerts must be a list")
 
+    # Severity filter (Session 219, 2026-05-10):
+    # Sev3 invariants are INFORMATIONAL — they're meant to stay
+    # visible on /admin/substrate-health for operator awareness,
+    # NOT to email-page on every 60s tick. The user's inbox was
+    # being flooded with `INFO FIRING: pre_mig175_privileged_unattested`
+    # (advisory-covered, sev3 by design) and `INFO FIRING:
+    # journal_upload_never_received` (deferred to ISO v39, sev3
+    # informational). Filter to sev1/sev2 only here so the email
+    # channel paging-tier semantics are preserved.
+    #
+    # Override via env: SUBSTRATE_ALERT_MIN_SEVERITY=sev1|sev2|sev3.
+    # Default sev2 (sev1+sev2 page; sev3 stays dashboard-only).
+    min_sev = (os.getenv("SUBSTRATE_ALERT_MIN_SEVERITY") or "sev2").lower()
+    sev_rank = {"sev1": 1, "sev2": 2, "sev3": 3, "sev4": 4}
+    cutoff = sev_rank.get(min_sev, 2)
+    pre_filter = len(alerts)
+    alerts = [
+        a for a in alerts
+        if sev_rank.get(
+            (a.get("labels", {}).get("severity") or "sev3").lower(),
+            3,  # unknown → treat as sev3 (silent by default)
+        ) <= cutoff
+    ]
+    filtered = pre_filter - len(alerts)
+    if filtered:
+        logger.info(
+            "alertmanager_webhook_severity_filtered",
+            extra={"dropped": filtered, "kept": len(alerts), "min_severity": min_sev},
+        )
+    if not alerts:
+        return {"accepted": pre_filter, "sent": False, "reason": "all_below_severity_cutoff"}
+    payload = {**payload, "alerts": alerts}
+
     recipients = _recipients()
     if not recipients:
         logger.error("alertmanager_webhook_no_recipients", extra={"alerts": len(alerts)})
