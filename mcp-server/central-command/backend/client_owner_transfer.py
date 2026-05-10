@@ -48,7 +48,7 @@ from .privileged_access_attestation import (
     PrivilegedAccessAttestationError,
     create_privileged_access_attestation,
 )
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -980,7 +980,9 @@ async def owner_transfer_sweep_loop():
         try:
             record_heartbeat("owner_transfer_sweep")
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
+            # admin_transaction (wave-42): owner_transfer_sweep_loop
+            # issues 2 admin statements (ready scan + UPDATE complete).
+            async with admin_transaction(pool) as conn:
                 # Branch 1: complete accepted+cooled-off transfers
                 ready = await conn.fetch(
                     """

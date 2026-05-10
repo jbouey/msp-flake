@@ -221,7 +221,9 @@ async def create_site_api(request: Request, user: dict = Depends(require_auth)):
     client_org_id = body.get("client_org_id")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-42): create_site_api issues 2 admin
+    # statements (org lookup, INSERT new site).
+    async with admin_transaction(pool) as conn:
         # If no org specified, use the first org (single-tenant shortcut)
         if not client_org_id:
             row = await conn.fetchrow("SELECT id FROM client_orgs ORDER BY created_at LIMIT 1")
@@ -6116,7 +6118,9 @@ async def compare_workstations_with_rmm(
             detail="No RMM devices provided"
         )
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-42): compare_workstations_with_rmm
+    # issues 2 admin reads (workstations, devices for diff).
+    async with admin_transaction(pool) as conn:
         # Get our workstations for this site
         ws_rows = await conn.fetch("""
             SELECT hostname, ip_address, mac_address, os_name, os_version, online
@@ -6894,7 +6898,9 @@ async def update_credential_host(
         raise HTTPException(status_code=400, detail="new_host is required")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-42): update_credential_host issues 2
+    # admin statements (credential lookup + UPDATE host).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow("""
             SELECT id, site_id, credential_name, encrypted_data
             FROM site_credentials WHERE id = $1
