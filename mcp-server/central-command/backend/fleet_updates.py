@@ -392,7 +392,9 @@ async def list_rollouts(
 ):
     """List all rollouts."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-38): list_rollouts issues 2 admin
+    # reads (rollouts, status counts).
+    async with admin_transaction(pool) as conn:
         query = """
             SELECT r.id, r.release_id, rel.version, r.name, r.strategy, r.current_stage,
                    r.stages, r.maintenance_window, r.status, r.started_at, r.paused_at,
@@ -585,7 +587,9 @@ async def create_rollout(rollout: RolloutCreate, background_tasks: BackgroundTas
 async def pause_rollout(rollout_id: str, user: dict = Depends(require_admin)):
     """Pause a rollout."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-38): pause_rollout issues 2 admin
+    # statements (UPDATE rollout + audit log).
+    async with admin_transaction(pool) as conn:
         result = await conn.execute(
             """
             UPDATE update_rollouts
@@ -609,7 +613,9 @@ async def pause_rollout(rollout_id: str, user: dict = Depends(require_admin)):
 async def resume_rollout(rollout_id: str, user: dict = Depends(require_admin)):
     """Resume a paused rollout."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-38): resume_rollout issues 2 admin
+    # statements (UPDATE rollout + audit log).
+    async with admin_transaction(pool) as conn:
         result = await conn.execute(
             """
             UPDATE update_rollouts

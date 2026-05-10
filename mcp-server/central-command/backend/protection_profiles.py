@@ -343,7 +343,9 @@ async def update_profile(
         params.append(body.description)
         idx += 1
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-38): update_profile issues 2 admin
+    # statements (site access verify, UPDATE profile).
+    async with admin_transaction(pool) as conn:
         await require_site_access(conn, user, site_id)
         # site_id co-constraint prevents cross-tenant modification
         params.append(site_id)
@@ -590,7 +592,9 @@ async def toggle_asset(
     pid = _parse_uuid(profile_id, "profile ID")
     aid = _uuid.UUID(asset_id)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-38): toggle_asset issues 2 admin
+    # statements (site access verify, profile/asset UPDATE).
+    async with admin_transaction(pool) as conn:
         await require_site_access(conn, user, site_id)
         # Verify profile belongs to site before mutating assets
         profile = await conn.fetchrow(
