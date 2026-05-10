@@ -116,6 +116,21 @@ def _make_admin_connection_patch(conn):
     return _fake_admin_connection
 
 
+def _make_admin_transaction_patch(conn):
+    """Return a context-manager patch for admin_transaction (Session 212
+    routing-pathology helper) that yields the same `conn`. Mirror of
+    _make_admin_connection_patch — both patches are applied in tandem
+    on every endpoint test below so the underlying handler can use
+    either helper interchangeably during the migration window."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _fake_admin_transaction(pool):
+        yield conn
+
+    return _fake_admin_transaction
+
+
 # ---------------------------------------------------------------------------
 # Test: GET /me/orgs/{org_id}/alert-config
 # ---------------------------------------------------------------------------
@@ -144,7 +159,9 @@ class TestGetOrgAlertConfig:
 
         with patch("dashboard_api.partners.get_pool", new=_fake_get_pool), \
              patch("dashboard_api.partners.admin_connection",
-                   new=_make_admin_connection_patch(conn)):
+                   new=_make_admin_connection_patch(conn)), \
+             patch("dashboard_api.partners.admin_transaction",
+                   new=_make_admin_transaction_patch(conn)):
             result = await get_partner_org_alert_config(
                 org_id=ORG_ID,
                 partner=FAKE_PARTNER,
@@ -169,7 +186,9 @@ class TestGetOrgAlertConfig:
 
         with patch("dashboard_api.partners.get_pool", new=_fake_get_pool), \
              patch("dashboard_api.partners.admin_connection",
-                   new=_make_admin_connection_patch(conn)):
+                   new=_make_admin_connection_patch(conn)), \
+             patch("dashboard_api.partners.admin_transaction",
+                   new=_make_admin_transaction_patch(conn)):
             with pytest.raises(HTTPException) as exc_info:
                 await get_partner_org_alert_config(
                     org_id=ORG_ID,
@@ -195,7 +214,9 @@ class TestGetOrgAlertConfig:
 
         with patch("dashboard_api.partners.get_pool", new=_fake_get_pool), \
              patch("dashboard_api.partners.admin_connection",
-                   new=_make_admin_connection_patch(conn)):
+                   new=_make_admin_connection_patch(conn)), \
+             patch("dashboard_api.partners.admin_transaction",
+                   new=_make_admin_transaction_patch(conn)):
             result = await get_partner_org_alert_config(
                 org_id=ORG_ID,
                 partner=FAKE_PARTNER,
@@ -248,7 +269,9 @@ class TestPutOrgAlertConfig:
 
         with patch("dashboard_api.partners.get_pool", new=_fake_get_pool), \
              patch("dashboard_api.partners.admin_connection",
-                   new=_make_admin_connection_patch(conn)):
+                   new=_make_admin_connection_patch(conn)), \
+             patch("dashboard_api.partners.admin_transaction",
+                   new=_make_admin_transaction_patch(conn)):
             result = await update_partner_org_alert_config(
                 org_id=ORG_ID,
                 request=request,
@@ -273,7 +296,9 @@ class TestPutOrgAlertConfig:
 
         with patch("dashboard_api.partners.get_pool", new=_fake_get_pool), \
              patch("dashboard_api.partners.admin_connection",
-                   new=_make_admin_connection_patch(conn)):
+                   new=_make_admin_connection_patch(conn)), \
+             patch("dashboard_api.partners.admin_transaction",
+                   new=_make_admin_transaction_patch(conn)):
             with pytest.raises(HTTPException) as exc_info:
                 await update_partner_org_alert_config(
                     org_id=ORG_ID,
@@ -302,7 +327,9 @@ class TestPutOrgAlertConfig:
 
         with patch("dashboard_api.partners.get_pool", new=_fake_get_pool), \
              patch("dashboard_api.partners.admin_connection",
-                   new=_make_admin_connection_patch(conn)):
+                   new=_make_admin_connection_patch(conn)), \
+             patch("dashboard_api.partners.admin_transaction",
+                   new=_make_admin_transaction_patch(conn)):
             result = await update_partner_org_alert_config(
                 org_id=ORG_ID,
                 request=request,
@@ -359,7 +386,9 @@ class TestPutSiteAlertConfig:
 
         with patch("dashboard_api.partners.get_pool", new=_fake_get_pool), \
              patch("dashboard_api.partners.admin_connection",
-                   new=_make_admin_connection_patch(conn)):
+                   new=_make_admin_connection_patch(conn)), \
+             patch("dashboard_api.partners.admin_transaction",
+                   new=_make_admin_transaction_patch(conn)):
             result = await update_partner_site_alert_config(
                 site_id=SITE_ID,
                 request=request,
@@ -385,7 +414,9 @@ class TestPutSiteAlertConfig:
 
         with patch("dashboard_api.partners.get_pool", new=_fake_get_pool), \
              patch("dashboard_api.partners.admin_connection",
-                   new=_make_admin_connection_patch(conn)):
+                   new=_make_admin_connection_patch(conn)), \
+             patch("dashboard_api.partners.admin_transaction",
+                   new=_make_admin_transaction_patch(conn)):
             result = await update_partner_site_alert_config(
                 site_id=SITE_ID,
                 request=request,
@@ -411,7 +442,9 @@ class TestPutSiteAlertConfig:
 
         with patch("dashboard_api.partners.get_pool", new=_fake_get_pool), \
              patch("dashboard_api.partners.admin_connection",
-                   new=_make_admin_connection_patch(conn)):
+                   new=_make_admin_connection_patch(conn)), \
+             patch("dashboard_api.partners.admin_transaction",
+                   new=_make_admin_transaction_patch(conn)):
             with pytest.raises(HTTPException) as exc_info:
                 await update_partner_site_alert_config(
                     site_id=SITE_ID,
