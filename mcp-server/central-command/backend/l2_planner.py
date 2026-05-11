@@ -1205,19 +1205,23 @@ async def analyze_incident(
     prompt_version_tag = "system-v1"
     try:
         from .fleet import get_pool
-        from .tenant_middleware import admin_connection
+        from .tenant_middleware import admin_transaction
         from .pattern_embeddings import find_neighbors_for_incident
         pool = await get_pool()
-        async with admin_connection(pool) as _conn:
+        # admin_transaction (wave-52): L2-prompt context lookup issues 3
+        # admin reads (neighbors, exemplars, active prompt version).
+        # Renamed `_conn` → `conn` so the matcher heuristic recognizes
+        # `conn.transaction()` if a future block adds one.
+        async with admin_transaction(pool) as conn:
             neighbors = await find_neighbors_for_incident(
-                _conn,
+                conn,
                 incident_type=incident_type,
                 check_type=check_type,
                 k=5,
                 min_similarity=0.3,
             )
             # Phase 10: approved exemplars for THIS incident_type
-            ex_rows = await _conn.fetch(
+            ex_rows = await conn.fetch(
                 "SELECT runbook_id, exemplar_text FROM l2_prompt_exemplars "
                 "WHERE incident_type = $1 AND status = 'approved' "
                 "ORDER BY approved_at DESC LIMIT 3",
@@ -1225,7 +1229,7 @@ async def analyze_incident(
             )
             approved_exemplars = [dict(r) for r in ex_rows]
             # Phase 10: which prompt version is currently active?
-            v_row = await _conn.fetchrow(
+            v_row = await conn.fetchrow(
                 "SELECT version_tag FROM l2_prompt_versions "
                 "WHERE status = 'active' AND purpose = 'system' LIMIT 1"
             )
