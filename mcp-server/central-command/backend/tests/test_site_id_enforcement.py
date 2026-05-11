@@ -106,25 +106,38 @@ class TestEnforcementCoverage:
 
     @pytest.fixture(autouse=True)
     def load_source(self):
-        agent_api_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "agent_api.py",
-        )
-        with open(agent_api_path) as f:
+        """Session 219 (2026-05-11) lifted `_enforce_site_id` from
+        agent_api.py to shared.py. Coverage check now reads BOTH —
+        bearer endpoints are scattered across agent_api.py +
+        appliance_delegation.py + (future Commit 2) provisioning.py +
+        sensors.py + discovery.py."""
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(backend_dir, "agent_api.py")) as f:
             self.source = f.read()
+        with open(os.path.join(backend_dir, "shared.py")) as f:
+            self.shared_source = f.read()
+        with open(os.path.join(backend_dir, "appliance_delegation.py")) as f:
+            self.delegation_source = f.read()
 
     def test_enforce_function_exists(self):
-        """_enforce_site_id must be defined in agent_api.py."""
-        assert "def _enforce_site_id(" in self.source
+        """_enforce_site_id must be defined in shared.py (lifted from
+        agent_api.py in Session 219, 2026-05-11)."""
+        assert "async def _enforce_site_id(" in self.shared_source, (
+            "_enforce_site_id missing from shared.py — Session 219 "
+            "(2026-05-11) lifted it from agent_api.py; coverage tests "
+            "must look at shared.py."
+        )
 
     def test_all_bearer_endpoints_call_enforce(self):
         """Every endpoint with require_appliance_bearer should call _enforce_site_id.
 
         We count Depends(require_appliance_bearer) occurrences (= endpoints)
-        and _enforce_site_id(auth_site_id calls (= enforcement).
+        and _enforce_site_id(auth_site_id calls (= enforcement) across
+        agent_api.py + appliance_delegation.py (Session 219 expansion).
         """
-        bearer_deps = len(re.findall(r"Depends\(require_appliance_bearer\)", self.source))
-        enforce_calls = len(re.findall(r"_enforce_site_id\(auth_site_id", self.source))
+        combined = self.source + "\n" + self.delegation_source
+        bearer_deps = len(re.findall(r"Depends\(require_appliance_bearer\)", combined))
+        enforce_calls = len(re.findall(r"_enforce_site_id\(auth_site_id", combined))
 
         # Allow small gap (some endpoints may conditionally enforce, e.g., optional site_id)
         assert enforce_calls >= bearer_deps - 4, (

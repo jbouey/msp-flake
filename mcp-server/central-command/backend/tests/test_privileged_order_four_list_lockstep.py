@@ -57,6 +57,15 @@ PYTHON_ONLY: Set[str] = {
     "watchdog_collect_diagnostics",
     # Phase S recovery-shell escape hatch — also watchdog-only.
     "enable_recovery_shell_24h",
+    # Session 219 (2026-05-11) — delegate_signing_key is BACKEND-ONLY.
+    # The appliance REQUESTS a delegated key from the central server
+    # (POST /api/appliances/{id}/delegate-key); the daemon never
+    # RECEIVES this as a fleet_order to execute. So dangerousOrderTypes
+    # in processor.go doesn't gate it — there's nothing on the daemon
+    # side to gate. The privileged-chain attestation lives on the
+    # backend issuance path (3 lists: PRIVILEGED_ORDER_TYPES +
+    # ALLOWED_EVENTS + mig 305 v_privileged_types).
+    "delegate_signing_key",
 }
 
 GO_ONLY: Set[str] = {
