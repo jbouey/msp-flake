@@ -2598,6 +2598,13 @@ async def require_appliance_bearer(request: Request) -> str:
     return await _shared_auth(request)
 
 
+async def _enforce_site_id(auth_site_id: str, request_site_id: str, endpoint: str = "") -> None:
+    """Cross-site spoof gate. Delegates to shared implementation
+    (Session 219 lift from agent_api.py to shared.py)."""
+    from dashboard_api.shared import _enforce_site_id as _shared_enforce
+    await _shared_enforce(auth_site_id, request_site_id, endpoint)
+
+
 # ============================================================================
 # Endpoints
 # ============================================================================
@@ -4838,6 +4845,19 @@ async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(
     Resolve the latest open incident matching site_id + host_id + check_type.
     Used by the Go daemon which reports incidents fire-and-forget and doesn't
     track backend incident UUIDs.
+
+    Session 219 Phase 3 PR-3b (2026-05-11): Layer 2 defensive gate. The
+    appliance daemon hardcodes `"L1"` in `ReportHealed` even for
+    `Action: "escalate"` rules (`daemon.go:1706`), producing 1,137
+    historical L1 orphans across 3 check_types (rogue_scheduled_tasks,
+    net_unexpected_ports, net_host_reachability). PR-3a (Layer 1
+    daemon fix) follows this commit but the fleet rollout window is
+    hours/days; this gate is the immediate safety net catching
+    monitoring-only false-L1s the moment they hit the backend.
+
+    Defense scope: monitoring-only check_types only. Non-monitoring-
+    only false-L1s (rogue_scheduled_tasks: 510 orphans) are closed
+    by Layer 1 once daemons update.
     """
     body = await request.json()
     site_id = body.get("site_id")
@@ -4848,6 +4868,24 @@ async def resolve_incident_by_type(request: Request, db: AsyncSession = Depends(
 
     if not site_id or not host_id or not check_type:
         raise HTTPException(status_code=400, detail="site_id, host_id, and check_type are required")
+
+    # P1-1 (Gate A v3): close the pre-existing C1 cross-site spoof gap
+    # — main.py twin lacked `_enforce_site_id`. The dead agent_api.py
+    # router had this check; the live endpoint did not. Phase 3 PR-3b
+    # is the natural commit to close it.
+    await _enforce_site_id(auth_site_id, site_id, "resolve_incident_by_type")
+
+    # Layer 2 monitoring-only downgrade gate (Session 219 Phase 3).
+    # Reads the cached MONITORING_ONLY_CHECKS module-global — populated
+    # at lifespan startup by load_monitoring_only_from_registry().
+    # P0-2 (Gate A v3): do NOT re-call the registry loader here — it
+    # rewrites the global under concurrent requests + a DB roundtrip.
+    if resolution_tier == "L1" and check_type in MONITORING_ONLY_CHECKS:
+        logger.info(
+            "L1→monitoring downgrade (Phase 3 Layer 2 gate)",
+            site_id=site_id, check_type=check_type, host_id=host_id,
+        )
+        resolution_tier = "monitoring"
 
     # Find the appliance
     app_result = await db.execute(
