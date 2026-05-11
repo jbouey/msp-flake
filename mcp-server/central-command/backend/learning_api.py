@@ -370,7 +370,9 @@ async def get_candidate_details(
     """Get detailed information about a specific promotion candidate."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-46): get_candidate_details issues 2
+    # admin reads (candidate details + execution history).
+    async with admin_transaction(pool) as conn:
         partner_id = partner['id']
 
         # Get candidate details
@@ -777,7 +779,9 @@ async def get_execution_history(
         logger.error(f"Database pool unavailable: {e}")
         raise HTTPException(status_code=503, detail="Database temporarily unavailable")
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-46): get_execution_history issues 2
+    # admin reads (filtered history + count for pagination).
+    async with admin_transaction(pool) as conn:
         partner_id = partner['id']
 
         # Build query with parameterized LIMIT (avoid SQL injection)
@@ -1078,7 +1082,9 @@ async def bulk_reject_candidates(
     failed = 0
     errors: List[str] = []
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-46): bulk_reject_candidates issues N×2
+    # admin statements per candidate in loop (verify + INSERT rejection).
+    async with admin_transaction(pool) as conn:
         partner_id = partner['id']
 
         for pattern_id in request.pattern_ids:

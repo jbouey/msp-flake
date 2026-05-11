@@ -1723,7 +1723,9 @@ async def partner_totp_disable(
     pool = await get_pool()
     partner_id = str(partner["id"])
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-46): partner_totp_disable issues 2 admin
+    # statements (verify password+mfa state, UPDATE disable + audit).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT password_hash, mfa_enabled FROM partners WHERE id = $1",
             partner_id

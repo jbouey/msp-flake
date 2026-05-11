@@ -428,7 +428,9 @@ async def update_provision_status(status: ProvisionStatusRequest):
     """
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-46): update_provision_status issues 2
+    # admin statements (UPDATE appliance status + audit log).
+    async with admin_transaction(pool) as conn:
         # Update appliance status
         result = await conn.execute("""
             UPDATE site_appliances
