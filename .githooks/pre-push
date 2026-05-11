@@ -289,6 +289,12 @@ SOURCE_LEVEL_TESTS=(
     # requires updating the literal + `PRIVILEGED-CHAIN-BODY-CHANGE:
     # <reason>` token in commit message.
     "tests/test_privileged_chain_function_body_shape.py"
+    # 2026-05-11 Session 220 task #119. Defense-in-depth follow-up
+    # to task #111 — git-history-aware gate that flags any commit
+    # mutating _CANONICAL_*_HASH literals without
+    # `PRIVILEGED-CHAIN-BODY-CHANGE:` token in commit body. Closes
+    # the same-commit hash-bump-and-weaken attack class.
+    "tests/test_canonical_hash_change_requires_token.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."

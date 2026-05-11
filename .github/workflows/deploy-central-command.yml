@@ -53,6 +53,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Session 220 task #119 — full history required so the
+          # hash-bump-token gate can `git log -p` over all commits
+          # touching _CANONICAL_*_HASH literals.
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -75,6 +80,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Session 220 task #119 — full history required so the
+          # hash-bump-token gate can `git log -p` over all commits
+          # touching _CANONICAL_*_HASH literals.
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -157,6 +167,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Session 220 task #119 — full history required so the
+          # hash-bump-token gate can `git log -p` over all commits
+          # touching _CANONICAL_*_HASH literals.
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -313,6 +328,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Session 220 task #119 — full history required so the
+          # hash-bump-token gate can `git log -p` over all commits
+          # touching _CANONICAL_*_HASH literals.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
