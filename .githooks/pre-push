@@ -273,6 +273,12 @@ SOURCE_LEVEL_TESTS=(
     # /incidents/resolve — monitoring-only L1→monitoring downgrade
     # + _enforce_site_id cross-site spoof gap closure.
     "tests/test_resolve_incident_monitoring_downgrade.py"
+    # 2026-05-11 Session 220 task #114. Pre-seeded with all 9
+    # known escalate-action rules (post-Phase-2A diagnostic). Future
+    # builtin rule additions trigger gate unless documented in
+    # _KNOWN_ESCALATE_CHECK_TYPES OR caught by MONITORING_ONLY_CHECKS.
+    # Closes the regression class fixed by Phase 3 PR-3a + PR-3b.
+    "tests/test_escalate_rule_check_type_drift.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
