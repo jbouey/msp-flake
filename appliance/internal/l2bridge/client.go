@@ -44,11 +44,26 @@ type LLMDecision struct {
 	RunbookID         string                 `json:"runbook_id,omitempty"`
 	RequiresApproval  bool                   `json:"requires_approval"`
 	EscalateToL3      bool                   `json:"escalate_to_l3"`
-	ContextUsed       map[string]interface{} `json:"context_used,omitempty"`
+	// L2DecisionRecorded — set by /api/agent/l2/plan Session 219
+	// round-3 fix. When server-side record_l2_decision() raises, the
+	// server returns this as false + clears RunbookID + sets
+	// EscalateToL3=true. The daemon already blocks execution on
+	// EscalateToL3, but checking this field is defense-in-depth — if
+	// a future server change drops EscalateToL3 escalation while still
+	// returning false here, ShouldExecute() still refuses to execute.
+	// Substrate invariant l2_resolution_without_decision_record class.
+	L2DecisionRecorded *bool                  `json:"l2_decision_recorded,omitempty"`
+	ContextUsed        map[string]interface{} `json:"context_used,omitempty"`
 }
 
 // ShouldExecute returns true if the decision can be auto-executed (no escalation needed).
+// The L2DecisionRecorded gate (Session 219 round-3): if the server signals that
+// it did NOT persist the L2 decision row, refusing execution prevents the daemon
+// from setting resolution_tier='L2' with no audit trail (ghost-L2 incident class).
 func (d *LLMDecision) ShouldExecute() bool {
+	if d.L2DecisionRecorded != nil && !*d.L2DecisionRecorded {
+		return false
+	}
 	return !d.EscalateToL3 && !d.RequiresApproval && d.Confidence >= 0.6
 }
 

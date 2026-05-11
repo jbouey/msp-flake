@@ -131,7 +131,11 @@ type l2PlanResponse struct {
 	RunbookID         string                 `json:"runbook_id"`
 	RequiresApproval  bool                   `json:"requires_approval"`
 	EscalateToL3      bool                   `json:"escalate_to_l3"`
-	ContextUsed       map[string]interface{} `json:"context_used"`
+	// Session 219 round-3 — server-side L2-decision-record-failure
+	// signal. Pointer so we can distinguish "field absent" (older
+	// server) from "field explicitly false" (record failed).
+	L2DecisionRecorded *bool                  `json:"l2_decision_recorded,omitempty"`
+	ContextUsed        map[string]interface{} `json:"context_used"`
 }
 
 // Plan sends a PHI-scrubbed incident to Central Command and returns the LLM decision.
@@ -202,15 +206,16 @@ func (p *Planner) Plan(incident *l2bridge.Incident) (*l2bridge.LLMDecision, erro
 
 	// 7. Convert response to LLMDecision
 	decision := &l2bridge.LLMDecision{
-		IncidentID:        planResp.IncidentID,
-		RecommendedAction: planResp.RecommendedAction,
-		ActionParams:      planResp.ActionParams,
-		Confidence:        planResp.Confidence,
-		Reasoning:         planResp.Reasoning,
-		RunbookID:         planResp.RunbookID,
-		RequiresApproval:  planResp.RequiresApproval,
-		EscalateToL3:      planResp.EscalateToL3,
-		ContextUsed:       planResp.ContextUsed,
+		IncidentID:         planResp.IncidentID,
+		RecommendedAction:  planResp.RecommendedAction,
+		ActionParams:       planResp.ActionParams,
+		Confidence:         planResp.Confidence,
+		Reasoning:          planResp.Reasoning,
+		RunbookID:          planResp.RunbookID,
+		RequiresApproval:   planResp.RequiresApproval,
+		EscalateToL3:       planResp.EscalateToL3,
+		L2DecisionRecorded: planResp.L2DecisionRecorded,
+		ContextUsed:        planResp.ContextUsed,
 	}
 
 	// 8. Validate decision schema (catches hallucinated runbooks, bad hosts, etc.)
