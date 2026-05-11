@@ -2909,7 +2909,9 @@ async def list_provision_codes(
     """List provision codes for this partner."""
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-51): list_provision_codes issues 2 admin
+    # reads (filtered list with/without status + count).
+    async with admin_transaction(pool) as conn:
         if status:
             rows = await conn.fetch("""
                 SELECT id, provision_code, target_site_id, client_name,
@@ -3488,7 +3490,9 @@ async def create_partner(request: Request, partner: PartnerCreate, admin: dict =
     api_key = generate_api_key()
     api_key_hash = hash_api_key(api_key)
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-51): create_partner issues 2 admin
+    # statements (slug uniqueness check + INSERT partner row).
+    async with admin_transaction(pool) as conn:
         # Check slug uniqueness
         existing = await conn.fetchval(
             "SELECT 1 FROM partners WHERE slug = $1",
