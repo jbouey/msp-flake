@@ -5393,13 +5393,50 @@ async def run_assertions_once(conn: asyncpg.Connection) -> Dict[str, int]:
     violations, marks resolved any open rows whose violations no
     longer appear (after RESOLVE_HYSTERESIS_MINUTES of no refresh).
     Returns a {opened, refreshed, resolved, held, errors} counters
-    dict for observability."""
+    dict for observability.
+
+    Cascade-fail mitigation (2026-05-11): a single assertion that
+    raises `asyncpg.exceptions._base.InterfaceError("connection has
+    been released back to the pool")` historically poisoned every
+    subsequent assertion in the same tick (the outer admin_connection
+    block holds ONE conn across all 60+ checks; if it dies mid-tick,
+    every subsequent check.fetch() raises the same InterfaceError).
+    Caught 2026-05-11 by post-Phase-4 prod health check: 7
+    InterfaceErrors per 10min, all in the assertions loop, all on
+    the same released conn.
+
+    Fix: catch InterfaceError specifically and break out of the
+    tick loop early — the next 60s tick acquires a fresh conn and
+    retries. We lose data on the partial tick but avoid cascading
+    every assertion into the errors counter.
+    """
+    from asyncpg.exceptions._base import InterfaceError as _AsyncpgInterfaceError
 
     counters = {"opened": 0, "refreshed": 0, "resolved": 0, "held": 0, "errors": 0}
+    conn_dead = False
 
     for a in ALL_ASSERTIONS:
+        if conn_dead:
+            # Skip remaining assertions — conn poisoned for this tick.
+            counters["errors"] += 1
+            continue
         try:
             current = await a.check(conn)
+        except _AsyncpgInterfaceError as e:
+            # Connection released back to pool mid-tick (asyncpg
+            # command_timeout fired on a previous query, or pool reaper
+            # ran). Subsequent assertions on this conn WILL ALL FAIL
+            # with the same error — short-circuit and let the next
+            # tick acquire a fresh conn.
+            logger.warning(
+                "assertion %s hit InterfaceError, conn dead — skipping "
+                "remaining assertions this tick (next tick will retry "
+                "with fresh conn). %s",
+                a.name, str(e)[:200],
+            )
+            counters["errors"] += 1
+            conn_dead = True
+            continue
         except Exception:
             logger.error("assertion %s raised", a.name, exc_info=True)
             counters["errors"] += 1
@@ -5595,7 +5632,13 @@ async def assertions_loop():
             async with admin_connection(pool) as conn:
                 counters = await run_assertions_once(conn)
                 # TTL sweep in same conn — cheap, atomic per tick.
-                deleted = await _ttl_sweep(conn)
+                # If run_assertions_once hit InterfaceError mid-tick the
+                # conn is poisoned; skip _ttl_sweep (would also fail
+                # and add noise). Next tick acquires a fresh conn.
+                if counters.get("errors", 0) == 0:
+                    deleted = await _ttl_sweep(conn)
+                else:
+                    deleted = 0
             if counters["opened"] or counters["resolved"] or deleted:
                 logger.info(
                     "assertions tick: opened=%d refreshed=%d resolved=%d held=%d errors=%d sigauth_swept=%d",
