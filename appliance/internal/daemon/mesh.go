@@ -426,7 +426,14 @@ func (m *Mesh) defaultProbe() func(ip string, port int) bool {
 	m.mu.RUnlock()
 
 	return func(ip string, port int) bool {
-		addr := fmt.Sprintf("%s:%d", ip, port)
+		// Session 220 task #118 (2026-05-11): net.JoinHostPort handles
+		// both IPv4 and IPv6 correctly (wraps IPv6 in brackets). The
+		// prior `fmt.Sprintf("%s:%d", ip, port)` form produced
+		// "fe80::1:443" which net.Dial parses as host=fe80::1:443 +
+		// no port, failing every IPv6 mesh probe. Closes go vet
+		// `address format "%s:%d" does not work with IPv6` (surfaced
+		// 2026-05-11 during Phase 3 PR-3a Gate B full Go sweep).
+		addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
 
 		// Prefer TLS with CA verification (confirms peer is a sibling appliance)
 		if caPool != nil {
