@@ -112,6 +112,26 @@ async def alertmanager_webhook(request: Request) -> dict[str, Any]:
             "alertmanager_webhook_severity_filtered",
             extra={"dropped": filtered, "kept": len(alerts), "min_severity": min_sev},
         )
+
+    # Soak-test filter (Phase 4 v2 P0-3 fix, 2026-05-11):
+    # When SUBSTRATE_ALERT_SOAK_SUPPRESS=true, drop alerts whose
+    # labels.soak_test='true' regardless of severity. Used during
+    # Phase 4 substrate-MTTR soak runs to prevent the 144 sev1+sev2
+    # synthetic-incident pages per 24h from flooding operator inboxes.
+    # Default false → real alerts always pass.
+    if (os.getenv("SUBSTRATE_ALERT_SOAK_SUPPRESS") or "").lower() == "true":
+        pre_soak = len(alerts)
+        alerts = [
+            a for a in alerts
+            if (a.get("labels", {}).get("soak_test") or "").lower() != "true"
+        ]
+        dropped_soak = pre_soak - len(alerts)
+        if dropped_soak:
+            logger.info(
+                "alertmanager_webhook_soak_suppressed",
+                extra={"dropped": dropped_soak, "kept": len(alerts)},
+            )
+
     if not alerts:
         return {"accepted": pre_filter, "sent": False, "reason": "all_below_severity_cutoff"}
     payload = {**payload, "alerts": alerts}
