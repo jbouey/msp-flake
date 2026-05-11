@@ -453,7 +453,13 @@ async def run_monthly_payout_job(for_month: Optional[date] = None) -> Dict[str, 
     # concurrent invocation returns False immediately and exits without work.
     conn_held = None
     try:
-        async with admin_connection(pool) as conn:
+        # admin_transaction (wave-53): outer block reads partner list +
+        # acquires pg_try_advisory_lock. The advisory lock is SESSION-
+        # scoped (not _xact_lock), so the COMMIT issued by
+        # admin_transaction's __aexit__ does NOT release it — the
+        # connection returning to the pool does (same as admin_connection).
+        # Behavior identical; routing-pathology hardening is the win.
+        async with admin_transaction(pool) as conn:
             got_lock = await conn.fetchval(
                 "SELECT pg_try_advisory_lock(hashtext($1))", _JOB_ADVISORY_LOCK_KEY,
             )
@@ -513,7 +519,9 @@ async def run_monthly_payout_job(for_month: Optional[date] = None) -> Dict[str, 
                 continue
 
             # Short conn #1 for this partner: compute rate + UPSERT row.
-            async with admin_connection(pool) as conn_compute:
+            # admin_transaction (wave-53): 2 admin statements (compute
+            # rate + UPSERT payout row). Pinned to one PgBouncer backend.
+            async with admin_transaction(pool) as conn_compute:
                 rate_bps = await conn_compute.fetchval(
                     "SELECT compute_partner_rate_bps($1::uuid, $2::int)",
                     pid, clinics,
