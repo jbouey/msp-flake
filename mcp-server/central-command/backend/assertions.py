@@ -1260,15 +1260,16 @@ async def _check_client_portal_zero_evidence_with_data(
         bundle_count_7d = int(row["bundle_count_7d"])
 
         # Simulate the canonical query under this org's client RLS.
-        # Use asyncpg's `async with conn.transaction()` for the
-        # savepoint, NOT raw `SAVEPOINT` SQL — raw SAVEPOINT requires
-        # an outer transaction, and `admin_connection` (caller) only
-        # begins one when wrapped in `admin_transaction`. The
-        # context-manager form auto-detects savepoint-vs-toplevel.
-        # `SET LOCAL` is scoped to the savepoint; on exit the
-        # transaction-context releases it (no explicit RESET needed).
-        # Round-2 audit P0-RT2-A: prior raw `SAVEPOINT` was raising
-        # `NoActiveSQLTransactionError` ~102/hr in prod.
+        # Post-Gate-A refactor (2026-05-11): every caller now wraps
+        # this function in `admin_transaction(pool)`, so `conn` is
+        # ALWAYS inside an outer transaction. `async with
+        # conn.transaction()` therefore opens a true SAVEPOINT here —
+        # one bad org row rolls back ONLY its SET LOCAL + visible-count
+        # query; sibling orgs continue. `SET LOCAL` scopes to the
+        # savepoint and is released on context exit (no explicit RESET
+        # needed). Round-2 audit P0-RT2-A: prior raw `SAVEPOINT` SQL
+        # was raising `NoActiveSQLTransactionError` ~102/hr in prod
+        # before the per-assertion admin_transaction wrap was added.
         try:
             async with conn.transaction():
                 await conn.execute(
@@ -5388,207 +5389,217 @@ async def _check_appliance_disk_pressure(conn: asyncpg.Connection) -> List[Viola
 RESOLVE_HYSTERESIS_MINUTES = 5
 
 
-async def run_assertions_once(conn: asyncpg.Connection) -> Dict[str, int]:
+async def run_assertions_once(pool) -> Dict[str, int]:
     """Run every registered assertion exactly once. UPSERTs new
     violations, marks resolved any open rows whose violations no
     longer appear (after RESOLVE_HYSTERESIS_MINUTES of no refresh).
     Returns a {opened, refreshed, resolved, held, errors} counters
     dict for observability.
 
-    Cascade-fail mitigation (2026-05-11): a single assertion that
-    raises `asyncpg.exceptions._base.InterfaceError("connection has
-    been released back to the pool")` historically poisoned every
-    subsequent assertion in the same tick (the outer admin_connection
-    block holds ONE conn across all 60+ checks; if it dies mid-tick,
-    every subsequent check.fetch() raises the same InterfaceError).
-    Caught 2026-05-11 by post-Phase-4 prod health check: 7
-    InterfaceErrors per 10min, all in the assertions loop, all on
-    the same released conn.
+    Per-assertion isolation (2026-05-11 Gate A APPROVE-WITH-FIXES,
+    audit/coach-substrate-per-assertion-refactor-gate-a-2026-05-11.md):
+    each assertion's check + open_rows fetch + UPSERT/INSERT/RESOLVE
+    runs inside its OWN `admin_transaction(pool)` block. Replaces the
+    prior single-outer-conn design where one check's asyncpg
+    InterfaceError poisoned every subsequent check in the same tick
+    (cascade-fail class observed 2026-05-11, 7 errors per 10min in
+    prod, mitigated defensively by commit b55846cb).
 
-    Fix: catch InterfaceError specifically and break out of the
-    tick loop early — the next 60s tick acquires a fresh conn and
-    retries. We lose data on the partial tick but avoid cascading
-    every assertion into the errors counter.
+    Under per-assertion conns, one timeout costs 1 assertion's data
+    (1.6% of tick fidelity), not all 60+. The defensive `conn_dead`
+    band-aid from b55846cb is REMOVED in this commit per Gate A P0-5
+    — under per-assertion isolation the flag would skip valid work
+    for no reason.
     """
-    from asyncpg.exceptions._base import InterfaceError as _AsyncpgInterfaceError
+    import asyncpg
+    from .tenant_middleware import admin_transaction
 
     counters = {"opened": 0, "refreshed": 0, "resolved": 0, "held": 0, "errors": 0}
-    conn_dead = False
 
     for a in ALL_ASSERTIONS:
-        if conn_dead:
-            # Skip remaining assertions — conn poisoned for this tick.
-            counters["errors"] += 1
-            continue
+        # Gate A P0-2: the entire per-assertion body (check + open_rows
+        # fetch + UPSERT/INSERT/RESOLVE) MUST run inside ONE
+        # admin_transaction so read-then-write consistency is preserved
+        # within the tick. Wrapping only `a.check(conn)` would create a
+        # TOCTOU window vs concurrent UPSERTs from a previous tick.
         try:
-            current = await a.check(conn)
-        except _AsyncpgInterfaceError as e:
-            # Connection released back to pool mid-tick (asyncpg
-            # command_timeout fired on a previous query, or pool reaper
-            # ran). Subsequent assertions on this conn WILL ALL FAIL
-            # with the same error — short-circuit and let the next
-            # tick acquire a fresh conn.
+            async with admin_transaction(pool) as conn:
+                try:
+                    current = await a.check(conn)
+                except asyncpg.InterfaceError as e:
+                    # Per-assertion isolation: one InterfaceError costs
+                    # 1 assertion. Subsequent assertions get a fresh
+                    # conn from admin_transaction on the next iteration.
+                    logger.warning(
+                        "assertion %s hit InterfaceError — fresh conn next iteration. %s",
+                        a.name, str(e)[:200],
+                    )
+                    counters["errors"] += 1
+                    continue
+                except Exception:
+                    logger.error("assertion %s raised", a.name, exc_info=True)
+                    counters["errors"] += 1
+                    continue
+
+                # Phase T-B gate fix: collapse multi-Violation groups into
+                # ONE row per (invariant, site). If an invariant returns several
+                # Violations for the same site (e.g. winrm_pin_mismatch with two
+                # target hosts), merge their details into a single row with a
+                # `matches` array — not N rows that race the partial UNIQUE
+                # index and crash the engine mid-tick.
+                collapsed: Dict[str, Violation] = {}
+                for v in current:
+                    site_key = v.site_id or ""
+                    if site_key in collapsed:
+                        existing = collapsed[site_key].details
+                        if "matches" not in existing:
+                            # Lift the first violation into a matches[] entry
+                            collapsed[site_key] = Violation(
+                                site_id=v.site_id,
+                                details={"matches": [existing]},
+                            )
+                        collapsed[site_key].details.setdefault("matches", []).append(v.details)
+                        collapsed[site_key].details["match_count"] = len(
+                            collapsed[site_key].details["matches"]
+                        )
+                    else:
+                        collapsed[site_key] = v
+
+                current_keys = set(collapsed.keys())
+
+                open_rows = await conn.fetch(
+                    """
+                    SELECT id, COALESCE(site_id, '') AS site_key
+                      FROM substrate_violations
+                     WHERE invariant_name = $1
+                       AND resolved_at IS NULL
+                    """,
+                    a.name,
+                )
+                open_by_site = {r["site_key"]: r["id"] for r in open_rows}
+
+                # Phase T-B gate fix: every mutation below runs in its own
+                # savepoint so a single UniqueViolation (or any other error)
+                # doesn't abort the outer transaction + blind the remaining
+                # invariants for the tick. Each site's UPDATE/INSERT/resolve
+                # is atomic and independently retryable; one bad row touches
+                # only its own counter. (Under per-assertion admin_transaction
+                # outer, conn.transaction() now opens a true SAVEPOINT —
+                # behavior preserved per Gate A P0-1.)
+                for site_key, v in collapsed.items():
+                    if site_key in open_by_site:
+                        try:
+                            async with conn.transaction():
+                                await conn.execute(
+                                    """
+                                    UPDATE substrate_violations
+                                       SET last_seen_at = NOW(),
+                                           details      = $1::jsonb
+                                     WHERE id = $2
+                                    """,
+                                    json.dumps(v.details),
+                                    open_by_site[site_key],
+                                )
+                            counters["refreshed"] += 1
+                        except Exception:
+                            logger.error(
+                                "substrate refresh failed: invariant=%s site=%s",
+                                a.name, site_key, exc_info=True,
+                            )
+                            counters["errors"] += 1
+                    else:
+                        try:
+                            async with conn.transaction():
+                                await conn.execute(
+                                    """
+                                    INSERT INTO substrate_violations
+                                          (invariant_name, severity, site_id, details)
+                                    VALUES ($1, $2, $3, $4::jsonb)
+                                    """,
+                                    a.name,
+                                    a.severity,
+                                    v.site_id,
+                                    json.dumps(v.details),
+                                )
+                            counters["opened"] += 1
+                            logger.warning(
+                                "substrate violation OPENED: invariant=%s severity=%s site=%s details=%s",
+                                a.name,
+                                a.severity,
+                                v.site_id,
+                                json.dumps(v.details),
+                            )
+                        except Exception:
+                            # UniqueViolation here = race between two tick passes
+                            # (or a previous tick partially committed). Resolve
+                            # by treating this as a refresh on the existing row.
+                            logger.warning(
+                                "substrate INSERT raced: invariant=%s site=%s — falling back to refresh",
+                                a.name, site_key, exc_info=True,
+                            )
+                            try:
+                                async with conn.transaction():
+                                    await conn.execute(
+                                        """
+                                        UPDATE substrate_violations
+                                           SET last_seen_at = NOW(),
+                                               details      = $1::jsonb
+                                         WHERE invariant_name = $2
+                                           AND COALESCE(site_id, '') = $3
+                                           AND resolved_at IS NULL
+                                        """,
+                                        json.dumps(v.details), a.name, site_key,
+                                    )
+                                counters["refreshed"] += 1
+                            except Exception:
+                                counters["errors"] += 1
+
+                for site_key, row_id in open_by_site.items():
+                    if site_key not in current_keys:
+                        try:
+                            async with conn.transaction():
+                                result = await conn.execute(
+                                    """
+                                    UPDATE substrate_violations
+                                       SET resolved_at = NOW()
+                                     WHERE id = $1
+                                       AND last_seen_at < NOW() - make_interval(mins => $2)
+                                    """,
+                                    row_id, RESOLVE_HYSTERESIS_MINUTES,
+                                )
+                            # asyncpg returns 'UPDATE <rowcount>'. Parse the count so
+                            # we can distinguish a true resolve from a hysteresis hold.
+                            rowcount = 0
+                            try:
+                                rowcount = int(result.split()[-1])
+                            except (ValueError, IndexError):
+                                pass
+                            if rowcount >= 1:
+                                counters["resolved"] += 1
+                                logger.info(
+                                    "substrate violation RESOLVED: invariant=%s site=%s id=%s",
+                                    a.name,
+                                    site_key,
+                                    row_id,
+                                )
+                            else:
+                                counters["held"] += 1
+                        except Exception:
+                            logger.error(
+                                "substrate resolve failed: invariant=%s site=%s id=%s",
+                                a.name, site_key, row_id, exc_info=True,
+                            )
+                            counters["errors"] += 1
+        except asyncpg.InterfaceError as e:
+            # Outer admin_transaction itself failed (pool exhausted /
+            # PgBouncer outage). Count + continue — next iteration
+            # acquires a fresh conn.
             logger.warning(
-                "assertion %s hit InterfaceError, conn dead — skipping "
-                "remaining assertions this tick (next tick will retry "
-                "with fresh conn). %s",
+                "assertion %s admin_transaction failed: %s",
                 a.name, str(e)[:200],
             )
             counters["errors"] += 1
-            conn_dead = True
             continue
-        except Exception:
-            logger.error("assertion %s raised", a.name, exc_info=True)
-            counters["errors"] += 1
-            continue
-
-        # Phase T-B gate fix: collapse multi-Violation groups into
-        # ONE row per (invariant, site). If an invariant returns several
-        # Violations for the same site (e.g. winrm_pin_mismatch with two
-        # target hosts), merge their details into a single row with a
-        # `matches` array — not N rows that race the partial UNIQUE
-        # index and crash the engine mid-tick.
-        collapsed: Dict[str, Violation] = {}
-        for v in current:
-            site_key = v.site_id or ""
-            if site_key in collapsed:
-                existing = collapsed[site_key].details
-                if "matches" not in existing:
-                    # Lift the first violation into a matches[] entry
-                    collapsed[site_key] = Violation(
-                        site_id=v.site_id,
-                        details={"matches": [existing]},
-                    )
-                collapsed[site_key].details.setdefault("matches", []).append(v.details)
-                collapsed[site_key].details["match_count"] = len(
-                    collapsed[site_key].details["matches"]
-                )
-            else:
-                collapsed[site_key] = v
-
-        current_keys = set(collapsed.keys())
-
-        open_rows = await conn.fetch(
-            """
-            SELECT id, COALESCE(site_id, '') AS site_key
-              FROM substrate_violations
-             WHERE invariant_name = $1
-               AND resolved_at IS NULL
-            """,
-            a.name,
-        )
-        open_by_site = {r["site_key"]: r["id"] for r in open_rows}
-
-        # Phase T-B gate fix: every mutation below runs in its own
-        # savepoint so a single UniqueViolation (or any other error)
-        # doesn't abort the outer transaction + blind the remaining
-        # invariants for the tick. Each site's UPDATE/INSERT/resolve
-        # is atomic and independently retryable; one bad row touches
-        # only its own counter.
-        for site_key, v in collapsed.items():
-            if site_key in open_by_site:
-                try:
-                    async with conn.transaction():
-                        await conn.execute(
-                            """
-                            UPDATE substrate_violations
-                               SET last_seen_at = NOW(),
-                                   details      = $1::jsonb
-                             WHERE id = $2
-                            """,
-                            json.dumps(v.details),
-                            open_by_site[site_key],
-                        )
-                    counters["refreshed"] += 1
-                except Exception:
-                    logger.error(
-                        "substrate refresh failed: invariant=%s site=%s",
-                        a.name, site_key, exc_info=True,
-                    )
-                    counters["errors"] += 1
-            else:
-                try:
-                    async with conn.transaction():
-                        await conn.execute(
-                            """
-                            INSERT INTO substrate_violations
-                                  (invariant_name, severity, site_id, details)
-                            VALUES ($1, $2, $3, $4::jsonb)
-                            """,
-                            a.name,
-                            a.severity,
-                            v.site_id,
-                            json.dumps(v.details),
-                        )
-                    counters["opened"] += 1
-                    logger.warning(
-                        "substrate violation OPENED: invariant=%s severity=%s site=%s details=%s",
-                        a.name,
-                        a.severity,
-                        v.site_id,
-                        json.dumps(v.details),
-                    )
-                except Exception:
-                    # UniqueViolation here = race between two tick passes
-                    # (or a previous tick partially committed). Resolve
-                    # by treating this as a refresh on the existing row.
-                    logger.warning(
-                        "substrate INSERT raced: invariant=%s site=%s — falling back to refresh",
-                        a.name, site_key, exc_info=True,
-                    )
-                    try:
-                        async with conn.transaction():
-                            await conn.execute(
-                                """
-                                UPDATE substrate_violations
-                                   SET last_seen_at = NOW(),
-                                       details      = $1::jsonb
-                                 WHERE invariant_name = $2
-                                   AND COALESCE(site_id, '') = $3
-                                   AND resolved_at IS NULL
-                                """,
-                                json.dumps(v.details), a.name, site_key,
-                            )
-                        counters["refreshed"] += 1
-                    except Exception:
-                        counters["errors"] += 1
-
-        for site_key, row_id in open_by_site.items():
-            if site_key not in current_keys:
-                try:
-                    async with conn.transaction():
-                        result = await conn.execute(
-                            """
-                            UPDATE substrate_violations
-                               SET resolved_at = NOW()
-                             WHERE id = $1
-                               AND last_seen_at < NOW() - make_interval(mins => $2)
-                            """,
-                            row_id, RESOLVE_HYSTERESIS_MINUTES,
-                        )
-                    # asyncpg returns 'UPDATE <rowcount>'. Parse the count so
-                    # we can distinguish a true resolve from a hysteresis hold.
-                    rowcount = 0
-                    try:
-                        rowcount = int(result.split()[-1])
-                    except (ValueError, IndexError):
-                        pass
-                    if rowcount >= 1:
-                        counters["resolved"] += 1
-                        logger.info(
-                            "substrate violation RESOLVED: invariant=%s site=%s id=%s",
-                            a.name,
-                            site_key,
-                            row_id,
-                        )
-                    else:
-                        counters["held"] += 1
-                except Exception:
-                    logger.error(
-                        "substrate resolve failed: invariant=%s site=%s id=%s",
-                        a.name, site_key, row_id, exc_info=True,
-                    )
-                    counters["errors"] += 1
 
     return counters
 
@@ -5609,9 +5620,17 @@ async def _ttl_sweep(conn: asyncpg.Connection) -> int:
 
 async def assertions_loop():
     """Background task — runs every 60s. Wired into main.py lifespan
-    via health_monitor's broader background_tasks orchestration."""
+    via health_monitor's broader background_tasks orchestration.
+
+    Gate A P0-4 refactor (2026-05-11): hands `pool` to
+    `run_assertions_once` (per-assertion admin_transaction inside),
+    and runs `_ttl_sweep` in its OWN admin_transaction block — so
+    a poisoned per-assertion conn no longer suppresses the sweep
+    (the prior `if errors == 0` short-circuit silently dropped the
+    TTL reclaim on any tick where one of the 60+ assertions hit an
+    InterfaceError, growing sigauth_observations unboundedly)."""
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     await asyncio.sleep(120)  # Let pool + migrations settle on cold start.
     logger.info("Substrate Integrity Engine started (interval=60s, assertions=%d)",
@@ -5627,18 +5646,21 @@ async def assertions_loop():
         except Exception:
             pass
 
+        deleted = 0
+        counters = {"opened": 0, "refreshed": 0, "resolved": 0,
+                    "held": 0, "errors": 0}
         try:
             pool = await get_pool()
-            async with admin_connection(pool) as conn:
-                counters = await run_assertions_once(conn)
-                # TTL sweep in same conn — cheap, atomic per tick.
-                # If run_assertions_once hit InterfaceError mid-tick the
-                # conn is poisoned; skip _ttl_sweep (would also fail
-                # and add noise). Next tick acquires a fresh conn.
-                if counters.get("errors", 0) == 0:
-                    deleted = await _ttl_sweep(conn)
-                else:
-                    deleted = 0
+            counters = await run_assertions_once(pool)
+            # TTL sweep is independent of per-assertion state — runs
+            # in its OWN admin_transaction block. Errors in one tick's
+            # assertions MUST NOT suppress the sweep (would let
+            # sigauth_observations grow unboundedly).
+            try:
+                async with admin_transaction(pool) as sweep_conn:
+                    deleted = await _ttl_sweep(sweep_conn)
+            except Exception:
+                logger.error("ttl_sweep failed", exc_info=True)
             if counters["opened"] or counters["resolved"] or deleted:
                 logger.info(
                     "assertions tick: opened=%d refreshed=%d resolved=%d held=%d errors=%d sigauth_swept=%d",
