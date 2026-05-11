@@ -279,6 +279,16 @@ SOURCE_LEVEL_TESTS=(
     # _KNOWN_ESCALATE_CHECK_TYPES OR caught by MONITORING_ONLY_CHECKS.
     # Closes the regression class fixed by Phase 3 PR-3a + PR-3b.
     "tests/test_escalate_rule_check_type_drift.py"
+    # 2026-05-11 Session 220 task #111. Pins SHA256 of normalized
+    # privileged-chain function bodies (enforce_privileged_order_
+    # attestation + enforce_privileged_order_immutability). Closes
+    # the regression class Gate B caught on mig 305 v1 (silent
+    # body rewrite dropping site_id cross-bundle check +
+    # PRIVILEGED_CHAIN_VIOLATION prefix + USING HINT). Canonical-
+    # tamper closed by literal hash pinning. Legitimate body change
+    # requires updating the literal + `PRIVILEGED-CHAIN-BODY-CHANGE:
+    # <reason>` token in commit message.
+    "tests/test_privileged_chain_function_body_shape.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
