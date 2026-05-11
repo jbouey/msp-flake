@@ -2464,7 +2464,14 @@ async def agent_l2_plan(
         site_id=request.site_id,
     )
 
-    # Step 3: Record decision with hypotheses for flywheel analysis
+    # Step 3: Record decision with hypotheses for flywheel analysis.
+    # Substrate invariant l2_resolution_without_decision_record
+    # (Session 219 mig 300, 4th callsite found 2026-05-11): if the
+    # record write fails, the daemon MUST NOT execute the L2 runbook —
+    # otherwise the incident gets resolution_tier='L2' (daemon-set)
+    # with no l2_decisions row → ghost-L2 audit gap.
+    # Forward fix: escalate to L3 in the response when record fails.
+    l2_decision_recorded = False
     try:
         await record_l2_decision(
             db, request.incident_id, decision,
@@ -2472,14 +2479,17 @@ async def agent_l2_plan(
             hypotheses=hypotheses,
         )
         await db.commit()
+        l2_decision_recorded = True
     except Exception as e:
-        logger.error(f"Failed to record L2 decision: {e}")
+        logger.error(
+            f"Failed to record L2 decision: {e}", exc_info=True,
+        )
 
     action = "escalate"
     action_params = {}
     escalate = True
 
-    if decision.runbook_id and decision.confidence >= 0.6:
+    if l2_decision_recorded and decision.runbook_id and decision.confidence >= 0.6:
         escalation_only_runbooks = {"RB-CERT-001", "RB-DISK-001"}
         is_escalation = (
             decision.runbook_id in escalation_only_runbooks
@@ -2500,10 +2510,14 @@ async def agent_l2_plan(
         "action_params": action_params,
         "confidence": decision.confidence,
         "reasoning": decision.reasoning,
-        "runbook_id": decision.runbook_id or "",
+        # runbook_id cleared when l2_decision_recorded fails — daemons
+        # that bypass `recommended_action` and read runbook_id directly
+        # still won't execute a ghost-L2 runbook.
+        "runbook_id": (decision.runbook_id or "") if l2_decision_recorded else "",
         "requires_approval": decision.requires_human_review,
         "escalate_to_l3": escalate,
         "hypotheses": hypotheses,
+        "l2_decision_recorded": l2_decision_recorded,
         "context_used": {
             "llm_model": decision.llm_model,
             "llm_latency_ms": decision.llm_latency_ms,
