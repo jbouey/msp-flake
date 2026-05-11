@@ -599,7 +599,9 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
     # Zero-friction: the device identity is the MAC, not the IP. DHCP changes
     # shouldn't break scanning.
     try:
-        async with admin_connection(pool) as cred_conn:
+        # admin_transaction (wave-50): cred IP auto-update issues 3
+        # admin statements (creds fetch, prev-IP lookup, UPDATE).
+        async with admin_transaction(pool) as cred_conn:
             creds = await cred_conn.fetch("""
                 SELECT id, convert_from(encrypted_data, 'UTF8') as cred_json
                 FROM site_credentials
@@ -651,7 +653,9 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
 
     # Also check org-level credentials (inherited via client_org)
     try:
-        async with admin_connection(pool) as org_conn:
+        # admin_transaction (wave-50): org-cred IP auto-update issues 3
+        # admin statements (org-creds fetch, prev-IP lookup, UPDATE).
+        async with admin_transaction(pool) as org_conn:
             org_creds = await org_conn.fetch("""
                 SELECT oc.id, convert_from(oc.encrypted_data, 'UTF8') as cred_json
                 FROM org_credentials oc
