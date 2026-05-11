@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Depends
 import asyncpg
 
 from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
+from .shared import _enforce_site_id, require_appliance_bearer
 
 logger = logging.getLogger(__name__)
 
@@ -270,31 +271,69 @@ async def get_pending_sensor_commands(site_id: str, appliance_id: Optional[str] 
 async def complete_sensor_command(
     command_id: int,
     success: bool = True,
-    error: Optional[str] = None
+    error: Optional[str] = None,
+    auth_site_id: str = Depends(require_appliance_bearer),
 ):
-    """Mark a sensor command as completed."""
+    """Mark a sensor command as completed.
+
+    Session 219 (2026-05-11): require_appliance_bearer added (pre-fix
+    zero-auth — anyone could mark any command done). The request body
+    carries `command_id` (not site_id), so the UPDATE is constrained
+    via JOIN to sensor_registry.site_id = auth_site_id. Cross-site
+    UPDATE returns 0 rows → 404; _enforce_site_id is called after the
+    miss to write the forensic audit row when the command exists under
+    a different tenant.
+    """
     pool = await get_db_pool()
 
-    async with admin_connection(pool) as conn:
+    async with admin_transaction(pool) as conn:
         result = {"success": success}
         if error:
             result["error"] = error
 
-        await conn.execute("""
-            UPDATE sensor_commands
-            SET status = $2, completed_at = NOW(), result = $3
-            WHERE id = $1
-        """, command_id, 'completed' if success else 'failed', json.dumps(result))
+        # Site-scoped UPDATE: command must belong to a sensor in the
+        # bearer-authenticated site. Cross-site spoof → UPDATE 0.
+        update_result = await conn.execute("""
+            UPDATE sensor_commands sc
+               SET status = $2, completed_at = NOW(), result = $3
+              FROM sensor_registry sr
+             WHERE sc.id = $1
+               AND sc.sensor_id = sr.sensor_id
+               AND sr.site_id = $4
+        """, command_id, 'completed' if success else 'failed', json.dumps(result), auth_site_id)
+
+        if update_result == "UPDATE 0":
+            # Command may exist under a different tenant — write the
+            # cross-site spoof audit row + 403 if so; else true 404.
+            real = await conn.fetchrow("""
+                SELECT sr.site_id
+                  FROM sensor_commands sc
+                  JOIN sensor_registry sr ON sr.sensor_id = sc.sensor_id
+                 WHERE sc.id = $1
+            """, command_id)
+            if real and real["site_id"] != auth_site_id:
+                await _enforce_site_id(
+                    auth_site_id, real["site_id"], "complete_sensor_command",
+                )  # raises 403 + audit row
+            raise HTTPException(status_code=404, detail="Command not found")
 
         return {"status": "ok"}
 
 
 @router.post("/heartbeat")
-async def record_sensor_heartbeat(heartbeat: SensorHeartbeatFromAppliance):
+async def record_sensor_heartbeat(
+    heartbeat: SensorHeartbeatFromAppliance,
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
     """
     Record sensor heartbeat forwarded from appliance.
     Updates or creates sensor registry entry.
+
+    Session 219 (2026-05-11): require_appliance_bearer + _enforce_site_id
+    added (pre-fix zero-auth, weekly audit 2026-05-11 P0). The endpoint
+    is post-claim — forwarding appliance always has a bearer.
     """
+    await _enforce_site_id(auth_site_id, heartbeat.site_id, "record_sensor_heartbeat")
     pool = await get_db_pool()
     now = datetime.now(timezone.utc)
 
@@ -537,11 +576,18 @@ async def remove_linux_sensor_from_host(site_id: str, hostname: str):
 
 
 @router.post("/linux/heartbeat")
-async def record_linux_sensor_heartbeat(heartbeat: LinuxSensorHeartbeatFromAppliance):
+async def record_linux_sensor_heartbeat(
+    heartbeat: LinuxSensorHeartbeatFromAppliance,
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
     """
     Record Linux sensor heartbeat forwarded from appliance.
     Updates or creates sensor registry entry.
+
+    Session 219 (2026-05-11): require_appliance_bearer + _enforce_site_id
+    added (pre-fix zero-auth). Same shape as /heartbeat sibling.
     """
+    await _enforce_site_id(auth_site_id, heartbeat.site_id, "record_linux_sensor_heartbeat")
     pool = await get_db_pool()
     now = datetime.now(timezone.utc)
 

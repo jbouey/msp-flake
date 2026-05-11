@@ -15,11 +15,12 @@ Discovery flow:
 import ipaddress
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from .fleet import get_pool
 from .tenant_middleware import admin_connection, admin_transaction
+from .shared import _enforce_site_id, require_appliance_bearer
 
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
@@ -190,12 +191,20 @@ def detect_services(open_ports: List[int]) -> Dict[str, str]:
 # =============================================================================
 
 @router.post("/report")
-async def report_discovery_results(report: DiscoveryReport):
+async def report_discovery_results(
+    report: DiscoveryReport,
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
     """Receive discovery results from an appliance.
 
     Called by the compliance agent after completing a network scan.
     Updates the discovered_assets table with findings.
+
+    Session 219 (2026-05-11): require_appliance_bearer + _enforce_site_id
+    added (pre-fix zero-auth, weekly audit 2026-05-11 P0). The endpoint
+    is post-claim so the appliance always has a bearer.
     """
+    await _enforce_site_id(auth_site_id, report.site_id, "report_discovery_results")
     pool = await get_pool()
 
     # wave-11: PgBouncer routing-pathology fix — pin SET LOCAL + 4 calls to one backend

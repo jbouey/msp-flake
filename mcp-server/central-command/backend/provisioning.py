@@ -31,6 +31,7 @@ def normalize_mac(mac: str) -> str:
 
 from .fleet import get_pool
 from .tenant_middleware import admin_connection, admin_transaction
+from .shared import _enforce_site_id, require_appliance_bearer
 
 # API endpoint from environment variable
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.osiriscare.net")
@@ -97,8 +98,23 @@ class RekeyRequest(BaseModel):
 
 
 class HeartbeatRequest(BaseModel):
-    """Heartbeat from provisioning appliance."""
+    """Heartbeat from provisioning appliance.
+
+    Session 219 (2026-05-11): `provision_code` is the B2 auth field —
+    pre-fix this endpoint was zero-auth (weekly audit 2026-05-11 P0).
+    The appliance already has the provision_code (printed on the ISO
+    label, scanned at setup) before it can heartbeat — same trust
+    model as `/claim`. Gate A chose option B2 over B1 (HMAC + shared
+    fleet secret) because B1 requires per-ISO key churn while B2
+    reuses material the appliance already possesses.
+
+    Field is Optional + handler-level 401 (NOT required) per Gate B
+    P1-3 — pre-fix daemons in the field would 422 on Pydantic
+    validation if required; 401 from the handler is the cleaner
+    error path for operator alerts to pattern-match.
+    """
     mac_address: str
+    provision_code: Optional[str] = None
     hostname: Optional[str] = None
     ip_address: Optional[str] = None
     status: str = "provisioning"
@@ -421,24 +437,54 @@ async def validate_provision_code(provision_code: str):
 
 
 @router.post("/status")
-async def update_provision_status(status: ProvisionStatusRequest):
+async def update_provision_status(
+    status: ProvisionStatusRequest,
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
     """Update provisioning status.
 
     Called by appliance during setup to report progress.
+
+    Session 219 (2026-05-11): require_appliance_bearer added (pre-fix
+    zero-auth, weekly audit 2026-05-11 P0). The request body carries
+    `appliance_id` (not site_id), so the UPDATE is constrained to
+    appliances owned by auth_site_id — cross-site spoof results in
+    404 (no rows match) + a `cross_site_spoof_attempt` audit row.
     """
     pool = await get_pool()
 
     # admin_transaction (wave-46): update_provision_status issues 2
     # admin statements (UPDATE appliance status + audit log).
     async with admin_transaction(pool) as conn:
-        # Update appliance status
+        # Update appliance status — constrained to appliances owned by
+        # the bearer-bound site. A caller targeting an appliance under a
+        # different site gets UPDATE 0 → 404 (instead of poisoning
+        # another tenant's status). Belt + suspenders: also call
+        # _enforce_site_id after the UPDATE so the forensic trail is
+        # written for the 404 class.
         result = await conn.execute("""
             UPDATE site_appliances
             SET status = $1, last_checkin = NOW()
             WHERE appliance_id = $2
-        """, status.status, status.appliance_id)
+              AND site_id = $3
+              AND deleted_at IS NULL
+        """, status.status, status.appliance_id, auth_site_id)
 
         if result == "UPDATE 0":
+            # Either unknown appliance OR cross-site attempt OR soft-
+            # deleted row. Look up the appliance's actual site for the
+            # forensic 403 path. This lookup INTENTIONALLY ignores
+            # deleted_at — we want to surface the spoof attempt even
+            # if the row was soft-deleted between the attacker probe
+            # and our audit.
+            real = await conn.fetchrow(
+                "SELECT site_id FROM site_appliances WHERE appliance_id = $1",  # noqa: site-appliances-deleted-include — cross-site forensic 403 audit lookup must see soft-deleted rows
+                status.appliance_id,
+            )
+            if real and real["site_id"] != auth_site_id:
+                await _enforce_site_id(
+                    auth_site_id, real["site_id"], "update_provision_status",
+                )  # raises 403 + writes audit row
             raise HTTPException(status_code=404, detail="Appliance not found")
 
         # If moving to active, update site onboarding stage + timestamp
@@ -449,7 +495,9 @@ async def update_provision_status(status: ProvisionStatusRequest):
                     status = 'active',
                     connectivity_at = NOW()
                 WHERE site_id = (
-                    SELECT site_id FROM site_appliances WHERE appliance_id = $1
+                    SELECT site_id FROM site_appliances
+                     WHERE appliance_id = $1
+                       AND deleted_at IS NULL
                 )
                 AND (onboarding_stage IN ('provisioning', 'received', 'shipped')
                      OR onboarding_stage IS NULL)
@@ -468,17 +516,53 @@ async def provisioning_heartbeat(heartbeat: HeartbeatRequest, request: Request):
 
     Allows tracking appliances that are powered on but haven't
     completed provisioning yet.
+
+    Session 219 (2026-05-11): provision_code is REQUIRED — pre-fix this
+    endpoint had zero auth (weekly audit 2026-05-11 P0). Gate A option
+    B2: reuse the provision_code the appliance already has from its
+    ISO label, same trust model as `/claim`. Validates against
+    `appliance_provisions.provision_code` with non-expired status.
     """
     pool = await get_pool()
     client_ip = request.client.host if request.client else heartbeat.ip_address
+    code = (heartbeat.provision_code or "").upper().strip()
 
-    # admin_transaction (wave-47): provisioning_heartbeat issues 2
-    # admin statements (appliance lookup + UPDATE heartbeat).
+    if not code:
+        raise HTTPException(status_code=401, detail="Missing provision_code")
+
+    # admin_transaction (wave-47): provisioning_heartbeat issues 3
+    # admin statements (validate code, appliance lookup, UPDATE heartbeat).
     async with admin_transaction(pool) as conn:
-        # Look for appliance by MAC
+        # B2 auth: provision_code must exist + non-expired. Status enum
+        # per mig 003 is ('pending', 'claimed', 'expired', 'revoked');
+        # we accept pending + claimed (the live pre-claim → post-claim
+        # window). expired/revoked get 403.
+        provision = await conn.fetchrow("""
+            SELECT id, status, expires_at
+              FROM appliance_provisions
+             WHERE provision_code = $1
+               AND status IN ('pending', 'claimed')
+               AND (expires_at IS NULL OR expires_at > NOW())
+        """, code)
+
+        if not provision:
+            logger.warning(
+                "provisioning_heartbeat 403: invalid/expired provision_code; mac=%s ip=%s",
+                heartbeat.mac_address, client_ip,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid or expired provision_code",
+            )
+
+        # Look for appliance by MAC. Soft-deleted appliances MUST NOT
+        # be auth-resurrectable via heartbeat — filter deleted_at IS NULL
+        # per the site_appliances soft-delete invariant
+        # (test_no_unfiltered_site_appliances_select baseline).
         appliance = await conn.fetchrow("""
             SELECT appliance_id, site_id FROM site_appliances
             WHERE mac_address = $1
+              AND deleted_at IS NULL
         """, heartbeat.mac_address.upper())
 
         if appliance:

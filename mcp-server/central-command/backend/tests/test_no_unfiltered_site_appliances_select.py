@@ -69,7 +69,10 @@ BACKEND_DIR = REPO_ROOT / "mcp-server" / "central-command" / "backend"
 # `deleted_at IS NULL` on both the per-site rollup query AND the
 # ring-agreement query. Soft-deleted appliances were being counted
 # in the mesh "total" → false ring-drift alerts. 85 → 83.
-BASELINE_MAX = 83
+# 2026-05-11 Session 219 Commit 2 zero-auth hardening filtered 2
+# provisioning.py queries (status UPDATE + heartbeat MAC lookup) +
+# added noqa to cross-site forensic 403 audit lookup. 83 → 81.
+BASELINE_MAX = 81
 
 _FROM_PATTERN = re.compile(r"\bFROM\s+site_appliances\b", re.IGNORECASE)
 _NOQA_PATTERN = re.compile(

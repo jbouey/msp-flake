@@ -262,6 +262,12 @@ SOURCE_LEVEL_TESTS=(
     # delegate_signing_key (PRIVILEGED_ORDER_TYPES + ALLOWED_EVENTS +
     # mig 305) per Gate A P0-1.
     "tests/test_appliance_delegation_auth_pinned.py"
+    # 2026-05-11 Session 219 zero-auth hardening Commit 2 (Gate A v1
+    # APPROVE-WITH-FIXES split). Hardens 6 endpoints across
+    # provisioning.py + discovery.py + sensors.py — heartbeat uses
+    # B2 provision_code auth (pre-claim); others use
+    # require_appliance_bearer + _enforce_site_id (post-claim).
+    "tests/test_appliance_endpoints_auth_pinned.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
