@@ -1,10 +1,11 @@
-"""Pin gate — every `jsonb_build_object($N, ...)` param MUST be cast.
+"""Pin gate — every JSONB-builder `$N` param MUST be cast.
 
-Session 219 (2026-05-11) caught a silent prod failure where
-`journal_api.py:178` was emitting `JOURNAL_UPLOAD_UNSCRUBBED` audit
-rows that ALL silently failed to write — asyncpg's prepare phase
-can't infer the JSONB-component type for unannotated `$N` params,
-and PgBouncer statement-caching makes the inference even worse.
+Session 219 (2026-05-11, commit c2c28b69) caught a silent prod
+failure where `journal_api.py:178` was emitting
+`JOURNAL_UPLOAD_UNSCRUBBED` audit rows that ALL silently failed
+to write — asyncpg's prepare phase can't infer the JSONB-component
+type for unannotated `$N` params, and PgBouncer statement-caching
+makes the inference even worse.
 
 Symptom in prod: `IndeterminateDatatypeError: could not determine
 data type of parameter $N`, firing 1×/3-5min for ~months. The
@@ -15,11 +16,17 @@ Same shape as the `auth.py + execute_with_retry` ::text rule
 (Session 199 PgBouncer DuplicatePreparedStatementError class).
 
 What this gate pins (regex over source):
-  Every `jsonb_build_object(...)` call that references `$N` (asyncpg
-  positional param) MUST have either an explicit `::text` / `::int`
-  / `::uuid` / `::bigint` / `::timestamptz` / `::jsonb` / `::float`
-  / `::bool` cast on each occurrence, OR be a static literal call
+  Every JSONB/JSON-builder call (`jsonb_build_object`,
+  `jsonb_build_array`, `to_jsonb`, `jsonb_set`, `jsonb_insert`,
+  `json_build_object`, `json_build_array`, `to_json`) that
+  references `$N` (asyncpg positional param) MUST have an explicit
+  `::<type>` cast on each occurrence, OR be a static-literal call
   with no `$N` at all.
+
+Gate A extension (2026-05-11 retroactive review found P1):
+  Original gate covered only `jsonb_build_object`. Extended to the
+  full JSONB-builder family because every one of them suffers the
+  same IndeterminateDatatypeError class.
 
 Sibling pattern:
   - `test_minio_worm_bucket_validation_pinned.py` (operator-discipline)
@@ -35,16 +42,29 @@ _REPO = pathlib.Path(__file__).resolve().parent.parent.parent.parent.parent
 _BACKEND = _REPO / "mcp-server" / "central-command" / "backend"
 
 # Recognized cast types — extend if new ones become legitimate.
+# Each addition MUST be justified in this file via a one-line
+# comment citing the prod path that needed it.
 _ALLOWED_CASTS = {
+    # Core scalar types
     "text", "int", "bigint", "uuid", "timestamptz", "timestamp",
     "jsonb", "json", "float", "float8", "real", "bool", "boolean",
     "numeric", "smallint", "interval", "date", "bytea",
+    # Gate A retroactive review (2026-05-11): network-audit metadata
+    # plausibly future-callsite. Adding pre-emptively to prevent
+    # wrong-rejects when a new callsite legitimately needs them.
+    "inet", "cidr", "varchar", "oid", "citext", "macaddr",
 }
 
-# Match jsonb_build_object(...) calls spanning multi-line; capture body
-# between balanced parens. Use a simple non-greedy approach with a
-# safety bound — production SQL strings are bounded.
-_JSONB_BUILD = re.compile(r"jsonb_build_object\s*\(", re.MULTILINE)
+# Match every JSONB/JSON-builder family member. Gate A P1-2:
+# originally only covered jsonb_build_object — extended to the
+# full family because the IndeterminateDatatypeError class affects
+# every one of them identically.
+_JSONB_BUILD = re.compile(
+    r"\b(?:jsonb_build_object|jsonb_build_array|to_jsonb|"
+    r"jsonb_set|jsonb_insert|json_build_object|json_build_array|"
+    r"to_json)\s*\(",
+    re.MULTILINE,
+)
 
 
 def _extract_body(src: str, open_idx: int) -> str:
@@ -110,25 +130,31 @@ def test_every_jsonb_build_object_param_is_cast():
         all_issues.extend(_scan_file(py_file))
 
     if all_issues:
-        lines = ["jsonb_build_object($N, ...) callsites lacking explicit casts:"]
+        lines = ["JSONB-builder($N, ...) callsites lacking explicit casts:"]
         for fname, lineno, snippet in all_issues:
             lines.append(f"  {fname}:{lineno}  ...{snippet}...")
         lines.append("")
         lines.append(
             "Each $N MUST have `::text` / `::int` / `::uuid` etc. "
-            "immediately after it. Session 219 (commit fbf… in 2026-05-11) "
-            "shows the prod symptom: IndeterminateDatatypeError, silent "
-            "audit-row leak. Fix: write `$1::text` not `$1`."
+            "immediately after it. Session 219 (commit c2c28b69, "
+            "2026-05-11) shows the prod symptom: "
+            "IndeterminateDatatypeError, silent audit-row leak. "
+            "Fix: write `$1::text` not `$1`."
         )
         raise AssertionError("\n".join(lines))
 
 
-def test_synthetic_violation_is_caught():
+def test_synthetic_violation_is_caught(tmp_path):
     """Positive control: synthesize a violation, scan it, confirm
     the gate catches it. Prevents the gate from silently rotting
-    (e.g. if someone breaks the regex)."""
-    tmp = pathlib.Path("/tmp/test_jsonb_synthetic_bad.py")
-    tmp.write_text(
+    (e.g. if someone breaks the regex).
+
+    Gate A P2 (2026-05-11): uses `tmp_path` pytest fixture instead
+    of a fixed /tmp/ path — eliminates TOCTOU vector when parallel
+    test runs collide on the same filename.
+    """
+    bad = tmp_path / "synthetic_bad.py"
+    bad.write_text(
         '''
 async def bad():
     await conn.execute(
@@ -140,15 +166,14 @@ async def bad():
     )
 '''
     )
-    issues = _scan_file(tmp)
-    tmp.unlink()
+    issues = _scan_file(bad)
     assert issues, "synthetic violation MUST be caught — gate regex is broken"
 
 
-def test_synthetic_safe_is_not_flagged():
+def test_synthetic_safe_is_not_flagged(tmp_path):
     """Negative control: a properly-cast callsite is NOT flagged."""
-    tmp = pathlib.Path("/tmp/test_jsonb_synthetic_good.py")
-    tmp.write_text(
+    good = tmp_path / "synthetic_good.py"
+    good.write_text(
         '''
 async def good():
     await conn.execute(
@@ -160,17 +185,16 @@ async def good():
     )
 '''
     )
-    issues = _scan_file(tmp)
-    tmp.unlink()
+    issues = _scan_file(good)
     assert not issues, f"properly-cast callsite was FLAGGED: {issues!r}"
 
 
-def test_no_static_only_jsonb_build_object_is_flagged():
+def test_no_static_only_jsonb_build_object_is_flagged(tmp_path):
     """Edge case: `jsonb_build_object('key', 'literal_value')` has
     no `$N` at all — must NOT be flagged. (See
     appliance_relocation_api.py:201 — `event_type` literal.)"""
-    tmp = pathlib.Path("/tmp/test_jsonb_synthetic_literal.py")
-    tmp.write_text(
+    literal = tmp_path / "synthetic_literal.py"
+    literal.write_text(
         '''
 async def static_only():
     await conn.execute(
@@ -181,6 +205,51 @@ async def static_only():
     )
 '''
     )
-    issues = _scan_file(tmp)
-    tmp.unlink()
+    issues = _scan_file(literal)
     assert not issues, f"static-literal callsite was FLAGGED: {issues!r}"
+
+
+def test_extended_builder_family_is_covered(tmp_path):
+    """Gate A P1-2 (2026-05-11): the JSONB-builder family extends
+    beyond `jsonb_build_object`. Confirm the gate catches each
+    sibling builder when used without a cast — `jsonb_set`,
+    `to_jsonb`, `jsonb_build_array`, `jsonb_insert`,
+    `json_build_object`, `json_build_array`, `to_json`. Same
+    IndeterminateDatatypeError class affects all.
+    """
+    multi = tmp_path / "synthetic_family.py"
+    multi.write_text(
+        '''
+async def bad_family():
+    await conn.execute("UPDATE f SET x = jsonb_set(x, '{k}', $1)")
+    await conn.execute("UPDATE f SET x = to_jsonb($2)")
+    await conn.execute("UPDATE f SET x = jsonb_build_array($3)")
+    await conn.execute("UPDATE f SET x = jsonb_insert(x, '{k}', $4)")
+    await conn.execute("UPDATE f SET x = json_build_object('k', $5)")
+    await conn.execute("UPDATE f SET x = json_build_array($6)")
+    await conn.execute("UPDATE f SET x = to_json($7)")
+'''
+    )
+    issues = _scan_file(multi)
+    # 7 builder calls × 1 uncasted $N each = at least 7 flagged occurrences
+    assert len(issues) >= 7, (
+        f"Extended family coverage broken — only {len(issues)} flagged "
+        f"of 7 expected: {issues!r}"
+    )
+
+
+def test_inet_cast_is_allowed(tmp_path):
+    """Gate A P1-3 (2026-05-11): `inet` is a legitimate cast for
+    network-audit metadata. Confirm a properly-cast `$N::inet`
+    callsite is NOT flagged."""
+    good = tmp_path / "synthetic_inet.py"
+    good.write_text(
+        '''
+async def good_inet():
+    await conn.execute(
+        "UPDATE audit SET meta = jsonb_build_object('peer_ip', $1::inet)"
+    )
+'''
+    )
+    issues = _scan_file(good)
+    assert not issues, f"::inet cast was wrongly flagged: {issues!r}"

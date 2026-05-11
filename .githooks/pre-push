@@ -236,6 +236,18 @@ SOURCE_LEVEL_TESTS=(
     # runtime-false class as round-1's prometheus_metrics finding.
     # AST gate prevents the regression structurally.
     "tests/test_assertions_loop_runs_clean.py"
+    # 2026-05-11 Session 219 substrate per-assertion admin_transaction
+    # refactor (commit 57960d4b) + Gate A retroactive review on
+    # commit c2c28b69. Both pin classes recently caught in prod:
+    #   - assertions_loop_uses_admin_transaction: pins the cascade-fail
+    #     class closure (one InterfaceError = 1.6% tick fidelity, not 100%)
+    #   - jsonb_build_object_param_casts: pins the IndeterminateDatatype
+    #     class (silent audit-row leak ~1×/3-5min for months)
+    #   - minio_worm_bucket_validation_pinned: pins WORM tamper-evidence
+    #     guarantee (task #102 caught the bucket-config drift)
+    "tests/test_assertions_loop_uses_admin_transaction.py"
+    "tests/test_jsonb_build_object_param_casts.py"
+    "tests/test_minio_worm_bucket_validation_pinned.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
