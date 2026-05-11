@@ -95,7 +95,19 @@ func (d *Daemon) makeActionExecutor() healing.ActionExecutor {
 				reason = "Rule action is escalate"
 			}
 			log.Printf("[l1-exec] Escalating to L3: host=%s reason=%s", hostID, reason)
-			return map[string]interface{}{"escalated": true, "reason": reason}, nil
+			// Session 219 Phase 3 PR-3a (2026-05-11): explicit
+			// success:false. Pre-fix: omitting the key caused
+			// l1_engine.go:328 to default Success=true, which then
+			// drove daemon.go:1706 ReportHealed(..., "L1", ...) for
+			// 9 builtin escalate-action rules — silently producing
+			// 1,137 prod L1-orphans across rogue_scheduled_tasks /
+			// net_unexpected_ports / net_host_reachability.
+			// Escalate is NOT a heal — operator action required.
+			return map[string]interface{}{
+				"success":   false,
+				"escalated": true,
+				"reason":    reason,
+			}, nil
 		case "restore_firewall_baseline":
 			return d.executeRunbook(map[string]interface{}{
 				"runbook_id": "RB-WIN-SEC-001",

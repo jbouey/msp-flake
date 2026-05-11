@@ -324,13 +324,21 @@ func (e *Engine) Execute(match *RuleMatch, siteID, hostID string) *ExecutionResu
 	}
 
 	result.Output = output
+	// Session 219 Phase 3 PR-3a (2026-05-11): fail-closed defaults.
+	// Pre-fix `output == nil` AND `output["success"]` missing both
+	// defaulted to Success=true. That silently false-healed any
+	// action handler that omitted the `success` key — specifically
+	// the escalate handler in healing_executor.go:92, producing
+	// 1,137 L1-orphans across 3 prod check_types. Fix-of-record:
+	// every handler MUST set `success` explicitly; this default is
+	// the structural backstop.
 	if output != nil {
 		if s, ok := output["success"]; ok {
 			if bv, ok := s.(bool); ok {
 				result.Success = bv
 			}
 		} else {
-			result.Success = true
+			result.Success = false
 		}
 		if e, ok := output["error"]; ok {
 			if ev, ok := e.(string); ok {
@@ -338,7 +346,7 @@ func (e *Engine) Execute(match *RuleMatch, siteID, hostID string) *ExecutionResu
 			}
 		}
 	} else {
-		result.Success = true
+		result.Success = false
 	}
 
 	result.CompletedAt = time.Now().UTC().Format(time.RFC3339)
