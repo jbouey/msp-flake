@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .auth import require_auth, require_operator, _check_org_access
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,9 @@ async def list_org_credentials(org_id: str, user: dict = Depends(require_auth)):
     """List credentials for an organization (passwords redacted)."""
     _check_org_access(user, org_id)
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-47): list_org_credentials issues 2 admin
+    # reads (org check + credential list).
+    async with admin_transaction(pool) as conn:
         # Verify org exists
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1", org_id
@@ -77,7 +79,9 @@ async def create_org_credential(
     """Add a credential to an organization."""
     _check_org_access(user, org_id)
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-47): create_org_credential issues 2 admin
+    # statements (org check + INSERT credential).
+    async with admin_transaction(pool) as conn:
         org = await conn.fetchrow(
             "SELECT id FROM client_orgs WHERE id = $1", org_id
         )

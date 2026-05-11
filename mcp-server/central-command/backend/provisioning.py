@@ -472,7 +472,9 @@ async def provisioning_heartbeat(heartbeat: HeartbeatRequest, request: Request):
     pool = await get_pool()
     client_ip = request.client.host if request.client else heartbeat.ip_address
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-47): provisioning_heartbeat issues 2
+    # admin statements (appliance lookup + UPDATE heartbeat).
+    async with admin_transaction(pool) as conn:
         # Look for appliance by MAC
         appliance = await conn.fetchrow("""
             SELECT appliance_id, site_id FROM site_appliances
@@ -534,7 +536,9 @@ async def get_provision_by_mac(mac_address: str):
     # Decode URL-encoded MAC and normalize
     mac = unquote(mac_address).upper().replace('-', ':')
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-47): get_provision_by_mac issues 2
+    # admin reads (provision lookup + site config).
+    async with admin_transaction(pool) as conn:
         # Check the appliance_provisioning table for MAC-based auto-provision
         provision = await conn.fetchrow("""
             SELECT ap.site_id,

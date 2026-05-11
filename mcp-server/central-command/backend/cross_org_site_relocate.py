@@ -1094,7 +1094,9 @@ async def execute_relocate(
     pool = await get_pool()
     actor_email = (user.get("email") or "").lower().strip()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-47): execute_relocate issues 2 admin
+    # statements (feature flag + request lookup + UPDATE relocate).
+    async with admin_transaction(pool) as conn:
         await _require_feature_enabled(conn)
 
         row = await conn.fetchrow(
