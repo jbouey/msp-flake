@@ -43,7 +43,7 @@ try:
         TargetNotFound,
         TargetRefInvalid,
     )
-    from tenant_middleware import admin_connection
+    from tenant_middleware import admin_connection, admin_transaction
 except ImportError:
     from .auth import require_auth
     from .assertions import ALL_ASSERTIONS, _DISPLAY_METADATA
@@ -55,7 +55,7 @@ except ImportError:
         TargetNotFound,
         TargetRefInvalid,
     )
-    from .tenant_middleware import admin_connection
+    from .tenant_middleware import admin_connection, admin_transaction
 
 # fleet.py itself has `from .tenant_middleware import admin_connection` at
 # module scope, so it is ONLY importable in the packaged runtime context
@@ -228,7 +228,9 @@ async def post_substrate_action(
     )
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-49): substrate-action invocation issues
+    # 2 admin statements (idempotency replay check + INSERT invocation).
+    async with admin_transaction(pool) as conn:
         # 1) Idempotency replay check — belt + suspenders ORDER BY LIMIT 1.
         # The unique index (actor_email, idempotency_key) guarantees at most
         # one row; ORDER BY/LIMIT protects against the edge case where a row

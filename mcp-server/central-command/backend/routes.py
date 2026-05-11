@@ -6481,7 +6481,9 @@ async def get_credential_health(
     from .fleet import get_pool
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-49): get_credential_health issues 2 admin
+    # reads (per-hostname telemetry + credential rows).
+    async with admin_transaction(pool) as conn:
         # Per-hostname telemetry health for this site (last 7 days of activity)
         rows = await conn.fetch("""
             SELECT
