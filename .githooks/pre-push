@@ -248,6 +248,12 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_assertions_loop_uses_admin_transaction.py"
     "tests/test_jsonb_build_object_param_casts.py"
     "tests/test_minio_worm_bucket_validation_pinned.py"
+    # 2026-05-11 Session 219 L1-orphan substrate invariant Phase 1
+    # (Gate A v2 APPROVE-WITH-FIXES). Sibling of L2 decision-record
+    # gate. Prod sample 2026-05-11: 1131 of 2327 L1 resolutions (49%)
+    # on chaos-lab lacked incident_remediation_steps. Phase 2 will
+    # name the offending callsite + backfill mig 305.
+    "tests/test_l1_resolution_requires_remediation_step.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."

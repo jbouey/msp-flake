@@ -1102,7 +1102,7 @@ async def report_incident(
                         runbook_id=matched_runbook)
         else:
             runbook_id = matched_runbook
-            resolution_tier = "L1"
+            resolution_tier = "L1"  # l1-orphan-allowed: proposal-write — relational step written by daemon ReportHealed callback at agent_api.py:1248
     else:
         # Step 2: Fallback keyword matching
         type_lower = incident.incident_type.lower()
@@ -1128,7 +1128,7 @@ async def report_incident(
         for keyword, rb_id in runbook_map.items():
             if keyword in type_lower or keyword in check_type.lower():
                 runbook_id = rb_id
-                resolution_tier = "L1"
+                resolution_tier = "L1"  # l1-orphan-allowed: proposal-write — relational step written by daemon ReportHealed callback at agent_api.py:1248
                 break
 
     order_id = None

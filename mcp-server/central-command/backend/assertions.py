@@ -1154,6 +1154,93 @@ async def _check_l2_resolution_without_decision_record(
     return violations
 
 
+async def _check_l1_resolution_without_remediation_step(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev2 — incident with resolution_tier='L1' but no
+    incident_remediation_steps row referencing it.
+
+    Session 219 hardening (2026-05-11, sibling of L2-orphan invariant).
+    `resolution_tier='L1'` is the customer-facing "auto-healed" label.
+    An L1-resolved incident with no relational step is a false claim on
+    the audit chain — every PDF + dashboard that counts L1 as "healed"
+    is over-stating the platform's remediation rate.
+
+    Prod sample 2026-05-11 (past 30 days): 1131 L1 orphans of 2327 (49%)
+    on chaos-lab (north-valley-branch-2). Branch-1 (paying customer)
+    has zero resolved incidents in the window — no customer exposure
+    during the dark stretch.
+
+    Ground truth: `LEFT JOIN incident_remediation_steps` (relational
+    table per mig 137). The `incidents.remediation_history` JSONB column
+    was NOT migrated — querying it would false-positive on every row
+    since mig 137 ran.
+
+    Dedup: `(site_id, COALESCE(dedup_key, id::text))` so flap-row sites
+    don't starve the violation budget (single dedup_key flapping 50×
+    surfaces ONCE, not 50×).
+
+    Window: 24 hours. Window function (COUNT OVER PARTITION) runs
+    BEFORE the LIMIT clause per Postgres planner — so site_total_orphans
+    reflects the full partition count, not the limited surface.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT ON (i.site_id, COALESCE(i.dedup_key, i.id::text))
+               i.site_id,
+               i.incident_type,
+               i.id::text AS incident_pk,
+               i.resolved_at,
+               COUNT(*) OVER (PARTITION BY i.site_id) AS site_total_orphans
+          FROM incidents i
+          LEFT JOIN incident_remediation_steps irs
+            ON irs.incident_id = i.id
+         WHERE i.resolution_tier = 'L1'
+           AND i.status = 'resolved'
+           AND i.resolved_at > NOW() - INTERVAL '24 hours'
+           AND irs.id IS NULL
+         ORDER BY i.site_id, COALESCE(i.dedup_key, i.id::text), i.resolved_at DESC
+         LIMIT 50
+        """
+    )
+
+    total_count = await conn.fetchval(
+        """
+        SELECT COUNT(*)
+          FROM incidents i
+          LEFT JOIN incident_remediation_steps irs
+            ON irs.incident_id = i.id
+         WHERE i.resolution_tier = 'L1'
+           AND i.status = 'resolved'
+           AND i.resolved_at > NOW() - INTERVAL '24 hours'
+           AND irs.id IS NULL
+        """
+    ) or 0
+
+    violations: List[Violation] = []
+    for row in rows:
+        violations.append(
+            Violation(
+                site_id=row.get("site_id"),
+                details={
+                    "incident_pk": str(row["incident_pk"]),
+                    "incident_type": row["incident_type"],
+                    "resolved_at": row["resolved_at"].isoformat() if row["resolved_at"] else None,
+                    "site_orphan_count_24h": int(row["site_total_orphans"]),
+                    "fleet_orphan_count_24h": int(total_count),
+                    "interpretation": (
+                        f"incident id={row['incident_pk']} "
+                        f"type={row['incident_type']} "
+                        f"resolved_at={row['resolved_at']} carries "
+                        f"resolution_tier='L1' but no incident_remediation_steps "
+                        f"row references it — L1 resolution without runbook execution"
+                    ),
+                },
+            )
+        )
+    return violations
+
+
 async def _check_orders_stuck_acknowledged(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -2062,6 +2149,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_l2_resolution_without_decision_record(c),
     ),
     Assertion(
+        name="l1_resolution_without_remediation_step",
+        severity="sev2",
+        description="An incident with resolution_tier='L1' has no corresponding row in incident_remediation_steps — auto-resolve path tagged 'L1' without recording the runbook execution. Session 219 (2026-05-11) prod sample found 1131 of 2327 L1 resolutions (49%) on chaos-lab lacking a relational step. Sibling of l2_resolution_without_decision_record. resolution_tier='L1' is the customer-facing 'auto-healed' label; a missing relational step is a false claim on the audit chain.",
+        check=lambda c: _check_l1_resolution_without_remediation_step(c),
+    ),
+    Assertion(
         name="orders_stuck_acknowledged",
         severity="sev2",
         description="orders.status has been 'acknowledged' or 'executing' for >30 minutes (acknowledged) or >1 hour (executing) — agent ack'd the order but never reported execution telemetry. RT-DM Issue #3 hardening (non-consensus): without this, dashboards show stuck orders as 'in flight' indefinitely. The sweep_stuck_orders() function (mig 286) addresses these but should not be needed often; firing this invariant means the agent → telemetry path is broken or the order_id metadata isn't reaching telemetry.",
@@ -2772,6 +2865,21 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "tier override per <ticket>'. RT-DM Issue #2 hardening "
             "(non-consensus, 2026-05-06). Pinned by "
             "tests/test_l2_canonical_view_used.py."
+        ),
+    },
+    "l1_resolution_without_remediation_step": {
+        "display_name": "L1 resolution without remediation step",
+        "recommended_action": (
+            "An incident has resolution_tier='L1' but no "
+            "incident_remediation_steps row references it. Auto-resolve "
+            "path tagged 'L1' without recording the runbook execution. "
+            "Phase 2 root-cause investigation pending — likely an auto-"
+            "resolve race in sites.py checkin handler beating daemon "
+            "healing_executor's ReportHealed callback. Recommended: "
+            "until Phase 2 names the offending callsite, treat trending-"
+            "up violations as evidence the race is widening. Pinned by "
+            "tests/test_l1_resolution_requires_remediation_step.py. "
+            "Session 219 (2026-05-11)."
         ),
     },
     "compliance_bundles_trigger_disabled": {
