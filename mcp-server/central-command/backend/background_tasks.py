@@ -358,11 +358,18 @@ async def temporal_decay_loop():
                     new_success = max(int((r["success_count"] or 0) * factor), floor)
                     new_total = max(int((r["total_occurrences"] or 0) * factor), floor)
 
+                    # asyncpg ambiguous-parameter class (Session 219
+                    # journal_api shape, hit again 2026-05-11): $1 is
+                    # referenced as both int (success_count column) AND
+                    # float (success_rate = $1::float / …). asyncpg can't
+                    # decide and raises AmbiguousParameterError. Explicit
+                    # casts on BOTH references unblock the prepare phase.
                     await conn.execute(
                         "UPDATE platform_pattern_stats "
-                        "SET success_count = $1, total_occurrences = $2, "
-                        "    success_rate = $1::float / NULLIF($2, 0) "
-                        "WHERE pattern_key = $3",
+                        "SET success_count = $1::int, "
+                        "    total_occurrences = $2::int, "
+                        "    success_rate = $1::float / NULLIF($2::float, 0) "
+                        "WHERE pattern_key = $3::text",
                         new_success, new_total, r["pattern_key"],
                     )
                     decayed += 1
