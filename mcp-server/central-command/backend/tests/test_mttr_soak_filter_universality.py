@@ -169,3 +169,51 @@ def test_synthetic_soak_site_remains_quarantined():
         "trail. If a real change is needed, document it in "
         "audit/coach-phase4-mttr-soak-v2-*.md first."
     )
+
+
+def test_phase4_v2_requires_two_gate_review_doc_when_re_activating():
+    """When Phase 4 v2 is ready to UN-quarantine the synthetic site
+    (flip status back away from 'inactive'), there MUST be a fresh
+    round-table review doc covering Gate A (pre-execution) AND
+    Gate B (pre-completion). Until then, mig 304 quarantine stays.
+
+    This gate guards against a future commit that adds mig 305
+    (or similar) un-quarantining the site without the two-gate
+    pattern locked in 2026-05-11.
+
+    The check: if any migration NEWER than 304 mentions
+    'synthetic-mttr-soak' AND sets status to anything other than
+    'inactive' OR drops the site row, there MUST be a paired
+    audit/coach-phase4-mttr-soak-v2-*.md file documenting both
+    gate reviews.
+    """
+    mig_dir = _BACKEND / "migrations"
+    audit_dir = _BACKEND.parent.parent.parent / "audit"
+    suspect_migs = []
+    for mig in sorted(mig_dir.glob("3*_*.sql")):
+        # Skip mig 303 (the create) and 304 (the quarantine).
+        if mig.name.startswith("303_") or mig.name.startswith("304_"):
+            continue
+        if int(mig.name.split("_")[0]) < 305:
+            continue
+        text = mig.read_text()
+        if "synthetic-mttr-soak" not in text:
+            continue
+        # Migration mentions the soak site. Check if it un-quarantines.
+        if "status = 'online'" in text or "status='online'" in text:
+            suspect_migs.append(mig.name)
+        elif "DROP" in text.upper() and "synthetic-mttr-soak" in text:
+            suspect_migs.append(mig.name)
+    if not suspect_migs:
+        return
+    # If un-quarantine migrations exist, demand a v2 review doc.
+    v2_docs = list(audit_dir.glob("coach-phase4-mttr-soak-v2-*.md")) if audit_dir.exists() else []
+    assert v2_docs, (
+        f"Migrations {suspect_migs} appear to un-quarantine or remove "
+        f"the synthetic-mttr-soak site, but no Phase 4 v2 round-table "
+        f"review doc exists at audit/coach-phase4-mttr-soak-v2-*.md. "
+        f"Per the TWO-GATE lock-in (CLAUDE.md, 2026-05-11), a fresh "
+        f"Gate A (pre-execution) AND Gate B (pre-completion) fork "
+        f"review must precede any state change to the soak "
+        f"infrastructure."
+    )
