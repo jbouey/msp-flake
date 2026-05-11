@@ -625,7 +625,9 @@ async def resolve_incident(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-48): resolve_incident issues 2 admin
+    # statements (incident lookup + UPDATE resolved).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT id, status FROM incidents WHERE id = $1",
             incident_id,
@@ -740,7 +742,9 @@ async def suppress_incident(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-48): suppress_incident issues 2 admin
+    # statements (incident lookup + INSERT suppression).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow("""
             SELECT i.id, i.site_id, i.check_type,
                    i.details->>'hostname' AS hostname
@@ -2832,11 +2836,13 @@ async def get_flywheel_events(
     filter for drill-down.
     """
     from dashboard_api.fleet import get_pool
-    from dashboard_api.tenant_middleware import admin_connection
+    from dashboard_api.tenant_middleware import admin_transaction
 
     limit = max(1, min(int(limit), 200))
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-48): get_flywheel_events issues 2 admin
+    # reads (events stream + rule-id filter join).
+    async with admin_transaction(pool) as conn:
         # Schema note: `promoted_rule_events` does NOT carry from_state /
         # to_state as columns — the ledger is event-oriented, not
         # state-transition-oriented. Previous version of this query
@@ -5395,7 +5401,9 @@ async def get_organization_agents(
     from .fleet import get_pool
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-48): get_organization_agents issues 2
+    # admin reads (sites list + agent status aggregation).
+    async with admin_transaction(pool) as conn:
         site_ids = [r['site_id'] for r in await conn.fetch(
             "SELECT site_id FROM sites WHERE client_org_id = $1", org_id
         )]
@@ -6207,7 +6215,9 @@ async def resolve_l4_ticket(
     from .fleet import get_pool
     pool = await get_pool()
 
-    async with admin_connection(pool) as conn:
+    # admin_transaction (wave-48): resolve_l4_ticket issues 2 admin
+    # statements (ticket lookup + UPDATE resolved).
+    async with admin_transaction(pool) as conn:
         ticket = await conn.fetchrow("""
             SELECT id, escalated_to_l4, l4_resolved_at FROM escalation_tickets
             WHERE id = $1 AND escalated_to_l4 = true
