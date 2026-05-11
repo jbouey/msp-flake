@@ -61,6 +61,10 @@ def test_allowed_events_matches_expected_set():
         "watchdog_collect_diagnostics",
         # Session 207 Phase S — SSH-free escape hatch (CLI-issued fleet_order)
         "enable_recovery_shell_24h",
+        # Session 219 (2026-05-11) — appliance delegated signing key
+        # issuance. Pre-fix the endpoint was zero-auth (weekly audit
+        # 2026-05-11 P0). Three-list lockstep with mig 305.
+        "delegate_signing_key",
         # Session 207 R+S — break-glass passphrase retrieval
         # (admin API call, NOT a fleet_order — asymmetry permitted)
         "break_glass_passphrase_retrieval",

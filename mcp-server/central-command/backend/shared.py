@@ -449,6 +449,83 @@ def load_runbooks():
 # Auth Dependencies
 # ============================================================================
 
+async def _enforce_site_id(
+    auth_site_id: str,
+    request_site_id: Optional[str],
+    endpoint: str = "",
+) -> None:
+    """Enforce that the request site_id matches the Bearer-authenticated
+    site_id. Prevents appliance spoofing — an appliance authenticated for
+    site-A must not act on behalf of site-B.
+
+    Session 202 introduced this on 13 agent_api.py callsites. Session 219
+    (2026-05-11) lifted it to shared.py + upgraded to write an
+    `admin_audit_log` row on every 403 — prior `logger.warning`-only
+    behavior lost the forensic trail. Audit-log write is best-effort:
+    if it fails (e.g. pool exhausted) we still raise the 403, but log
+    the persistence failure at ERROR.
+    """
+    if not request_site_id or request_site_id == auth_site_id:
+        return
+
+    logger.warning(
+        "site_id mismatch: appliance attempted cross-site action",
+        auth_site_id=auth_site_id,
+        request_site_id=request_site_id,
+        endpoint=endpoint,
+    )
+
+    # Best-effort admin_audit_log write so the forensic trail survives.
+    # Pool acquisition errors here MUST NOT mask the 403 — we still raise.
+    # Local imports avoid the circular shared.py → fleet.py → shared.py
+    # chain. Gate B P2 (2026-05-11): documented intentionally.
+    try:
+        from dashboard_api.fleet import get_pool
+        from dashboard_api.tenant_middleware import admin_transaction
+        pool = await get_pool()
+        # username uses the `appliance:<site_id>` shape for parity with
+        # the target field + SIEM grep-ability — Gate B P1-1 (2026-05-11).
+        # CLAUDE.md privileged-chain rule prefers named human emails for
+        # actor; for appliance-initiated spoof the actor IS the appliance.
+        actor_username = f"appliance:{auth_site_id}"
+        async with admin_transaction(pool) as conn:
+            await conn.execute(
+                """
+                INSERT INTO admin_audit_log
+                    (username, action, target, details, created_at)
+                VALUES (
+                    $1::text,
+                    'cross_site_spoof_attempt',
+                    $2::text,
+                    jsonb_build_object(
+                        'auth_site_id', $3::text,
+                        'request_site_id', $4::text,
+                        'endpoint', $5::text
+                    ),
+                    NOW()
+                )
+                """,
+                actor_username,
+                f"appliance:{auth_site_id}",
+                auth_site_id,
+                request_site_id,
+                endpoint,
+            )
+    except Exception:
+        logger.error(
+            "failed to write cross_site_spoof_attempt audit row",
+            auth_site_id=auth_site_id,
+            request_site_id=request_site_id,
+            endpoint=endpoint,
+            exc_info=True,
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Site ID mismatch: token does not authorize this site",
+    )
+
+
 async def require_appliance_bearer_full(request: Request) -> tuple[str, Optional[str]]:
     """Same as require_appliance_bearer but returns both the site_id AND
     the bearer-bound appliance_id. The appliance_id MAY be None for

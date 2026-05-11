@@ -175,6 +175,14 @@ PRIVILEGED_ORDER_TYPES = {
     # sshd, arms a systemd-run transient timer to stop sshd + wipe
     # keys at duration_hours expiry. Bypassable only with a new order.
     "enable_recovery_shell_24h",
+    # Session 219 (2026-05-11) — appliance delegated signing key issuance.
+    # Pre-fix this endpoint had zero auth (weekly audit 2026-05-11 P0).
+    # The resulting Ed25519 keypair signs evidence + audit-trail entries
+    # the customer-facing attestation chain relies on — functionally
+    # equivalent to signing_key_rotation. Three-list lockstep with
+    # privileged_access_attestation.ALLOWED_EVENTS + migration 305
+    # v_privileged_types is enforced by CI.
+    "delegate_signing_key",
 }
 PRIVILEGED_RATE_LIMIT_PER_WEEK = 3  # per site, per event_type
 

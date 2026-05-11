@@ -66,6 +66,11 @@ ALLOWED_EVENTS = {
     "watchdog_collect_diagnostics",
     # Session 207 Phase S escape hatch — see fleet_cli comment.
     "enable_recovery_shell_24h",
+    # Session 219 (2026-05-11) — appliance delegated signing key
+    # issuance. Pre-fix the endpoint was zero-auth (weekly audit
+    # 2026-05-11 P0 finding). Three-list lockstep with
+    # fleet_cli.PRIVILEGED_ORDER_TYPES + migration 305 v_privileged_types.
+    "delegate_signing_key",
     # Session 207 R+S non-blocking follow-up — break-glass passphrase
     # retrievals flow into the attestation chain + auditor kit. Not a
     # fleet_order type (retrieval is an admin API call, not a queued

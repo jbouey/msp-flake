@@ -27,6 +27,7 @@ except ImportError:
 from .fleet import get_pool
 from .tenant_middleware import admin_connection, admin_transaction
 from .auth import require_admin
+from .shared import _enforce_site_id, require_appliance_bearer
 
 logger = logging.getLogger(__name__)
 
@@ -259,11 +260,20 @@ async def verify_site_api_key(conn, site_id: str, api_key: str) -> bool:
 async def delegate_signing_key(
     appliance_id: str,
     request: DelegatedKeyRequest,
+    auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Issue a delegated signing key to an appliance.
 
     The appliance can use this key to sign evidence and audit trail entries
     locally when Central Command is unreachable.
+
+    Session 219 (2026-05-11) hardening: previously zero-auth. Now
+    requires `require_appliance_bearer`; `auth_site_id` REPLACES the
+    request-body `site_id` for ownership verification + INSERT to
+    prevent caller-supplied site spoofing. `request.site_id` is still
+    accepted in the model (Python-agent legacy caller compat) but is
+    cross-checked via `_enforce_site_id` — mismatch raises 403 + writes
+    a `cross_site_spoof_attempt` audit row.
 
     The key is:
     1. Generated as a new Ed25519 keypair
@@ -271,6 +281,8 @@ async def delegate_signing_key(
     3. Stored in the database for verification
     4. Returned to the appliance (private key only sent once)
     """
+    await _enforce_site_id(auth_site_id, request.site_id, "delegate_signing_key")
+
     if not NACL_AVAILABLE:
         raise HTTPException(status_code=500, detail="Signing not available")
 
@@ -278,8 +290,12 @@ async def delegate_signing_key(
     # admin_transaction (wave-27): delegate_signing_key issues 2 admin
     # statements (ownership verify, INSERT delegated key + audit).
     async with admin_transaction(pool) as conn:
-        # Verify appliance belongs to site
-        if not await verify_appliance_ownership(conn, appliance_id, request.site_id):
+        # Verify appliance belongs to site. Use auth_site_id (bearer-bound)
+        # not request.site_id (caller-supplied) — load-bearing per Gate A
+        # P0-4. The 403 from _enforce_site_id above catches mismatch; this
+        # check confirms the appliance row exists under the authenticated
+        # site.
+        if not await verify_appliance_ownership(conn, appliance_id, auth_site_id):
             raise HTTPException(status_code=404, detail="Appliance not found for this site")
 
         # Check for existing valid key
@@ -290,10 +306,13 @@ async def delegate_signing_key(
         """, appliance_id)
 
         if existing:
-            # Key already exists and is valid
+            # Key already exists and is valid. Redact key_id to 8-char
+            # prefix per Gate A P1-3 (defense in depth — pre-auth fix the
+            # full key_id was leaked via 409; now post-auth keep the
+            # response minimal).
             raise HTTPException(
                 status_code=409,
-                detail=f"Active key {existing['key_id']} exists until {existing['expires_at']}"
+                detail=f"Active key {str(existing['key_id'])[:8]}… exists until {existing['expires_at']}"
             )
 
         # Generate new Ed25519 keypair
@@ -306,10 +325,14 @@ async def delegate_signing_key(
         now = datetime.now(timezone.utc)
         expires = now + timedelta(days=request.validity_days)
 
+        # site_id is auth_site_id (bearer-bound), NOT request.site_id —
+        # load-bearing per Gate A P0-4. The signed delegation_data carries
+        # the AUTHENTICATED site_id so downstream evidence verification
+        # cannot be fooled by a caller-supplied alternative.
         delegation_data = {
             "key_id": key_id,
             "appliance_id": appliance_id,
-            "site_id": request.site_id,
+            "site_id": auth_site_id,
             "public_key": public_key_hex,
             "scope": request.scope,
             "delegated_at": now.isoformat(),
@@ -321,7 +344,9 @@ async def delegate_signing_key(
         delegation_json = json.dumps(delegation_data, sort_keys=True, separators=(",", ":"))
         signature = master_key.sign(delegation_json.encode()).signature.hex()
 
-        # Store in database
+        # Store in database. site_id uses auth_site_id per P0-4 — both
+        # the row's site_id AND the signed delegation_data must point at
+        # the authenticated site, not the caller-supplied one.
         await conn.execute("""
             INSERT INTO delegated_keys
             (key_id, appliance_id, site_id, public_key, scope, delegated_at, expires_at, delegated_by)
@@ -329,7 +354,7 @@ async def delegate_signing_key(
         """,
             key_id,
             appliance_id,
-            request.site_id,
+            auth_site_id,
             public_key_hex,
             json.dumps(request.scope),
             now,
@@ -415,6 +440,7 @@ async def list_delegated_keys(
 async def sync_audit_trail(
     appliance_id: str,
     request: AuditSyncRequest,
+    auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Sync offline audit trail entries from an appliance.
 
@@ -422,10 +448,21 @@ async def sync_audit_trail(
     1. Valid signature (if signed)
     2. Hash chain integrity
     3. Timestamp ordering
+
+    Session 219 (2026-05-11) hardening: previously zero-auth. Now
+    requires `require_appliance_bearer`; EVERY entry's site_id is
+    cross-checked against `auth_site_id` to prevent false-attestation
+    injection (Maya §164.528 disclosure-accounting class).
     """
     pool = await get_pool()
     synced_ids = []
     failed_ids = []
+
+    # Enforce per-entry site binding BEFORE the admin_transaction —
+    # any cross-site entry rejects the whole batch via 403 + writes a
+    # cross_site_spoof_attempt audit row.
+    for entry in request.entries:
+        await _enforce_site_id(auth_site_id, entry.site_id, "sync_audit_trail")
 
     # admin_transaction (wave-28): sync_audit_trail issues 2+ admin
     # statements per entry (verify, INSERT) in a loop.
@@ -562,11 +599,17 @@ async def get_audit_trail(
 async def process_urgent_escalations(
     appliance_id: str,
     request: EscalationBatchRequest,
+    auth_site_id: str = Depends(require_appliance_bearer),
 ):
     """Process urgent escalations from an appliance.
 
     These are incidents that occurred while the appliance was offline
     and couldn't be escalated in real-time.
+
+    Session 219 (2026-05-11) hardening: previously zero-auth. Now
+    requires `require_appliance_bearer`; EVERY escalation's site_id is
+    cross-checked against `auth_site_id` — prevents cross-site
+    incident injection.
 
     Each escalation is:
     1. Validated
@@ -578,6 +621,11 @@ async def process_urgent_escalations(
     escalated_to_l2 = []
     escalated_to_l3 = []
     failed_ids = []
+
+    # Enforce per-escalation site binding BEFORE the admin_transaction —
+    # any cross-site escalation rejects the whole batch via 403.
+    for escalation in request.escalations:
+        await _enforce_site_id(auth_site_id, escalation.site_id, "process_urgent_escalations")
 
     # admin_transaction (wave-28): process_urgent_escalations issues
     # 2+ admin statements per escalation in a loop (verify, route).
