@@ -476,8 +476,9 @@ async def _enforce_site_id(
 
     Audit-log write is best-effort: if it fails (e.g. pool exhausted)
     we still raise the 403, but log the persistence failure at ERROR.
-    SAFE under CLAUDE.md "no canonical_site_id for compliance_bundles"
-    rule — this helper is operational auth, NOT chain-attached.
+    SAFE under CLAUDE.md attestation-chain immutability rule — this
+    helper is operational auth, NOT chain-attached. See the project
+    rule about which tables forbid canonical resolution.
 
     Dev/test envs without mig 256 applied → `fetchrow` raises
     `UndefinedFunctionError` and the bare `except Exception` swallows
