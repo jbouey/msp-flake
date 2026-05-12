@@ -1425,7 +1425,6 @@ async def add_network_device(site_id: str, device: NetworkDeviceAdd, user: dict 
     return await _add_network_device(pool, site_id, device)
 
 
-@router.get("/{site_id}/appliances")
 def _primary_subnet(ips: list) -> Optional[str]:
     """Extract the /24 subnet an appliance is on, ignoring link-local (169.254)
     and WireGuard (10.100.0) — those are well-known non-routable addresses,
@@ -1480,8 +1479,18 @@ def _compute_network_anomaly(
     }
 
 
+@router.get("/{site_id}/appliances")
 async def get_site_appliances(site_id: str, user: dict = Depends(require_auth)):
-    """Get all appliances for a site. Requires authentication."""
+    """Get all appliances for a site. Requires authentication.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12 zero-auth audit P0): the
+    @router.get decorator was attached to the synchronous helper
+    `_primary_subnet` immediately below the previous comment block,
+    not to this handler. Result: GET /api/sites/{site_id}/appliances
+    returned HTTP 422 (FastAPI tried to validate `_primary_subnet`'s
+    `ips: list` against the query/body), and this handler was
+    unreachable. Decorator now lands on the correct function.
+    """
     pool = await get_pool()
 
     async with tenant_connection(pool, site_id=site_id) as conn:

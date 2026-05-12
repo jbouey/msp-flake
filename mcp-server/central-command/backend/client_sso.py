@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from .fleet import get_pool
 from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
 from .oauth_login import encrypt_secret, decrypt_secret
+from .partners import require_partner
 from .client_portal import (
     SESSION_COOKIE_NAME,
     SESSION_DURATION_DAYS,
@@ -32,7 +33,18 @@ logger = logging.getLogger(__name__)
 sso_router = APIRouter(prefix="/client/auth/sso", tags=["client-sso"])
 
 # Partner-facing config router — requires partner auth
-config_router = APIRouter(prefix="/api/partners/me/orgs", tags=["partner-sso-config"])
+# Partner-facing config router — every endpoint MUST be partner-authed.
+# Pre-fix (Session 220 RT-Auth-2026-05-12 zero-auth audit P0): the router
+# carried no `dependencies` arg even though each handler's docstring
+# claimed "Partner auth applied at router level." That intent was never
+# wired. Anonymous callers could WIPE SSO configs (DELETE), write new
+# OIDC credentials including encrypted client_secret (PUT), or read the
+# allowlist/issuer (GET). Now blocked at router level.
+config_router = APIRouter(
+    prefix="/api/partners/me/orgs",
+    tags=["partner-sso-config"],
+    dependencies=[Depends(require_partner)],
+)
 
 PKCE_VERIFIER_LENGTH = 64
 STATE_TTL_SECONDS = 600  # 10 minutes
