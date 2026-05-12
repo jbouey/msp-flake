@@ -17,7 +17,7 @@ import logging
 from typing import Optional
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import Response, JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +187,27 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 f"header={'present' if has_header else 'MISSING'}"
                 f"{', mismatch' if has_cookie and has_header else ''})"
             )
-            raise HTTPException(
+            # Session 220 task #121 (2026-05-11): return JSONResponse,
+            # do NOT raise HTTPException. Starlette's BaseHTTPMiddleware
+            # wraps dispatch in anyio TaskGroup; raised HTTPExceptions
+            # surface as BaseExceptionGroup to FastAPI's exception_handler
+            # chain, which doesn't match HTTPException and falls through
+            # to the generic 500 path. Customer-visible bug: every CSRF
+            # rejection returned 500 {"error":"Internal server error"}
+            # instead of 403 + actionable message. Sibling pattern at
+            # rate_limiter.py:253/265/277 — same canonical return-not-
+            # raise shape from a BaseHTTPMiddleware.dispatch.
+            #
+            # Body envelope `{"error": ..., "status_code": ...}` matches
+            # the project-wide global error shape. FastAPI's default
+            # `{"detail": ...}` would silently break frontend error
+            # parsers that read `.error`.
+            return JSONResponse(
                 status_code=403,
-                detail="CSRF validation failed. Refresh the page and try again."
+                content={
+                    "error": "CSRF validation failed. Refresh the page and try again.",
+                    "status_code": 403,
+                },
             )
 
         response = await call_next(request)

@@ -295,6 +295,13 @@ SOURCE_LEVEL_TESTS=(
     # `PRIVILEGED-CHAIN-BODY-CHANGE:` token in commit body. Closes
     # the same-commit hash-bump-and-weaken attack class.
     "tests/test_canonical_hash_change_requires_token.py"
+    # 2026-05-11 Session 220 task #121. Pins the regression class
+    # where BaseHTTPMiddleware.dispatch raises HTTPException —
+    # Starlette TaskGroup wraps the raise as BaseExceptionGroup,
+    # falls through to generic 500 instead of the intended status.
+    # csrf.py:190 was the live victim; rate_limiter.py:253 is the
+    # sibling pattern. Allowlist: `# noqa: middleware-raise-allowed`.
+    "tests/test_no_middleware_dispatch_raises_httpexception.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
