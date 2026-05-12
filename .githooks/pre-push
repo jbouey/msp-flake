@@ -302,6 +302,13 @@ SOURCE_LEVEL_TESTS=(
     # csrf.py:190 was the live victim; rate_limiter.py:253 is the
     # sibling pattern. Allowlist: `# noqa: middleware-raise-allowed`.
     "tests/test_no_middleware_dispatch_raises_httpexception.py"
+    # 2026-05-11 Session 220 task #122. Every state-changing endpoint
+    # with Depends(require_appliance_bearer) must be covered by
+    # csrf.py:EXEMPT_PATHS or EXEMPT_PREFIXES. Closes the Session 210-B
+    # /api/journal/upload silent-403 class + 2026-05-11 sites.py
+    # /api/sites/{site_id}/... 7-endpoint set. Cross-file AST resolution:
+    # APIRouter(prefix=) + main.py app.include_router(prefix=) + decorator.
+    "tests/test_csrf_exempt_paths_match_appliance_endpoints.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
