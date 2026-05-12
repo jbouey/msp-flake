@@ -211,11 +211,19 @@ async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db)
 # =============================================================================
 
 @router.get("/sites/{site_id}", response_model=List[SiteRunbookConfigItem])
-async def get_site_runbook_config(site_id: str, db: AsyncSession = Depends(get_db)):
-    """Get runbook configuration for a site.
+async def get_site_runbook_config(
+    site_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth),
+):
+    """Get runbook configuration for a site. Auth-required.
 
     Returns all runbooks with their enabled/disabled status and full details.
     Runbooks not in site_runbook_config are enabled by default.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12 zero-auth audit P1): no
+    auth dependency despite the sibling PUT at :255 having require_auth.
+    Sibling-endpoint parity restored.
     """
     # Get all runbooks with site-specific overrides and full details
     query = text("""
@@ -386,11 +394,15 @@ async def toggle_category_for_site(
 @router.get("/appliances/{appliance_id}", response_model=List[RunbookConfigStatus])
 async def get_appliance_runbook_overrides(
     appliance_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth),
 ):
-    """Get appliance-level runbook overrides.
+    """Get appliance-level runbook overrides. Auth-required.
 
     Returns only overrides; runbooks not listed use site-level config.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12 zero-auth audit P1): no
+    auth dependency despite the sibling PUT at :416 having require_auth.
     """
     query = text("""
         SELECT runbook_id, enabled, modified_by, modified_at, notes
@@ -542,9 +554,15 @@ async def list_runbook_executions(
     runbook_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth),
 ):
-    """List runbook execution history with filters."""
+    """List runbook execution history with filters. Auth-required.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12 zero-auth audit P1): no
+    auth dependency. Tenant data (target_hostname, error_message,
+    triggered_by) exposed to anonymous callers.
+    """
     conditions = []
     params = {"limit": limit}
 
@@ -597,9 +615,15 @@ async def list_runbook_executions(
 @router.get("/executions/stats")
 async def get_runbook_execution_stats(
     days: int = Query(30, le=90),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth),
 ):
-    """Get aggregate execution statistics for runbooks."""
+    """Get aggregate execution statistics for runbooks. Auth-required.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12 zero-auth audit P1): no
+    auth dependency. Aggregate execution stats — same exposure class as
+    /executions list.
+    """
     query = text("""
         SELECT
             runbook_id,

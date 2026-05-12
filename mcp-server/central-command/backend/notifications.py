@@ -12,12 +12,13 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel, EmailStr
 
 from .fleet import get_pool
 from .tenant_middleware import admin_connection, admin_transaction
 from .partners import require_partner
+from .shared import require_appliance_bearer, _enforce_site_id
 
 logger = logging.getLogger(__name__)
 
@@ -671,14 +672,26 @@ class EscalationRequest(BaseModel):
 
 
 @escalations_router.post("")
-async def create_escalation(request: EscalationRequest):
+async def create_escalation(
+    request: EscalationRequest,
+    http_request: Request,
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
     """
     Create an L3 escalation from a compliance agent.
 
     This endpoint is called by appliances when they need to escalate
     an incident that L1/L2 couldn't resolve. The escalation engine
     will route to the appropriate partner based on site ownership.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12 zero-auth audit P1): no auth
+    dependency. Anonymous callers could inject L3 escalations into the
+    pager queue, page on-call, and write false rows into
+    notification_audit_log. require_appliance_bearer + _enforce_site_id
+    closes the class. The auth_site_id MUST match the request.site_id
+    to prevent cross-site escalation spoofing.
     """
+    await _enforce_site_id(auth_site_id, request.site_id, "create_escalation")
     try:
         from .escalation_engine import get_escalation_engine
 
