@@ -317,6 +317,11 @@ SOURCE_LEVEL_TESTS=(
     # filename and OSIRIS-* H1 ID in lockstep with a ratchet for legacy
     # drifters (MERKLE/MERKLE-COLLISION + PACKET_GAP/PACKET-AUTOGEN-GAP).
     "tests/test_security_advisory_id_filename_parity.py"
+    # 2026-05-12 Session 220 Gate-B-followup audit. Ratchets 11
+    # remaining anonymous privileged endpoints from the zero-auth audit
+    # (P2 class — framework_sync reads, runbook catalog, discovery)
+    # and blocks NEW @router decorators without auth deps from landing.
+    "tests/test_no_anonymous_privileged_endpoints.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
