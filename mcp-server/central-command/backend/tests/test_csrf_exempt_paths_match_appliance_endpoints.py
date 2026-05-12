@@ -193,9 +193,26 @@ def _extract_registry() -> dict[tuple[str, str], str]:
 # module — extract APIRouter assignments → router_var → prefix
 # ----------------------------------------------------------------------
 
+def _extract_apirouter_aliases(tree: ast.AST) -> set[str]:
+    """Walk module-level `ast.ImportFrom` for `APIRouter` and any aliased
+    forms (`from fastapi import APIRouter as R`). Returns the alias-set
+    that should be matched by `_extract_router_prefixes` as router-class
+    constructors. Closes task #126 (Gate A v3 P2-B from #125)."""
+    out: set[str] = {"APIRouter"}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for alias in node.names:
+            if alias.name == "APIRouter":
+                out.add(alias.asname or alias.name)
+    return out
+
+
 def _extract_router_prefixes(tree: ast.AST) -> dict[str, str]:
     """For a single file's AST, find `<name> = APIRouter(prefix="...")`
-    assignments. Returns {var_name: prefix}."""
+    assignments. Returns {var_name: prefix}. Tracks any module-level
+    `APIRouter as <alias>` imports."""
+    router_class_names = _extract_apirouter_aliases(tree)
     out: dict[str, str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
@@ -203,11 +220,12 @@ def _extract_router_prefixes(tree: ast.AST) -> dict[str, str]:
         if not isinstance(node.value, ast.Call):
             continue
         func = node.value.func
-        # Match APIRouter(...) — Name "APIRouter" or Attribute ending in APIRouter
+        # Match <RouterClass>(...) — Name or Attribute whose final attr is
+        # in the per-file APIRouter alias set.
         is_router = False
-        if isinstance(func, ast.Name) and func.id == "APIRouter":
+        if isinstance(func, ast.Name) and func.id in router_class_names:
             is_router = True
-        elif isinstance(func, ast.Attribute) and func.attr == "APIRouter":
+        elif isinstance(func, ast.Attribute) and func.attr in router_class_names:
             is_router = True
         if not is_router:
             continue
@@ -240,7 +258,7 @@ def _extract_alias_maps(tree: ast.AST) -> tuple[set[str], set[str]]:
     binds the alias visible to any `Depends(<alias>)` callsite in the
     enclosing module, so the alias must be in the file-wide set. Sibling
     note: APIRouter aliases (`from fastapi import APIRouter as R`) are
-    NOT tracked here yet; see task #126.
+    tracked by `_extract_apirouter_aliases` (task #126 2026-05-12).
     """
     depends_names: set[str] = {"Depends"}
     bearer_names: set[str] = set(_APPLIANCE_BEARER_DEP_NAMES)
@@ -661,6 +679,33 @@ async def alias_kwarg(_):
         f"aliased Depends + aliased _full in decorator kwarg must be "
         f"detected; got {handlers!r}"
     )
+
+
+def test_synthetic_apirouter_alias_detected():
+    """Task #126 regression (Gate A v3 P2-B from #125): aliased
+    `APIRouter as <alias>` imports must be recognized so router-prefix
+    resolution still works. Zero current callsites; defense-in-depth."""
+    src = '''
+from fastapi import APIRouter as R, Depends
+router = R(prefix="/api/aliased-router")
+
+@router.post("/poke")
+async def poke(_=Depends(require_appliance_bearer)):
+    return {}
+'''
+    tree = ast.parse(src)
+    router_prefixes = _extract_router_prefixes(tree)
+    assert router_prefixes == {"router": "/api/aliased-router"}, (
+        f"aliased APIRouter not detected; got {router_prefixes!r}"
+    )
+
+
+def test_extract_apirouter_aliases_canonical_only_when_no_import():
+    """Backward-compat: when no `APIRouter as` import exists, the
+    alias-set returns only the canonical name."""
+    tree = ast.parse("x = 1\n")
+    names = _extract_apirouter_aliases(tree)
+    assert names == {"APIRouter"}, names
 
 
 def test_extract_alias_maps_canonical_only_when_no_import():
