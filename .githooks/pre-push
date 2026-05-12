@@ -313,6 +313,10 @@ SOURCE_LEVEL_TESTS=(
     # recurrence-count SQL — closes the 320-missed-L2-escalations class
     # where multi-daemon sites silently never tripped the >=3 threshold.
     "tests/test_no_appliance_id_partitioned_recurrence_count.py"
+    # 2026-05-12 Session 220 P1 Gate B Maya P2-M1. Pins SECURITY_ADVISORY
+    # filename and OSIRIS-* H1 ID in lockstep with a ratchet for legacy
+    # drifters (MERKLE/MERKLE-COLLISION + PACKET_GAP/PACKET-AUTOGEN-GAP).
+    "tests/test_security_advisory_id_filename_parity.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
