@@ -169,6 +169,7 @@ for mod_name in ("starlette", "starlette.middleware", "starlette.middleware.base
         sys.modules[mod_name] = types.ModuleType(mod_name)
 sys.modules["starlette.middleware.base"].BaseHTTPMiddleware = type("BHM", (), {})
 sys.modules["starlette.responses"].Response = object
+sys.modules["starlette.responses"].JSONResponse = object  # task #121
 
 # Stub fastapi
 for mod_name in ("fastapi",):

@@ -40,6 +40,10 @@ sys.modules["fastapi"].Request = type("Request", (), {})
 sys.modules["fastapi"].HTTPException = type("HTTPException", (Exception,), {})
 sys.modules["starlette.middleware.base"].BaseHTTPMiddleware = type("BaseHTTPMiddleware", (), {})
 sys.modules["starlette.responses"].Response = type("Response", (), {})
+# Task #121 (2026-05-11): csrf.py now imports JSONResponse from
+# starlette.responses for the 403-not-500 unwrap fix. The stub MUST
+# export it too or csrf import fails at test collection.
+sys.modules["starlette.responses"].JSONResponse = type("JSONResponse", (), {})
 
 
 # ============================================================================
