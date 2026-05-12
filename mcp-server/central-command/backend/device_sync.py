@@ -915,7 +915,7 @@ async def get_site_device_counts(site_id: str) -> dict:
     Get device count summary for a site.
 
     BUG 3 round-table 2026-05-01 (fork a48dd10968aaf583c, Path C):
-    `discovered_devices.compliance_status` is DEPRECATED — never
+    the compliance_status column on discovered_devices is DEPRECATED — never
     populated by the bundle-ingest path; reading it gave 0% Managed
     Fleet on the dashboard while the site-level score correctly
     showed 94%. Per consensus, derive compliance counts LIVE from
@@ -932,7 +932,7 @@ async def get_site_device_counts(site_id: str) -> dict:
     pool = await get_pool()
 
     # Step 1: live-compute per-device compliance from compliance_bundles
-    # (NOT from the deprecated discovered_devices.compliance_status).
+    # (NOT from the deprecated compliance_status column on discovered_devices).
     # Use the SQLAlchemy session path so we hit the same code path as
     # site-level scoring (db_queries.get_compliance_scores_for_site).
     from .shared import async_session

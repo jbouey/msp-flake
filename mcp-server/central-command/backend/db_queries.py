@@ -733,8 +733,8 @@ async def get_per_device_compliance(
     """Per-device compliance status derived live from compliance_bundles.
 
     BUG 3 round-table 2026-05-01 (fork a48dd10968aaf583c, Path C):
-    `discovered_devices.compliance_status` is a denormalized cache that
-    was NEVER wired to bundle-ingest; every device shows 'unknown'
+    the deprecated compliance_status column on discovered_devices is
+    a denormalized cache that was NEVER wired to bundle-ingest; every device shows 'unknown'
     forever even when Go agents are actively submitting passing bundles.
     Site-level score read 94% from compliance_bundles, but per-device
     "Managed Fleet" read 0% from the stale cache — same writer/reader

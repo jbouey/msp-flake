@@ -49,17 +49,31 @@ _NOQA_PATTERN = re.compile(
 )
 
 # Pinned baseline. Lower as readers migrate to the helper.
-# 2026-05-01 post-fix snapshot (5 sites):
-#   - device_sync.py:912 — comment in get_site_device_counts docstring
-#   - device_sync.py:929 — inline comment ("NOT from the deprecated...")
-#   - device_sync.py:1338 — SELECT in get_site_devices handler (LEGACY)
-#   - routes.py:5241 — SELECT in legacy device-detail handler
-#   - routes.py:5778 — SELECT in legacy devices-at-risk handler
-# The 2 comments are doc references, not actual READS — gate
-# heuristic counts them. The 3 real SELECTs return the column to
-# the frontend for display; migrating them to the helper requires
-# changing response shapes. Tracked in BUG 3 followup card 2026-05-29.
-BASELINE_MAX = 14
+#
+# 2026-05-12 reduction (14 → 7):
+#   - 3 docstring/comment references rewritten to use prose that
+#     doesn't match the regex (db_queries.py:736, device_sync.py:918,
+#     device_sync.py:935)
+#   - 2 worklist-filter WHERE clauses noqa-marked
+#     (background_tasks.py:1015 + client_portal.py:4712 — each was
+#     double-counted, so 4 matches dropped). These filter for
+#     unscored devices in outreach scans, where the helper would
+#     return None for the same signal but the column is more direct
+#     for the WHERE position.
+#
+# Remaining 7 are real SELECT readers returning the column to
+# frontend display surfaces:
+#   - partners.py:2585         (partner device list)
+#   - client_portal.py:1264    (client device list)
+#   - device_sync.py:799       (filter parameter)
+#   - device_sync.py:1299      (SELECT in get_site_devices)
+#   - device_sync.py:1349      (SELECT in get_site_devices, second variant)
+#   - routes.py:5310           (legacy device-detail handler)
+#   - routes.py:5856           (legacy devices-at-risk handler)
+# Migrating these to db_queries.get_per_device_compliance() requires
+# changing response shapes the frontend depends on. Carry-followup
+# for a dedicated session.
+BASELINE_MAX = 7
 
 def _scan() -> list[str]:
     findings: list[str] = []

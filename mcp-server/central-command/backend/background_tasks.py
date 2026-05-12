@@ -1013,6 +1013,7 @@ async def unregistered_device_alert_loop():
                     WHERE dd.device_status IN ('take_over_available', 'ad_managed')
                     AND dd.device_type IN ('workstation', 'server', 'unknown')
                     AND (dd.compliance_status IS NULL OR dd.compliance_status = 'unknown')
+                    -- # noqa: deprecated-compliance-status — worklist filter for unscored devices; helper returns None for the same signal but this scan is for outreach not display
                     AND s.client_contact_email IS NOT NULL
                     AND s.client_contact_email != ''
                     GROUP BY s.site_id, s.clinic_name, s.client_contact_email

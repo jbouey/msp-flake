@@ -4710,6 +4710,7 @@ async def get_unregistered_devices(
             AND dd.device_status IN ('take_over_available', 'ad_managed')
             AND dd.device_type IN ('workstation', 'server', 'unknown')
             AND (dd.compliance_status IS NULL OR dd.compliance_status = 'unknown')
+            -- # noqa: deprecated-compliance-status — worklist filter for unscored devices; helper returns None for the same signal
             AND dd.hostname NOT LIKE '%router%'
             ORDER BY dd.last_seen_at DESC
         """, site_id)
