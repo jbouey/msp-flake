@@ -59,6 +59,24 @@ _LOOP_LOCATIONS: dict[str, Tuple[str, str]] = {
     "owner_transfer_sweep": ("client_owner_transfer", "owner_transfer_sweep_loop"),
     "partner_admin_transfer_sweep": ("partner_admin_transfer", "partner_admin_transfer_sweep_loop"),
     "mfa_revocation_expiry_sweep": ("mfa_admin", "mfa_revocation_expiry_sweep_loop"),
+    # 2026-05-12 BUG 2 followup — 17 previously-uncovered task_defs loops.
+    "ots_reverify": ("background_tasks", "ots_reverify_sample_loop"),
+    "mesh_consistency": ("background_tasks", "mesh_consistency_check_loop"),
+    "flywheel_reconciliation": ("background_tasks", "flywheel_reconciliation_loop"),
+    "l2_auto_candidate": ("background_tasks", "l2_auto_candidate_loop"),
+    "framework_sync": ("framework_sync", "framework_sync_loop"),
+    "companion_alerts": ("companion", "companion_alert_check_loop"),
+    "flywheel_orchestrator": ("background_tasks", "flywheel_orchestrator_loop"),
+    "partition_maintainer": ("background_tasks", "partition_maintainer_loop"),
+    "weekly_rollup_refresh": ("background_tasks", "weekly_rollup_refresh_loop"),
+    "partner_weekly_digest": ("background_tasks", "partner_weekly_digest_loop"),
+    "expire_consent_request_tokens": ("background_tasks", "expire_consent_request_tokens_loop"),
+    "heartbeat_partition_maintainer": ("background_tasks", "heartbeat_partition_maintainer_loop"),
+    "mesh_reassignment": ("background_tasks", "mesh_reassignment_loop"),
+    "sigauth_auto_promotion": ("sigauth_enforcement", "sigauth_auto_promotion_loop"),
+    "client_telemetry_retention": ("background_tasks", "client_telemetry_retention_loop"),
+    "data_hygiene_gc": ("background_tasks", "data_hygiene_gc_loop"),
+    "relocation_finalize": ("background_tasks", "relocation_finalize_loop"),
 }
 
 # Loops registered in EXPECTED_INTERVAL_S but whose definitions live
@@ -113,7 +131,19 @@ def _load_module_constants(module_basename: str) -> dict[str, Any]:
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, (int, float)):
             out[target.id] = int(node.value.value)
             continue
-        # Common pattern: int(os.getenv("VAR", "N"))
+        # Arithmetic of two int literals: NAME = 30 * 60 (very common
+        # for second-counts authored as hours/minutes × 60).
+        if (
+            isinstance(node.value, ast.BinOp)
+            and isinstance(node.value.op, ast.Mult)
+            and isinstance(node.value.left, ast.Constant)
+            and isinstance(node.value.right, ast.Constant)
+            and isinstance(node.value.left.value, (int, float))
+            and isinstance(node.value.right.value, (int, float))
+        ):
+            out[target.id] = int(node.value.left.value) * int(node.value.right.value)
+            continue
+        # Common pattern: int(os.getenv("VAR", "N")) OR int(os.environ.get("VAR", "N")).
         if (
             isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Name)
@@ -124,7 +154,7 @@ def _load_module_constants(module_basename: str) -> dict[str, Any]:
             if (
                 isinstance(inner, ast.Call)
                 and isinstance(inner.func, ast.Attribute)
-                and inner.func.attr == "getenv"
+                and inner.func.attr in ("getenv", "get")
                 and len(inner.args) >= 2
                 and isinstance(inner.args[1], ast.Constant)
             ):

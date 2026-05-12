@@ -67,6 +67,26 @@ _LOOP_LOCATIONS: dict[str, Tuple[str, str]] = {
     "owner_transfer_sweep": ("client_owner_transfer", "owner_transfer_sweep_loop"),
     "partner_admin_transfer_sweep": ("partner_admin_transfer", "partner_admin_transfer_sweep_loop"),
     "mfa_revocation_expiry_sweep": ("mfa_admin", "mfa_revocation_expiry_sweep_loop"),
+    # 2026-05-12 BUG 2 followup — 17 previously-uncovered task_defs loops
+    # registered. Lockstep with EXPECTED_INTERVAL_S + the calibration
+    # test's own _LOOP_LOCATIONS map.
+    "ots_reverify": ("background_tasks", "ots_reverify_sample_loop"),
+    "mesh_consistency": ("background_tasks", "mesh_consistency_check_loop"),
+    "flywheel_reconciliation": ("background_tasks", "flywheel_reconciliation_loop"),
+    "l2_auto_candidate": ("background_tasks", "l2_auto_candidate_loop"),
+    "framework_sync": ("framework_sync", "framework_sync_loop"),
+    "companion_alerts": ("companion", "companion_alert_check_loop"),
+    "flywheel_orchestrator": ("background_tasks", "flywheel_orchestrator_loop"),
+    "partition_maintainer": ("background_tasks", "partition_maintainer_loop"),
+    "weekly_rollup_refresh": ("background_tasks", "weekly_rollup_refresh_loop"),
+    "partner_weekly_digest": ("background_tasks", "partner_weekly_digest_loop"),
+    "expire_consent_request_tokens": ("background_tasks", "expire_consent_request_tokens_loop"),
+    "heartbeat_partition_maintainer": ("background_tasks", "heartbeat_partition_maintainer_loop"),
+    "mesh_reassignment": ("background_tasks", "mesh_reassignment_loop"),
+    "sigauth_auto_promotion": ("sigauth_enforcement", "sigauth_auto_promotion_loop"),
+    "client_telemetry_retention": ("background_tasks", "client_telemetry_retention_loop"),
+    "data_hygiene_gc": ("background_tasks", "data_hygiene_gc_loop"),
+    "relocation_finalize": ("background_tasks", "relocation_finalize_loop"),
 }
 
 # Loops nested inside main.py's lifespan() — manually verified to call

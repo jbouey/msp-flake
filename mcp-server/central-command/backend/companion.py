@@ -1363,6 +1363,12 @@ async def companion_alert_check_loop():
 
     await asyncio.sleep(30)  # let startup finish
     while True:
+        # bg_loop_silent heartbeat — Session 220 BUG 2 followup 2026-05-12.
+        try:
+            from .bg_heartbeat import record_heartbeat
+            record_heartbeat("companion_alerts")
+        except Exception:
+            pass
         try:
             pool = await get_pool()
             async with admin_connection(pool) as conn:

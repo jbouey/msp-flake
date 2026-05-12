@@ -108,6 +108,35 @@ EXPECTED_INTERVAL_S: Dict[str, int] = {
     "owner_transfer_sweep": 60,  # client_owner_transfer.py:owner_transfer_sweep_loop sleeps 60s
     "partner_admin_transfer_sweep": 60,  # partner_admin_transfer.py:partner_admin_transfer_sweep_loop sleeps 60s
     "mfa_revocation_expiry_sweep": 60,  # mfa_admin.py:mfa_revocation_expiry_sweep_loop sleeps 60s
+    # 2026-05-12 BUG 2 followup — 17 previously-uncovered task_defs loops
+    # added. Each value matches the body sleep verified by
+    # test_expected_interval_calibration.py. Constants resolved via
+    # _load_module_constants in the test.
+    "ots_reverify": 21600,                      # 6h
+    "mesh_consistency": 900,                    # 15min
+    "flywheel_reconciliation": 1800,            # 30min
+    "l2_auto_candidate": 1800,                  # 30min
+    "framework_sync": 604800,                   # 7 days
+    "companion_alerts": 21600,                  # 6h
+    "flywheel_orchestrator": 300,               # FLYWHEEL_ORCHESTRATOR_INTERVAL_SECONDS
+    "partition_maintainer": 86400,              # PARTITION_MAINTAINER_INTERVAL_SECONDS
+    "weekly_rollup_refresh": 1800,              # WEEKLY_ROLLUP_REFRESH_SECONDS = 30*60
+    "partner_weekly_digest": 900,               # PARTNER_DIGEST_CHECK_SECONDS = 15*60
+    "expire_consent_request_tokens": 3600,      # CONSENT_TOKEN_EXPIRY_CHECK_SECONDS = 60*60
+    "heartbeat_partition_maintainer": 3600,     # HEARTBEAT_PARTITION_CHECK_SECONDS
+    "mesh_reassignment": 300,                   # MESH_REBALANCE_INTERVAL_SECONDS
+    "sigauth_auto_promotion": 300,              # AUTO_PROMOTE_INTERVAL_SECONDS env default
+    "client_telemetry_retention": 86400,        # 24h
+    "data_hygiene_gc": 86400,                   # 24h
+    "relocation_finalize": 60,                  # 60s post-startup tick
+}
+
+# Loops with dynamic/work-driven cadence that don't have a single static
+# interval value. Exempt from staleness alarms — the bg_loop_silent
+# invariant filters them out. Pattern analogous to DRAIN_LOOPS.
+DYNAMIC_LOOPS: set = {
+    "cve_watch",          # cve_watch.py:cve_sync_loop — config-driven (sync_interval_hours)
+    "cve_remediation",    # cve_remediation.py:cve_remediation_loop — work-driven (300/1800)
 }
 
 

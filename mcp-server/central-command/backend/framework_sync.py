@@ -520,6 +520,12 @@ async def framework_sync_loop():
     await asyncio.sleep(300)
 
     while True:
+        # bg_loop_silent heartbeat — Session 220 BUG 2 followup 2026-05-12.
+        try:
+            from .bg_heartbeat import record_heartbeat
+            record_heartbeat("framework_sync")
+        except Exception:
+            pass
         try:
             await _run_full_sync()
         except Exception as e:

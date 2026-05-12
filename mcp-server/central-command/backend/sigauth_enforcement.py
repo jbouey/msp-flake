@@ -246,6 +246,12 @@ async def sigauth_auto_promotion_loop():
         AUTO_PROMOTE_INTERVAL_SECONDS, MIN_SAMPLES, AUTO_PROMOTE_WINDOW_HOURS,
     )
     while True:
+        # bg_loop_silent heartbeat — Session 220 BUG 2 followup 2026-05-12.
+        try:
+            from .bg_heartbeat import record_heartbeat
+            record_heartbeat("sigauth_auto_promotion")
+        except Exception:
+            pass
         try:
             pool = await get_pool()
             async with admin_connection(pool) as conn:
