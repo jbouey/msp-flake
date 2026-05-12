@@ -275,7 +275,7 @@ UPDATE_BASELINE_MAX = 0
 # `appliance_id` + `outcome` to compliance_bundles + 25 partitions).
 # That dropped one false positive (appliance_relocation_api.py:86),
 # baseline 12 → 11.
-SELECT_BASELINE_MAX = 11
+SELECT_BASELINE_MAX = 9  # Session 220 task #120 PR-A 2026-05-12: 11→9 after deleting report_discovery_results + verify_ots_bitcoin SQL bodies
 
 
 def test_every_python_insert_references_real_columns(schema):

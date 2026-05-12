@@ -39,19 +39,9 @@ ENDPOINT_CONTRACTS: List[Tuple[str, str, str, str]] = [
         "POST",
         r"""[@\.]\w*\.post\(\s*["']/?flywheel-spine/acknowledge""",
     ),
-    # SensorStatus — Windows sensor deploy / remove
-    (
-        "components/sensors/SensorStatus.tsx",
-        "/api/sensors/sites/",
-        "POST",
-        r"""[@\.]\w*\.post\(\s*["']/?(?:api/)?sensors/sites/[^"']*hosts/[^"']*deploy""",
-    ),
-    (
-        "components/sensors/SensorStatus.tsx",
-        "/api/sensors/sites/",
-        "DELETE",
-        r"""[@\.]\w*\.delete\(\s*["']/?(?:api/)?sensors/sites/[^"']*hosts/""",
-    ),
+    # Session 220 task #120 PR-A (2026-05-12): SensorStatus.tsx +
+    # backend sensors.py both deleted as fully-orphan dead code.
+    # Their entries are removed from this DEMO_BUTTON list.
 ]
 
 
@@ -97,58 +87,29 @@ def test_operator_ack_button_endpoint_exists():
     )
 
 
-def test_sensor_status_deploy_endpoint_exists():
-    """SensorStatus.tsx POSTs to /api/sensors/sites/{id}/hosts/{host}/deploy.
-    Both string fragments must appear in the .tsx, and a matching POST
-    route must exist in the backend."""
-    src = (FRONTEND_SRC / "components/sensors/SensorStatus.tsx").read_text()
-    assert "/api/sensors/sites/" in src and "/hosts/" in src and "/deploy" in src, (
-        "SensorStatus.tsx no longer references the sensor-deploy endpoint."
+# Session 220 task #120 PR-A (2026-05-12): test_sensor_status_*_endpoint_exists
+# tests and SensorStatus.tsx CSRF-helper test removed. SensorStatus.tsx
+# was fully-orphan (zero parent imports — never mounted in the app tree);
+# backend sensors.py was unregistered (no main.py include_router). Both
+# deleted together. OperatorAckPanel CSRF assertion still has its own
+# coverage via test_frontend_mutation_csrf.py.
+
+
+def test_operator_ack_button_has_csrf_header_or_helper():
+    """Carry-forward from the prior 2026-04-25 audit: assert the
+    OperatorAckPanel mutation button retains credentials:'include'
+    + a CSRF reference. If someone hand-rewrites it without using
+    fetchApi, this test fails fast."""
+    rel = "components/command-center/OperatorAckPanel.tsx"
+    src = (FRONTEND_SRC / rel).read_text()
+    assert "credentials: 'include'" in src or "credentials:'include'" in src, (
+        f"{rel} dropped credentials:'include' from its mutation fetch."
     )
-    backend = _backend_concat()
-    # Backend decorators live in sensors.py with `prefix="/sensors"` set
-    # at mount time, so the literal in the source is "/sites/.../deploy"
-    # (router-relative). Match either router-relative or absolute form.
-    assert re.search(
-        r"""[@\.]\w*\.post\(\s*["'](?:/api/sensors|/sensors)?/sites/[^"']*hosts/[^"']*deploy""",
-        backend,
-    ), "Backend has no /sensors/.../hosts/.../deploy POST route."
-
-
-def test_sensor_status_remove_endpoint_exists():
-    """SensorStatus.tsx DELETEs /api/sensors/sites/{id}/hosts/{host}."""
-    src = (FRONTEND_SRC / "components/sensors/SensorStatus.tsx").read_text()
-    assert "/api/sensors/sites/" in src and "/hosts/" in src, (
-        "SensorStatus.tsx no longer references the sensor-remove endpoint."
+    has_csrf = (
+        "X-CSRF-Token" in src
+        or "csrfHeaders(" in src
+        or "getCsrfTokenOrEmpty(" in src
     )
-    assert "method: 'DELETE'" in src, (
-        "SensorStatus.tsx no longer issues a DELETE on sensors."
+    assert has_csrf, (
+        f"{rel} dropped its CSRF-token reference from the mutation fetch."
     )
-    backend = _backend_concat()
-    assert re.search(
-        r"""[@\.]\w*\.delete\(\s*["'](?:/api/sensors|/sensors)?/sites/[^"']*hosts/""",
-        backend,
-    ), "Backend has no /sensors/.../hosts/... DELETE route."
-
-
-def test_demo_path_buttons_have_csrf_header_or_helper():
-    """Belt-and-suspenders to test_frontend_mutation_csrf.py: assert the
-    two buttons that triggered the 2026-04-25 push specifically retain
-    credentials:'include' + a CSRF reference. If someone hand-rewrites
-    them later without using fetchApi, this test fails fast."""
-    for rel in (
-        "components/command-center/OperatorAckPanel.tsx",
-        "components/sensors/SensorStatus.tsx",
-    ):
-        src = (FRONTEND_SRC / rel).read_text()
-        assert "credentials: 'include'" in src or "credentials:'include'" in src, (
-            f"{rel} dropped credentials:'include' from its mutation fetch."
-        )
-        has_csrf = (
-            "X-CSRF-Token" in src
-            or "csrfHeaders(" in src
-            or "getCsrfTokenOrEmpty(" in src
-        )
-        assert has_csrf, (
-            f"{rel} dropped its CSRF-token reference from the mutation fetch."
-        )

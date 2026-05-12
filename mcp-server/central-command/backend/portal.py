@@ -2580,51 +2580,9 @@ class ControlResult(BaseModel):
     fix_duration_sec: Optional[int] = None
 
 
-class ComplianceSnapshot(BaseModel):
-    """Compliance snapshot from appliance phone-home."""
-    site_id: str
-    host_id: str
-    # KPIs
-    compliance_pct: float = 100.0
-    patch_mttr_hours: float = 0.0
-    mfa_coverage_pct: float = 100.0
-    backup_success_rate: float = 100.0
-    auto_fixes_24h: int = 0
-    health_score: float = 100.0
-    # Control results
-    control_results: List[ControlResult] = []
-    # Recent incidents (last 24h)
-    recent_incidents: List[Dict[str, Any]] = []
-    # Metadata
-    agent_version: Optional[str] = None
-    policy_version: Optional[str] = None
-
-
-# =============================================================================
-# PHONE-HOME ENDPOINT (DEPRECATED)
-# =============================================================================
-
-@router.post("/appliances/snapshot")
-async def receive_compliance_snapshot(snapshot: ComplianceSnapshot):
-    """Receive compliance snapshot from appliance phone-home.
-
-    NOTE: This endpoint is kept for backwards compatibility but no longer
-    updates portal data directly. The portal now reads from PostgreSQL
-    (compliance_bundles table) which is populated by the main checkin endpoint.
-
-    Appliances should use the main /api/appliances/checkin endpoint which
-    writes compliance data to compliance_bundles table.
-    """
-    logger.info(f"Received snapshot from {snapshot.site_id} (portal now reads from DB)")
-
-    return {
-        "status": "received",
-        "site_id": snapshot.site_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "controls_received": len(snapshot.control_results),
-        "note": "Portal now reads from PostgreSQL. Use /api/appliances/checkin for persistence."
-    }
-
-
-# NOTE: update_compliance_data() function removed
-# Portal data is now read directly from PostgreSQL (compliance_bundles table)
+# Session 220 task #120 PR-A (2026-05-12): receive_compliance_snapshot
+# stub + ComplianceSnapshot model deleted. Endpoint was a no-op since
+# the portal switched to reading from compliance_bundles via the main
+# /api/appliances/checkin path; the CSRF middleware silently 403'd
+# every external POST to /api/portal/appliances/snapshot for the entire
+# life of the stub. No real callers in 24h prod logs.

@@ -20,7 +20,9 @@ from pydantic import BaseModel
 
 from .fleet import get_pool
 from .tenant_middleware import admin_connection, admin_transaction
-from .shared import _enforce_site_id, require_appliance_bearer
+# Session 220 task #120 PR-A: _enforce_site_id + require_appliance_bearer
+# were only used by the deleted report_discovery_results handler. Removed
+# from the import to avoid dead-import lint noise.
 
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
@@ -44,24 +46,13 @@ class DiscoveredAsset(BaseModel):
     ad_info: Optional[Dict[str, Any]] = None
 
 
-class DiscoveryReport(BaseModel):
-    """Report from appliance after running discovery."""
-    scan_id: str
-    site_id: str
-    appliance_id: str
-    network_range: str
-    assets: List[DiscoveredAsset]
-    duration_seconds: float
-    errors: List[str] = []
-
-
-class ScanStatus(BaseModel):
-    """Update scan status."""
-    scan_id: str
-    status: str  # running, completed, failed
-    error_message: Optional[str] = None
-    assets_found: int = 0
-    new_assets: int = 0
+# Session 220 task #120 PR-A (2026-05-12): DiscoveryReport + ScanStatus
+# models and their report_discovery_results + update_scan_status
+# handlers were deleted. Both endpoints were silently CSRF-403'd
+# for their entire lifetime (no daemon caller — verified
+# `grep -rn discovery/report appliance/` empty); zero real traffic
+# in 24h prod logs (only loopback verification probes). Discovery
+# results never flowed through these handlers in production.
 
 
 # =============================================================================
@@ -190,194 +181,13 @@ def detect_services(open_ports: List[int]) -> Dict[str, str]:
 # API ENDPOINTS
 # =============================================================================
 
-@router.post("/report")
-async def report_discovery_results(
-    report: DiscoveryReport,
-    auth_site_id: str = Depends(require_appliance_bearer),
-):
-    """Receive discovery results from an appliance.
-
-    Called by the compliance agent after completing a network scan.
-    Updates the discovered_assets table with findings.
-
-    Session 219 (2026-05-11): require_appliance_bearer + _enforce_site_id
-    added (pre-fix zero-auth, weekly audit 2026-05-11 P0). The endpoint
-    is post-claim so the appliance always has a bearer.
-    """
-    await _enforce_site_id(auth_site_id, report.site_id, "report_discovery_results")
-    pool = await get_pool()
-
-    # wave-11: PgBouncer routing-pathology fix — pin SET LOCAL + 4 calls to one backend
-    async with admin_transaction(pool) as conn:
-        # Verify scan exists and get site internal ID
-        scan = await conn.fetchrow("""
-            SELECT ds.id, ds.site_id, s.site_id as site_id_str
-            FROM discovery_scans ds
-            JOIN sites s ON s.id = ds.site_id
-            WHERE ds.id = $1
-        """, report.scan_id)
-
-        if not scan:
-            raise HTTPException(status_code=404, detail="Scan not found")
-
-        # Verify site_id matches
-        if scan['site_id_str'] != report.site_id:
-            raise HTTPException(status_code=400, detail="Site ID mismatch")
-
-        site_internal_id = scan['site_id']
-        new_count = 0
-        updated_count = 0
-
-        # Process each discovered asset
-        for asset in report.assets:
-            # Validate IP
-            try:
-                ip = ipaddress.ip_address(asset.ip_address)
-            except ValueError:
-                continue  # Skip invalid IPs
-
-            # Auto-classify if not provided
-            if not asset.asset_type:
-                asset_type, confidence = classify_asset(
-                    asset.open_ports,
-                    asset.hostname,
-                    asset.ad_info
-                )
-            else:
-                asset_type = asset.asset_type
-                confidence = asset.confidence
-
-            # Detect services
-            services = asset.detected_services or detect_services(asset.open_ports)
-
-            # Upsert asset
-            result = await conn.execute("""
-                INSERT INTO discovered_assets (
-                    site_id, ip_address, hostname, mac_address,
-                    asset_type, os_info, confidence, discovery_method,
-                    open_ports, detected_services, ad_info,
-                    last_seen_at, monitoring_status
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), 'discovered')
-                ON CONFLICT (site_id, ip_address) DO UPDATE SET
-                    hostname = COALESCE(EXCLUDED.hostname, discovered_assets.hostname),
-                    mac_address = COALESCE(EXCLUDED.mac_address, discovered_assets.mac_address),
-                    asset_type = CASE
-                        WHEN EXCLUDED.confidence > discovered_assets.confidence
-                        THEN EXCLUDED.asset_type
-                        ELSE discovered_assets.asset_type
-                    END,
-                    os_info = COALESCE(EXCLUDED.os_info, discovered_assets.os_info),
-                    confidence = GREATEST(EXCLUDED.confidence, discovered_assets.confidence),
-                    open_ports = EXCLUDED.open_ports,
-                    detected_services = EXCLUDED.detected_services,
-                    ad_info = COALESCE(EXCLUDED.ad_info, discovered_assets.ad_info),
-                    last_seen_at = NOW(),
-                    updated_at = NOW()
-            """,
-                site_internal_id,
-                asset.ip_address,
-                asset.hostname,
-                asset.mac_address,
-                asset_type,
-                asset.os_info,
-                confidence,
-                asset.discovery_method,
-                asset.open_ports,
-                services,
-                asset.ad_info
-            )
-
-            if "INSERT" in result:
-                new_count += 1
-            else:
-                updated_count += 1
-
-        # Update scan record
-        error_msg = "; ".join(report.errors) if report.errors else None
-        status = "failed" if report.errors and not report.assets else "completed"
-
-        await conn.execute("""
-            UPDATE discovery_scans
-            SET status = $1,
-                completed_at = NOW(),
-                network_range_scanned = $2,
-                assets_found = $3,
-                new_assets = $4,
-                changed_assets = $5,
-                error_message = $6,
-                scan_log = $7
-            WHERE id = $8
-        """,
-            status,
-            report.network_range,
-            len(report.assets),
-            new_count,
-            updated_count,
-            error_msg,
-            {"duration_seconds": report.duration_seconds, "errors": report.errors},
-            report.scan_id
-        )
-
-        # Mark any assets not seen in this scan as potentially missing
-        # (only if this was a full scan)
-        await conn.execute("""
-            UPDATE discovered_assets
-            SET monitoring_status = CASE
-                WHEN monitoring_status = 'monitored' THEN 'unreachable'
-                ELSE monitoring_status
-            END
-            WHERE site_id = $1
-            AND last_seen_at < NOW() - INTERVAL '1 hour'
-            AND monitoring_status NOT IN ('ignored', 'unreachable')
-        """, site_internal_id)
-
-    return {
-        "status": "processed",
-        "scan_id": report.scan_id,
-        "assets_processed": len(report.assets),
-        "new_assets": new_count,
-        "updated_assets": updated_count,
-    }
-
-
-@router.post("/status")
-async def update_scan_status(status: ScanStatus):
-    """Update the status of a running discovery scan.
-
-    Called by appliance to report scan progress or completion.
-    """
-    pool = await get_pool()
-
-    # admin_transaction (wave-37): update_scan_status issues 2 admin
-    # statements (UPDATE scan + audit log).
-    async with admin_transaction(pool) as conn:
-        if status.status == "completed":
-            result = await conn.execute("""
-                UPDATE discovery_scans
-                SET status = $1,
-                    completed_at = NOW(),
-                    assets_found = $2,
-                    new_assets = $3,
-                    error_message = $4
-                WHERE id = $5
-            """,
-                status.status,
-                status.assets_found,
-                status.new_assets,
-                status.error_message,
-                status.scan_id
-            )
-        else:
-            result = await conn.execute("""
-                UPDATE discovery_scans
-                SET status = $1, error_message = $2
-                WHERE id = $3
-            """, status.status, status.error_message, status.scan_id)
-
-        if result == "UPDATE 0":
-            raise HTTPException(status_code=404, detail="Scan not found")
-
-    return {"status": "updated", "scan_id": status.scan_id}
+# Session 220 task #120 PR-A (2026-05-12): two POST handlers deleted —
+#   - report_discovery_results @router.post("/report")
+#     (zero daemon callers in production; 24h log silence confirms)
+#   - update_scan_status      @router.post("/status")
+#     (zero daemon callers; CSRF-403'd for entire lifetime)
+# Their Pydantic models (DiscoveryReport, ScanStatus) deleted above.
+# The /api/discovery/* GET endpoints (pending, assets summary) remain.
 
 
 @router.get("/pending/{site_id}")

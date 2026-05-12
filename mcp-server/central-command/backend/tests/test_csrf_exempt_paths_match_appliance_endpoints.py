@@ -84,8 +84,9 @@ _KNOWN_BLOCKED_DEAD_ROUTES: set[tuple[str, str]] = {
     # /api/learning/promotion-report — L2 flywheel promotion intake.
     # CSRF-blocked, 0 calls in 12h prod logs.
     ("post", "/api/learning/promotion-report"),
-    # /api/discovery/report — discovery batch report. CSRF-blocked.
-    ("post", "/api/discovery/report"),
+    # Session 220 task #120 PR-A (2026-05-12): /api/discovery/report
+    # entry removed — handler fully deleted, so the gate no longer fires
+    # on it. Ratchet 6 → 5 entries.
     # /api/alerts/email — appliance email alerts. CSRF-blocked.
     ("post", "/api/alerts/email"),
 }

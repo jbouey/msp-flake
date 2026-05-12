@@ -119,10 +119,13 @@ def _has_provision_code_validation(handler: ast.AsyncFunctionDef) -> bool:
 _COMMIT_2_HARDENED_HANDLERS = {
     "provisioning_heartbeat",        # provisioning.py — B2 provision_code
     "update_provision_status",       # provisioning.py — bearer
-    "report_discovery_results",      # discovery.py — bearer + enforce
-    "record_sensor_heartbeat",       # sensors.py — bearer + enforce
-    "record_linux_sensor_heartbeat", # sensors.py — bearer + enforce
-    "complete_sensor_command",       # sensors.py — bearer + site-scoped UPDATE
+    # Session 220 task #120 PR-A (2026-05-12): the following 4 handlers
+    # were deleted along with their parent handler scope:
+    #   - report_discovery_results      (discovery.py — full handler delete)
+    #   - record_sensor_heartbeat       (sensors.py entire module delete)
+    #   - record_linux_sensor_heartbeat (sensors.py entire module delete)
+    #   - complete_sensor_command       (sensors.py entire module delete)
+    # All 4 were CSRF-blocked dead routes with zero real callers.
 }
 
 

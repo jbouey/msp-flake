@@ -3223,133 +3223,15 @@ async def migrate_chain_positions(
     }
 
 
-@router.post("/ots/verify-bitcoin/{bundle_id}")
-async def verify_ots_bitcoin(
-    bundle_id: str,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Verify an OTS proof against the Bitcoin blockchain.
-
-    For anchored proofs, checks that the merkle commitment actually
-    exists in the claimed Bitcoin block via blockstream.info API.
-    """
-    # Get proof
-    result = await db.execute(text("""
-        SELECT bundle_id, bundle_hash, proof_data, status, bitcoin_block, calendar_url
-        FROM ots_proofs
-        WHERE bundle_id = :bundle_id
-    """), {"bundle_id": bundle_id})
-
-    proof = result.fetchone()
-    if not proof:
-        raise HTTPException(status_code=404, detail=f"OTS proof not found: {bundle_id}")
-
-    if proof.status != "anchored":
-        return {
-            "bundle_id": bundle_id,
-            "verified": False,
-            "reason": f"Proof status is '{proof.status}', not 'anchored'",
-        }
-
-    # Parse the OTS file
-    proof_bytes = base64.b64decode(proof.proof_data)
-    parsed = parse_ots_file(proof_bytes)
-
-    if not parsed:
-        return {
-            "bundle_id": bundle_id,
-            "verified": False,
-            "reason": "Could not parse OTS proof format",
-        }
-
-    # Verify the original hash matches what we expect
-    expected_hash = bytes.fromhex(proof.bundle_hash)
-    if parsed["hash_bytes"] != expected_hash:
-        return {
-            "bundle_id": bundle_id,
-            "verified": False,
-            "reason": "Proof hash does not match stored bundle hash",
-        }
-
-    # Replay timestamp operations to get commitment
-    commitment = replay_timestamp_operations(parsed["hash_bytes"], parsed["timestamp_data"])
-    if not commitment:
-        return {
-            "bundle_id": bundle_id,
-            "verified": False,
-            "reason": "Could not compute commitment from timestamp operations",
-        }
-
-    # Query Bitcoin block merkle root via blockstream API
-    block_height = proof.bitcoin_block
-    if not block_height:
-        return {
-            "bundle_id": bundle_id,
-            "verified": False,
-            "reason": "No Bitcoin block height recorded",
-        }
-
-    try:
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(
-                f"https://blockstream.info/api/block-height/{block_height}"
-            ) as resp:
-                if resp.status != 200:
-                    return {
-                        "bundle_id": bundle_id,
-                        "verified": False,
-                        "reason": f"Could not fetch block {block_height}: HTTP {resp.status}",
-                    }
-                block_hash = await resp.text()
-
-            # Get full block data
-            async with session.get(
-                f"https://blockstream.info/api/block/{block_hash}"
-            ) as resp:
-                if resp.status != 200:
-                    return {
-                        "bundle_id": bundle_id,
-                        "verified": False,
-                        "reason": f"Could not fetch block data: HTTP {resp.status}",
-                    }
-                block_data = await resp.json()
-
-        merkle_root = block_data.get("merkle_root", "")
-        block_time = block_data.get("timestamp", 0)
-
-        # Update proof with verification result
-        await db.execute(text("""
-            UPDATE ots_proofs
-            SET status = 'verified',
-                verified_at = NOW(),
-                error = NULL
-            WHERE bundle_id = :bundle_id
-        """), {"bundle_id": bundle_id})
-        await db.commit()
-
-        logger.info(
-            f"OTS Bitcoin verified: bundle={bundle_id[:8]}... "
-            f"block={block_height} merkle={merkle_root[:16]}..."
-        )
-
-        return {
-            "bundle_id": bundle_id,
-            "verified": True,
-            "bitcoin_block": block_height,
-            "block_hash": block_hash,
-            "merkle_root": merkle_root,
-            "block_timestamp": datetime.fromtimestamp(block_time, tz=timezone.utc).isoformat(),
-            "commitment": commitment.hex(),
-        }
-
-    except aiohttp.ClientError as e:
-        return {
-            "bundle_id": bundle_id,
-            "verified": False,
-            "reason": f"Bitcoin API error: {str(e)[:200]}",
-        }
+# Session 220 task #120 PR-A (2026-05-12): verify_ots_bitcoin handler
+# at @router.post("/ots/verify-bitcoin/{bundle_id}") deleted. Gate A v2
+# P0-2 (audit/coach-csrf-disposition-packet-v2-gate-a-2026-05-12.md):
+#   - Unauthenticated state mutation (UPDATE ots_proofs SET status='verified')
+#   - blockstream.info DoS amplification (no rate-limit, accepts any
+#     bundle_id, fans out to external API on every request)
+#   - Zero frontend callers (grep verify-ots → only api-generated.ts stubs)
+# The OTS verify-chain pathway remains via the GET /sites/{site_id}/verify-chain
+# endpoint that does signature-only verification without external fanout.
 
 
 @router.get("/public-key")

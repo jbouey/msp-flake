@@ -458,24 +458,12 @@ async def update_appliance_runbook_config(
     }
 
 
-@router.delete("/appliances/{appliance_id}/{runbook_id}")
-async def remove_appliance_runbook_override(
-    appliance_id: str,
-    runbook_id: str,
-    db: AsyncSession = Depends(get_db)
-):
-    """Remove appliance-level override (revert to site config)."""
-    query = text("""
-        DELETE FROM appliance_runbook_config
-        WHERE appliance_id = :appliance_id AND runbook_id = :runbook_id
-    """)
-    result = await db.execute(query, {
-        "appliance_id": appliance_id,
-        "runbook_id": runbook_id
-    })
-    await db.commit()
-
-    return {"deleted": result.rowcount > 0}
+# Session 220 task #120 PR-A (2026-05-12): remove_appliance_runbook_override
+# DELETE handler at /api/runbooks/appliances/{appliance_id}/{runbook_id}
+# deleted. Was zero-auth state-changing (DELETE FROM appliance_runbook_config)
+# with zero frontend callers (grep verified — only api-generated.ts stubs).
+# Per-appliance overrides remain manageable via the PUT handler at the
+# same path; revert-to-site-default is reachable by updating to NULL.
 
 
 # =============================================================================

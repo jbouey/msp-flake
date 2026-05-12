@@ -81,14 +81,10 @@ UNAUTH_ALLOWLIST: dict[str, str] = {
         "auditor-kit includes pre-signed bundle_ids, anyone with "
         "a kit can verify any bundle. No new info leaked."
     ),
-    # `/verify-ots-bitcoin` — Bitcoin OTS verifier; takes user-
-    # supplied calendar+proof bytes and returns whether they
-    # validate against the public Bitcoin chain. No DB access.
-    "verify_ots_bitcoin": (
-        "Bitcoin-OTS verifier — pure crypto/network call, no DB "
-        "access; the inputs come from the caller, validation is "
-        "against the public Bitcoin blockchain"
-    ),
+    # Session 220 task #120 PR-A (2026-05-12): verify_ots_bitcoin
+    # handler deleted (Gate A v2 P0-2: unauthenticated state mutation
+    # + blockstream.info DoS amplification + zero frontend callers).
+    # No allowlist entry needed — the handler no longer exists.
     # `/verify-batch` — batch verifier; same shape as the others.
     "verify_batch": (
         "Batch verifier — accepts caller-supplied bundle_ids + "
