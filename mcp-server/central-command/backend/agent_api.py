@@ -835,6 +835,10 @@ async def report_incident(
             )
             velocity_row = recurrence_check.first()
             if velocity_row is None:
+                # First incident of this (site, type) pair — velocity loop
+                # hasn't materialized a row yet. Treat as zero-recurrence;
+                # L1 will handle this iteration and the loop will populate
+                # the row on its next 300s pass.
                 reopen_recurrence_count = 0
             else:
                 reopen_recurrence_count = velocity_row.resolved_4h or 0
@@ -865,7 +869,6 @@ async def report_incident(
                 try:
                     from dashboard_api.l2_planner import analyze_incident as l2_analyze, record_l2_decision, is_l2_available
                     if is_l2_available():
-                        l2_attempted = True
                         l2_details = dict(incident.details or {})
                         l2_details["recurrence"] = {
                             "recurrence_count_4h": reopen_recurrence_count,
@@ -886,6 +889,12 @@ async def report_incident(
                             hipaa_controls=incident.hipaa_controls,
                             site_id=incident.site_id,
                         )
+                        # Set l2_attempted only AFTER l2_analyze returns
+                        # successfully — Gate B Steve P2-S2 false-positive
+                        # fix. If l2_analyze raises (LLM timeout, planner
+                        # error), no audit row is owed, so don't fire the
+                        # ghost-L2 alert downstream.
+                        l2_attempted = True
                         try:
                             await record_l2_decision(
                                 db, existing_id, decision,
@@ -1079,6 +1088,10 @@ async def report_incident(
     )
     velocity_row = velocity_check.first()
     if velocity_row is None:
+        # First incident of this (site, type) pair — velocity loop hasn't
+        # materialized a row yet. Treat as zero-recurrence; the loop will
+        # populate the row on its next 300s pass and subsequent incidents
+        # will escalate normally.
         recent_recurrence_count = 0
         chronic_count = 0
     else:
