@@ -18,8 +18,13 @@
 -- (prompt_version) — none satisfy the composite predicate efficiently at
 -- 232K+ rows.
 
+-- Single-statement file: asyncpg's simple-query protocol wraps multi-statement
+-- scripts in an implicit transaction block, which CONCURRENTLY rejects.
+-- Pattern proven by mig 154 (single CONCURRENTLY, no COMMENT). The COMMENT ON
+-- INDEX clause was attempted standalone in deploy 9d11bb47 and triggered the
+-- same ActiveSQLTransactionError because it made the file multi-statement.
+-- Index purpose is documented in this file's header + mig 308's body + the
+-- chronic_without_l2_escalation runbook; a separate COMMENT migration can
+-- ship later if pg_class.relkind=i COMMENT visibility is needed.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_l2_decisions_site_reason_created
     ON l2_decisions (site_id, escalation_reason, created_at DESC);
-
-COMMENT ON INDEX idx_l2_decisions_site_reason_created IS
-  'Supports the chronic_without_l2_escalation substrate invariant 60s tick query.';
