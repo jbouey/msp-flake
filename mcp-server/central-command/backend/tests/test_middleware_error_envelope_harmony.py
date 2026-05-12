@@ -13,9 +13,11 @@ SCOPE: every `return JSONResponse(status_code=N, content={...})` inside a
 `BaseHTTPMiddleware.dispatch` method body where N is an integer literal >= 400.
 Asserts the `content` dict literal has a `"detail"` key.
 
-Allowlist marker: `# noqa: envelope-shape-allowed` on the same line as the
-JSONResponse opening — only for documented non-error 4xx/5xx responses or
-for endpoints whose consumers specifically read alternate keys.
+Allowlist marker: `# noqa: envelope-shape-allowed` MUST be on the same
+line as the `JSONResponse(` opening (the AST `call.lineno`). Placing it
+on a continuation line — e.g. before the closing `)` — will NOT exempt
+the call. Use only for documented non-error 4xx/5xx responses or for
+endpoints whose consumers specifically read alternate keys.
 
 Sibling pattern: `tests/test_no_middleware_dispatch_raises_httpexception.py`
 (task #121).
@@ -50,16 +52,39 @@ def _find_dispatch_method(class_node: ast.ClassDef) -> ast.AsyncFunctionDef | as
     return None
 
 
+def _extract_jsonresponse_aliases(tree: ast.AST) -> set[str]:
+    """Walk module-level `ast.ImportFrom` for `JSONResponse` aliases.
+    Returns {"JSONResponse"} ∪ {any aliased forms `JSONResponse as JR`}.
+    Closes Gate B P2-#2 from task #123 (`from starlette.responses import
+    JSONResponse as JR` would otherwise bypass the name-match)."""
+    out: set[str] = {"JSONResponse"}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for alias in node.names:
+            if alias.name == "JSONResponse":
+                out.add(alias.asname or alias.name)
+    return out
+
+
 def _extract_jsonresponse_violations(
     dispatch: ast.AsyncFunctionDef | ast.FunctionDef,
     src_lines: list[str],
+    jsonresponse_names: set[str] | None = None,
 ) -> list[tuple[int, str]]:
     """Return (lineno, message) tuples for each JSONResponse(status_code>=400)
     whose content dict literal lacks a `"detail"` key.
 
     Only handles direct-literal content dicts. Variable-referenced content
     (e.g. `content=my_payload`) is skipped — those callsites must be reviewed
-    manually since the literal isn't inspectable at AST time."""
+    manually since the literal isn't inspectable at AST time. Filed as
+    task #128 followup if soft-warning becomes worthwhile.
+
+    `jsonresponse_names` is the per-file alias-set built by
+    `_extract_jsonresponse_aliases` — closes the Gate B P2 from task #123.
+    Defaults to canonical `{"JSONResponse"}` for backward-compat."""
+    if jsonresponse_names is None:
+        jsonresponse_names = {"JSONResponse"}
     out: list[tuple[int, str]] = []
     for node in ast.walk(dispatch):
         if not isinstance(node, ast.Return):
@@ -68,12 +93,13 @@ def _extract_jsonresponse_violations(
         if not isinstance(call, ast.Call):
             continue
         func = call.func
-        # Match JSONResponse(...) — Name or Attribute ending in JSONResponse.
+        # Match JSONResponse(...) — Name or Attribute ending in
+        # JSONResponse OR any of its aliases (task #128).
         if isinstance(func, ast.Name):
-            if func.id != "JSONResponse":
+            if func.id not in jsonresponse_names:
                 continue
         elif isinstance(func, ast.Attribute):
-            if func.attr != "JSONResponse":
+            if func.attr not in jsonresponse_names:
                 continue
         else:
             continue
@@ -126,6 +152,7 @@ def _scan_file(path: pathlib.Path) -> list[tuple[pathlib.Path, str, int, str]]:
     except SyntaxError:
         return []
     src_lines = src.splitlines()
+    jsonresponse_names = _extract_jsonresponse_aliases(tree)
     out: list[tuple[pathlib.Path, str, int, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
@@ -135,7 +162,7 @@ def _scan_file(path: pathlib.Path) -> list[tuple[pathlib.Path, str, int, str]]:
         dispatch = _find_dispatch_method(node)
         if dispatch is None:
             continue
-        for lineno, msg in _extract_jsonresponse_violations(dispatch, src_lines):
+        for lineno, msg in _extract_jsonresponse_violations(dispatch, src_lines, jsonresponse_names):
             out.append((path, node.name, lineno, msg))
     return out
 
@@ -254,3 +281,36 @@ class AllowlistedMiddleware(BaseHTTPMiddleware):
     )
     hits = _scan_file(flagged)
     assert not hits, f"allowlist marker should exempt: {hits!r}"
+
+
+def test_synthetic_aliased_jsonresponse_caught(tmp_path):
+    """Task #128 regression: aliased `JSONResponse as <alias>` import
+    must still be matched by the gate. Zero current callsites; defense-
+    in-depth — closes the obvious 1-line bypass."""
+    bad = tmp_path / "synthetic_aliased_envelope.py"
+    bad.write_text(
+        '''
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse as JR
+
+class AliasedBadMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        return JR(
+            status_code=403,
+            content={"error": "nope", "status_code": 403},
+        )
+'''
+    )
+    hits = _scan_file(bad)
+    assert any(
+        h[1] == "AliasedBadMiddleware" and "missing `detail`" in h[3]
+        for h in hits
+    ), f"aliased JSONResponse bypass not caught: {hits!r}"
+
+
+def test_extract_jsonresponse_aliases_canonical_only_when_no_import():
+    """Backward-compat: when no `JSONResponse as` import exists, the
+    alias-set returns only the canonical name."""
+    tree = ast.parse("x = 1\n")
+    names = _extract_jsonresponse_aliases(tree)
+    assert names == {"JSONResponse"}, names
