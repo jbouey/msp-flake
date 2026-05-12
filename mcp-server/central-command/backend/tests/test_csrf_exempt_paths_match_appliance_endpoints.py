@@ -225,23 +225,50 @@ def _extract_router_prefixes(tree: ast.AST) -> dict[str, str]:
 # handler detection — Depends(require_appliance_bearer) + decorator
 # ----------------------------------------------------------------------
 
-def _has_appliance_bearer_dep(func: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
-    """Scan a function's parameter defaults for `Depends(require_appliance_bearer)`."""
+def _is_appliance_bearer_depends_call(node: ast.AST) -> bool:
+    """True if `node` is a `Depends(require_appliance_bearer[_full])` Call."""
+    if not isinstance(node, ast.Call):
+        return False
+    f = node.func
+    if not ((isinstance(f, ast.Name) and f.id == "Depends") or
+            (isinstance(f, ast.Attribute) and f.attr == "Depends")):
+        return False
+    for a in node.args:
+        if isinstance(a, ast.Name) and a.id in _APPLIANCE_BEARER_DEP_NAMES:
+            return True
+        if isinstance(a, ast.Attribute) and a.attr in _APPLIANCE_BEARER_DEP_NAMES:
+            return True
+    return False
+
+
+def _function_has_appliance_bearer_dep(func: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
+    """Scan a function's parameter defaults for `Depends(require_appliance_bearer[_full])`."""
     for default in list(func.args.defaults) + list(func.args.kw_defaults or []):
         if default is None:
             continue
-        if not isinstance(default, ast.Call):
+        if _is_appliance_bearer_depends_call(default):
+            return True
+    return False
+
+
+def _decorator_has_appliance_bearer_dep(deco: ast.Call) -> bool:
+    """Scan a decorator's `dependencies=[Depends(...), ...]` kwarg.
+
+    Closes Gate B v2 P1-A class — `@router.post(p, dependencies=[Depends(
+    require_appliance_bearer)])` is a live FastAPI pattern (install_reports.py
+    and install_telemetry.py use it with the install-token dep). A future
+    appliance-bearer migration to this shape would escape the v1 gate."""
+    for kw in deco.keywords:
+        if kw.arg != "dependencies":
             continue
-        f = default.func
-        if not ((isinstance(f, ast.Name) and f.id == "Depends") or
-                (isinstance(f, ast.Attribute) and f.attr == "Depends")):
+        if not isinstance(kw.value, ast.List):
             continue
-        for a in default.args:
-            if isinstance(a, ast.Name) and a.id in _APPLIANCE_BEARER_DEP_NAMES:
-                return True
-            if isinstance(a, ast.Attribute) and a.attr in _APPLIANCE_BEARER_DEP_NAMES:
+        for elt in kw.value.elts:
+            if _is_appliance_bearer_depends_call(elt):
                 return True
     return False
+
+
 
 
 def _extract_handlers(
@@ -259,6 +286,7 @@ def _extract_handlers(
     Closes the agent_api.py false-positive class (router exists but main.py
     never imports/includes it → handler unreachable → not a real silent-403)."""
     out: list[tuple[str, str, int, str]] = []
+    func_level_dep = _function_has_appliance_bearer_dep(func)
     for deco in func.decorator_list:
         if not isinstance(deco, ast.Call):
             continue
@@ -278,6 +306,11 @@ def _extract_handlers(
         if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
             continue
         deco_path = first.value
+        # Per-decorator dep check (Gate B v2 P1-A): the same function may
+        # bear function-level Depends OR carry it via this decorator's
+        # `dependencies=[Depends(...)]` kwarg.
+        if not (func_level_dep or _decorator_has_appliance_bearer_dep(deco)):
+            continue
         # Resolve full path + registration check:
         if owner_name == "app" and is_main:
             full = deco_path  # @app.post in main.py — absolute path
@@ -313,8 +346,8 @@ def _scan_file(path: pathlib.Path, registry: dict[tuple[str, str], str]):
     for node in ast.walk(tree):
         if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
             continue
-        if not _has_appliance_bearer_dep(node):
-            continue
+        # Per-decorator filter inside _extract_handlers picks up both
+        # function-level and decorator-level appliance-bearer deps.
         for method, full_path, lineno, deco_path in _extract_handlers(
             node, router_prefixes, module_basename, registry, is_main,
         ):
@@ -450,8 +483,6 @@ async def read_widget(widget_id: str, _=Depends(require_appliance_bearer)):
     handlers: list[tuple[str, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
-            if not _has_appliance_bearer_dep(node):
-                continue
             for method, full, _ln, _dp in _extract_handlers(
                 node, router_prefixes, "widgets_module", fake_registry, is_main=False,
             ):
@@ -484,12 +515,56 @@ async def upload_journal(_=Depends(require_appliance_bearer_full)):
     handlers: list[tuple[str, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
-            if not _has_appliance_bearer_dep(node):
-                continue
             for method, full, _ln, _dp in _extract_handlers(
                 node, router_prefixes, "journal_module", fake_registry, is_main=False,
             ):
                 handlers.append((method, full))
     assert ("post", "/api/journal/upload") in handlers, (
         f"`require_appliance_bearer_full` dep must be detected; got {handlers!r}"
+    )
+
+
+def test_synthetic_dependencies_kwarg_shape_detected():
+    """Gate B v2 P1-A regression (task #124): the `@router.post(p,
+    dependencies=[Depends(require_appliance_bearer)])` decorator-kwarg
+    shape is a live FastAPI pattern (install_reports.py + install_telemetry.py
+    use it with install-token deps). The gate MUST detect it for appliance-
+    bearer dep — otherwise a future appliance migration to this shape
+    silently escapes the CSRF parity check."""
+    src = '''
+from fastapi import APIRouter, Depends
+router = APIRouter(prefix="/api/widgets")
+
+@router.post("/{widget_id}/poke", dependencies=[Depends(require_appliance_bearer)])
+async def poke_widget(widget_id: str):
+    return {}
+
+@router.post("/{widget_id}/full-poke", dependencies=[Depends(require_appliance_bearer_full)])
+async def full_poke_widget(widget_id: str):
+    return {}
+
+@router.post("/{widget_id}/auth-only", dependencies=[Depends(require_auth)])
+async def auth_only_widget(widget_id: str):
+    return {}
+'''
+    tree = ast.parse(src)
+    router_prefixes = _extract_router_prefixes(tree)
+    fake_registry = {("widgets_module", "router"): ""}
+    handlers: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            for method, full, _ln, _dp in _extract_handlers(
+                node, router_prefixes, "widgets_module", fake_registry, is_main=False,
+            ):
+                handlers.append((method, full))
+    assert ("post", "/api/widgets/{widget_id}/poke") in handlers, (
+        f"decorator-kwarg shape with require_appliance_bearer must be detected; "
+        f"got {handlers!r}"
+    )
+    assert ("post", "/api/widgets/{widget_id}/full-poke") in handlers, (
+        f"decorator-kwarg shape with _full variant must be detected; "
+        f"got {handlers!r}"
+    )
+    assert ("post", "/api/widgets/{widget_id}/auth-only") not in handlers, (
+        f"non-bearer dep (require_auth) MUST NOT be flagged; got {handlers!r}"
     )
