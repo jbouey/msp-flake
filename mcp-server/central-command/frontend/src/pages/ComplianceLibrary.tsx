@@ -339,6 +339,26 @@ const ComplianceLibrary: React.FC = () => {
         </button>
       </div>
 
+      {/* Task #127 (2026-05-12): surface mutation errors. Pre-fix the
+          syncAllMutation + syncOneMutation only consumed isPending; on
+          403/500 the button spinner stopped but no error was shown.
+          After task #120 PR-B lands require_admin on these endpoints,
+          a non-admin click WILL 403 — this banner makes that visible. */}
+      {(syncAllMutation.isError || syncOneMutation.isError) && (
+        <div
+          role="alert"
+          className="mb-4 px-4 py-3 rounded-ios-md bg-health-critical/10 border border-health-critical/30 text-health-critical text-sm"
+        >
+          {syncAllMutation.isError
+            ? (syncAllMutation.error instanceof Error
+                ? syncAllMutation.error.message
+                : 'Framework sync failed. Refresh and try again.')
+            : (syncOneMutation.error instanceof Error
+                ? syncOneMutation.error.message
+                : 'Framework sync failed. Refresh and try again.')}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex justify-center py-12"><Spinner size="lg" /></div>
       ) : view === 'frameworks' ? (
