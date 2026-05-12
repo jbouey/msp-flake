@@ -86,10 +86,40 @@ PR-3a code shipped to git (`3f0e5104`) but daemon binary needs to be built + rol
 - L1 invariant immediately detected 49 historical orphans on chaos-lab (DISTINCT ON correctly deduped to 3 surfaced groups) — caller IP 172.25.0.7 (WireGuard appliance) traced via `docker logs mcp-server | grep "Incident resolved by type"` confirming `main.py:4899-4900` resolver
 - Backend Layer 2 gate live as of 2026-05-11 ~15:45Z — going-forward downgrade L1→monitoring for net_unexpected_ports + net_host_reachability
 
+## Late-session additions (post-9-commit batch)
+
+After the initial 9-commit wrap, 6 more commits shipped through the same TWO-GATE discipline:
+
+| # | Commit | Track | What |
+|---|---|---|---|
+| 10 | `62cf44f6` | Substrate | escalate-rule check_type drift CI gate (task #114) |
+| 11 | `7e741507` | Privileged-chain | function-body shape SHA256 pin (task #111) |
+| 12 | `36f57a2f` | Daemon | mesh.go IPv6 format fix (task #118) |
+| 13 | `cf28f796` | Defense-in-depth | hash-bump commit-msg-token detector (task #119, also added `fetch-depth: 0` to CI) |
+| 14 | `e880520b` | Auth | `_enforce_site_id` canonical-site-id resolution (task #112) |
+| 15 | `5af5ea6f` | CI fix | docstring co-mention triggered F1 misuse gate; rewrote without triggering it |
+
+**Total: 15 commits.** Most ran Gate A → implement → Gate B. Real architectural regressions caught at gates this session: 17+.
+
+## Comprehensive zero-auth audit + reframing (task #113)
+
+Late-session: dispatched comprehensive audit fork to scan all 349 backend state-changing endpoints. Catalog at `audit/zero-auth-comprehensive-audit-2026-05-11.md`. 7 Category-C zero-auth findings.
+
+**Runtime verification revealed a critical reframing** (`audit/csrf-blocks-zero-auth-endpoints-finding-2026-05-11.md`):
+
+CSRF middleware blocks all POSTs to `/api/discovery/*` + `/api/sensors/*` (not in EXEMPT_PATHS). FastAPI Depends NEVER fires. Real-appliance traffic in 12h: **0**. The "zero-auth" endpoints are effectively dead routes — attackers can't exploit because CSRF blocks first; real appliance callers also can't reach them (same silent-block class as Session 210-B journal_upload bug).
+
+Round-3 task #113 reframed:
+- 7 endpoints need DISPOSITION TRIAGE (delete vs harden+EXEMPT) — not a hardening sprint
+- Separate bug found: Starlette TaskGroup converts CSRF `raise HTTPException(403)` → 500 in production responses
+- Carry as `task #113 v2` for next session with proper Gate A on the new scope
+
 ## What I learned
 
 - "I'll just rewrite the function body" → silent regression class. Always additive when extending mig functions.
 - "Sibling pattern means I can skip Gate A" → no. Static pin gates STILL need fork-eyes (caught 3 P1s on jsonb).
 - "Gate B doesn't need the full sweep, just the diff" → no. Caught 3 real CI fails this session (substrate doc miss, 4-list miss, ratchet regression).
+- "My curated sweep covers the full source-level gates" → no. Late-session `5af5ea6f` CI failure was on `test_canonical_not_used_for_compliance_bundles` — a gate that IS in pre-push SOURCE_LEVEL_TESTS but wasn't in my hand-curated 15-test pre-commit subset. Always run the full SOURCE_LEVEL_TESTS array OR `bash .githooks/full-test-sweep.sh`, never a curated subset.
 - "Speculate the bug then propose a fix" → BLOCK. Source-trace first; the v1 L1-orphan theory was wrong and would have shipped a no-op fix.
 - "9 escalate rules theorized to bleed" → actually 3 in 90d. Always ground blast radius with prod SQL before backfill design.
+- "Zero-auth at FastAPI layer = exploitable" → not always. CSRF middleware is a layer above Depends. The comprehensive audit found "7 zero-auth endpoints"; runtime probes showed all 7 are CSRF-blocked. Distinguish "vulnerable" from "defense-in-depth-protected by an upstream layer".
