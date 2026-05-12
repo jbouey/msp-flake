@@ -4496,7 +4496,7 @@ async def download_auditor_kit(
     _advisories_cache = _collect_security_advisories()
 
     chain_metadata = {
-        "kit_version": "2.1",
+        "kit_version": "2.2",
         "generated_at": generated_at,
         "site": {
             "site_id": site_row.site_id,
@@ -4674,7 +4674,7 @@ async def download_auditor_kit(
     """), {"sid": site_id})).fetchall()
 
     identity_chain_payload = {
-        "kit_version": "2.1",
+        "kit_version": "2.2",
         "site_id": site_row.site_id,
         "generated_at": generated_at,
         "events": [
@@ -4721,7 +4721,7 @@ async def download_auditor_kit(
     """), {"sid": site_id})).fetchall()
 
     iso_ca_payload = {
-        "kit_version": "2.1",
+        "kit_version": "2.2",
         "generated_at": generated_at,
         "cas": [
             {
@@ -4793,7 +4793,7 @@ async def download_auditor_kit(
     verify_identity_sh_text = _render_template("auditor_kit/verify_identity_sh")
     pubkeys_payload = {
         "site_id": site_row.site_id,
-        "kit_version": "2.1",
+        "kit_version": "2.2",
         "public_keys": pubkeys,
         "verification_note": (
             "Pin these public keys offline before verification. The "
@@ -4802,6 +4802,45 @@ async def download_auditor_kit(
             "record it in your audit working papers."
         ),
     }
+
+    # Session 220 RT-P1 / kit_version 2.2 — per-site dump of historically
+    # missed L2 escalations from the pre-2026-05-12 recurrence-detector
+    # partitioning bug. Round-table 2026-05-12 chose Option B (parallel
+    # disclosure) over Option A (synthetic backfill into l2_decisions,
+    # rejected per Session 218 forgery precedent). The dump satisfies the
+    # auditor's deterministic-chain promise WITHOUT mutating l2_decisions.
+    # Empty list when no rows exist for this site (clean state).
+    try:
+        missed_rows = (await db.execute(text("""
+            SELECT incident_type, missed_count,
+                   first_observed_at, last_observed_at,
+                   detection_method, disclosed_in_kit_version
+              FROM l2_escalations_missed
+             WHERE site_id = :sid
+             ORDER BY incident_type, first_observed_at
+        """), {"sid": site_id})).fetchall()
+    except Exception:
+        # Table not yet present (mig 308 not applied) — write empty
+        # section so the kit still generates deterministically.
+        missed_rows = []
+    missed_l2_payload = {
+        "site_id": site_row.site_id,
+        "kit_version": "2.2",
+        "schema_version": 1,
+        "advisory_ref": "disclosures/SECURITY_ADVISORY_2026-05-12_RECURRENCE_DETECTOR_PARTITIONING.md",
+        "entries": [
+            {
+                "incident_type": r.incident_type,
+                "missed_count": r.missed_count,
+                "first_observed_at": r.first_observed_at.isoformat() if r.first_observed_at else None,
+                "last_observed_at": r.last_observed_at.isoformat() if r.last_observed_at else None,
+                "detection_method": r.detection_method,
+                "disclosed_in_kit_version": r.disclosed_in_kit_version,
+            }
+            for r in missed_rows
+        ],
+    }
+
     fixed_entries = [
         ("README.md", readme_text),
         ("verify.sh", verify_sh_text),
@@ -4811,6 +4850,7 @@ async def download_auditor_kit(
         ("pubkeys.json", _json.dumps(pubkeys_payload, indent=2, sort_keys=True)),
         ("identity_chain.json", _json.dumps(identity_chain_payload, indent=2, sort_keys=True)),
         ("iso_ca_bundle.json", _json.dumps(iso_ca_payload, indent=2, sort_keys=True)),
+        ("disclosures/missed_l2_escalations.json", _json.dumps(missed_l2_payload, indent=2, sort_keys=True)),
     ]
     with zipfile.ZipFile(
         buf, "w", zipfile.ZIP_DEFLATED, compresslevel=_KIT_COMPRESSLEVEL,
@@ -4932,7 +4972,7 @@ async def download_auditor_kit(
         media_type="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-Kit-Version": "2.1",
+            "X-Kit-Version": "2.2",
             "X-Bundle-Count": str(len(bundle_rows)),
             "X-Pubkey-Count": str(len(pubkeys)),
             "X-OTS-File-Count": str(len(ots_files)),

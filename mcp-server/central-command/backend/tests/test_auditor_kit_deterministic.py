@@ -179,8 +179,9 @@ def test_advisories_collected_once_not_twice():
 
 def test_kit_version_consistent_across_surfaces():
     """Steve P3 + Carol P3: kit_version was 1.0 / 2.0 / 2.1 across
-    different surfaces. Pin to 2.1 (chain_metadata.kit_version is
-    canonical per round-table 2026-05-06)."""
+    different surfaces. Pin to 2.2 (Session 220 RT-P1 bump for the new
+    disclosures/missed_l2_escalations.json + advisory; chain_metadata.kit_version
+    is canonical per round-table 2026-05-06)."""
     src = _load_endpoint_source()
     idx = src.find("async def download_auditor_kit(")
     body = src[idx : idx + 80000]
@@ -188,15 +189,15 @@ def test_kit_version_consistent_across_surfaces():
     hdr_idx = body.find('"X-Kit-Version":')
     assert hdr_idx > 0
     hdr_snippet = body[hdr_idx : hdr_idx + 80]
-    assert '"2.1"' in hdr_snippet, (
-        "X-Kit-Version header must be 2.1 to match "
+    assert '"2.2"' in hdr_snippet, (
+        "X-Kit-Version header must be 2.2 to match "
         "chain_metadata.kit_version."
     )
     # pubkeys_payload kit_version
-    pk_idx = body.find('"kit_version": "2.1"')
+    pk_idx = body.find('"kit_version": "2.2"')
     assert pk_idx > 0, (
-        "pubkeys_payload must declare kit_version 2.1 (was 2.0 — "
-        "drifted across surfaces, fixed round-table 2026-05-06)."
+        "pubkeys_payload must declare kit_version 2.2 (Session 220 RT-P1 "
+        "bump for disclosures/missed_l2_escalations.json + advisory)."
     )
 
 

@@ -591,6 +591,7 @@ async def _check_substrate_sla_breach(conn: asyncpg.Connection) -> List[Violatio
     # list requires explicit round-table sign-off.
     LONG_OPEN_BY_DESIGN = (
         "pre_mig175_privileged_unattested",
+        "l2_recurrence_partitioning_disclosed",  # sev3 disclosure surface (Session 220 RT-P1)
         "substrate_sla_breach",  # never alert on self
     )
 
@@ -2256,6 +2257,24 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="The deployed code's tests/fixtures/schema/prod_columns.json differs from prod's information_schema. Catches the 'forgot to update fixture' deploy class — bit Session 214 audit cycle TWICE (mig 271 forward-merge required manual fixture edits). Sev3 because the test_sql_columns_match_schema CI gate already prevents new deploys with drift; this invariant catches the case where prod has drifted from the fixture in the CURRENTLY DEPLOYED code (rare, but happens via manual SQL or partial migration). Round-table 2026-05-02 Diana adversarial recommendation. Followup #49.",
         check=lambda c: _check_schema_fixture_drift(c),
     ),
+    Assertion(
+        name="chronic_without_l2_escalation",
+        severity="sev2",
+        description="An (site_id, incident_type) pair flagged is_chronic=TRUE in incident_recurrence_velocity has neither a matching l2_decisions.escalation_reason IN ('recurrence','recurrence_backfill') row in the last 24h nor an l2_escalations_missed disclosure row. Closes the Session 220 RT-P1 routing class — pre-fix the agent_api.py recurrence detector partitioned counts by appliance_id, so multi-daemon sites silently never tripped >=3-in-4h (320 missed L2 escalations / 7d at north-valley-branch-2). Forward fix: detector reads velocity table by (site_id, incident_type). This invariant catches regressions of the routing OR cases where the velocity loop stalled (cross-reference recurrence_velocity_stale).",
+        check=lambda c: _check_chronic_without_l2_escalation(c),
+    ),
+    Assertion(
+        name="l2_recurrence_partitioning_disclosed",
+        severity="sev3",
+        description="INFORMATIONAL — l2_escalations_missed carries rows disclosing historically-missed L2 escalations from the pre-2026-05-12 recurrence-detector partitioning bug. Round-table 2026-05-12 RT-P1 chose Option B (parallel disclosure table) over Option A (synthetic backfill into l2_decisions, rejected by Maya per Session 218 forgery precedent). This invariant keeps the disclosure surface visible on the substrate dashboard; auditor kit v2.2+ ships disclosures/missed_l2_escalations.json + SECURITY_ADVISORY_2026-05-12. Mirror of pre_mig175_privileged_unattested. Carved out of substrate_sla_breach.",
+        check=lambda c: _check_l2_recurrence_partitioning_disclosed(c),
+    ),
+    Assertion(
+        name="recurrence_velocity_stale",
+        severity="sev3",
+        description="One or more is_chronic=TRUE rows in incident_recurrence_velocity have computed_at older than 10 minutes — the freshness window the agent_api.py recurrence detector uses. Sev3 SPOF guard (Steve P0-B Gate A finding): bg_loop_silent (sev2) covers complete death of recurrence_velocity_loop; this catches the partial-degradation case where the loop runs slowly or specific chronic rows haven't been recomputed recently. Forward operation continues — new incidents still attempt the velocity read and log the stale signal — but chronic escalation may be delayed until the loop catches up.",
+        check=lambda c: _check_recurrence_velocity_stale(c),
+    ),
 ]
 
 
@@ -2983,6 +3002,54 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "INTERVAL '1 hour' AND metadata ? 'order_id'`. If volume is "
             "high, run `SELECT * FROM sweep_stuck_orders()` manually "
             "to clear the backlog. RT-DM Issue #3 (2026-05-06)."
+        ),
+    },
+    "chronic_without_l2_escalation": {
+        "display_name": "Chronic pattern without L2 root-cause analysis",
+        "recommended_action": (
+            "An (site, incident-type) pair is flagged chronic in the "
+            "recurrence velocity table but has no matching L2 root-cause "
+            "row in the last 24h and no disclosure entry in "
+            "l2_escalations_missed. Order of investigation: (a) check "
+            "recurrence_velocity_stale — if also firing, the velocity "
+            "loop is behind; let it catch up. (b) check bg_loop_silent "
+            "for recurrence_velocity_loop. (c) confirm the agent_api.py "
+            "recurrence detector is still reading from "
+            "incident_recurrence_velocity by (site_id, incident_type) — "
+            "if the SELECT regressed to per-appliance, the multi-daemon "
+            "partitioning bug is back. (d) if the row predates the "
+            "2026-05-12 detector switch, INSERT a one-shot row into "
+            "l2_escalations_missed disclosing it."
+        ),
+    },
+    "l2_recurrence_partitioning_disclosed": {
+        "display_name": "Historical recurrence misses disclosed",
+        "recommended_action": (
+            "INFORMATIONAL — l2_escalations_missed carries rows from the "
+            "pre-2026-05-12 recurrence-detector partitioning bug. The "
+            "forward fix shipped on 2026-05-12 (Session 220 RT-P1); the "
+            "missed escalations are disclosed in auditor-kit v2.2+ "
+            "(disclosures/missed_l2_escalations.json + "
+            "SECURITY_ADVISORY_2026-05-12_RECURRENCE_DETECTOR_PARTITIONING.md). "
+            "Mirror of pre_mig175_privileged_unattested. No auto-heal "
+            "exists; backfill into l2_decisions would fabricate evidence "
+            "of LLM calls that never ran (Session 218 forgery precedent). "
+            "Resolves only when the disclosure surface is closed by a "
+            "future round-table grandfathering decision."
+        ),
+    },
+    "recurrence_velocity_stale": {
+        "display_name": "Recurrence velocity data is stale",
+        "recommended_action": (
+            "One or more chronic-pattern rows in "
+            "incident_recurrence_velocity have computed_at older than "
+            "10 minutes — the freshness window the recurrence detector "
+            "uses. Check bg_loop_silent for recurrence_velocity_loop "
+            "first. If healthy, the row simply hasn't been touched by a "
+            "recent recompute pass (no new incidents in the rolling "
+            "windows) — non-actionable, will resolve. If bg_loop_silent "
+            "is also firing, restart the background_tasks loop. Sev3 "
+            "SPoF guard (Steve P0-B, Gate A 2026-05-12)."
         ),
     },
 }
@@ -5480,6 +5547,227 @@ async def _check_appliance_disk_pressure(conn: asyncpg.Connection) -> List[Viola
             )
         )
     return violations
+
+
+async def _check_chronic_without_l2_escalation(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev2 — Chronic (site_id, incident_type) pattern with no L2 audit row.
+
+    Closes the Session 220 RT-P1 class. `incident_recurrence_velocity`
+    flags `is_chronic=TRUE` for an `(site_id, incident_type)` pair but
+    no matching `l2_decisions` row carries `escalation_reason IN
+    ('recurrence', 'recurrence_backfill')` in the last 24h — meaning
+    the dashboard says "chronic" but the flywheel never recorded a
+    root-cause analysis.
+
+    Pre-fix root cause: agent_api.py recurrence detector partitioned
+    by `(appliance_id, incident_type)`. Multi-daemon sites (3 daemons
+    at north-valley-branch-2) split the count across appliances and
+    never tripped `>=3 in 4h`. 320 missed L2 escalations / 7d (verified
+    2026-05-12). Detector switched to read from this same velocity
+    table by (site_id, incident_type) — closes the routing gap.
+
+    A row in `l2_escalations_missed` for the same (site, type) ALSO
+    resolves the invariant: Maya P0-C disclosure path acknowledges
+    the gap explicitly in the auditor kit. Per round-table 2026-05-12
+    Option B, that parallel table is the §164.528 record, NOT a
+    `recurrence_backfill` write into `l2_decisions` (which would
+    fabricate evidence of LLM calls that never ran).
+
+    Carol P0-D index `idx_l2_decisions_site_reason_created` (mig 308)
+    is required for this NOT EXISTS to scale at 60s cadence on 232K+
+    `l2_decisions` rows. `l2_decisions` has no `incident_type` column —
+    join through `incidents` to filter by type.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT v.site_id, v.incident_type, v.resolved_4h, v.resolved_7d,
+               v.computed_at
+          FROM incident_recurrence_velocity v
+         WHERE v.is_chronic = TRUE
+           AND v.computed_at > NOW() - INTERVAL '24 hours'
+           AND NOT EXISTS (
+                 SELECT 1
+                   FROM l2_decisions ld
+                   JOIN incidents i ON i.id = ld.incident_id
+                  WHERE ld.site_id = v.site_id
+                    AND i.incident_type = v.incident_type
+                    AND ld.escalation_reason IN ('recurrence', 'recurrence_backfill')
+                    AND ld.created_at > NOW() - INTERVAL '24 hours'
+             )
+           AND NOT EXISTS (
+                 SELECT 1
+                   FROM l2_escalations_missed lem
+                  WHERE lem.site_id = v.site_id
+                    AND lem.incident_type = v.incident_type
+             )
+         ORDER BY v.computed_at DESC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "incident_type": r["incident_type"],
+                "resolved_4h": r["resolved_4h"],
+                "resolved_7d": r["resolved_7d"],
+                "velocity_computed_at": r["computed_at"].isoformat(),
+                "interpretation": (
+                    f"Chronic recurrence pattern flagged for "
+                    f"({r['site_id']}, {r['incident_type']}) but no "
+                    f"L2 root-cause analysis recorded in the last 24h "
+                    f"and no entry in l2_escalations_missed disclosure "
+                    f"table. Either the detector switch (Session 220 "
+                    f"RT-P1) regressed, the velocity loop is stale "
+                    f"(see recurrence_velocity_stale invariant), or "
+                    f"the disclosure backfill missed this row."
+                ),
+                "remediation": (
+                    "Check recurrence_velocity_stale first. If clean, "
+                    "investigate agent_api.py recurrence detector — "
+                    "the SELECT against incident_recurrence_velocity "
+                    "at the reopen-branch and new-incident branch "
+                    "should be reading this row's site_id+incident_type. "
+                    "If the row predates 2026-05-12 (the detector "
+                    "switch deploy), ship a one-shot INSERT into "
+                    "l2_escalations_missed for it."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_l2_recurrence_partitioning_disclosed(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev3 — INFORMATIONAL — recurrence-detector partitioning bug disclosure surface.
+
+    The Session 220 RT-P1 round-table chose Option B (parallel
+    l2_escalations_missed table + advisory disclosure) over Option A
+    (synthetic backfill into l2_decisions). Per Maya P0-C, fabricating
+    `recurrence_backfill` rows in l2_decisions would inject evidence
+    of L2 LLM calls that never ran — the same forgery class Session 218
+    rejected for pre-mig-175 privileged orders.
+
+    Resolution path: this invariant is INFORMATIONAL. It never
+    auto-resolves while `l2_escalations_missed` carries rows.
+    Mirror of pre_mig175_privileged_unattested.
+
+    Sev3 because: (1) forward fix is in place — `agent_api.py`
+    recurrence detector now partitions correctly; (2) the missed
+    escalations are disclosed in the auditor kit
+    (`disclosures/missed_l2_escalations.json` + advisory MD); (3)
+    no auto-heal is possible without forgery. The invariant exists
+    for OPERATOR VISIBILITY, not for action.
+
+    Resolves when: the rows are deleted (NEVER — l2_escalations_missed
+    is INSERT-only by trigger) OR a future migration explicitly
+    grandfathers them in (requires round-table approval).
+    """
+    rows = await conn.fetch(
+        """
+        SELECT site_id, incident_type, missed_count,
+               first_observed_at, last_observed_at,
+               disclosed_in_kit_version
+          FROM l2_escalations_missed
+         ORDER BY first_observed_at ASC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "incident_type": r["incident_type"],
+                "missed_count": r["missed_count"],
+                "first_observed_at": r["first_observed_at"].isoformat(),
+                "last_observed_at": r["last_observed_at"].isoformat(),
+                "disclosed_in_kit_version": r["disclosed_in_kit_version"],
+                "advisory_ref": (
+                    "disclosures/"
+                    "SECURITY_ADVISORY_2026-05-12_RECURRENCE_DETECTOR_PARTITIONING.md"
+                ),
+                "interpretation": (
+                    f"Recurrence-detector partitioning bug caused "
+                    f"{r['missed_count']} L2 escalation(s) to be "
+                    f"skipped for ({r['site_id']}, "
+                    f"{r['incident_type']}) between "
+                    f"{r['first_observed_at'].isoformat()} and "
+                    f"{r['last_observed_at'].isoformat()}. The fix "
+                    f"shipped 2026-05-12 (Session 220 RT-P1). Past "
+                    f"misses are disclosed in auditor-kit "
+                    f"v{r['disclosed_in_kit_version']}+. INFORMATIONAL: "
+                    f"new misses are blocked by the detector switch."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_recurrence_velocity_stale(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev3 — Chronic patterns whose velocity row is older than 10 minutes.
+
+    Steve P0-B SPOF guard. `recurrence_velocity_loop` (background_tasks.py)
+    recomputes `incident_recurrence_velocity` every 300s. The detector
+    in agent_api.py reads from this table with a 10-min freshness guard
+    — if the loop stalls, `is_chronic=TRUE` rows go stale and the
+    detector misses the escalation.
+
+    Fires sev3 when ≥1 row has `is_chronic=TRUE` AND `computed_at <
+    NOW() - INTERVAL '10 minutes'`. Sev3 because:
+      * `bg_loop_silent` (sev2) covers complete loop death.
+      * This is the partial-degradation case: loop still runs but
+        slowly, or the row hasn't been re-touched recently because
+        the underlying incident dynamics have shifted.
+      * Forward operation is unaffected — new incidents on chronic
+        patterns will still attempt the recurrence query; they just
+        log `recurrence_velocity_stale` and may miss the >=3 threshold
+        until the loop catches up.
+
+    Resolves when the loop catches up and every chronic row's
+    computed_at advances inside the 10-min window.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT site_id, incident_type, computed_at, resolved_4h,
+               EXTRACT(EPOCH FROM (NOW() - computed_at)) / 60 AS age_minutes
+          FROM incident_recurrence_velocity
+         WHERE is_chronic = TRUE
+           AND computed_at < NOW() - INTERVAL '10 minutes'
+         ORDER BY computed_at ASC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "incident_type": r["incident_type"],
+                "computed_at": r["computed_at"].isoformat(),
+                "age_minutes": round(float(r["age_minutes"]), 1),
+                "resolved_4h": r["resolved_4h"],
+                "interpretation": (
+                    f"Chronic-pattern row "
+                    f"({r['site_id']}, {r['incident_type']}) has "
+                    f"computed_at "
+                    f"{round(float(r['age_minutes']), 1)} minutes "
+                    f"behind the 10-min freshness window. The "
+                    f"agent_api.py recurrence detector is reading "
+                    f"stale velocity data on this pair — chronic "
+                    f"escalation may be delayed."
+                ),
+                "remediation": (
+                    "Check bg_loop_silent for recurrence_velocity_loop. "
+                    "If healthy, the row simply hasn't been touched by "
+                    "a recent recompute pass (no new incidents in the "
+                    "rolling windows) — non-actionable, will resolve. "
+                    "If bg_loop_silent is also firing, restart the "
+                    "background_tasks loop."
+                ),
+            },
+        )
+        for r in rows
+    ]
 
 
 # --- Engine ----------------------------------------------------------

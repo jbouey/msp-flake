@@ -309,6 +309,10 @@ SOURCE_LEVEL_TESTS=(
     # /api/sites/{site_id}/... 7-endpoint set. Cross-file AST resolution:
     # APIRouter(prefix=) + main.py app.include_router(prefix=) + decorator.
     "tests/test_csrf_exempt_paths_match_appliance_endpoints.py"
+    # 2026-05-12 Session 220 RT-P1. Bans appliance_id-partitioned
+    # recurrence-count SQL — closes the 320-missed-L2-escalations class
+    # where multi-daemon sites silently never tripped the >=3 threshold.
+    "tests/test_no_appliance_id_partitioned_recurrence_count.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."

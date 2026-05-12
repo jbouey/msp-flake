@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
-  "session": 218,
-  "updated": "2026-05-09T02:49:20Z",
+  "session": 220,
+  "updated": "2026-05-12T08:05:12.525669Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty. Refreshed 2026-05-04 post-Session-215: session/version/milestone fields had drifted (file said 214/0.4.6/v37 vs reality 215/0.4.13/v38).",
   "versions": {
     "agent": "0.4.13",
@@ -78,18 +78,6 @@
   "active_tasks": [],
   "scheduled_followups": [
     {
-      "due": "2026-05-05T17:11:00Z",
-      "what": "task #169 closed early on user override 2026-04-28 22:51Z; substrate watch through window-end. Re-fire of sigauth_enforce_mode_rejections OR sigauth_post_fix_window_canary auto-reopens task and triggers pivot to MVCC / deleted_at / autovacuum hypothesis (NEW round-table required BEFORE any fix). After 2026-05-05 if both invariants stayed silent, REMOVE sigauth_post_fix_window_canary from ALL_ASSERTIONS.",
-      "doc": "docs/security/sigauth-wrap-validation-2026-04-28.md (User-override early closure section)",
-      "owner": "session pickup engineer (any)",
-      "pre_window_verification_2026_05_04": {
-        "verdict": "SILENT",
-        "fork": "a01cce6c8b2df10c8",
-        "evidence": "0 firings + 0 open rows for both invariants since 2026-04-28 17:11Z; sigauth_observations valid=false count = 0 in window",
-        "disposition": "On track for REMOVE post-2026-05-05T17:11Z. Removal blueprint captured in TaskCreate #4 with verbatim file:line refs (assertions.py 1010-1015 + 1375-1386 + 2413-2459, plus substrate_runbooks/sigauth_post_fix_window_canary.md). Re-run 3 prod queries post-window before deletion to confirm final-day silence."
-      }
-    },
-    {
       "due": "2026-05-15T15:14:00Z",
       "task": "EXPECTED_INTERVAL_S calibration sweep \u2014 Session 214 follow-up",
       "why": "On 2026-05-01 bg_loop_silent (sev2) fired immediately on first deploy with loop=health_monitor, age_s=250. Investigation showed no real outage \u2014 the bug was a calibration drift: bg_heartbeat.EXPECTED_INTERVAL_S[\"health_monitor\"]=60 vs actual asyncio.sleep(300) in health_monitor.py:101. Fix landed e820ca85. The same drift class will bite again as new loops are added or sleep cadences change. This task spawns an audit fork to catch all such drifts + recommend an AST-grep CI gate.",
@@ -98,7 +86,7 @@
       "action_prompt": "Spawn a research fork: walk EXPECTED_INTERVAL_S in mcp-server/central-command/backend/bg_heartbeat.py + task_defs in mcp-server/main.py; for each entry, find the corresponding loop function and grep its inter-iteration asyncio.sleep(N); flag any drift > 50%. Also list loops in task_defs without EXPECTED_INTERVAL_S coverage. Recommend an AST-grep CI gate. Report under 600 words. Research-only \u2014 no code changes from the fork."
     },
     {
-      "due": "2026-05-11T13:43:00Z",
+      "due": "2026-05-18T13:43:00Z",
       "task": "Weekly scheduled_followups digest (re-schedule + run)",
       "why": "CronCreate scheduled cron e6242204 for Monday 8:43 AM local but the durable flag appears non-functional in this runtime build (response said Session-only despite durable=true). Without the cross-session pattern this entry, the digest stops the moment my session ends. Future-Claude on first invocation should: (1) run the digest fork itself, (2) re-schedule the cron with CronCreate(\"43 8 * * 1\", recurring=true, durable=true), (3) bump THIS scheduled_followups entry to next Monday to keep the self-healing chain alive.",
       "doc": "CLAUDE.md Session 214 entry on bg_heartbeat calibration (sibling pattern); CronCreate id e6242204 (in-session) \u2014 may have died",
@@ -115,8 +103,9 @@
       "action_prompt": "Spawn fork to: (1) read _recurrence_velocity_loop in main.py and trace its emission logic, (2) check if recurrence rows are written to recurrence_patterns or similar table, (3) inspect what triggers escalation_reason=recurrence on l2_decisions, (4) confirm whether persistence runbook rules are gated on recurrence vs immediate dispatch. Report under 800 words. Research only."
     },
     {
-      "due": "2026-05-08T00:00:00Z",
+      "due": "2026-05-29T00:00:00Z",
       "task": "P3 followup: extend incidents.resolution_tier VARCHAR(10) \u2192 VARCHAR(32) cleanly",
+      "deferred_2026_05_12": "Digest review deferred to calm session per Maya recommendation; needs MV REFRESH timing empirically measured first.",
       "why": "Round-table 2026-05-01 abandoned mig 266 ALTER COLUMN TYPE during prod outage because v_canonical_incidents (mig 258 view) AND partner_site_weekly_rollup (materialized view) both reference resolution_tier. Drop+recreate of the materialized view requires REFRESH which can take minutes on prod-sized data. Shipped mig 267 instead (shorten value: auto_recovered \u2192 recovered). Architectural cleanup remains: extending the column allows future tier names without 10-char constraint.",
       "doc": "migrations/266 (abandoned), 267 (shipped), CLAUDE.md round-table 2026-05-01",
       "owner": "engineering \u2014 calm session",
@@ -137,28 +126,6 @@
         "Diana: drop idx_efm_status_lookup from mig 269; EXPLAIN-driven decision post-deploy",
         "Steve: schedule backfill within 24h post-deploy + add data_completeness API field (separate followup)"
       ]
-    },
-    {
-      "due": "2026-05-15T00:00:00Z",
-      "task": "D5: extend ||-INTERVAL lint to scan SQL function bodies (pg_proc.prosrc)",
-      "why": "Python lint cannot see SQL function bodies. mig 268 closed the only known violation. Zero current violations but a future regression would slip through.",
-      "doc": "mig 268; tests/test_flywheel_eligibility_queries.py",
-      "owner": "engineering \u2014 calm session ~30 min",
-      "action_prompt": "Add pg_proc.prosrc scan or parse CREATE FUNCTION blocks in migrations; assert no banned pattern. Sibling to Python-side lint.",
-      "closed": "2026-05-01",
-      "closed_by": "commit a5bb68ad",
-      "closure_note": "Advanced from 2026-05-15 during BUG 3 closure same-session momentum. ~30 min bounded scope. 4 historical occurrences identified (mig 013/091/243 noqa-marked; mig 268 false-positive comment fixed by regex). Ratchet baseline=0 prevents new offenders."
-    },
-    {
-      "due": "2026-05-22T00:00:00Z",
-      "task": "D7: prod-fixture coverage for 4 new invariants",
-      "why": "Block 2 + Block 4 added substrate_assertions_meta_silent / bg_loop_silent / compliance_packets_stalled / partition_maintainer_dry. Session 210-B fixture pattern exists but these are uncovered.",
-      "doc": "tests/fixtures/substrate/; tests/test_substrate_prod_fixtures.py",
-      "owner": "engineering \u2014 calm session",
-      "action_prompt": "For each invariant, capture clean + violation fixtures, expand INVARIANTS_WITH_FIXTURES, verify auto-resolve.",
-      "closed": "2026-05-01",
-      "closed_by": "TBD commit",
-      "closure_note": "Advanced from 2026-05-22 during BUG 3 closure same-session momentum. 11 new tests across 3 files: 3 JSON fixtures for compliance_packets_stalled (parametrized pattern), 7 monkeypatch tests for substrate_assertions_meta_silent + bg_loop_silent (in-process bg_heartbeat state), 4 datetime-mocked tests for partition_maintainer_dry (next-month suffix dynamic). All 4 new invariants now have regression coverage."
     },
     {
       "due": "2026-05-29T00:00:00Z",

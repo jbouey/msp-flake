@@ -143,6 +143,7 @@ class TestChainMetadata:
         assert '"kit_version"' in src
         assert ('"kit_version": "1.0"' in src
                 or '"kit_version": "2.1"' in src
+                or '"kit_version": "2.2"' in src
                 or 'kit_version=' in src)
 
     def test_chain_metadata_has_disclosures(self):

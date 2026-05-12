@@ -816,21 +816,38 @@ async def report_incident(
                 {"id": existing_id}
             )
 
-            # CRITICAL: Check for recurrence pattern on reopen.
-            # Without this, the flywheel NEVER gets to analyze recurring
-            # issues because dedup reopens them instead of creating new
-            # incidents that would trigger the recurrence check.
+            # Recurrence detection via incident_recurrence_velocity (Session
+            # 220 RT-P1). The table is recomputed every 300s by
+            # recurrence_velocity_loop in background_tasks.py and aggregates
+            # by (site_id, incident_type) — closing the multi-daemon
+            # partitioning gap where per-appliance counts never tripped the
+            # >=3 threshold even though the dashboard's chronic flag was
+            # correct (320 missed L2 escalations / 7d / north-valley-branch-2).
             recurrence_check = await db.execute(
                 text("""
-                    SELECT COUNT(*) FROM incidents
-                    WHERE appliance_id = :appliance_id
+                    SELECT resolved_4h, computed_at,
+                           (computed_at < NOW() - INTERVAL '10 minutes') AS is_stale
+                    FROM incident_recurrence_velocity
+                    WHERE site_id = :site_id
                     AND incident_type = :incident_type
-                    AND status = 'resolved'
-                    AND resolved_at > NOW() - INTERVAL '4 hours'
                 """),
-                {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+                {"site_id": incident.site_id, "incident_type": incident.incident_type}
             )
-            reopen_recurrence_count = recurrence_check.scalar() or 0
+            velocity_row = recurrence_check.first()
+            if velocity_row is None:
+                reopen_recurrence_count = 0
+            else:
+                reopen_recurrence_count = velocity_row.resolved_4h or 0
+                if velocity_row.is_stale:
+                    # Substrate invariant recurrence_velocity_stale picks
+                    # this up — the detector is acting on data older than
+                    # the loop's 300s cadence (Steve P0-B SPOF guard).
+                    logger.warning(
+                        "recurrence_velocity_stale",
+                        site_id=incident.site_id,
+                        incident_type=incident.incident_type,
+                        computed_at=velocity_row.computed_at.isoformat() if velocity_row.computed_at else None,
+                    )
 
             if reopen_recurrence_count >= 3:
                 logger.info("Recurrence detected on reopen — escalating existing incident to L2",
@@ -839,10 +856,16 @@ async def report_incident(
                             recurrence_4h=reopen_recurrence_count,
                             incident_id=existing_id)
 
-                # Call L2 with recurrence context for the REOPENED incident
+                # Call L2 with recurrence context for the REOPENED incident.
+                # Session 219 ghost-L2 gate: track l2_decision_recorded so a
+                # silent record_l2_decision() failure surfaces structurally
+                # rather than being swallowed by the outer try/except.
+                l2_attempted = False
+                l2_decision_recorded = False
                 try:
                     from dashboard_api.l2_planner import analyze_incident as l2_analyze, record_l2_decision, is_l2_available
                     if is_l2_available():
+                        l2_attempted = True
                         l2_details = dict(incident.details or {})
                         l2_details["recurrence"] = {
                             "recurrence_count_4h": reopen_recurrence_count,
@@ -863,17 +886,45 @@ async def report_incident(
                             hipaa_controls=incident.hipaa_controls,
                             site_id=incident.site_id,
                         )
-                        await record_l2_decision(
-                            db, existing_id, decision,
-                            incident_type=incident.incident_type,
-                            escalation_reason="recurrence",
-                        )
-                        logger.info("L2 recurrence decision recorded on reopen",
-                                    incident_id=existing_id,
-                                    recommended_runbook=decision.runbook_id,
-                                    confidence=decision.confidence)
+                        try:
+                            await record_l2_decision(
+                                db, existing_id, decision,
+                                incident_type=incident.incident_type,
+                                escalation_reason="recurrence",
+                            )
+                            l2_decision_recorded = True
+                            logger.info("L2 recurrence decision recorded on reopen",
+                                        incident_id=existing_id,
+                                        recommended_runbook=decision.runbook_id,
+                                        confidence=decision.confidence)
+                        except Exception as record_err:
+                            logger.error(
+                                "Failed to record L2 recurrence decision on reopen",
+                                incident_id=existing_id,
+                                site_id=incident.site_id,
+                                incident_type=incident.incident_type,
+                                error=str(record_err),
+                                exc_info=True,
+                            )
                 except Exception as e:
-                    logger.error(f"L2 recurrence analysis on reopen failed: {e}")
+                    logger.error(
+                        "L2 recurrence analysis on reopen failed",
+                        incident_id=existing_id,
+                        site_id=incident.site_id,
+                        incident_type=incident.incident_type,
+                        error=str(e),
+                        exc_info=True,
+                    )
+
+                if l2_attempted and not l2_decision_recorded:
+                    # Substrate signal: L2 LLM ran but audit row missing.
+                    # Picked up by ghost_l2_recurrence_reopen invariant.
+                    logger.error(
+                        "ghost_l2_recurrence_reopen",
+                        incident_id=existing_id,
+                        site_id=incident.site_id,
+                        incident_type=incident.incident_type,
+                    )
 
             await db.commit()
             return {
@@ -1010,30 +1061,36 @@ async def report_incident(
     # Thresholds:
     #   3+ resolved in 4h  → bypass L1, send to L2 with recurrence context
     #   10+ resolved in 7d → L3 human review (L2 isn't solving it either)
+    #
+    # Read from incident_recurrence_velocity (Session 220 RT-P1) — partitioned
+    # by (site_id, incident_type) so multi-daemon sites are counted correctly.
+    # Per-appliance counting hid 320+ chronic patterns from L2 over 7d at
+    # north-valley-branch-2 before this switch.
     recurrence_context = None
-    recent_recurrence = await db.execute(
+    velocity_check = await db.execute(
         text("""
-            SELECT COUNT(*) FROM incidents
-            WHERE appliance_id = :appliance_id
+            SELECT resolved_4h, resolved_7d, computed_at,
+                   (computed_at < NOW() - INTERVAL '10 minutes') AS is_stale
+            FROM incident_recurrence_velocity
+            WHERE site_id = :site_id
             AND incident_type = :incident_type
-            AND status = 'resolved'
-            AND resolved_at > NOW() - INTERVAL '4 hours'
         """),
-        {"appliance_id": appliance_id, "incident_type": incident.incident_type}
+        {"site_id": incident.site_id, "incident_type": incident.incident_type}
     )
-    recent_recurrence_count = recent_recurrence.scalar() or 0
-
-    chronic_check = await db.execute(
-        text("""
-            SELECT COUNT(*) FROM incidents
-            WHERE appliance_id = :appliance_id
-            AND incident_type = :incident_type
-            AND status = 'resolved'
-            AND resolved_at > NOW() - INTERVAL '7 days'
-        """),
-        {"appliance_id": appliance_id, "incident_type": incident.incident_type}
-    )
-    chronic_count = chronic_check.scalar() or 0
+    velocity_row = velocity_check.first()
+    if velocity_row is None:
+        recent_recurrence_count = 0
+        chronic_count = 0
+    else:
+        recent_recurrence_count = velocity_row.resolved_4h or 0
+        chronic_count = velocity_row.resolved_7d or 0
+        if velocity_row.is_stale:
+            logger.warning(
+                "recurrence_velocity_stale",
+                site_id=incident.site_id,
+                incident_type=incident.incident_type,
+                computed_at=velocity_row.computed_at.isoformat() if velocity_row.computed_at else None,
+            )
 
     if recent_recurrence_count >= 3:
         # L1 keeps fixing this and it keeps coming back.

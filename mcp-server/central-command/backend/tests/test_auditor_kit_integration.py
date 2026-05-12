@@ -57,7 +57,7 @@ from auditor_kit_zip_primitives import (  # noqa: E402
 _FIXTURE_SITE_ID = "fixture-site-deterministic"
 _FIXTURE_GENERATED_AT = "2026-05-06T00:00:00+00:00"
 _FIXTURE_ZIP_MTIME = (2026, 5, 6, 0, 0, 0)
-_FIXTURE_KIT_VERSION = "2.1"
+_FIXTURE_KIT_VERSION = "2.2"
 
 
 def _build_kit_zip() -> bytes:
