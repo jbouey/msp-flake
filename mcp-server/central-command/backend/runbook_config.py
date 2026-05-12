@@ -109,9 +109,13 @@ async def get_db():
 @router.get("", response_model=List[RunbookInfo])
 async def list_all_runbooks(
     category: Optional[str] = Query(None, description="Filter by category"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth),
 ):
-    """List all available runbooks from the catalog with execution statistics."""
+    """List all available runbooks from the catalog with execution statistics.
+    Auth-required (Session 220 RT-Auth-2026-05-12 audit P2 — sibling mutations
+    are require_auth-gated; closes sibling-endpoint parity drift).
+    """
     # Build base query with execution stats from telemetry via mapping table
     base_query = """
         WITH telemetry_stats AS (
@@ -163,8 +167,11 @@ async def list_all_runbooks(
 
 
 @router.get("/categories")
-async def list_runbook_categories(db: AsyncSession = Depends(get_db)):
-    """List runbook categories with counts."""
+async def list_runbook_categories(
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth),
+):
+    """List runbook categories with counts. Auth-required (Session 220 P2)."""
     query = text("""
         SELECT category, COUNT(*) as count
         FROM runbooks
@@ -178,8 +185,12 @@ async def list_runbook_categories(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{runbook_id}", response_model=RunbookInfo)
-async def get_runbook_detail(runbook_id: str, db: AsyncSession = Depends(get_db)):
-    """Get details for a specific runbook."""
+async def get_runbook_detail(
+    runbook_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: Dict[str, Any] = Depends(require_auth),
+):
+    """Get details for a specific runbook. Auth-required (Session 220 P2)."""
     query = text("""
         SELECT runbook_id, name, description, category, check_type, severity,
                is_disruptive, requires_maintenance_window, hipaa_controls, version
@@ -485,6 +496,7 @@ async def update_appliance_runbook_config(
 @router.get("/appliances/{appliance_id}/effective", response_model=EnabledRunbooksResponse)
 async def get_effective_runbooks_for_appliance(
     appliance_id: str,
+    _user: Dict[str, Any] = Depends(require_auth),
     site_id: Optional[str] = Query(None, description="Site ID (if known)"),
     db: AsyncSession = Depends(get_db)
 ):

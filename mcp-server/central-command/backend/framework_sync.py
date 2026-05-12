@@ -39,8 +39,11 @@ YAML_PATH = Path(__file__).parent / ".." / ".." / ".." / "packages" / "complianc
 # =============================================================================
 
 @router.get("/status")
-async def get_sync_status():
-    """All frameworks with sync status and coverage stats."""
+async def get_sync_status(_admin: Dict[str, Any] = Depends(require_admin)):
+    """All frameworks with sync status and coverage stats. Admin-only
+    (Session 220 RT-Auth-2026-05-12 P2 — sibling /sync mutations already
+    require_admin-gated in 7f878c77; closes read-side parity).
+    """
     pool = await get_pool()
     rows = await pool.fetch("""
         SELECT framework, display_name, current_version, source_type, source_url,
@@ -74,8 +77,9 @@ async def get_framework_controls(
     search: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
+    _admin: Dict[str, Any] = Depends(require_admin),
 ):
-    """List controls for a framework with optional filters."""
+    """List controls for a framework with optional filters. Admin-only (Session 220 P2)."""
     pool = await get_pool()
 
     conditions = ["fc.framework = $1"]
@@ -124,8 +128,11 @@ async def get_framework_controls(
 
 
 @router.get("/crosswalks/{framework}")
-async def get_crosswalks(framework: str):
-    """Cross-mappings from one framework to others."""
+async def get_crosswalks(
+    framework: str,
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """Cross-mappings from one framework to others. Admin-only (Session 220 P2)."""
     pool = await get_pool()
     rows = await pool.fetch("""
         SELECT source_control_id, target_framework, target_control_id,
@@ -148,8 +155,8 @@ async def get_crosswalks(framework: str):
 
 
 @router.get("/coverage")
-async def get_coverage_analysis():
-    """Coverage analysis — which controls have checks, which don't."""
+async def get_coverage_analysis(_admin: Dict[str, Any] = Depends(require_admin)):
+    """Coverage analysis — which controls have checks, which don't. Admin-only (Session 220 P2)."""
     pool = await get_pool()
 
     # Framework summaries
@@ -244,8 +251,11 @@ async def trigger_sync_one(
 
 
 @router.get("/categories/{framework}")
-async def get_categories(framework: str):
-    """Get distinct categories for a framework."""
+async def get_categories(
+    framework: str,
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """Get distinct categories for a framework. Admin-only (Session 220 P2)."""
     pool = await get_pool()
     rows = await pool.fetch("""
         SELECT DISTINCT category, COUNT(*) as control_count

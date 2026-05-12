@@ -18,11 +18,11 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from fastapi import Request  # noqa: F401 — used by appliance-auth handlers below
+
 from .fleet import get_pool
 from .tenant_middleware import admin_connection, admin_transaction
-# Session 220 task #120 PR-A: _enforce_site_id + require_appliance_bearer
-# were only used by the deleted report_discovery_results handler. Removed
-# from the import to avoid dead-import lint noise.
+from .shared import require_appliance_bearer, _enforce_site_id
 
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
@@ -191,11 +191,20 @@ def detect_services(open_ports: List[int]) -> Dict[str, str]:
 
 
 @router.get("/pending/{site_id}")
-async def get_pending_scans(site_id: str):
-    """Get pending discovery scans for a site.
+async def get_pending_scans(
+    site_id: str,
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Get pending discovery scans for a site. Appliance-only.
 
     Called by appliance during sync to check for triggered scans.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12 zero-auth audit P2): no
+    auth dependency. Anonymous callers could probe whether scans are
+    pending for any caller-supplied site_id (tenant probe). The bearer
+    site_id MUST match the path site_id to prevent cross-site probing.
     """
+    await _enforce_site_id(auth_site_id, site_id, "discovery_pending")
     pool = await get_pool()
 
     async with admin_connection(pool) as conn:
@@ -223,11 +232,19 @@ async def get_pending_scans(site_id: str):
 
 
 @router.get("/assets/{site_id}/summary")
-async def get_asset_summary(site_id: str):
-    """Get asset summary for a site.
+async def get_asset_summary(
+    site_id: str,
+    auth_site_id: str = Depends(require_appliance_bearer),
+):
+    """Get asset summary for a site. Appliance-only.
 
     Returns counts by type and status for dashboard display.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12 zero-auth audit P2): no
+    auth dependency. Anonymous callers could enumerate per-site asset
+    inventory aggregates by caller-supplied site_id.
     """
+    await _enforce_site_id(auth_site_id, site_id, "discovery_assets_summary")
     pool = await get_pool()
 
     # wave-12: 4-DB-call read pinned to single PgBouncer backend (Session 212 routing-pathology rule).

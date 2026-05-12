@@ -106,46 +106,16 @@ ANON_KEYWORDS = (
     "/auth/providers", "/auth/email-login", "/auth/email-signup",
 )
 
-# RATCHET: known-anonymous privileged endpoints still on disk as of
-# the gate landing. Each entry justifies WHY it's still anonymous +
-# the priority from the 2026-05-12 audit. Delete an entry only after
+# RATCHET: known-anonymous privileged endpoints still on disk. Each
+# entry justifies WHY it's still anonymous. Delete an entry only after
 # (a) the endpoint has been auth-gated, (b) the corresponding
 # require_* dep has been added, and (c) the deploy has succeeded.
 # Adding a NEW entry requires a code-review-visible reason.
-RATCHET_ANONYMOUS = {
-    # Discovery endpoints — appliance daemon callers; need
-    # require_appliance_bearer + _enforce_site_id. P2 from audit.
-    ("discovery.py", "/api/discovery/pending/{site_id}", "get"):
-        "audit P2 — should be require_appliance_bearer (daemon caller)",
-    ("discovery.py", "/api/discovery/assets/{site_id}/summary", "get"):
-        "audit P2 — should be require_appliance_bearer (daemon caller)",
-
-    # runbook_config.py read endpoints not yet gated. The 4 P1 reads
-    # were closed in c6eebf35 — these are the catalog/effective reads
-    # (P2 in audit). Less sensitive: catalog data + per-appliance
-    # effective set. Should match the sibling PUT auth.
-    ("runbook_config.py", "/api/runbooks", "get"):
-        "audit P2 — runbook catalog read; sibling mutations require_auth-gated",
-    ("runbook_config.py", "/api/runbooks/categories", "get"):
-        "audit P2 — runbook categories read",
-    ("runbook_config.py", "/api/runbooks/{runbook_id}", "get"):
-        "audit P2 — runbook detail read",
-    ("runbook_config.py", "/api/runbooks/appliances/{appliance_id}/effective", "get"):
-        "audit P2 — per-appliance effective runbooks (deployment posture)",
-
-    # framework_sync.py read endpoints. The mutations were closed in
-    # 7f878c77; reads remain. P2 in audit.
-    ("framework_sync.py", "/api/framework-sync/status", "get"):
-        "audit P2 — sync status; mutations already require_admin-gated (7f878c77)",
-    ("framework_sync.py", "/api/framework-sync/controls/{framework}", "get"):
-        "audit P2 — controls list",
-    ("framework_sync.py", "/api/framework-sync/crosswalks/{framework}", "get"):
-        "audit P2 — crosswalks",
-    ("framework_sync.py", "/api/framework-sync/coverage", "get"):
-        "audit P2 — coverage analysis (internal data)",
-    ("framework_sync.py", "/api/framework-sync/categories/{framework}", "get"):
-        "audit P2 — categories",
-}
+#
+# 2026-05-12: 11 P2 audit entries all closed in the same session that
+# landed this gate (P2 batch commit). Ratchet now empty — any new
+# anonymous privileged endpoint trips the gate.
+RATCHET_ANONYMOUS: dict = {}
 
 _AUTH_RE = re.compile(r"Depends\(\s*([\w.]+)")
 
