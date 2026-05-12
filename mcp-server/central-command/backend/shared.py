@@ -461,64 +461,105 @@ async def _enforce_site_id(
     Session 202 introduced this on 13 agent_api.py callsites. Session 219
     (2026-05-11) lifted it to shared.py + upgraded to write an
     `admin_audit_log` row on every 403 — prior `logger.warning`-only
-    behavior lost the forensic trail. Audit-log write is best-effort:
-    if it fails (e.g. pool exhausted) we still raise the 403, but log
-    the persistence failure at ERROR.
+    behavior lost the forensic trail.
+
+    Session 220 task #112 (2026-05-11) added canonical-site-id resolution
+    on the slow path. A site renamed via `rename_site()` SQL function
+    (mig 257) lives in `site_canonical_mapping`; legacy daemon callers
+    sending the OLD identifier alongside a bearer authenticated for the
+    NEW canonical identifier would have permanent-403'd pre-fix. The
+    slow path now resolves BOTH sides through `canonical_site_id()`
+    (mig 256:108, STABLE, depth-16 recursive walk) and treats a
+    post-canonical match as legitimate. Auditor benefit: false-positive
+    `cross_site_spoof_attempt` rows for legitimate post-rename callers
+    are eliminated.
+
+    Audit-log write is best-effort: if it fails (e.g. pool exhausted)
+    we still raise the 403, but log the persistence failure at ERROR.
+    SAFE under CLAUDE.md "no canonical_site_id for compliance_bundles"
+    rule — this helper is operational auth, NOT chain-attached.
+
+    Dev/test envs without mig 256 applied → `fetchrow` raises
+    `UndefinedFunctionError` and the bare `except Exception` swallows
+    + logs ERROR + raises 403 — fail-safe, degrades to pre-fix
+    direct-compare behavior.
     """
     if not request_site_id or request_site_id == auth_site_id:
-        return
+        return  # fast path — direct match, no DB hit
 
-    logger.warning(
-        "site_id mismatch: appliance attempted cross-site action",
-        auth_site_id=auth_site_id,
-        request_site_id=request_site_id,
-        endpoint=endpoint,
-    )
-
-    # Best-effort admin_audit_log write so the forensic trail survives.
-    # Pool acquisition errors here MUST NOT mask the 403 — we still raise.
-    # Local imports avoid the circular shared.py → fleet.py → shared.py
-    # chain. Gate B P2 (2026-05-11): documented intentionally.
+    # Slow path: canonical-resolve before audit-logging. Local imports
+    # avoid the circular shared.py → fleet.py → shared.py chain.
+    canonical_match = False
     try:
         from dashboard_api.fleet import get_pool
         from dashboard_api.tenant_middleware import admin_transaction
         pool = await get_pool()
         # username uses the `appliance:<site_id>` shape for parity with
-        # the target field + SIEM grep-ability — Gate B P1-1 (2026-05-11).
-        # CLAUDE.md privileged-chain rule prefers named human emails for
-        # actor; for appliance-initiated spoof the actor IS the appliance.
+        # the target field + SIEM grep-ability — Session 219 lift.
         actor_username = f"appliance:{auth_site_id}"
         async with admin_transaction(pool) as conn:
-            await conn.execute(
+            # Canonical-resolve both sides in one round-trip. Note:
+            # STABLE function memoizes WITHIN a single evaluation but
+            # NOT across distinct argument values — two recursive walks
+            # against site_canonical_mapping happen here (one per arg).
+            # Acceptable: mapping table is tiny + index-scan + sub-ms.
+            row = await conn.fetchrow(
                 """
-                INSERT INTO admin_audit_log
-                    (username, action, target, details, created_at)
-                VALUES (
-                    $1::text,
-                    'cross_site_spoof_attempt',
-                    $2::text,
-                    jsonb_build_object(
-                        'auth_site_id', $3::text,
-                        'request_site_id', $4::text,
-                        'endpoint', $5::text
-                    ),
-                    NOW()
-                )
+                SELECT canonical_site_id($1::text) AS auth_canon,
+                       canonical_site_id($2::text) AS req_canon
                 """,
-                actor_username,
-                f"appliance:{auth_site_id}",
                 auth_site_id,
                 request_site_id,
-                endpoint,
             )
+            if row and row["auth_canon"] == row["req_canon"]:
+                # Post-canonical match → legitimate rename case. Caller
+                # is sending a now-stale identifier; bearer is bound to
+                # the canonical. NOT a spoof. Return WITHOUT raising
+                # or audit-logging.
+                canonical_match = True
+            else:
+                # True mismatch (after canonical resolution). Log
+                # warning + write audit row + fall through to 403.
+                logger.warning(
+                    "site_id mismatch: appliance attempted cross-site action",
+                    auth_site_id=auth_site_id,
+                    request_site_id=request_site_id,
+                    endpoint=endpoint,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO admin_audit_log
+                        (username, action, target, details, created_at)
+                    VALUES (
+                        $1::text,
+                        'cross_site_spoof_attempt',
+                        $2::text,
+                        jsonb_build_object(
+                            'auth_site_id', $3::text,
+                            'request_site_id', $4::text,
+                            'endpoint', $5::text
+                        ),
+                        NOW()
+                    )
+                    """,
+                    actor_username,
+                    f"appliance:{auth_site_id}",
+                    auth_site_id,
+                    request_site_id,
+                    endpoint,
+                )
     except Exception:
         logger.error(
-            "failed to write cross_site_spoof_attempt audit row",
+            "canonical resolution or audit-log write failed; "
+            "falling back to direct-compare 403",
             auth_site_id=auth_site_id,
             request_site_id=request_site_id,
             endpoint=endpoint,
             exc_info=True,
         )
+
+    if canonical_match:
+        return  # not a spoof
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

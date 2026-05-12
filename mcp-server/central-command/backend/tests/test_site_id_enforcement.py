@@ -101,6 +101,137 @@ class TestEnforceSiteId:
             self.enforce("north-valley", "north-valley ", "test")
 
 
+class TestCanonicalResolution:
+    """Session 220 task #112 (2026-05-11). _enforce_site_id slow path
+    canonical-resolves both sides via canonical_site_id() (mig 256).
+    Legacy daemon callers sending OLD (pre-rename) site_id alongside
+    a bearer authenticated for the NEW canonical site_id no longer
+    permanent-403 + emit false-positive audit rows.
+
+    Gate A v1 P1-1 (2026-05-11) — existing unit tests use a sync
+    fixture that re-implements direct-compare and don't exercise the
+    real async DB path. This class fills that gap with AsyncMock
+    against the actual production function.
+    """
+
+    @pytest.fixture(autouse=True)
+    def skip_if_missing_deps(self):
+        """The real _enforce_site_id imports asyncpg-dependent modules
+        at call time. If unavailable (e.g. minimal dev box), skip these
+        tests — the sync-fixture coverage in TestEnforceSiteId still
+        validates the logic shape."""
+        pytest.importorskip("dashboard_api.shared")
+
+    @pytest.mark.asyncio
+    async def test_canonical_match_after_rename_does_not_raise(self):
+        """Legacy caller sends OLD site_id; bearer's canonical is NEW.
+        canonical_site_id() resolves both sides to the same value →
+        legitimate rename case → no raise, no insert."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from dashboard_api.shared import _enforce_site_id
+
+        # Mock the DB path: fetchrow returns canonical-match row.
+        mock_conn = MagicMock()
+        mock_conn.fetchrow = AsyncMock(return_value={
+            "auth_canon": "site-canonical",
+            "req_canon": "site-canonical",
+        })
+        mock_conn.execute = AsyncMock()
+
+        class _TxCtx:
+            async def __aenter__(self):
+                return mock_conn
+
+            async def __aexit__(self, *a):
+                return False
+
+        with patch("dashboard_api.fleet.get_pool", AsyncMock(return_value="POOL")):
+            with patch(
+                "dashboard_api.tenant_middleware.admin_transaction",
+                lambda pool: _TxCtx(),
+            ):
+                # Should return without raising — caller is legitimate.
+                await _enforce_site_id(
+                    "site-canonical", "site-old-renamed-from", "test_endpoint"
+                )
+
+        # CRITICAL: audit-log INSERT must NOT fire on a legitimate
+        # rename case (Maya audit-cleanliness rule).
+        mock_conn.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_true_mismatch_after_canonical_raises_403_and_inserts(self):
+        """Two distinct sites with NO mapping → canonical-resolves to
+        themselves → still mismatch → 403 + audit row."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from dashboard_api.shared import _enforce_site_id
+        from fastapi import HTTPException
+
+        mock_conn = MagicMock()
+        mock_conn.fetchrow = AsyncMock(return_value={
+            "auth_canon": "site-a",
+            "req_canon": "site-b",
+        })
+        mock_conn.execute = AsyncMock()
+
+        class _TxCtx:
+            async def __aenter__(self):
+                return mock_conn
+
+            async def __aexit__(self, *a):
+                return False
+
+        with patch("dashboard_api.fleet.get_pool", AsyncMock(return_value="POOL")):
+            with patch(
+                "dashboard_api.tenant_middleware.admin_transaction",
+                lambda pool: _TxCtx(),
+            ):
+                with pytest.raises(HTTPException) as exc_info:
+                    await _enforce_site_id("site-a", "site-b", "test_endpoint")
+
+        assert exc_info.value.status_code == 403
+        mock_conn.execute.assert_called_once()
+        # Verify the audit row INSERT was on admin_audit_log with the
+        # cross_site_spoof_attempt action.
+        call_args = mock_conn.execute.call_args
+        assert "admin_audit_log" in call_args.args[0]
+        assert "cross_site_spoof_attempt" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_fetchrow_raises_still_403(self):
+        """Failure mode: if the DB query fails (e.g. mig 256 not
+        applied, pool exhausted), the bare except swallows + logs
+        ERROR + raises 403. Fail-closed semantics."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from dashboard_api.shared import _enforce_site_id
+        from fastapi import HTTPException
+
+        mock_conn = MagicMock()
+        # fetchrow raises (e.g. UndefinedFunctionError in envs without mig 256)
+        mock_conn.fetchrow = AsyncMock(side_effect=Exception("mig 256 missing"))
+        mock_conn.execute = AsyncMock()
+
+        class _TxCtx:
+            async def __aenter__(self):
+                return mock_conn
+
+            async def __aexit__(self, *a):
+                return False
+
+        with patch("dashboard_api.fleet.get_pool", AsyncMock(return_value="POOL")):
+            with patch(
+                "dashboard_api.tenant_middleware.admin_transaction",
+                lambda pool: _TxCtx(),
+            ):
+                with pytest.raises(HTTPException) as exc_info:
+                    await _enforce_site_id("site-a", "site-b", "test_endpoint")
+
+        # Fail-closed: still 403 even though DB path failed.
+        assert exc_info.value.status_code == 403
+        # No audit row written (couldn't reach the INSERT statement).
+        mock_conn.execute.assert_not_called()
+
+
 class TestEnforcementCoverage:
     """Verify enforcement is wired into all agent-facing endpoints via source inspection."""
 
