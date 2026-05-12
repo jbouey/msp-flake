@@ -104,7 +104,7 @@ export const SiteSearchBar: React.FC<Props> = ({ siteId, placeholder }) => {
     queryFn: async () => {
       const res = await fetch(
         `/api/sites/${siteId}/search?q=${encodeURIComponent(debouncedInput)}&limit=10`,
-        { credentials: 'same-origin' },
+        { credentials: 'include' },
       );
       if (!res.ok) {
         throw new Error(`Search failed: ${res.status}`);

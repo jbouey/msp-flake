@@ -18,7 +18,7 @@ async function fetchIntegrationsApi<T>(endpoint: string, options?: RequestInit):
   };
   const response = await fetch(url, {
     ...options,
-    credentials: 'same-origin',
+    credentials: 'include',
     headers: {
       ...headers,
       ...(options?.headers as Record<string, string>),

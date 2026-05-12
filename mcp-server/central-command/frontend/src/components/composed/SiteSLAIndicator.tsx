@@ -99,7 +99,7 @@ export const SiteSLAIndicator: React.FC<Props> = ({ siteId }) => {
     queryKey: ['site-sla', siteId],
     queryFn: async () => {
       const res = await fetch(`/api/sites/${siteId}/sla`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (!res.ok) {
         throw new Error(`SLA fetch failed: ${res.status}`);

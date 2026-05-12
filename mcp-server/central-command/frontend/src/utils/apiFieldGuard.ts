@@ -104,7 +104,7 @@ function emitFieldUndefined(payload: {
         'X-CSRF-Token': getCsrfTokenCookie(),
       },
       body,
-      credentials: 'same-origin',
+      credentials: 'include',
       keepalive: true,
     }).catch(() => undefined);
   } catch {

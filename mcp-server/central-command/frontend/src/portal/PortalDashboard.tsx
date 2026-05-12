@@ -429,7 +429,7 @@ const OrgOverviewSection: React.FC<{ siteId: string }> = ({ siteId }) => {
 
   React.useEffect(() => {
     if (!siteId) return;
-    fetch(`/api/portal/site/${siteId}/org-overview`, { credentials: 'same-origin' })
+    fetch(`/api/portal/site/${siteId}/org-overview`, { credentials: 'same-origin' }) // same-origin-allowed: portal endpoint — token-OR-cookie anonymous auth (BUG 2 KEEP 2026-05-12)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.org) setOverview(d); })
       .catch(() => {});
@@ -501,7 +501,7 @@ const PracticeHomeCardWrapper: React.FC<{
   useEffect(() => {
     if (!siteId) return;
     const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-    fetch(`/api/portal/site/${siteId}/home${qs}`, { credentials: 'same-origin' })
+    fetch(`/api/portal/site/${siteId}/home${qs}`, { credentials: 'same-origin' }) // same-origin-allowed: portal endpoint — token-OR-cookie anonymous auth (BUG 2 KEEP 2026-05-12)
       .then((r) => (r.ok ? (r.json() as Promise<HomeApiData>) : null))
       .then((d) => { setData(d); setLoading(false); })
       .catch(() => { setLoading(false); });

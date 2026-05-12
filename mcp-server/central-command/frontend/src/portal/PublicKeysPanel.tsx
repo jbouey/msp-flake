@@ -64,7 +64,7 @@ export const PublicKeysPanel: React.FC<Props> = ({ siteId }) => {
     let cancelled = false;
     setLoading(true);
     fetch(`/api/evidence/sites/${siteId}/public-keys`, {
-      credentials: 'same-origin',
+      credentials: 'same-origin', // same-origin-allowed: browser-verify — intentional cryptographic isolation (BUG 2 KEEP 2026-05-12)
     })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);

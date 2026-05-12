@@ -110,7 +110,7 @@ export const SiteActivityTimeline: React.FC<SiteActivityTimelineProps> = ({ site
     queryKey: ['site-activity', siteId, limit],
     queryFn: async () => {
       const res = await fetch(`/api/sites/${siteId}/activity?limit=${limit}`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (!res.ok) {
         throw new Error(`Activity fetch failed: ${res.status}`);

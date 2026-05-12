@@ -69,7 +69,7 @@ export const SiteDetail: React.FC = () => {
     queryKey: ['compliance-health-coverage', siteId],
     queryFn: async () => {
       const res = await fetch(`/api/dashboard/sites/${siteId}/compliance-health`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (!res.ok) return null;
       return res.json();
@@ -86,7 +86,7 @@ export const SiteDetail: React.FC = () => {
     queryFn: async () => {
       try {
         const res = await fetch(`/api/dashboard/devices/sites/${siteId}/summary`, {
-          credentials: 'same-origin',
+          credentials: 'include',
         });
         if (!res.ok) return null;
         return res.json();
@@ -104,7 +104,7 @@ export const SiteDetail: React.FC = () => {
     queryFn: async () => {
       try {
         const res = await fetch(`/api/dashboard/sites/${siteId}/workstations`, {
-          credentials: 'same-origin',
+          credentials: 'include',
         });
         if (!res.ok) return null;
         return res.json();
@@ -122,7 +122,7 @@ export const SiteDetail: React.FC = () => {
     queryFn: async () => {
       try {
         const res = await fetch(`/api/dashboard/sites/${siteId}/agents`, {
-          credentials: 'same-origin',
+          credentials: 'include',
         });
         if (!res.ok) return null;
         return res.json();
@@ -140,7 +140,7 @@ export const SiteDetail: React.FC = () => {
     queryFn: async () => {
       try {
         const res = await fetch(`/api/dashboard/protection-profiles?site_id=${siteId}`, {
-          credentials: 'same-origin',
+          credentials: 'include',
         });
         if (!res.ok) return null;
         return res.json();
@@ -309,7 +309,7 @@ export const SiteDetail: React.FC = () => {
     try {
       const res = await fetch(`/api/sites/${siteId}/appliances/${applianceId}/relocate`, {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfTokenOrEmpty() },
         body: JSON.stringify({ target_site_id: targetSiteId, reason }),
       });
@@ -768,7 +768,7 @@ export const SiteDetail: React.FC = () => {
                       return;
                     }
                     const res = await fetch(`/api/dashboard/sites/${siteId}/provision`, {
-                      method: 'POST', credentials: 'same-origin',
+                      method: 'POST', credentials: 'include',
                       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
                       body: JSON.stringify({ mac_address: provisionMac.trim() || undefined, client_email: provisionEmail.trim() || undefined }),
                     });

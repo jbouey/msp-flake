@@ -65,8 +65,8 @@ export const AdminOAuthSettings: React.FC = () => {
 
     try {
       const [configRes, pendingRes] = await Promise.all([
-        fetch('/api/admin/oauth/config', { credentials: 'same-origin' }),
-        fetch('/api/admin/oauth/pending', { credentials: 'same-origin' }),
+        fetch('/api/admin/oauth/config', { credentials: 'include' }),
+        fetch('/api/admin/oauth/pending', { credentials: 'include' }),
       ]);
 
       if (configRes.ok) {
@@ -135,7 +135,7 @@ export const AdminOAuthSettings: React.FC = () => {
 
       const response = await fetch(`/api/admin/oauth/config/${editingProvider}`, {
         method: 'PUT',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify(payload),
       });

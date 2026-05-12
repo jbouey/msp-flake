@@ -27,7 +27,7 @@ export const EditSiteModal: React.FC<EditSiteModalProps> = ({ site, onClose, onS
     try {
       const res = await fetch(`/api/sites/${site.site_id}`, {
         method: 'PUT',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfTokenOrEmpty() },
         body: JSON.stringify({
           clinic_name: clinicName,

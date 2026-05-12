@@ -45,13 +45,13 @@ export const DASHBOARD_SLA_QUERY_KEY = ['dashboard-sla-strip'] as const;
  */
 export async function fetchDashboardSLA(): Promise<DashboardSLAData> {
   try {
-    const res = await fetch('/api/dashboard/sla-strip', { credentials: 'same-origin' });
+    const res = await fetch('/api/dashboard/sla-strip', { credentials: 'include' });
     if (res.ok) return (await res.json()) as DashboardSLAData;
   } catch {
     // fall through to stats fallback
   }
 
-  const statsRes = await fetch('/api/dashboard/stats', { credentials: 'same-origin' });
+  const statsRes = await fetch('/api/dashboard/stats', { credentials: 'include' });
   if (!statsRes.ok) {
     throw new Error(`stats fallback failed: ${statsRes.status}`);
   }

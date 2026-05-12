@@ -46,7 +46,14 @@ FRONTEND_SRC = (
 # Ratchet baseline. Decrement as the followup sweep removes sites.
 # CI fails if found_count > BASELINE_MAX (regression — new same-origin
 # added) OR if found_count < BASELINE_MAX (forgot to update baseline).
-BASELINE_MAX = 60
+#
+# 2026-05-12: BUG 2 batch closed the entire ratchet. 49 SWAPped to
+# `credentials: 'include'`; 8 portal/browser-verify callsites kept
+# with `// same-origin-allowed: <reason>` opt-out markers; 3
+# SiteDetail.tsx URLs (/api/dashboard/devices/..., /api/dashboard/
+# sites/{id}/workstations, /api/dashboard/sites/{id}/agents) swapped
+# anyway — URLs themselves 404 today (separate URL-typo followup).
+BASELINE_MAX = 0
 
 # Per-line opt-out marker (matches rename-site-gate convention)
 _NOQA_MARKER = re.compile(r"#\s*noqa:\s*same-origin-allowed", re.IGNORECASE)

@@ -66,7 +66,7 @@ export const PortalConsentPage: React.FC = () => {
     setLoading(true);
     try {
       const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-      const res = await fetch(`/api/portal/site/${siteId}/consent${qs}`, { credentials: 'same-origin' });
+      const res = await fetch(`/api/portal/site/${siteId}/consent${qs}`, { credentials: 'same-origin' }); // same-origin-allowed: portal endpoint — token-OR-cookie anonymous auth (BUG 2 KEEP 2026-05-12)
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = (await res.json()) as Payload;
       setData(j);

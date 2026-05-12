@@ -198,7 +198,7 @@ export const Dashboard: React.FC = () => {
   const { data: trendsData } = useQuery<KPITrendsData>({
     queryKey: ['dashboard-kpi-trends', 14],
     queryFn: async () => {
-      const res = await fetch('/api/dashboard/kpi-trends?days=14', { credentials: 'same-origin' });
+      const res = await fetch('/api/dashboard/kpi-trends?days=14', { credentials: 'include' });
       if (!res.ok) throw new Error(`KPI trends failed: ${res.status}`);
       return res.json();
     },

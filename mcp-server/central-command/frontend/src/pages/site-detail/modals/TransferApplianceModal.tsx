@@ -24,7 +24,7 @@ export const TransferApplianceModal: React.FC<TransferApplianceModalProps> = ({ 
   React.useEffect(() => {
     const fetchSites = async () => {
       try {
-        const res = await fetch('/api/sites', { credentials: 'same-origin' });
+        const res = await fetch('/api/sites', { credentials: 'include' });
         if (res.ok) {
           const data = await res.json();
           setSites((data.sites || []).filter((s: { site_id: string }) => s.site_id !== currentSiteId));

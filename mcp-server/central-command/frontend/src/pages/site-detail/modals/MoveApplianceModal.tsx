@@ -66,7 +66,7 @@ export const MoveApplianceModal: React.FC<MoveApplianceModalProps> = ({
     const fetchSites = async () => {
       try {
         const res = await fetch('/api/sites', {
-          credentials: 'same-origin',
+          credentials: 'include',
         });
         if (res.ok) {
           const data = await res.json();

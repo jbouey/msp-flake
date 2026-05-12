@@ -121,10 +121,10 @@ export const PartnerAuditLog: React.FC = () => {
     if (apiKey) {
       return {
         headers: { 'X-API-Key': apiKey },
-        credentials: 'same-origin',
+        credentials: 'include',
       };
     }
-    return { credentials: 'same-origin' };
+    return { credentials: 'include' };
   }, [apiKey]);
 
   const fetchAuditLog = useCallback(async () => {

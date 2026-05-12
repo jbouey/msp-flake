@@ -120,7 +120,7 @@ export function useBrowserVerify(siteId: string): BrowserVerifyResult {
       try {
         // 1. Fetch per-appliance public keys
         const pkRes = await fetch(`/api/evidence/sites/${siteId}/public-keys`, {
-          credentials: 'same-origin',
+          credentials: 'same-origin', // same-origin-allowed: browser-verify — intentional cryptographic isolation (BUG 2 KEEP 2026-05-12)
         });
         if (!pkRes.ok) {
           throw new Error(`public-keys fetch failed: ${pkRes.status}`);
@@ -131,7 +131,7 @@ export function useBrowserVerify(siteId: string): BrowserVerifyResult {
         // 2. Fetch the latest 10 bundles
         const bRes = await fetch(
           `/api/evidence/sites/${siteId}/bundles?limit=10&offset=0`,
-          { credentials: 'same-origin' },
+          { credentials: 'same-origin' }, // same-origin-allowed: browser-verify — intentional cryptographic isolation (BUG 2 KEEP 2026-05-12)
         );
         if (!bRes.ok) {
           throw new Error(`bundles fetch failed: ${bRes.status}`);

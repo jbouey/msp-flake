@@ -79,7 +79,7 @@ interface WitnessStatus {
 
 /** Fetch wrapper matching SystemHealth.tsx pattern (cookie auth). */
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`/api/dashboard${path}`, { credentials: 'same-origin' });
+  const res = await fetch(`/api/dashboard${path}`, { credentials: 'include' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: 'Request failed' }));
     throw new Error(body.detail || `HTTP ${res.status}`);

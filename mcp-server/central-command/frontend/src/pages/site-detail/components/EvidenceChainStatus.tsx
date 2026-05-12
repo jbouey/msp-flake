@@ -26,7 +26,7 @@ export const EvidenceChainStatus: React.FC<EvidenceChainStatusProps> = ({ siteId
     queryKey: ['evidence-signing-status', siteId],
     queryFn: async () => {
       const res = await fetch(`/api/evidence/sites/${siteId}/signing-status`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (!res.ok) return null;
       return res.json();

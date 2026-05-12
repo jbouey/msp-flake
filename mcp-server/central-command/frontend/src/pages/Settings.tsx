@@ -278,7 +278,7 @@ export const Settings: React.FC = () => {
   const loadSettings = async () => {
     try {
       const response = await fetch('/api/dashboard/admin/settings', {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (response.ok) {
         const data = await response.json();
@@ -297,7 +297,7 @@ export const Settings: React.FC = () => {
     try {
       const response = await fetch('/api/dashboard/admin/settings', {
         method: 'PUT',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'X-CSRF-Token': getCsrfToken(),
@@ -760,7 +760,7 @@ export const Settings: React.FC = () => {
                 try {
                   const res = await fetch('/api/dashboard/admin/settings/purge-telemetry', {
                     method: 'POST',
-                    credentials: 'same-origin',
+                    credentials: 'include',
                     headers: { 'X-CSRF-Token': getCsrfToken() },
                   });
                   const data = await res.json();
@@ -789,7 +789,7 @@ export const Settings: React.FC = () => {
                 try {
                   const res = await fetch('/api/dashboard/admin/settings/reset-learning', {
                     method: 'POST',
-                    credentials: 'same-origin',
+                    credentials: 'include',
                     headers: { 'X-CSRF-Token': getCsrfToken() },
                   });
                   const data = await res.json();

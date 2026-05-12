@@ -155,7 +155,7 @@ export function useBrowserVerifyFull(
       try {
         // 1. Fetch public keys (single request)
         const pkRes = await fetch(`/api/evidence/sites/${siteId}/public-keys`, {
-          credentials: 'same-origin',
+          credentials: 'same-origin', // same-origin-allowed: browser-verify — intentional cryptographic isolation (BUG 2 KEEP 2026-05-12)
         });
         if (!pkRes.ok) {
           throw new Error(`public-keys fetch failed: ${pkRes.status}`);
@@ -175,7 +175,7 @@ export function useBrowserVerifyFull(
           const url =
             `/api/evidence/sites/${siteId}/bundles?` +
             `limit=${BATCH_SIZE}&offset=${offset}&order=asc&include_signatures=true`;
-          const bRes = await fetch(url, { credentials: 'same-origin' });
+          const bRes = await fetch(url, { credentials: 'same-origin' }); // same-origin-allowed: browser-verify — intentional cryptographic isolation (BUG 2 KEEP 2026-05-12)
           if (!bRes.ok) {
             throw new Error(`bundles fetch failed at offset ${offset}: ${bRes.status}`);
           }

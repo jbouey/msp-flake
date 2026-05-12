@@ -123,7 +123,7 @@ export const SystemHealth: React.FC = () => {
     queryKey: ['system-health'],
     queryFn: async () => {
       const res = await fetch('/api/dashboard/admin/system-health', {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ detail: 'Request failed' }));

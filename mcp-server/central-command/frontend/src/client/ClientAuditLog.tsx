@@ -132,7 +132,7 @@ export const ClientAuditLog: React.FC = () => {
         params.set('action', actionFilter);
       }
       const res = await fetch(`/api/client/audit-log?${params.toString()}`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (!res.ok) {
         throw new Error(`Failed to load audit log (${res.status})`);

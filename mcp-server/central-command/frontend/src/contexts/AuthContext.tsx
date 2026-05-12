@@ -62,7 +62,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const validateSession = async () => {
       try {
         const response = await fetch(`${API_BASE}/auth/me`, {
-          credentials: 'same-origin',
+          credentials: 'include',
         });
 
         if (response.ok) {
@@ -89,7 +89,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const refreshAuditLogs = async () => {
     try {
       const response = await fetch(`${API_BASE}/auth/audit-logs?limit=100`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
 
       if (response.ok) {
@@ -153,7 +153,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const validateAndSetUser = async () => {
       try {
         const response = await fetch(`${API_BASE}/auth/me`, {
-          credentials: 'same-origin',
+          credentials: 'include',
         });
 
         if (response.ok) {
@@ -175,7 +175,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const refreshOAuthIdentities = async () => {
     try {
       const response = await fetch(`${API_BASE}/auth/oauth/identities`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
 
       if (response.ok) {

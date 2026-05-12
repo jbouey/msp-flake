@@ -63,7 +63,7 @@ interface OpsHealthResponse {
 // ---------------------------------------------------------------------------
 
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`/api/dashboard${path}`, { credentials: 'same-origin' });
+  const res = await fetch(`/api/dashboard${path}`, { credentials: 'include' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: 'Request failed' }));
     throw new Error(body.detail || `HTTP ${res.status}`);
@@ -228,7 +228,7 @@ function AuditReadinessSection() {
   const { data: orgs, isLoading: orgsLoading } = useQuery<OrgSummary[]>({
     queryKey: ['organizations-list'],
     queryFn: async () => {
-      const res = await fetch('/api/dashboard/organizations', { credentials: 'same-origin' });
+      const res = await fetch('/api/dashboard/organizations', { credentials: 'include' });
       if (!res.ok) throw new Error('Failed to fetch organizations');
       return res.json();
     },

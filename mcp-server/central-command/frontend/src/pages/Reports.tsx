@@ -112,7 +112,7 @@ export const Reports: React.FC = () => {
       const params = new URLSearchParams({ site_id: selectedSiteId });
       if (selectedMonth) params.set('month', selectedMonth);
       const res = await fetch(`/api/dashboard/admin/reports/generate?${params}`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ detail: 'Request failed' }));

@@ -293,7 +293,7 @@ const PartnerDetailView: React.FC<{
     setIsLoading(true);
     try {
       const res = await fetch(`/api/partners/${partnerId}`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (res.ok) {
         const data = await res.json();
@@ -317,7 +317,7 @@ const PartnerDetailView: React.FC<{
     setActivityLoading(true);
     try {
       const res = await fetch(`/api/partners/${partnerId}/activity?limit=100`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (res.ok) {
         const data = await res.json();
@@ -338,7 +338,7 @@ const PartnerDetailView: React.FC<{
     try {
       const res = await fetch(`/api/partners/${partnerId}`, {
         method: 'PUT',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
           name: editName, contact_email: editEmail, contact_phone: editPhone || null,
@@ -370,7 +370,7 @@ const PartnerDetailView: React.FC<{
     try {
       const res = await fetch(`/api/partners/${partnerId}`, {
         method: 'DELETE',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: { 'X-CSRF-Token': getCsrfToken() },
       });
       if (res.ok) {
@@ -392,7 +392,7 @@ const PartnerDetailView: React.FC<{
     try {
       const res = await fetch(`/api/partners/${partnerId}/regenerate-key`, {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: { 'X-CSRF-Token': getCsrfToken() },
       });
       if (res.ok) {
@@ -818,7 +818,7 @@ const PartnerActivityLog: React.FC = () => {
       if (filterCategory !== 'all') params.set('event_category', filterCategory);
       if (filterPartner !== 'all') params.set('partner_id', filterPartner);
       const res = await fetch(`/api/partners/activity/all?${params}`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (res.ok) {
         const data = await res.json();
@@ -1024,7 +1024,7 @@ export const Partners: React.FC = () => {
       if (statusFilter) params.set('status', statusFilter);
       if (debouncedSearch) params.set('search', debouncedSearch);
       const response = await fetch(`/api/partners?${params}`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (response.ok) {
         const data = await response.json();
@@ -1048,7 +1048,7 @@ export const Partners: React.FC = () => {
 
   const fetchPendingPartners = async () => {    try {
       const response = await fetch('/api/admin/partners/pending', {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (response.ok) {
         const data = await response.json();
@@ -1061,7 +1061,7 @@ export const Partners: React.FC = () => {
 
   const fetchOAuthConfig = async () => {    try {
       const response = await fetch('/api/admin/partners/oauth-config', {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (response.ok) {
         const data = await response.json();
@@ -1080,7 +1080,7 @@ export const Partners: React.FC = () => {
       const domains = oauthDomains.split(',').map(d => d.trim().toLowerCase()).filter(d => d);
       const response = await fetch('/api/admin/partners/oauth-config', {
         method: 'PUT',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
           allowed_domains: domains, require_approval: oauthRequireApproval,
@@ -1164,7 +1164,7 @@ export const Partners: React.FC = () => {
     try {
       const response = await fetch('/api/partners', {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify(data),
       });

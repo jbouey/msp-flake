@@ -205,7 +205,7 @@ function AuditActions({
       const res = await fetch(`/api/dashboard/ops/audit-config/${orgId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        credentials: 'same-origin',
+        credentials: 'include',
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error('Failed to update');
@@ -296,7 +296,7 @@ export function AuditReadiness({ orgId }: AuditReadinessProps) {
     queryKey: ['audit-readiness', orgId],
     queryFn: async () => {
       const res = await fetch(`/api/dashboard/ops/audit-readiness/${orgId}`, {
-        credentials: 'same-origin',
+        credentials: 'include',
       });
       if (!res.ok) throw new Error('Failed to fetch audit readiness');
       return res.json();
