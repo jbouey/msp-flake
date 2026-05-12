@@ -225,33 +225,79 @@ def _extract_router_prefixes(tree: ast.AST) -> dict[str, str]:
 # handler detection — Depends(require_appliance_bearer) + decorator
 # ----------------------------------------------------------------------
 
-def _is_appliance_bearer_depends_call(node: ast.AST) -> bool:
-    """True if `node` is a `Depends(require_appliance_bearer[_full])` Call."""
+def _extract_alias_maps(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """For a single file's AST, build (depends_names, bearer_dep_names)
+    where each set includes the canonical name AND any module-level alias.
+
+    Closes the Gate B v2 P1-B class — `from fastapi import Depends as D`
+    or `from .shared import require_appliance_bearer_full as raf` would
+    otherwise silently escape. Zero callsites today (single live import-
+    forward at main.py:2597 doesn't use Depends()), but pattern is alive.
+
+    Note: `ast.walk` traverses NESTED scopes too (function-local imports,
+    class-level imports). That is intentional — a nested ImportFrom still
+    binds the alias visible to any `Depends(<alias>)` callsite in the
+    enclosing module, so the alias must be in the file-wide set. Sibling
+    note: APIRouter aliases (`from fastapi import APIRouter as R`) are
+    NOT tracked here yet; see task #126.
+    """
+    depends_names: set[str] = {"Depends"}
+    bearer_names: set[str] = set(_APPLIANCE_BEARER_DEP_NAMES)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for alias in node.names:
+            if alias.name == "Depends":
+                depends_names.add(alias.asname or alias.name)
+            elif alias.name in _APPLIANCE_BEARER_DEP_NAMES:
+                bearer_names.add(alias.asname or alias.name)
+    return depends_names, bearer_names
+
+
+def _is_appliance_bearer_depends_call(
+    node: ast.AST,
+    depends_names: set[str] | None = None,
+    bearer_names: set[str] | None = None,
+) -> bool:
+    """True if `node` is a `Depends(require_appliance_bearer[_full])` Call.
+    If alias maps are supplied, also matches aliased imports of either name."""
+    if depends_names is None:
+        depends_names = {"Depends"}
+    if bearer_names is None:
+        bearer_names = set(_APPLIANCE_BEARER_DEP_NAMES)
     if not isinstance(node, ast.Call):
         return False
     f = node.func
-    if not ((isinstance(f, ast.Name) and f.id == "Depends") or
-            (isinstance(f, ast.Attribute) and f.attr == "Depends")):
+    if not ((isinstance(f, ast.Name) and f.id in depends_names) or
+            (isinstance(f, ast.Attribute) and f.attr in depends_names)):
         return False
     for a in node.args:
-        if isinstance(a, ast.Name) and a.id in _APPLIANCE_BEARER_DEP_NAMES:
+        if isinstance(a, ast.Name) and a.id in bearer_names:
             return True
-        if isinstance(a, ast.Attribute) and a.attr in _APPLIANCE_BEARER_DEP_NAMES:
+        if isinstance(a, ast.Attribute) and a.attr in bearer_names:
             return True
     return False
 
 
-def _function_has_appliance_bearer_dep(func: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
+def _function_has_appliance_bearer_dep(
+    func: ast.AsyncFunctionDef | ast.FunctionDef,
+    depends_names: set[str] | None = None,
+    bearer_names: set[str] | None = None,
+) -> bool:
     """Scan a function's parameter defaults for `Depends(require_appliance_bearer[_full])`."""
     for default in list(func.args.defaults) + list(func.args.kw_defaults or []):
         if default is None:
             continue
-        if _is_appliance_bearer_depends_call(default):
+        if _is_appliance_bearer_depends_call(default, depends_names, bearer_names):
             return True
     return False
 
 
-def _decorator_has_appliance_bearer_dep(deco: ast.Call) -> bool:
+def _decorator_has_appliance_bearer_dep(
+    deco: ast.Call,
+    depends_names: set[str] | None = None,
+    bearer_names: set[str] | None = None,
+) -> bool:
     """Scan a decorator's `dependencies=[Depends(...), ...]` kwarg.
 
     Closes Gate B v2 P1-A class — `@router.post(p, dependencies=[Depends(
@@ -264,7 +310,7 @@ def _decorator_has_appliance_bearer_dep(deco: ast.Call) -> bool:
         if not isinstance(kw.value, ast.List):
             continue
         for elt in kw.value.elts:
-            if _is_appliance_bearer_depends_call(elt):
+            if _is_appliance_bearer_depends_call(elt, depends_names, bearer_names):
                 return True
     return False
 
@@ -277,6 +323,8 @@ def _extract_handlers(
     module_basename: str,
     registry: dict[tuple[str, str], str],
     is_main: bool,
+    depends_names: set[str] | None = None,
+    bearer_names: set[str] | None = None,
 ) -> list[tuple[str, str, int, str]]:
     """For each state-changing decorator on `func`, return (method, full_path,
     lineno, deco_path). Skips GET/HEAD/OPTIONS. Resolves cross-file prefix.
@@ -286,7 +334,7 @@ def _extract_handlers(
     Closes the agent_api.py false-positive class (router exists but main.py
     never imports/includes it → handler unreachable → not a real silent-403)."""
     out: list[tuple[str, str, int, str]] = []
-    func_level_dep = _function_has_appliance_bearer_dep(func)
+    func_level_dep = _function_has_appliance_bearer_dep(func, depends_names, bearer_names)
     for deco in func.decorator_list:
         if not isinstance(deco, ast.Call):
             continue
@@ -309,7 +357,7 @@ def _extract_handlers(
         # Per-decorator dep check (Gate B v2 P1-A): the same function may
         # bear function-level Depends OR carry it via this decorator's
         # `dependencies=[Depends(...)]` kwarg.
-        if not (func_level_dep or _decorator_has_appliance_bearer_dep(deco)):
+        if not (func_level_dep or _decorator_has_appliance_bearer_dep(deco, depends_names, bearer_names)):
             continue
         # Resolve full path + registration check:
         if owner_name == "app" and is_main:
@@ -341,6 +389,7 @@ def _scan_file(path: pathlib.Path, registry: dict[tuple[str, str], str]):
     except SyntaxError:
         return
     router_prefixes = _extract_router_prefixes(tree)
+    depends_names, bearer_names = _extract_alias_maps(tree)
     module_basename = path.stem
     is_main = path.name == "main.py" and path.parent.name == "mcp-server"
     for node in ast.walk(tree):
@@ -350,6 +399,7 @@ def _scan_file(path: pathlib.Path, registry: dict[tuple[str, str], str]):
         # function-level and decorator-level appliance-bearer deps.
         for method, full_path, lineno, deco_path in _extract_handlers(
             node, router_prefixes, module_basename, registry, is_main,
+            depends_names, bearer_names,
         ):
             yield path, method, full_path, lineno, node.name, deco_path
 
@@ -568,3 +618,55 @@ async def auth_only_widget(widget_id: str):
     assert ("post", "/api/widgets/{widget_id}/auth-only") not in handlers, (
         f"non-bearer dep (require_auth) MUST NOT be flagged; got {handlers!r}"
     )
+
+
+def test_synthetic_aliased_import_detected():
+    """Gate B v2 P1-B regression (task #125): aliased import of EITHER
+    `Depends` OR `require_appliance_bearer[_full]` must be detected.
+
+    Zero current real-codebase callsites use this shape on appliance-bearer
+    deps (main.py:2597 only forwards-import, never `Depends(_shared_auth)`),
+    but the pattern is alive and trivial to introduce. Defense-in-depth."""
+    src = '''
+from fastapi import APIRouter, Depends as D
+from .shared import require_appliance_bearer_full as raf
+router = APIRouter(prefix="/api/aliased")
+
+@router.post("/full-aliased")
+async def alias_full(_=D(raf)):
+    return {}
+
+@router.post("/kwarg-aliased", dependencies=[D(raf)])
+async def alias_kwarg(_):
+    return {}
+'''
+    tree = ast.parse(src)
+    router_prefixes = _extract_router_prefixes(tree)
+    depends_names, bearer_names = _extract_alias_maps(tree)
+    fake_registry = {("aliased_module", "router"): ""}
+    handlers: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            for method, full, _ln, _dp in _extract_handlers(
+                node, router_prefixes, "aliased_module", fake_registry,
+                is_main=False, depends_names=depends_names, bearer_names=bearer_names,
+            ):
+                handlers.append((method, full))
+    assert ("post", "/api/aliased/full-aliased") in handlers, (
+        f"aliased Depends + aliased _full in function-param defaults must "
+        f"be detected; got {handlers!r}"
+    )
+    assert ("post", "/api/aliased/kwarg-aliased") in handlers, (
+        f"aliased Depends + aliased _full in decorator kwarg must be "
+        f"detected; got {handlers!r}"
+    )
+
+
+def test_extract_alias_maps_canonical_only_when_no_import():
+    """Without any ImportFrom, the alias maps return only the canonical
+    names — guarantees the v1/v2 behavior is preserved when alias-tracking
+    is enabled for files that don't actually alias anything."""
+    tree = ast.parse("x = 1\n")
+    depends_names, bearer_names = _extract_alias_maps(tree)
+    assert depends_names == {"Depends"}, depends_names
+    assert bearer_names == _APPLIANCE_BEARER_DEP_NAMES, bearer_names
