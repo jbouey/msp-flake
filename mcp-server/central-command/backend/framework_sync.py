@@ -15,7 +15,9 @@ from typing import Optional, Dict, Any, List
 
 import httpx
 import yaml
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+
+from .auth import require_admin
 
 from .fleet import get_pool
 
@@ -204,15 +206,34 @@ async def get_coverage_analysis():
 
 
 @router.post("/sync")
-async def trigger_sync_all(background_tasks: BackgroundTasks):
-    """Trigger sync for all enabled OSCAL frameworks."""
+async def trigger_sync_all(
+    background_tasks: BackgroundTasks,
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """Trigger sync for all enabled OSCAL frameworks.
+
+    Session 220 task #120 PR-B (2026-05-12): require_admin added.
+    Pre-fix this endpoint was zero-auth + CSRF-exempt under
+    `/api/framework-sync/` prefix — any caller could fan out a
+    fleet-wide framework re-sync, classic DoS-amplification class.
+    Frontend `ComplianceLibrary.tsx` already sends admin session
+    cookies + surfaces 4xx errors via task #127 isError banner.
+    """
     background_tasks.add_task(_run_full_sync)
     return {"status": "sync_started", "frameworks": list(OSCAL_CATALOG_URLS.keys())}
 
 
 @router.post("/sync/{framework}")
-async def trigger_sync_one(framework: str, background_tasks: BackgroundTasks):
-    """Trigger sync for a single framework."""
+async def trigger_sync_one(
+    framework: str,
+    background_tasks: BackgroundTasks,
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """Trigger sync for a single framework.
+
+    Session 220 task #120 PR-B (2026-05-12): require_admin added —
+    same rationale as trigger_sync_all above.
+    """
     if framework not in OSCAL_CATALOG_URLS:
         # For manual frameworks, re-seed from YAML
         background_tasks.add_task(_seed_framework_from_yaml, framework)
