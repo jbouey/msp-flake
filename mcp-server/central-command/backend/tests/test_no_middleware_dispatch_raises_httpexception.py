@@ -142,7 +142,8 @@ def test_no_middleware_dispatch_raises_httpexception():
         "surface as BaseExceptionGroup to FastAPI's exception_handler "
         "chain, which doesn't match HTTPException and falls through to "
         "the generic 500 path. Use `return JSONResponse(status_code=N, "
-        "content={\"error\": ..., \"status_code\": N})` instead.\n\n"
+        "content={\"detail\": ...})` instead (FastAPI default + sibling "
+        "rate_limiter.py shape; harmonized in task #123 2026-05-12).\n\n"
         "Violations:\n"
         + "\n".join(violations)
         + "\n\nCanonical sibling: rate_limiter.py:253/265/277 + csrf.py:190+ "
@@ -189,7 +190,7 @@ class GoodMiddleware(BaseHTTPMiddleware):
         if request.method == "POST":
             return JSONResponse(
                 status_code=403,
-                content={"error": "nope", "status_code": 403},
+                content={"detail": "nope"},
             )
         return await call_next(request)
 """

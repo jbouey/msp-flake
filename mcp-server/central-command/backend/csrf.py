@@ -198,15 +198,18 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             # rate_limiter.py:253/265/277 — same canonical return-not-
             # raise shape from a BaseHTTPMiddleware.dispatch.
             #
-            # Body envelope `{"error": ..., "status_code": ...}` matches
-            # the project-wide global error shape. FastAPI's default
-            # `{"detail": ...}` would silently break frontend error
-            # parsers that read `.error`.
+            # Session 220 task #123 (2026-05-12): body envelope harmonized
+            # to `{"detail": ...}` — every frontend parser (utils/api.ts,
+            # portalFetch.ts, integrationsApi.ts) reads `.detail`; ZERO
+            # read `.error`. Sibling middlewares (rate_limiter.py) also
+            # use `{"detail"}`. Prior shape `{"error", "status_code"}`
+            # was generalized from a Starlette uncustomized 500 fallback,
+            # not a project convention — confirmed by repo-wide grep
+            # (0 producers besides csrf.py, 0 consumers).
             return JSONResponse(
                 status_code=403,
                 content={
-                    "error": "CSRF validation failed. Refresh the page and try again.",
-                    "status_code": 403,
+                    "detail": "CSRF validation failed. Refresh the page and try again.",
                 },
             )
 
