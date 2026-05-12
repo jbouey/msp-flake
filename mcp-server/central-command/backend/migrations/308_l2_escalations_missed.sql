@@ -216,18 +216,9 @@ VALUES (
 
 COMMIT;
 
--- ----------------------------------------------------------------------
--- Composite index on l2_decisions for the new substrate invariant query
--- (Carol P0-D: NOT-EXISTS subquery against 232K+ rows seq-scans without
--- this index; substrate runs at 60s cadence -> self-inflicted slow-query
--- class). Outside the BEGIN/COMMIT block because CREATE INDEX CONCURRENTLY
--- cannot run inside a transaction.
--- ----------------------------------------------------------------------
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_l2_decisions_site_reason_created
-    ON l2_decisions (site_id, escalation_reason, created_at DESC);
-
-COMMENT ON INDEX idx_l2_decisions_site_reason_created IS
-  'Supports the chronic_without_l2_escalation substrate invariant 60s '
-  'tick query — JOIN through incidents on (site_id, incident_type) with '
-  'a filter on escalation_reason IN (recurrence, recurrence_backfill) '
-  'and created_at > NOW() - INTERVAL 24h. Carol P0-D 2026-05-12.';
+-- Carol P0-D composite index on l2_decisions(site_id, escalation_reason,
+-- created_at DESC) lives in mig 309 as a standalone file. asyncpg's
+-- simple-query runner cannot run CREATE INDEX CONCURRENTLY in the same
+-- script as an explicit BEGIN/COMMIT block (deploy 096de200 hit this).
+-- Working pattern: mig 136 + mig 154 ship CONCURRENTLY-only with no
+-- BEGIN/COMMIT.
