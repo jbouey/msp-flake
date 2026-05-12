@@ -4310,8 +4310,15 @@ async def ensure_settings_table(db: AsyncSession):
 
 
 @router.get("/admin/settings", response_model=SystemSettingsModel)
-async def get_system_settings(db: AsyncSession = Depends(get_db)):
-    """Get current system settings."""
+async def get_system_settings(
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(auth_module.require_admin),
+):
+    """Get current system settings. Admin-only.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12): no auth dependency — any
+    caller reaching the dashboard origin could read system settings.
+    """
     await ensure_settings_table(db)
 
     result = await execute_with_retry(db,text(
@@ -4330,9 +4337,15 @@ async def get_system_settings(db: AsyncSession = Depends(get_db)):
 @router.put("/admin/settings", response_model=SystemSettingsModel)
 async def update_system_settings(
     settings: SystemSettingsModel,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(auth_module.require_admin),
 ):
-    """Update system settings."""
+    """Update system settings. Admin-only.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12): no auth dependency — any
+    caller reaching the dashboard origin could mutate retention windows,
+    L2 cost caps, healing thresholds, etc.
+    """
     await ensure_settings_table(db)
 
     import json
@@ -4351,9 +4364,30 @@ async def update_system_settings(
 
 
 @router.post("/admin/settings/purge-telemetry")
-async def purge_old_telemetry(db: AsyncSession = Depends(get_db)):
-    """Purge telemetry data older than retention period."""
-    settings = await get_system_settings(db)
+async def purge_old_telemetry(
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(auth_module.require_admin),
+):
+    """Purge telemetry data older than retention period. Admin-only.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12): no auth dependency — any
+    caller reaching the dashboard origin could DELETE FROM
+    execution_telemetry irrecoverably. Destructive operation.
+    """
+    # get_system_settings is admin-gated; pass a synthetic admin context
+    # rather than re-invoking the dependency from another endpoint body
+    # (which short-circuits FastAPI's dependency resolution).
+    await ensure_settings_table(db)
+    result = await execute_with_retry(db, text(
+        "SELECT settings FROM system_settings WHERE id = 1"
+    ))
+    row = result.fetchone()
+    defaults = SystemSettingsModel()
+    if row and row.settings:
+        stored = row.settings if isinstance(row.settings, dict) else {}
+        settings = SystemSettingsModel(**{**defaults.model_dump(), **stored})
+    else:
+        settings = defaults
     retention_days = settings.telemetry_retention_days
 
     # SECURITY: Use parameterized query to prevent SQL injection
@@ -4367,8 +4401,17 @@ async def purge_old_telemetry(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/admin/settings/reset-learning")
-async def reset_learning_data(db: AsyncSession = Depends(get_db)):
-    """Reset all learning data (patterns and L1 rules)."""
+async def reset_learning_data(
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(auth_module.require_admin),
+):
+    """Reset all learning data (patterns and L1 rules). Admin-only.
+
+    Pre-fix (Session 220 RT-Auth-2026-05-12): no auth dependency — any
+    caller reaching the dashboard origin could DROP every learned pattern
+    and every promoted L1 rule. Catastrophic + irreversible without a DB
+    restore.
+    """
     patterns_result = await execute_with_retry(db,text("DELETE FROM patterns"))
     rules_result = await execute_with_retry(db,text(
         "DELETE FROM l1_rules WHERE promoted_from_l2 = true"
