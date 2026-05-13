@@ -2306,6 +2306,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="The 60s reconciliation loop that maintains canonical_devices (mig 319, Task #73) has not updated any row for an active site in >60min. Monthly compliance packet PDFs + device-inventory page may show stale counts. Counsel Rule 1 runtime parity — pairs with discovered_devices_freshness (existing). Runbook: substrate_runbooks/canonical_devices_freshness.md.",
         check=lambda c: _check_canonical_devices_freshness(c),
     ),
+    Assertion(
+        name="daemon_heartbeat_signature_unverified",
+        severity="sev1",
+        description="An appliance with a registered evidence-bundle public key has emitted ≥3 heartbeats in the last 15 minutes with `agent_signature IS NOT NULL` BUT `signature_valid IS NULL`. This is the verifier-crashed-silently class — backend tried to verify but hit an exception (e.g., ModuleNotFoundError on signature_auth import, missing pubkey row, decode failure) and stored NULL. Counsel Rule 4 PRIMARY (orphan-coverage — closes the gap that `daemon_heartbeat_unsigned` queries `agent_signature IS NULL` and `daemon_heartbeat_signature_invalid` queries `signature_valid IS NOT NULL`, so the NULL-despite-non-NULL-signature state silently slipped past both for ~13 days pre-fix 2026-05-13 adb7671a). Counsel Rule 3 SECONDARY — chain-of-custody for the signature chain. Sev1 because legitimate-but-unverified vs attacker-but-unverified are indistinguishable. Runbook: substrate_runbooks/daemon_heartbeat_signature_unverified.md.",
+        check=lambda c: _check_daemon_heartbeat_signature_unverified(c),
+    ),
 ]
 
 
@@ -3137,6 +3143,23 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "canonical_metrics.py — drive-down PR should migrate that "
             "endpoint to delegate to the canonical helper. See "
             "substrate_runbooks/canonical_compliance_score_drift.md."
+        ),
+    },
+    "daemon_heartbeat_signature_unverified": {
+        "display_name": "Daemon signature stored NULL — verifier crashed silently",
+        "recommended_action": (
+            "An appliance signed its heartbeat, but backend's verifier "
+            "threw an exception while validating + stored NULL instead "
+            "of TRUE/FALSE. This is the detection-gap class that masked "
+            "D1 inert state for ~13 days pre-2026-05-13 (commit "
+            "adb7671a). Investigate: (1) check mcp-server logs for "
+            "ModuleNotFoundError or other exceptions in "
+            "appliance_checkin's signature_auth import path; (2) "
+            "verify site_appliances.agent_public_key for the affected "
+            "appliance is non-NULL + correctly formatted; (3) verify "
+            "the canonical-payload reconstruction in verify_heartbeat_"
+            "signature doesn't have a code drift. See "
+            "substrate_runbooks/daemon_heartbeat_signature_unverified.md."
         ),
     },
     "canonical_devices_freshness": {
@@ -6213,6 +6236,93 @@ async def _check_canonical_compliance_score_drift(
                 )
             )
     return out
+
+
+async def _check_daemon_heartbeat_signature_unverified(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev1 — Verifier-crashed-silently class. Closes the orphan-coverage
+    gap that masked D1 inert state for ~13 days pre-fix 2026-05-13.
+
+    Existing sibling invariants are BLIND to this specific failure mode:
+    - daemon_heartbeat_unsigned queries `agent_signature IS NULL`
+    - daemon_heartbeat_signature_invalid filters `signature_valid IS NOT NULL`
+    - But `agent_signature IS NOT NULL AND signature_valid IS NULL`
+      (verifier hit exception, soft-failed, stored NULL) — neither fires.
+
+    Counsel Rule 4 PRIMARY (orphan coverage). Counsel Rule 3 SECONDARY
+    (chain-of-custody for signature chain). Sev1 because the unverified
+    state is at least as serious as known-invalid — legitimate-but-
+    unverified and attacker-but-unverified are indistinguishable rows.
+
+    Threshold (per sev1 sibling parity with daemon_heartbeat_signature_invalid):
+    ≥3 unverified heartbeats in the last 15 minutes.
+
+    Pre-D1 daemons + dev appliances that never registered a key are
+    excluded via JOIN site_appliances on agent_public_key IS NOT NULL
+    (same guard as daemon_heartbeat_unsigned).
+    """
+    rows = await conn.fetch(
+        """
+        SELECT
+            ah.site_id,
+            ah.appliance_id,
+            COUNT(*) FILTER (WHERE ah.agent_signature IS NOT NULL
+                              AND ah.signature_valid IS NULL) AS unverified_count,
+            COUNT(*) AS total_count,
+            MAX(ah.observed_at) AS last_seen_at
+          FROM appliance_heartbeats ah
+          JOIN site_appliances sa ON sa.id = ah.appliance_id
+         WHERE ah.observed_at > NOW() - INTERVAL '15 minutes'
+           AND sa.agent_public_key IS NOT NULL
+           AND sa.deleted_at IS NULL
+         GROUP BY ah.site_id, ah.appliance_id
+        HAVING COUNT(*) FILTER (WHERE ah.agent_signature IS NOT NULL
+                                 AND ah.signature_valid IS NULL) >= 3
+         ORDER BY unverified_count DESC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": str(r["appliance_id"]),
+                "unverified_count": r["unverified_count"],
+                "total_count": r["total_count"],
+                "last_seen_at": (
+                    r["last_seen_at"].isoformat() if r["last_seen_at"] else None
+                ),
+                "interpretation": (
+                    f"Appliance {r['appliance_id']} at site {r['site_id']} "
+                    f"emitted {r['unverified_count']} of {r['total_count']} "
+                    f"heartbeats in the last 15 minutes with "
+                    f"agent_signature present but signature_valid stored "
+                    f"as NULL. Backend's verifier hit an exception while "
+                    f"validating + soft-failed. This is the detection gap "
+                    f"that masked D1 inert state for ~13 days pre-fix "
+                    f"adb7671a — neither daemon_heartbeat_unsigned (NULL "
+                    f"signature) nor daemon_heartbeat_signature_invalid "
+                    f"(FALSE) catches this state."
+                ),
+                "remediation": (
+                    "1. Check mcp-server logs for ImportError, "
+                    "ModuleNotFoundError, or other exceptions inside "
+                    "sites.py:appliance_checkin around the signature "
+                    "verification path. "
+                    "2. Verify site_appliances.agent_public_key for the "
+                    "affected appliance is non-NULL + parseable as Ed25519. "
+                    "3. If verification is failing for a known reason "
+                    "(e.g., new payload format), the canonical-payload "
+                    "reconstruction in signature_auth.verify_heartbeat_"
+                    "signature may need a code update. "
+                    "4. If unverified rows persist >1h, escalate — this "
+                    "is the chain-of-custody integrity class."
+                ),
+            },
+        )
+        for r in rows
+    ]
 
 
 async def _check_canonical_devices_freshness(
