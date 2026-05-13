@@ -85,7 +85,7 @@ export const SiteDetail: React.FC = () => {
     queryKey: ['site-device-summary', siteId],
     queryFn: async () => {
       try {
-        const res = await fetch(`/api/dashboard/devices/sites/${siteId}/summary`, {
+        const res = await fetch(`/api/devices/sites/${siteId}/summary`, {
           credentials: 'include',
         });
         if (!res.ok) return null;
@@ -103,7 +103,7 @@ export const SiteDetail: React.FC = () => {
     queryKey: ['site-workstation-summary', siteId],
     queryFn: async () => {
       try {
-        const res = await fetch(`/api/dashboard/sites/${siteId}/workstations`, {
+        const res = await fetch(`/api/sites/${siteId}/workstations`, {
           credentials: 'include',
         });
         if (!res.ok) return null;
@@ -121,7 +121,7 @@ export const SiteDetail: React.FC = () => {
     queryKey: ['site-agent-summary', siteId],
     queryFn: async () => {
       try {
-        const res = await fetch(`/api/dashboard/sites/${siteId}/agents`, {
+        const res = await fetch(`/api/sites/${siteId}/agents`, {
           credentials: 'include',
         });
         if (!res.ok) return null;
