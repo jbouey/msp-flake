@@ -126,6 +126,17 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
     # engineering question. Per Task #50 Gate A P0 #1 logic, including
     # a TBD entry is itself a Rule 1 violation — so this metric class
     # is absent from this registry until its own Gate A completes.
+    # Phase 2 helper — the canonical CTE-JOIN shape for migrating raw
+    # discovered_devices readers to canonical_devices. Use this string
+    # constant instead of hand-writing 17 copies; prevents CTE-drift
+    # class. Gate B will catch any divergence via grep + AST anchor.
+    # Pattern: replace `FROM discovered_devices d WHERE site_id = $N`
+    # with `FROM dd_freshest_from_canonical($N) d` (illustrative).
+    # Callsites with column needs not covered by the CTE add to the
+    # SELECT projection in the CTE inline. COUNT-only readers should
+    # skip the CTE and read `SELECT COUNT(*) FROM canonical_devices
+    # WHERE site_id = $N` directly (3 callsites: partners.py:2595,
+    # routes.py:5322, portal.py:1251).
     "device_count_per_site": {
         # Canonical: canonical_devices table (mig 319, Task #73 Phase 1).
         # Multi-appliance same-(ip,mac) observations collapse via 60s

@@ -35,13 +35,15 @@ _BACKEND = pathlib.Path(__file__).resolve().parent.parent
 # Phase 2 migration targets. Each is classified in canonical_metrics.py
 # allowlist as `operator_only` or `write_path`.
 _EXEMPT_FILES = frozenset({
-    "assertions.py",          # _check_discovered_devices_freshness + _check_canonical_devices_freshness (per-row + per-site)
-    "device_sync.py",         # write paths (sync from appliances) + the canonical reader uses migration marker
-    "appliance_trace.py",     # per-appliance audit trail (operator-only)
-    "prometheus_metrics.py",  # operator-only metrics
-    "background_tasks.py",    # canonical_devices reconciliation loop (the writer)
-    "compliance_packet.py",   # post-migration uses marker; raw-reader removed
-    "health_monitor.py",      # owner_appliance write path
+    "assertions.py",                # _check_discovered_devices_freshness + _check_canonical_devices_freshness (per-row + per-site)
+    "device_sync.py",               # write paths (sync from appliances) + the canonical reader uses migration marker
+    "appliance_trace.py",           # per-appliance audit trail (operator-only)
+    "prometheus_metrics.py",        # operator-only metrics
+    "background_tasks.py",          # canonical_devices reconciliation loop (the writer)
+    "compliance_packet.py",         # post-migration uses marker; raw-reader removed
+    "health_monitor.py",            # owner_appliance write path
+    "canonical_metrics.py",         # registry comments reference the pattern by name
+    "canonical_devices_helpers.py", # Phase 2 helper module — CTE string constants
 })
 
 # Files that have migrated MUST contain this marker. Used to assert the
@@ -49,11 +51,12 @@ _EXEMPT_FILES = frozenset({
 _MIGRATION_MARKER = "canonical-migration: device_count_per_site"
 
 # Frozen baseline. Phase 2 commits decrement this as each customer-facing
-# reader migrates. Drive-down target: 0. Empirical Phase-1-post count = 22
+# reader migrates. Drive-down target: 0. Empirical Phase-1-post count was 22
 # (raw grep returned more callsites than Gate A v2 fork enumerated — e.g.
 # compliance_frameworks.py + sites.py readers Gate A missed). Phase 2 owns
-# enumerating-and-migrating each.
-BASELINE_MAX = 22
+# enumerating-and-migrating each. Phase 2 Batch 1 (partners.py × 4)
+# dropped 22 → 18 on 2026-05-13.
+BASELINE_MAX = 18
 
 
 def _raw_count_in_file(path: pathlib.Path) -> int:

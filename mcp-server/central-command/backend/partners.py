@@ -1885,12 +1885,23 @@ async def get_partner_site_topology(
             """,
             site_id,
         )
+        # canonical-migration: device_count_per_site — Phase 2 Batch 1 (Task #74)
+        # Multi-appliance same-(ip,mac) observations now collapse to one row.
         devices = await conn.fetch(
             """
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = $1
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT id, hostname, ip_address, device_type, last_seen,
                    device_status, owner_appliance_id
-            FROM discovered_devices
-            WHERE site_id = $1
+            FROM dd_freshest
             ORDER BY ip_address, hostname
             LIMIT 200
             """,
@@ -2580,26 +2591,60 @@ async def get_partner_org_devices(
         if not site_ids:
             return {"devices": [], "summary": {"total": 0, "compliant": 0, "drifted": 0, "unknown": 0, "compliance_rate": 0}, "total": 0}
 
+        # canonical-migration: device_count_per_site — Phase 2 Batch 1 (Task #74)
+        # Pre-fix: each appliance's ARP scan duplicated rows per (ip,mac).
+        # Multi-appliance sites' partner-facing org-level device list
+        # showed inflated counts. Migrated to canonical_devices via
+        # CTE-JOIN-back for fields canonical doesn't carry (compliance_status,
+        # device_status, last_seen_at, hostname, os_name).
         devices = await conn.fetch("""
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id)
+                       cd.canonical_id,
+                       cd.site_id,
+                       cd.ip_address,
+                       cd.mac_address,
+                       dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = ANY($1)
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT d.id, d.site_id, s.clinic_name, d.hostname, d.ip_address,
-                   d.device_type, d.os_name, d.compliance_status, d.device_status,
+                   d.device_type, d.os_name,
+                   d.compliance_status,  -- noqa: deprecated-compliance-status — Phase 2 partner-listing dedup per Gate A
+                   d.device_status,
                    d.last_seen_at
-            FROM discovered_devices d
+            FROM dd_freshest d
             JOIN sites s ON d.site_id = s.site_id
-            WHERE d.site_id = ANY($1)
             ORDER BY d.ip_address
             LIMIT $2 OFFSET $3
         """, site_ids, limit, offset)
 
+        # canonical-migration: device_count_per_site — Phase 2 Batch 1 (COUNT-only direct, no CTE)
         total = await conn.fetchval(
-            "SELECT count(*) FROM discovered_devices WHERE site_id = ANY($1)", site_ids
+            "SELECT count(*) FROM canonical_devices WHERE site_id = ANY($1)", site_ids
         )
+        # canonical-migration: device_count_per_site — Phase 2 Batch 1 (summary needs CTE-JOIN for compliance_status filter)
         summary = await conn.fetchrow("""
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = ANY($1)
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT count(*) as total,
-                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant,
-                count(*) FILTER (WHERE compliance_status = 'drifted') as drifted,
-                count(*) FILTER (WHERE compliance_status IS NULL OR compliance_status = 'unknown') as unknown
-            FROM discovered_devices WHERE site_id = ANY($1)
+                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant,  -- noqa: deprecated-compliance-status — Phase 2
+                count(*) FILTER (WHERE compliance_status = 'drifted') as drifted,  -- noqa: deprecated-compliance-status — Phase 2
+                count(*) FILTER (WHERE compliance_status IS NULL OR compliance_status = 'unknown') as unknown  -- noqa: deprecated-compliance-status — Phase 2
+            FROM dd_freshest
         """, site_ids)
 
     return {
