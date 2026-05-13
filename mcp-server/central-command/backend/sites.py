@@ -4241,22 +4241,35 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                                 from .signature_auth import verify_heartbeat_signature
                             except ImportError:
                                 from signature_auth import verify_heartbeat_signature  # type: ignore
-                            _hb_verify_result = await verify_heartbeat_signature(
-                                conn,
-                                site_id=checkin.site_id,
-                                appliance_id=str(canonical_id),
-                                mac_address=getattr(checkin, 'mac_address', '') or '',
-                                agent_version=checkin.agent_version or '',
-                                signature_hex=_hb_sig,
-                                daemon_supplied_timestamp_unix=_hb_daemon_ts,
-                                now_dt=now,
-                            )
+                            # Savepoint isolation (2026-05-13 dashboard-sync fix):
+                            # without `async with conn.transaction():`, a
+                            # verifier exception poisons the connection's
+                            # transaction state and ANY downstream query on
+                            # the same conn (incl. the appliance_heartbeats
+                            # INSERT below) fails silently. Wrap the verify
+                            # call so the soft-verify except block also
+                            # rolls back the savepoint cleanly.
+                            async with conn.transaction():
+                                _hb_verify_result = await verify_heartbeat_signature(
+                                    conn,
+                                    site_id=checkin.site_id,
+                                    appliance_id=str(canonical_id),
+                                    mac_address=getattr(checkin, 'mac_address', '') or '',
+                                    agent_version=checkin.agent_version or '',
+                                    signature_hex=_hb_sig,
+                                    daemon_supplied_timestamp_unix=_hb_daemon_ts,
+                                    now_dt=now,
+                                )
                         except Exception:
                             # Soft-verify: never block the checkin on
-                            # verifier exception. Substrate invariant
-                            # daemon_heartbeat_signature_invalid (sev1)
-                            # catches signature_valid=FALSE; this branch
-                            # is for unexpected verifier-side failures.
+                            # verifier exception. Substrate invariants
+                            # daemon_heartbeat_signature_invalid (sev1) +
+                            # daemon_heartbeat_signature_unverified (sev1
+                            # new 2026-05-13 d042802e) catch the failure
+                            # modes — this except just logs + continues.
+                            # The savepoint rollback (from the inner
+                            # transaction context) ensures sibling
+                            # writes downstream are unaffected.
                             logger.exception(
                                 "verify_heartbeat_signature raised; "
                                 "continuing with NULL verification state"

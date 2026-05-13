@@ -610,12 +610,22 @@ async def verify_heartbeat_signature(
     # Filter deleted_at IS NULL — D1 verifier never validates signatures
     # for soft-deleted appliances (gate parity per
     # test_no_unfiltered_site_appliances_select.py BASELINE_MAX rule).
+    # schema-vs-code drift fix (2026-05-13): site_appliances.appliance_id
+    # is character varying (TEXT), not UUID. The prior `$1::uuid` cast
+    # raised UndefinedFunctionError("character varying = uuid") on every
+    # heartbeat verify call, the soft-verify wrapper caught it, BUT the
+    # connection's transaction state was poisoned and the downstream
+    # appliance_heartbeats INSERT in sites.py also failed silently.
+    # Net effect: 4h+ of dashboard-vs-site-detail divergence
+    # (site_appliances.last_checkin fresh, appliance_heartbeats stale).
+    # Cast removed. Companion fix: caller wraps in conn.transaction()
+    # so future verifier exceptions can't poison sibling writes.
     row = await conn.fetchrow(
         """
         SELECT agent_public_key, previous_agent_public_key,
                previous_agent_public_key_retired_at
           FROM site_appliances
-         WHERE appliance_id = $1::uuid
+         WHERE appliance_id = $1
            AND site_id = $2
            AND deleted_at IS NULL
         """,
