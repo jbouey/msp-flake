@@ -759,6 +759,30 @@ async def get_dashboard(user: dict = Depends(require_client_user)):
         from .compliance_score import compute_compliance_score
         score_result = await compute_compliance_score(conn, site_ids)
 
+        # Counsel Rule 1 runtime sampling — 10% stochastic capture of the
+        # customer-facing emission for substrate drift verification.
+        # Soft-fail; never blocks the response.
+        try:
+            from .canonical_metrics_sampler import sample_metric_response
+            await sample_metric_response(
+                conn,
+                metric_class="compliance_score",
+                tenant_id=str(org_id),
+                captured_value=(
+                    float(score_result.overall_score)
+                    if score_result.overall_score is not None else None
+                ),
+                endpoint_path="/api/client/dashboard",
+                helper_input={
+                    "site_ids": site_ids,
+                    "window_days": 30,
+                    "include_incidents": False,
+                },
+                classification="customer-facing",
+            )
+        except Exception:
+            pass  # sampler is best-effort
+
         # Get recent notifications (unread)
         unread_count = await conn.fetchval("""
             SELECT COUNT(*) FROM client_notifications
