@@ -27,13 +27,33 @@ CHANGED=$(git diff --name-only "@{u}..HEAD" 2>/dev/null || git diff --name-only 
 BACKEND_CHANGED=0
 ISO_CHANGED=0
 FRONTEND_CHANGED=0
-for f in $CHANGED; do
-    case "$f" in
-        mcp-server/central-command/frontend/*) FRONTEND_CHANGED=1 ;;
-        mcp-server/*) BACKEND_CHANGED=1 ;;
-        iso/*)        ISO_CHANGED=1 ;;
-    esac
-done
+# Silent-skip-class fix (Task #68, 2026-05-13):
+# `git diff @{u}..HEAD` exits 0 with EMPTY stdout when HEAD == upstream
+# (the exact state during manual verification reruns AFTER a successful
+# push). The `||` fallback only triggers on non-zero exit, not on empty
+# stdout. Result: $CHANGED is empty, the for-loop iterates zero times,
+# all flags stay 0, every gate silently skips, exit 0. That's how
+# commit fd54e637 (Phase 2c canonical_compliance_score_drift) deployed
+# with a missing ## Escalation runbook section — author's manual
+# re-verify showed rc=0 because the empty-stdout case hit ALL flags=0.
+# Fix: if $CHANGED is empty, force all flags to 1 (treat as manual
+# verification mode — run every gate). Docs-only changes still skip
+# all gates because $CHANGED would be non-empty but contain no
+# mcp-server/* or iso/* entries.
+if [ -z "$CHANGED" ]; then
+    echo "[pre-push] manual-verification mode (HEAD == @{u} or no upstream) — running all gates"
+    BACKEND_CHANGED=1
+    ISO_CHANGED=1
+    FRONTEND_CHANGED=1
+else
+    for f in $CHANGED; do
+        case "$f" in
+            mcp-server/central-command/frontend/*) FRONTEND_CHANGED=1 ;;
+            mcp-server/*) BACKEND_CHANGED=1 ;;
+            iso/*)        ISO_CHANGED=1 ;;
+        esac
+    done
+fi
 
 # Backend smoke-import (catches the 2026-04-15 ImportError-on-deploy class).
 if [ "$BACKEND_CHANGED" -eq 1 ]; then
