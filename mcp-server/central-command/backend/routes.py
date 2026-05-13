@@ -5305,30 +5305,55 @@ async def get_organization_devices(
         if not site_ids:
             return {"devices": [], "summary": {}, "total": 0}
 
+        # canonical-migration: device_count_per_site — Phase 2 Batch 2 (Task #74)
+        # Admin org-scope device list. CTE-JOIN-back for compliance_status +
+        # owner_appliance_id (canonical_devices doesn't carry those today).
         devices = await conn.fetch("""
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = ANY($1)
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT d.id, d.site_id, s.clinic_name, d.hostname, d.ip_address,
-                   d.mac_address, d.device_type, d.os_name, d.compliance_status,
+                   d.mac_address, d.device_type, d.os_name,
+                   d.compliance_status,  -- noqa: deprecated-compliance-status — Phase 2 admin org-scope read
                    d.device_status, d.last_seen_at, d.owner_appliance_id,
                    a_owner.site_id as owner_site_id
-            FROM discovered_devices d
+            FROM dd_freshest d
             JOIN sites s ON d.site_id = s.site_id
             LEFT JOIN v_appliances_current a_owner ON d.owner_appliance_id = a_owner.id
-            WHERE d.site_id = ANY($1)
             ORDER BY d.ip_address
             LIMIT $2 OFFSET $3
         """, site_ids, limit, offset)
 
+        # canonical-migration: device_count_per_site — Phase 2 Batch 2 (COUNT-only direct)
         total = await conn.fetchval(
-            "SELECT count(*) FROM discovered_devices WHERE site_id = ANY($1)", site_ids
+            "SELECT count(*) FROM canonical_devices WHERE site_id = ANY($1)", site_ids
         )
 
+        # canonical-migration: device_count_per_site — Phase 2 Batch 2 (CTE-JOIN for compliance_status filter)
         summary = await conn.fetchrow("""
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = ANY($1)
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT count(*) as total,
-                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant,
-                count(*) FILTER (WHERE compliance_status = 'drifted') as drifted,
-                count(*) FILTER (WHERE compliance_status = 'unknown' OR compliance_status IS NULL) as unknown,
+                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant,  -- noqa: deprecated-compliance-status — Phase 2 admin summary
+                count(*) FILTER (WHERE compliance_status = 'drifted') as drifted,  -- noqa: deprecated-compliance-status — Phase 2 admin summary
+                count(*) FILTER (WHERE compliance_status = 'unknown' OR compliance_status IS NULL) as unknown,  -- noqa: deprecated-compliance-status — Phase 2 admin summary
                 count(DISTINCT site_id) as site_count
-            FROM discovered_devices WHERE site_id = ANY($1)
+            FROM dd_freshest
         """, site_ids)
 
     return {
@@ -5754,13 +5779,24 @@ async def get_admin_compliance_health(
               AND created_at > NOW() - INTERVAL '30 days'
         """, site_id)
 
-        # Network coverage score
+        # canonical-migration: device_count_per_site — Phase 2 Batch 2 (Task #74)
+        # Network coverage: per-device device_status filter. CTE-JOIN-back
+        # because canonical_devices doesn't carry device_status today.
         coverage_row = await conn.fetchrow("""
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = $1
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT
                 COUNT(*) FILTER (WHERE device_status = 'agent_active') as agent_active,
                 COUNT(*) FILTER (WHERE device_status NOT IN ('ignored', 'archived')) as total_non_ignored
-            FROM discovered_devices
-            WHERE site_id = $1
+            FROM dd_freshest
         """, site_id)
 
         agent_active = coverage_row["agent_active"] or 0
@@ -5849,13 +5885,24 @@ async def get_devices_at_risk(
             ORDER BY sa.hostname, i.created_at DESC
         """, site_id)
 
-        # Get device info from discovered_devices for enrichment (hostname, ip, device_type)
+        # Get device info for enrichment (hostname, ip, device_type)
+        # canonical-migration: device_count_per_site — Phase 2 Batch 2 (Task #74)
         device_info = {}
         try:
             devices = await conn.fetch("""
-                SELECT d.hostname, d.ip_address, d.device_type, d.os_name, d.compliance_status
-                FROM discovered_devices d
-                WHERE d.site_id = $1
+                WITH dd_freshest AS (
+                    SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                      FROM canonical_devices cd
+                      JOIN discovered_devices dd
+                        ON dd.site_id = cd.site_id
+                       AND dd.ip_address = cd.ip_address
+                       AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                     WHERE cd.site_id = $1
+                     ORDER BY cd.canonical_id, dd.last_seen_at DESC
+                )
+                SELECT d.hostname, d.ip_address, d.device_type, d.os_name,
+                       d.compliance_status  -- noqa: deprecated-compliance-status — Phase 2 enrichment lookup
+                FROM dd_freshest d
             """, site_id)
             for d in devices:
                 hn = (d["hostname"] or "").lower()

@@ -164,12 +164,24 @@ class TestSearchEndpoint:
         assert "ge=1, le=100" in body_src or "ge=1,le=100" in body_src
 
     def test_searches_all_four_categories(self):
-        """Incidents, devices, credentials, workstations must all be queried."""
+        """Incidents, devices, credentials, workstations must all be queried.
+
+        Post Task #73 Phase 2 Batch 2 (2026-05-13): the devices search
+        was migrated from raw `discovered_devices` to canonical_devices
+        via CTE-JOIN (`WITH dd_freshest AS (... FROM canonical_devices cd
+        JOIN discovered_devices dd ...) SELECT ... FROM dd_freshest`).
+        Accept either shape — the test's intent is semantic ("the
+        function searches devices") not structural.
+        """
         tree = ast.parse(_load(SITES_PY))
         fn = _get_func(tree, "search_site")
         body_src = ast.get_source_segment(_load(SITES_PY), fn) or ""
         assert "FROM incidents" in body_src
-        assert "FROM discovered_devices" in body_src
+        assert (
+            "FROM discovered_devices" in body_src
+            or "FROM canonical_devices" in body_src
+            or "FROM dd_freshest" in body_src
+        ), "search_site must query the devices table (raw or canonical via CTE)"
         assert "FROM site_credentials" in body_src
         assert "FROM workstations" in body_src
 

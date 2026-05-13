@@ -7265,12 +7265,25 @@ async def search_site(
         # 2) Discovered devices — hostname, ip_address, mac_address
         # NOTE: incidents.title lives in details JSONB — there's no title column.
         try:
+            # canonical-migration: device_count_per_site — Phase 2 Batch 2 (Task #74)
+            # Search-by-hostname/ip/mac. CTE-JOIN-back; id stays from
+            # discovered_devices (incident-correlation lookup; not a
+            # write-path).
             device_rows = await conn.fetch(
                 """
+                WITH dd_freshest AS (
+                    SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                      FROM canonical_devices cd
+                      JOIN discovered_devices dd
+                        ON dd.site_id = cd.site_id
+                       AND dd.ip_address = cd.ip_address
+                       AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                     WHERE cd.site_id = $1
+                     ORDER BY cd.canonical_id, dd.last_seen_at DESC
+                )
                 SELECT id::text AS id, hostname, ip_address, mac_address, device_type
-                FROM discovered_devices
-                WHERE site_id = $1
-                  AND (
+                FROM dd_freshest
+                WHERE (
                     COALESCE(hostname,'') ILIKE $2
                     OR COALESCE(ip_address,'') ILIKE $2
                     OR COALESCE(mac_address,'') ILIKE $2
