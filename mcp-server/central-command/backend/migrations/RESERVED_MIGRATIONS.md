@@ -43,5 +43,5 @@ If a design is dropped or the number is no longer needed: remove the row in a co
 
 ## See also
 
-- `tests/test_migration_number_collision.py` — CI gate (6 tests)
+- `tests/test_migration_number_collision.py` — CI gate (8 tests, incl. Gate A v3 hardenings)
 - `audit/reserved-migrations-ledger-design-2026-05-13.md` — design v3 + Gate A trail
