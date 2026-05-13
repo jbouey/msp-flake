@@ -363,10 +363,11 @@ async def remediate_cve(cve_id: str, body: CVERemediateRequest, user: dict = Dep
                 0, "healing", parameters, now, expires_at
             )
 
+            from .signing_backend import current_signing_method
             row = await conn.fetchrow("""
                 INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
-                                          nonce, signature, signed_payload)
-                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+                                          nonce, signature, signed_payload, signing_method)
+                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7, $8)
                 RETURNING id, created_at
             """,
                 "healing",
@@ -376,6 +377,7 @@ async def remediate_cve(cve_id: str, body: CVERemediateRequest, user: dict = Dep
                 nonce,
                 signature,
                 signed_payload,
+                current_signing_method(),
             )
 
             order_id = row["id"]

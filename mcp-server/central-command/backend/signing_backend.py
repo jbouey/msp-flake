@@ -432,6 +432,33 @@ def get_signing_backend():
     return _BACKEND_SINGLETON
 
 
+def current_signing_method() -> str:
+    """Return the active PRIMARY backend's name for fleet_orders.signing_method.
+
+    Vault Phase C P0 #3 (audit/coach-vault-phase-c-gate-a-2026-05-12.md):
+    the column was added in mig 177 but every INSERT defaulted to 'file'.
+    Call-site code now writes this value at INSERT time. After Phase C
+    cutover this returns 'vault'; during shadow mode it returns whichever
+    backend the env names as PRIMARY (typically 'file').
+
+    Returns: 'file' | 'vault' (never 'shadow' — that's the wrapper, not
+    the actual signer). Safe to call before backend init — falls back
+    to env if singleton not yet built.
+    """
+    try:
+        backend = get_signing_backend()
+    except Exception:
+        # Build failure → fall back to env
+        return SIGNING_BACKEND_PRIMARY if SIGNING_BACKEND == "shadow" else SIGNING_BACKEND
+    primary = getattr(backend, "_primary", backend)
+    name = getattr(primary, "name", "file")
+    # Defensive — never expose 'shadow' as a signing method because no
+    # signature actually originates from the shadow wrapper.
+    if name == "shadow":
+        return "file"
+    return name
+
+
 def reset_singleton() -> None:
     """For tests + in-process env changes only. Force the next call
     to _build_backend to re-read env."""
