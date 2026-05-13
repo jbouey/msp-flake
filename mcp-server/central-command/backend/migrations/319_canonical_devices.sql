@@ -57,15 +57,28 @@ CREATE POLICY canonical_devices_admin_all
     USING (current_setting('app.is_admin', true) = 'true')
     WITH CHECK (current_setting('app.is_admin', true) = 'true');
 
--- Tenant isolation by site_id (mirrors discovered_devices.tenant_org_isolation)
+-- Tenant isolation by site_id (mirrors discovered_devices.tenant_org_isolation
+-- per mig 278 canonical shape — short-circuit if app.current_org is unset
+-- per the rls_site_belongs_to_current_org function's contract comment).
+-- Gate B P1.1 fix 2026-05-13: omitting these guards is a documented
+-- contract violation.
 CREATE POLICY canonical_devices_tenant_org_isolation
-    ON canonical_devices
-    USING (rls_site_belongs_to_current_org(site_id));
+    ON canonical_devices FOR ALL
+    USING (
+        current_setting('app.current_org', true) IS NOT NULL
+        AND current_setting('app.current_org', true) <> ''
+        AND rls_site_belongs_to_current_org(site_id::text)
+    );
 
--- Partner isolation by site_id (mirrors discovered_devices.partner_isolation)
+-- Partner isolation by site_id (mirrors discovered_devices.partner_isolation
+-- per mig 297 canonical shape).
 CREATE POLICY canonical_devices_partner_isolation
-    ON canonical_devices
-    USING (rls_site_belongs_to_current_partner(site_id));
+    ON canonical_devices FOR ALL
+    USING (
+        current_setting('app.current_partner_id', true) IS NOT NULL
+        AND current_setting('app.current_partner_id', true) <> ''
+        AND rls_site_belongs_to_current_partner(site_id::text)
+    );
 
 COMMENT ON TABLE canonical_devices IS
     'Canonical view of physical devices per site, deduplicated from discovered_devices. '

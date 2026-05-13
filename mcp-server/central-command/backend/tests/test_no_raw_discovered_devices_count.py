@@ -21,7 +21,7 @@ Ratchet semantics:
     inline marker (compliance_packet + device_sync as of Phase 1).
   - VIOLATIONS = SOURCE - EXEMPT_FILES - MIGRATED → must stay ≤ BASELINE_MAX.
 
-Pin: BASELINE_MAX = 17 today (Phase 2 readers to be migrated). Phase 2
+Pin: BASELINE_MAX = 22 today (Phase 2 readers to be migrated). Phase 2
 drives to 0.
 """
 from __future__ import annotations

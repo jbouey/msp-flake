@@ -1182,7 +1182,7 @@ class CompliancePacket:
                     SELECT DISTINCT ON (cd.canonical_id)
                            cd.canonical_id,
                            dd.os_name,
-                           dd.compliance_status,
+                           dd.compliance_status,  # noqa: deprecated-compliance-status — Phase 1 dedup CTE-JOIN per Task #73 Gate A v2 plan; sourced from canonical_devices row's freshest discovered_devices observation for the Methodology section's per-OS/compliance/managed aggregation
                            dd.device_status
                       FROM canonical_devices cd
                       JOIN discovered_devices dd

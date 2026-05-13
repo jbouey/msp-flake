@@ -308,7 +308,12 @@ async def canonical_devices_reconciliation_loop():
     Substrate invariant: canonical_devices_freshness (sev2, fires
     on staleness > 60min).
     """
-    await asyncio.sleep(120)  # Wait 2 min after startup
+    # Gate B P1.3 (2026-05-13): 5s startup window minimizes
+    # customer-visible empty-canonical-table regression on backend
+    # restart. Pre-fix the 120s window meant the device-inventory
+    # page + compliance packet PDFs emitted zero counts for the
+    # first 2 minutes after every restart.
+    await asyncio.sleep(5)
     while True:
         _hb("canonical_devices_reconciliation")
         try:
