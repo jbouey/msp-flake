@@ -4581,6 +4581,7 @@
     "ssh_authorized_keys",
     "status",
     "sub_partner_id",
+    "synthetic",
     "tier",
     "tracking_carrier",
     "tracking_number",
@@ -4623,6 +4624,32 @@
     "stripe_subscription_id",
     "trial_end",
     "updated_at"
+  ],
+  "substrate_mttr_soak_runs_v2": [
+    "config",
+    "detect_p50_seconds",
+    "detect_p95_seconds",
+    "detect_p99_seconds",
+    "ended_at",
+    "resolve_p50_seconds",
+    "resolve_p95_seconds",
+    "resolve_p99_seconds",
+    "soak_run_id",
+    "started_at",
+    "status",
+    "summary"
+  ],
+  "substrate_synthetic_seeds": [
+    "detected_at",
+    "incident_id",
+    "invariant_name",
+    "removed_at",
+    "resolved_at",
+    "seed_id",
+    "seeded_at",
+    "severity_label",
+    "site_id",
+    "soak_run_id"
   ],
   "substrate_action_invocations": [
     "action_key",

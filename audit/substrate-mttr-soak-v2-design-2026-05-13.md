@@ -76,9 +76,14 @@ To make this fire, the seed must be a row in `incidents` with:
 - Mig 300/301/302 already backfilled real prod orphans; the synthetic-marker carve-out is the same pattern.
 - Closure is asymmetric: deleting the seed makes the engine's invariant query return empty for that key → hysteresis-timer → resolve. We never UPDATE `incidents.status` to close.
 
-<!-- mig-claim: 315 task:#98 -->
+<!-- mig 315 SHIPPED 2026-05-13 — see migrations/315_substrate_mttr_soak_v2.sql -->
 
-### Migration design (mig 315 `substrate_mttr_soak_v2`)
+### Migration design (mig 315 `substrate_mttr_soak_v2`, v3 P0 fixes applied)
+
+> **v3 P0 fixes (Gate A v2 APPROVE-WITH-FIXES → 3 P0s applied 2026-05-13):**
+> - **P0-CROSS-2 (status-flip race):** mig no longer flips `status='active'`. Status STAYS at `'inactive'` (quarantined by mig 304). The injector itself flips status to `'active'` at startup, gated on CI green for the new `synthetic = FALSE` filter code. Backend-deploy-lag-induced contamination window closed structurally.
+> - **P0-CROSS-3 (compliance_bundles CHECK):** mig now lands `no_synthetic_bundles CHECK (site_id NOT LIKE 'synthetic-%') NOT VALID` per Counsel Rule 2 compiler-rule discipline. `NOT VALID` defers table scan to manual VALIDATE; enforces on every new write immediately.
+> - **P0-CROSS-1 (mig number 311 → 315):** already applied in Task #59 Commit 1 (audit-log reference at line 142 corrected from `'mig:311'` to `'mig:315'`).
 
 ```sql
 BEGIN;
@@ -87,15 +92,24 @@ BEGIN;
 ALTER TABLE sites ADD COLUMN IF NOT EXISTS synthetic BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_sites_synthetic ON sites (synthetic) WHERE synthetic = TRUE;
 
--- 2. Mark the v1-quarantined synthetic site (mig 304 left it at status='inactive').
--- v2 flips it BACK to status='active' AND synthetic=TRUE so the substrate engine
--- ticks against its incidents (status filter in routes.py:151 still excludes it
--- because the new filter is `synthetic = FALSE` at every callsite — see §4).
+-- 2. Mark the v1-quarantined synthetic site as synthetic=TRUE but LEAVE
+--    status='inactive' (mig 304 quarantine preserved). v3 P0-CROSS-2 fix:
+--    the injector itself flips status to 'active' at startup, gated on the
+--    `synthetic = FALSE` filter code being live in prod (deploy-verified).
+--    Closes the backend-deploy-lag-induced contamination window.
 UPDATE sites
    SET synthetic = TRUE,
-       status = 'active',
        updated_at = NOW()
  WHERE site_id = 'synthetic-mttr-soak';
+
+-- 2b. v3 P0-CROSS-3: schema-level write-side guard against any future code
+--     path accidentally INSERTing a compliance_bundles row for a synthetic
+--     site. NOT VALID defers the table-scan cost (zero existing synthetic
+--     rows by §6.8 invariant) and enforces only on NEW writes. Counsel
+--     Rule 2 (PHI/customer-data boundary as compiler rule) compliance.
+ALTER TABLE compliance_bundles
+    ADD CONSTRAINT no_synthetic_bundles
+    CHECK (site_id NOT LIKE 'synthetic-%') NOT VALID;
 
 -- 3. New seed-tracking table. NOT incidents — incidents is the SHAPE we inject;
 -- this table is the ROUND-TRIP audit (seed lifecycle for the analyzer).
@@ -139,7 +153,7 @@ INSERT INTO admin_audit_log (username, action, target, details, created_at)
 VALUES (
     'jbouey2006@gmail.com',
     'substrate_mttr_soak_v2_install',
-    'mig:311',
+    'mig:315',
     jsonb_build_object(
         'supersedes', '303_substrate_mttr_soak + 304_quarantine',
         'design_doc', 'audit/substrate-mttr-soak-v2-design-2026-05-13.md'
