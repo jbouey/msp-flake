@@ -42,6 +42,15 @@ This is an operator-facing alert. **DO NOT surface to clinic-facing channels** �
   ```
   Recompute via the helper using the captured `helper_input` and confirm match.
 
+## Escalation
+
+If the drift persists across 3+ ticks AND the immediate-action grep doesn't surface a clear allowlist hit, escalate to engineering. The substrate engine's sample-vs-canonical comparison is deterministic — persistent drift beyond the 0.5 tolerance indicates either:
+- A new code path that bypasses the canonical helper and wasn't caught by the static AST gate (the static gate has a `BASELINE_MAX` ratchet — a newly-introduced inline computation would have failed the static gate; if drift fires WITHOUT a static-gate failure, the new path may be in a file the static gate doesn't walk).
+- A regression in `compute_compliance_score` semantics — e.g., a window-default change that wasn't propagated to all callsites.
+- A `helper_input` capture bug at the sampler decorator — the sampler recorded different kwargs than the endpoint actually passed.
+
+Engineering should: (1) inspect the AST gate's BASELINE_MAX vs current count, (2) `git log -p compliance_score.py` for recent semantic changes, (3) audit the sampler callsite at `details.endpoint_path` to verify kwarg capture matches the actual helper call.
+
 ## False-positive guard
 
 - **Sample-then-recompute window-shift:** the sample was captured at t=0; the substrate invariant recomputes at t=N seconds later. The NOW-anchored window has slid by N. Tolerance 0.5 accommodates small numeric drift at the window boundary. Larger deltas are real non-canonical-path drift.
