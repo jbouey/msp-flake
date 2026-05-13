@@ -85,10 +85,7 @@ CREATE TABLE fleet_orders (
     created_by TEXT,
     nonce TEXT,
     signature TEXT,
-    signed_payload TEXT,
-    -- Mig 177 column (Vault Phase C P0 #3 write path 2026-05-12).
-    -- fixture mirrors prod schema so flywheel_promote.py INSERT works.
-    signing_method TEXT NOT NULL DEFAULT 'file'
+    signed_payload TEXT
 );
 
 CREATE TABLE fleet_order_completions (

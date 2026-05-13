@@ -850,16 +850,12 @@ async def issue_sync_promoted_rule_orders(
             0, "sync_promoted_rule", params, now, expires_at,
         )
         try:
-            try:
-                from .signing_backend import current_signing_method
-            except ImportError:
-                from signing_backend import current_signing_method  # type: ignore
             await conn.execute(
                 """
                 INSERT INTO fleet_orders (
                     order_type, parameters, status, expires_at, created_by,
-                    nonce, signature, signed_payload, signing_method
-                ) VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7, $8)
+                    nonce, signature, signed_payload
+                ) VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
                 """,
                 "sync_promoted_rule",
                 json.dumps(params),
@@ -868,7 +864,6 @@ async def issue_sync_promoted_rule_orders(
                 nonce,
                 signature,
                 signed_payload,
-                current_signing_method(),
             )
             created += 1
         except Exception as e:

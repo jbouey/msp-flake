@@ -2197,17 +2197,13 @@ async def relocate_appliance(
                 order_now, order_expires,
                 target_appliance_id=appliance_id,
             )
-            try:
-                from .signing_backend import current_signing_method
-            except ImportError:
-                from signing_backend import current_signing_method  # type: ignore
             row = await conn.fetchrow(
                 """
                 INSERT INTO fleet_orders (
                     order_type, parameters, status, expires_at, created_by,
-                    nonce, signature, signed_payload, signing_method
+                    nonce, signature, signed_payload
                 )
-                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7, $8)
+                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
                 RETURNING id
                 """,
                 "reprovision",
@@ -2217,7 +2213,6 @@ async def relocate_appliance(
                 nonce,
                 signature,
                 signed_payload,
-                current_signing_method(),
             )
             fleet_order_id = str(row["id"])
             logger.info(
@@ -3149,14 +3144,10 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
         expires_at = now + timedelta(hours=24)
         parameters = {"site_id": site_id, "reason": f"Admin {action} healing"}
 
-        try:
-            from .signing_backend import current_signing_method
-        except ImportError:
-            from signing_backend import current_signing_method  # type: ignore
         row = await conn.fetchrow("""
             INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
-                                      nonce, signature, signed_payload, signing_method)
-            VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7, $8)
+                                      nonce, signature, signed_payload)
+            VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
             RETURNING id, created_at
         """,
             order_type,
@@ -3164,7 +3155,6 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
             expires_at,
             user.get("username") or user.get("email"),
             *sign_fleet_order(0, order_type, parameters, now, expires_at),
-            current_signing_method(),
         )
 
         # Audit log
