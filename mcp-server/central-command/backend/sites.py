@@ -3257,9 +3257,16 @@ class ApplianceCheckin(BaseModel):
     generation_uuid: Optional[str] = None
     reconcile_needed: bool = False
     reconcile_signals: Optional[List[str]] = None
-    # D1 (Session 206): Ed25519 hex signature by the appliance over the
-    # heartbeat content hash. NULL until the Go daemon D1 PR ships.
+    # D1 (Session 206 + RT 2026-05-13): Ed25519 hex signature by the
+    # appliance over the heartbeat canonical payload. Daemon-side
+    # signing IS live (phonehome.go:827); backend verification landed
+    # 2026-05-13 (Task #40, Counsel Rule 4).
     heartbeat_signature: Optional[str] = None
+    # D1 hybrid protocol path-A: daemon-supplied Unix timestamp used
+    # in the canonical payload that was signed. Present from daemon
+    # v0.5.0+; absent on v0.4.x (verifier falls back to path-B ±60s
+    # reconstruction). See signature_auth.verify_heartbeat_signature.
+    heartbeat_timestamp: Optional[int] = None
 
 
 def normalize_mac(mac: str) -> str:
@@ -4207,18 +4214,64 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 async with conn.transaction():
                     _hb_subnet = _primary_subnet(checkin.ip_addresses or [])
                     _hb_has_anycast = ANYCAST_LINK_LOCAL in (checkin.ip_addresses or [])
-                    # D1: optional signed-heartbeat signature from the Go
-                    # daemon. Current daemon builds don't send it — column
-                    # will be NULL for pre-D1 daemons. When the daemon PR
-                    # ships, checkin.heartbeat_signature will carry an
-                    # Ed25519 hex over the heartbeat content hash.
+                    # D1 (Task #40, Rule 4): Ed25519 signed-heartbeat
+                    # signature from the daemon. Backend verifies via the
+                    # hybrid protocol (D1 RT verdict 2026-05-13 option c):
+                    # path A if daemon supplied heartbeat_timestamp, else
+                    # path B reconstructs the ±60s window. Soft-verify:
+                    # never blocks the checkin; result lands in
+                    # appliance_heartbeats.signature_valid +
+                    # signature_canonical_format + signature_timestamp_unix
+                    # for the substrate invariants to consume.
                     _hb_sig = getattr(checkin, 'heartbeat_signature', None)
+                    _hb_daemon_ts = getattr(checkin, 'heartbeat_timestamp', None)
+                    _hb_verify_result = None
+                    if _hb_sig:
+                        try:
+                            from signature_auth import verify_heartbeat_signature
+                            _hb_verify_result = await verify_heartbeat_signature(
+                                conn,
+                                site_id=checkin.site_id,
+                                appliance_id=str(canonical_id),
+                                mac_address=getattr(checkin, 'mac_address', '') or '',
+                                agent_version=checkin.agent_version or '',
+                                signature_hex=_hb_sig,
+                                daemon_supplied_timestamp_unix=_hb_daemon_ts,
+                                now_dt=now,
+                            )
+                        except Exception:
+                            # Soft-verify: never block the checkin on
+                            # verifier exception. Substrate invariant
+                            # daemon_heartbeat_signature_invalid (sev1)
+                            # catches signature_valid=FALSE; this branch
+                            # is for unexpected verifier-side failures.
+                            logger.exception(
+                                "verify_heartbeat_signature raised; "
+                                "continuing with NULL verification state"
+                            )
+                    _hb_sig_valid = (
+                        _hb_verify_result.valid
+                        if _hb_verify_result is not None else None
+                    )
+                    _hb_sig_format = (
+                        _hb_verify_result.canonical_format
+                        if _hb_verify_result is not None else None
+                    )
+                    _hb_sig_ts_unix = (
+                        _hb_verify_result.signature_timestamp_unix
+                        if _hb_verify_result is not None else None
+                    )
+                    _hb_sig_verified_at = now if _hb_verify_result is not None else None
                     await conn.execute("""
                         INSERT INTO appliance_heartbeats
                             (site_id, appliance_id, observed_at, status,
                              agent_version, boot_source, primary_subnet,
-                             has_anycast, agent_signature)
-                        VALUES ($1, $2, $3, 'online', $4, $5, $6, $7, $8)
+                             has_anycast, agent_signature,
+                             signature_valid, signature_verified_at,
+                             signature_canonical_format,
+                             signature_timestamp_unix)
+                        VALUES ($1, $2, $3, 'online', $4, $5, $6, $7, $8,
+                                $9, $10, $11, $12)
                     """,
                         checkin.site_id,
                         canonical_id,
@@ -4228,6 +4281,10 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         _hb_subnet,
                         _hb_has_anycast,
                         _hb_sig,
+                        _hb_sig_valid,
+                        _hb_sig_verified_at,
+                        _hb_sig_format,
+                        _hb_sig_ts_unix,
                     )
             except Exception:
                 logger.error(

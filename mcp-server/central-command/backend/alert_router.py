@@ -347,7 +347,10 @@ async def send_digest_for_org(
 
     alerts_list = list(buckets.values())
     html_body, text_body = render_digest_email(org_name, alerts_list, org_mode)
-    subject = f"[OsirisCare] Compliance digest — {org_name}"
+    # Rule 7 opaque-mode (Task #53 v2, Gate A + Gate B 2026-05-13):
+    # customer-facing subject, no org_name leak. Body redirects to
+    # authenticated portal for full context.
+    subject = "[OsirisCare] Compliance digest"
 
     sent = send_digest_email(
         to_email=alert_email,
@@ -403,7 +406,8 @@ async def send_welcome_email_if_needed(
     if not row or row["welcome_email_sent_at"] is not None:
         return False
 
-    subject = f"[OsirisCare] Your compliance monitoring is active — {org_name}"
+    # Rule 7 opaque-mode (Task #53 v2 Phase 0): no org_name leak in subject.
+    subject = "[OsirisCare] Compliance monitoring active"
     text_body = (
         f"Welcome to OsirisCare, {org_name}!\n\n"
         f"Your compliance monitoring is now active.\n"
@@ -527,7 +531,10 @@ async def _flush_critical_alerts(conn) -> None:
             "count": 1,
         }]
         html_body, text_body = render_digest_email(row["org_name"], alerts_list, org_mode)
-        subject = f"[OsirisCare] {row['severity'].upper()} alert — {row['org_name']}"
+        # Rule 7 opaque-mode (Task #53 v2 Phase 0): drop severity + org_name
+        # from subject; both lived in the body already. Severity-routing
+        # remains via the dispatcher; this is the customer-facing surface.
+        subject = "[OsirisCare] Compliance alert"
         sent = send_digest_email(
             to_email=row["alert_email"],
             cc_email=None,
@@ -616,7 +623,9 @@ async def _check_non_engagement(conn) -> None:
                 send_digest_email(
                     to_email=partner["email"],
                     cc_email=None,
-                    subject=f"[OsirisCare Partner] Client non-engagement — {row['org_name']}",
+                    # Rule 7 opaque-mode (Task #53 v2 Phase 0): partner-facing
+                    # customer-class surface; no client org_name in subject.
+                    subject="[OsirisCare Partner] Client non-engagement",
                     html_body=html_body,
                     text_body=text_body,
                 )

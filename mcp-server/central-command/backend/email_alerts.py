@@ -944,7 +944,11 @@ async def send_sra_overdue_email(
         return False
 
     count = len(overdue_items)
-    subject = f"[OsirisCare] {count} SRA remediation item{'s' if count != 1 else ''} overdue for {org_name}"
+    # Rule 7 opaque-mode (Task #53 v2 Phase 0, Gate A + Gate B 2026-05-13):
+    # SRA reminder is customer-facing (recipient is practice owner). No
+    # count + no org_name in subject. Body contains item-level detail
+    # behind authenticated portal redirect.
+    subject = "[OsirisCare] SRA remediation reminder"
 
     items_html = ""
     items_text = ""

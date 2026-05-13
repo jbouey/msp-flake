@@ -64,6 +64,21 @@ _BG_TASKS = _BACKEND / "background_tasks.py"
 # org identity should appear only inside the authenticated portal
 # session).
 _CLIENT_SIGNUP = _BACKEND / "client_signup.py"
+# Task #53 v2 Phase 0 (2026-05-13): alert_router.py is fully
+# customer-facing for the 4 subject paths (compliance digest,
+# monitoring-active, compliance alert, partner non-engagement) — all
+# 4 rewritten to class-hint plain literals in the same commit.
+#
+# email_alerts.py is DELIBERATELY EXCLUDED from this allowlist at
+# Phase 0: it's mixed-recipient (operator-class subjects at lines
+# 257/780/820/1584 + 1 latent send_companion_alert_email org_name
+# leak to clinic-side at line 820). The SRA-reminder subject at
+# line 947 IS customer-facing and was rewritten in the same commit
+# to a class-hint plain literal — but the module as a whole cannot
+# enter _OPAQUE_MODULES without structural recipient-split first.
+# Phase 1 design (own Gate A) addresses email_alerts.py module-level
+# gating + the line-820 latent leak fix.
+_ALERT_ROUTER = _BACKEND / "alert_router.py"
 
 _OPAQUE_MODULES = (
     _OWNER_TRANSFER,
@@ -75,6 +90,7 @@ _OPAQUE_MODULES = (
     _SITES,
     _BG_TASKS,
     _CLIENT_SIGNUP,
+    _ALERT_ROUTER,
 )
 
 # Forbidden parameter names in opaque-mode helpers (drop verbose-mode

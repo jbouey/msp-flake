@@ -206,6 +206,13 @@ async def get_audit_readiness(org_id: int, user: dict = Depends(require_auth)):
             if not org:
                 raise HTTPException(status_code=404, detail="Organization not found")
 
+            # Counsel-grade gate: "BAA on file" claim requires BOTH the
+            # admin flag AND a formal (non-acknowledgment-only) signature.
+            # See baa_status.is_baa_on_file_verified docstring + the
+            # v1.0-INTERIM master BAA at docs/legal/MASTER_BAA_v1.0_INTERIM.md.
+            from baa_status import is_baa_on_file_verified
+            baa_verified = await is_baa_on_file_verified(conn, org_id)
+
             # Gather site IDs for this org.
             #
             # Session 203 audit fix: the column is `client_org_id`, not
@@ -225,7 +232,7 @@ async def get_audit_readiness(org_id: int, user: dict = Depends(require_auth)):
                     signing_rate=0.0,
                     ots_current=False,
                     critical_unresolved=0,
-                    baa_on_file=bool(org["baa_on_file"]),
+                    baa_on_file=baa_verified,
                     packet_downloadable=False,
                 )
                 countdown = compute_audit_countdown(org["next_audit_date"])
@@ -315,7 +322,7 @@ async def get_audit_readiness(org_id: int, user: dict = Depends(require_auth)):
         signing_rate=signing_rate,
         ots_current=ots_current,
         critical_unresolved=critical_unresolved,
-        baa_on_file=bool(org["baa_on_file"]),
+        baa_on_file=baa_verified,
         packet_downloadable=packet_downloadable,
     )
     countdown = compute_audit_countdown(org["next_audit_date"])

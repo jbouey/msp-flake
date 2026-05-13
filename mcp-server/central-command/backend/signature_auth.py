@@ -440,3 +440,261 @@ async def verify_appliance_signature(
         pubkey_fingerprint=fingerprint,
         detail="",
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# D1 heartbeat-signature verification (Task #40, Counsel Rule 4)
+# ─────────────────────────────────────────────────────────────────────
+#
+# The daemon signs the heartbeat canonical payload `site_id|MAC.upper()
+# |ts_unix|agent_version` with Ed25519 over SHA-256 of the joined
+# string. Reference: appliance/internal/daemon/phonehome.go:827-853.
+#
+# Per the D1 protocol round-table 2026-05-13 (UNANIMOUS APPROVE on
+# option (c) HYBRID), the backend verifies via TWO PATHS:
+#
+#   path-A (v1a-daemon): daemon-supplied `heartbeat_timestamp` integer
+#     in CheckinRequest body. Backend reconstructs canonical payload
+#     using THAT timestamp. Requires daemon v0.5.0+.
+#
+#   path-B (v1b-reconstruct): backend reconstructs canonical payload
+#     using server NOW() and tries integer timestamps in the ±60s
+#     window. Signature passes if ANY timestamp in window verifies.
+#     Backward-compat with v0.4.x daemons that don't send
+#     heartbeat_timestamp.
+#
+# Path A is preferred. The fork picks A if heartbeat_timestamp is
+# supplied; otherwise falls back to B. signature_canonical_format
+# records which path was used per heartbeat ('v1a-daemon' or
+# 'v1b-reconstruct').
+#
+# The 60s window matches the existing MAX_CLOCK_SKEW used by sigauth
+# at line 72 above — sibling-parity precedent confirmed by D1 RT
+# round-table (Coach lens APPROVE no-double-build).
+
+# Canonical-format identifier strings (lockstep across 4 surfaces:
+# this verifier, daemon phonehome.go, substrate runbook, auditor kit
+# verify.sh). Substrate invariant daemon_on_legacy_path_b watches
+# v1b-reconstruct usage past deprecation deadline.
+HEARTBEAT_FORMAT_V1A_DAEMON = "v1a-daemon"
+HEARTBEAT_FORMAT_V1B_RECONSTRUCT = "v1b-reconstruct"
+
+# Path-B reconstruct window: ±60s of integer timestamps. This matches
+# MAX_CLOCK_SKEW above. At 60s window × 2 sides = 120 verify attempts
+# worst case per heartbeat × ~25µs per Ed25519 verify ≈ 3ms — acceptable.
+_HEARTBEAT_RECONSTRUCT_WINDOW_S = 60
+
+# Rotation-grace window: when site_appliances.agent_public_key is rotated,
+# the previous key remains valid for 15 minutes (matches mig 313
+# previous_agent_public_key_retired_at semantics). Prevents sev1 alert
+# storm on key rotation.
+_HEARTBEAT_KEY_ROTATION_GRACE = timedelta(minutes=15)
+
+
+@dataclass(frozen=True)
+class HeartbeatSignatureResult:
+    """Outcome of a backend heartbeat-signature verification attempt.
+
+    valid
+        TRUE: signature verified against appliance's known agent_public_key
+        (or previous_agent_public_key within rotation grace).
+        FALSE: signature was present but did not verify (potential
+        compromise OR daemon-side bug OR canonical-format mismatch).
+        None: no signature was attempted OR appliance has no
+        agent_public_key on file.
+    canonical_format
+        Which path was used: HEARTBEAT_FORMAT_V1A_DAEMON if the daemon
+        supplied heartbeat_timestamp; HEARTBEAT_FORMAT_V1B_RECONSTRUCT
+        if backend reconstructed the timestamp window. None if signature
+        not attempted.
+    signature_timestamp_unix
+        The Unix-epoch integer used in the canonical payload reconstruction
+        that produced a valid signature. None if signature not attempted
+        or did not verify.
+    """
+    valid: Optional[bool]
+    canonical_format: Optional[str]
+    signature_timestamp_unix: Optional[int]
+
+
+def _heartbeat_canonical_payload(
+    site_id: str, mac_address: str, ts_unix: int, agent_version: str,
+) -> bytes:
+    """Reconstruct the daemon-side canonical heartbeat payload.
+
+    MUST match `appliance/internal/daemon/phonehome.go:837-844` exactly.
+    Format: `site_id|MAC.upper()|ts_unix|agent_version` UTF-8 bytes.
+    """
+    payload = "|".join([
+        site_id,
+        (mac_address or "").upper(),
+        str(int(ts_unix)),
+        agent_version or "",
+    ])
+    return payload.encode("utf-8")
+
+
+def _verify_heartbeat_one_key(
+    pubkey_hex: str,
+    canonical_payload_hashed: bytes,
+    signature_hex: str,
+) -> bool:
+    """Verify a single Ed25519 signature attempt against one pubkey.
+
+    The daemon signs SHA-256(payload), not the raw payload — match that.
+    Uses the same Ed25519PublicKey shape as the existing sigauth verifier
+    (line 410+) for sibling parity. Returns True on success; False on any
+    verification failure or parse error.
+    """
+    try:
+        pubkey_raw = bytes.fromhex(pubkey_hex)
+        sig_raw = bytes.fromhex(signature_hex)
+        pub = Ed25519PublicKey.from_public_bytes(pubkey_raw)
+        pub.verify(sig_raw, canonical_payload_hashed)
+        return True
+    except (InvalidSignature, ValueError, TypeError, binascii.Error):
+        return False
+
+
+async def verify_heartbeat_signature(
+    conn,
+    site_id: str,
+    appliance_id: str,
+    mac_address: str,
+    agent_version: str,
+    signature_hex: Optional[str],
+    daemon_supplied_timestamp_unix: Optional[int] = None,
+    now_dt: Optional[datetime] = None,
+) -> HeartbeatSignatureResult:
+    """Verify a daemon-emitted heartbeat signature using the D1 hybrid
+    protocol (option c, unanimous APPROVE from 2026-05-13 round-table).
+
+    This is a SOFT-VERIFY function: never raises, never blocks the
+    checkin. Returns a result that the caller persists in
+    appliance_heartbeats.signature_valid + signature_canonical_format
+    + signature_timestamp_unix.
+
+    Args:
+        conn: asyncpg connection (admin-scoped; reads site_appliances).
+        site_id, appliance_id, mac_address, agent_version: fields the
+            daemon used to construct its canonical payload.
+        signature_hex: hex-encoded Ed25519 signature from the daemon.
+            None if daemon didn't sign (path absent).
+        daemon_supplied_timestamp_unix: the daemon's `heartbeat_timestamp`
+            integer from the CheckinRequest body. Present when daemon
+            v0.5.0+ supplies it (path A). None for v0.4.x daemons
+            (falls back to path B reconstruction).
+        now_dt: server-side wall-clock for path-B reconstruction.
+            Defaults to datetime.now(timezone.utc); injectable for tests.
+
+    Returns:
+        HeartbeatSignatureResult with valid/canonical_format/timestamp.
+
+    Soft-fail behavior:
+        - No signature supplied → valid=None, canonical_format=None.
+        - Appliance has no agent_public_key on file → valid=None,
+          canonical_format=None.
+        - Signature supplied but does not verify under either path →
+          valid=False, canonical_format=None.
+        - Path A verifies → valid=True, canonical_format='v1a-daemon',
+          signature_timestamp_unix=daemon_supplied_timestamp_unix.
+        - Path B verifies → valid=True, canonical_format='v1b-reconstruct',
+          signature_timestamp_unix=the integer that verified.
+    """
+    if not signature_hex:
+        return HeartbeatSignatureResult(
+            valid=None, canonical_format=None, signature_timestamp_unix=None,
+        )
+
+    # Fetch the appliance's current + previous pubkeys for rotation-grace.
+    # Filter deleted_at IS NULL — D1 verifier never validates signatures
+    # for soft-deleted appliances (gate parity per
+    # test_no_unfiltered_site_appliances_select.py BASELINE_MAX rule).
+    row = await conn.fetchrow(
+        """
+        SELECT agent_public_key, previous_agent_public_key,
+               previous_agent_public_key_retired_at
+          FROM site_appliances
+         WHERE appliance_id = $1::uuid
+           AND site_id = $2
+           AND deleted_at IS NULL
+        """,
+        appliance_id, site_id,
+    )
+
+    if row is None or not row["agent_public_key"]:
+        # No key on file → can't verify. Substrate invariant
+        # daemon_heartbeat_unsigned catches "key SHOULD exist but doesn't"
+        # cases; this branch is informational not sev1.
+        return HeartbeatSignatureResult(
+            valid=None, canonical_format=None, signature_timestamp_unix=None,
+        )
+
+    current_pubkey = row["agent_public_key"]
+    previous_pubkey = row["previous_agent_public_key"]
+    previous_retired_at = row["previous_agent_public_key_retired_at"]
+
+    now = now_dt or datetime.now(timezone.utc)
+
+    # Candidate pubkeys: current first; previous if within grace window.
+    candidate_keys = [current_pubkey]
+    if (
+        previous_pubkey
+        and previous_retired_at is not None
+        and now - previous_retired_at <= _HEARTBEAT_KEY_ROTATION_GRACE
+    ):
+        candidate_keys.append(previous_pubkey)
+
+    # ── PATH A — daemon-supplied heartbeat_timestamp ───────────────
+    if daemon_supplied_timestamp_unix is not None:
+        ts = int(daemon_supplied_timestamp_unix)
+        payload = _heartbeat_canonical_payload(
+            site_id, mac_address, ts, agent_version,
+        )
+        payload_hashed = hashlib.sha256(payload).digest()
+        for pubkey_hex in candidate_keys:
+            if _verify_heartbeat_one_key(pubkey_hex, payload_hashed, signature_hex):
+                return HeartbeatSignatureResult(
+                    valid=True,
+                    canonical_format=HEARTBEAT_FORMAT_V1A_DAEMON,
+                    signature_timestamp_unix=ts,
+                )
+        # Path A attempted but did not verify; record path-A invalid
+        # rather than falling back to path B — the daemon committed to
+        # a specific timestamp, and if that doesn't verify the signature
+        # is invalid regardless of skew window.
+        return HeartbeatSignatureResult(
+            valid=False,
+            canonical_format=None,
+            signature_timestamp_unix=None,
+        )
+
+    # ── PATH B — reconstruct ±60s window of integer timestamps ─────
+    server_now_ts = int(now.timestamp())
+    # Try the most-likely match first (server NOW), then expand outward.
+    # This minimizes Ed25519 verify cost on the common case where clocks
+    # are well-synchronized.
+    timestamps_to_try = [server_now_ts]
+    for offset in range(1, _HEARTBEAT_RECONSTRUCT_WINDOW_S + 1):
+        timestamps_to_try.append(server_now_ts - offset)
+        timestamps_to_try.append(server_now_ts + offset)
+
+    for ts in timestamps_to_try:
+        payload = _heartbeat_canonical_payload(
+            site_id, mac_address, ts, agent_version,
+        )
+        payload_hashed = hashlib.sha256(payload).digest()
+        for pubkey_hex in candidate_keys:
+            if _verify_heartbeat_one_key(pubkey_hex, payload_hashed, signature_hex):
+                return HeartbeatSignatureResult(
+                    valid=True,
+                    canonical_format=HEARTBEAT_FORMAT_V1B_RECONSTRUCT,
+                    signature_timestamp_unix=ts,
+                )
+
+    # Neither path verified.
+    return HeartbeatSignatureResult(
+        valid=False,
+        canonical_format=None,
+        signature_timestamp_unix=None,
+    )

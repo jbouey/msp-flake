@@ -5783,7 +5783,13 @@ async def public_verify_attestation_letter(
             "name": row["privacy_officer_name"],
             "title": row["privacy_officer_title"],
         },
-        "baa_on_file": True,
+        # baa_on_file derived from baa_dated_at (set at letter-issuance
+        # time iff BAA was verified). Counsel-grade Rule 1 (canonical
+        # truth): never hardcode customer-facing assertions. Pre-2026-05-13
+        # this was hardcoded TRUE — corrected per master BAA v1.0-INTERIM
+        # rollout. See baa_status.is_baa_on_file_verified for the active
+        # issuance-time gate.
+        "baa_on_file": row["baa_dated_at"] is not None,
         "baa_dated_at": row["baa_dated_at"].isoformat() if row["baa_dated_at"] else None,
         "baa_practice_name": row["baa_practice_name"],
         "presenter_brand": row["presenter_brand"],

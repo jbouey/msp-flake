@@ -2275,6 +2275,25 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="One or more is_chronic=TRUE rows in incident_recurrence_velocity have computed_at older than 10 minutes — the freshness window the agent_api.py recurrence detector uses. Sev3 SPOF guard (Steve P0-B Gate A finding): bg_loop_silent (sev2) covers complete death of recurrence_velocity_loop; this catches the partial-degradation case where the loop runs slowly or specific chronic rows haven't been recomputed recently. Forward operation continues — new incidents still attempt the velocity read and log the stale signal — but chronic escalation may be delayed until the loop catches up.",
         check=lambda c: _check_recurrence_velocity_stale(c),
     ),
+    # ── D1 heartbeat-signature invariants (Task #40, Counsel Rule 4) ──
+    Assertion(
+        name="daemon_heartbeat_unsigned",
+        severity="sev2",
+        description="An appliance whose site_appliances.agent_public_key IS SET has emitted ≥12 consecutive heartbeats in the last 60 minutes with NULL agent_signature (i.e. daemon is silently not signing heartbeats). Counsel Rule 4 orphan coverage at multi-device-enterprise fleet scale: a daemon that should be signing but isn't is potentially-compromised OR version-rolled-back OR daemon-bug. Threshold tuned per D1 RT 2026-05-13: 12-consecutive at ~5min cadence = ~1 hour of silent unsigned heartbeats before sev2 fires. Auto-resolves when the appliance emits a signed heartbeat. Runbook: substrate_runbooks/daemon_heartbeat_unsigned.md.",
+        check=lambda c: _check_daemon_heartbeat_unsigned(c),
+    ),
+    Assertion(
+        name="daemon_heartbeat_signature_invalid",
+        severity="sev1",
+        description="An appliance has emitted ≥3 heartbeats in the last 15 minutes with signature_valid=FALSE (i.e. signature is present but does NOT verify under any known pubkey, including previous_agent_public_key within the 15-minute rotation grace). Compromise-detection class — sev1 because either (a) the appliance's signing key has been replaced by an attacker, or (b) the canonical-payload format has drifted between daemon and backend lockstep. Runbook: substrate_runbooks/daemon_heartbeat_signature_invalid.md.",
+        check=lambda c: _check_daemon_heartbeat_signature_invalid(c),
+    ),
+    Assertion(
+        name="daemon_on_legacy_path_b",
+        severity="sev3",
+        description="INFORMATIONAL until 2026-08-13 deprecation deadline, then sev2. An appliance has emitted heartbeats with signature_canonical_format='v1b-reconstruct' (i.e. backend reconstructed the ±60s timestamp window because daemon did NOT supply heartbeat_timestamp — daemon version is pre-v0.5.0). After 2026-08-13 deprecation deadline, this becomes sev2: every appliance should have rolled forward to v0.5.0+ which supplies heartbeat_timestamp natively (path A). Allows fleet operators to track daemon-rollout progress. Runbook: substrate_runbooks/daemon_on_legacy_path_b.md.",
+        check=lambda c: _check_daemon_on_legacy_path_b(c),
+    ),
 ]
 
 
@@ -3050,6 +3069,49 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "windows) — non-actionable, will resolve. If bg_loop_silent "
             "is also firing, restart the background_tasks loop. Sev3 "
             "SPoF guard (Steve P0-B, Gate A 2026-05-12)."
+        ),
+    },
+    "daemon_heartbeat_unsigned": {
+        "display_name": "Daemon is silently NOT signing heartbeats",
+        "recommended_action": (
+            "Appliance has agent_public_key on file but emitted ≥12 "
+            "heartbeats in the last 60 minutes with NULL agent_signature. "
+            "Daemon should be signing every heartbeat per "
+            "phonehome.go:827 SystemInfoSigned. Investigate (a) daemon "
+            "version, (b) evidence-submitter signing-key state, (c) "
+            "appliance-side signing-loop errors in daemon slog. If the "
+            "appliance was recently re-flashed, verify site_appliances. "
+            "agent_public_key matches the new daemon's key (15-min "
+            "rotation grace via previous_agent_public_key). Counsel "
+            "Rule 4 orphan-coverage. See "
+            "substrate_runbooks/daemon_heartbeat_unsigned.md."
+        ),
+    },
+    "daemon_heartbeat_signature_invalid": {
+        "display_name": "Daemon signature does NOT verify — potential compromise OR canonical-format drift",
+        "recommended_action": (
+            "SEV1 — escalate to operator. ≥3 heartbeats in the last 15 "
+            "minutes carry signature_valid=FALSE. Either (a) signing key "
+            "compromised (rotate agent_public_key, isolate appliance, "
+            "investigate), or (b) canonical-payload format drifted "
+            "between daemon and backend (diff phonehome.go:837 vs "
+            "signature_auth.py::_heartbeat_canonical_payload — all 4 "
+            "lockstep surfaces must agree). Counsel Rule 4 compromise "
+            "detection. See substrate_runbooks/daemon_heartbeat_"
+            "signature_invalid.md."
+        ),
+    },
+    "daemon_on_legacy_path_b": {
+        "display_name": "Daemon using legacy path-B heartbeat verification (pre-v0.5.0)",
+        "recommended_action": (
+            "Informational until 2026-08-13 deprecation deadline, then "
+            "auto-escalates to sev2. Appliance is on pre-v0.5.0 daemon "
+            "that does not supply heartbeat_timestamp natively — backend "
+            "verifies via path B (±60s reconstruction). Upgrade the "
+            "daemon to v0.5.0+ before the deadline to switch to path A "
+            "(daemon-supplied timestamp, deterministic, auditor-preferred). "
+            "Tracks fleet-rollout progress. See "
+            "substrate_runbooks/daemon_on_legacy_path_b.md."
         ),
     },
 }
@@ -5763,6 +5825,235 @@ async def _check_recurrence_velocity_stale(conn: asyncpg.Connection) -> List[Vio
                     "rolling windows) — non-actionable, will resolve. "
                     "If bg_loop_silent is also firing, restart the "
                     "background_tasks loop."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_daemon_heartbeat_unsigned(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev2 — Appliance has agent_public_key SET but recent heartbeats
+    are NULL-signed.
+
+    Counsel Rule 4 orphan coverage at multi-device-enterprise fleet
+    scale. An appliance whose `site_appliances.agent_public_key` is set
+    SHOULD be signing every heartbeat (daemon code at
+    `appliance/internal/daemon/phonehome.go:827 SystemInfoSigned()` does
+    this when the evidence-submitter's signing key is non-nil). If 12+
+    consecutive heartbeats in the last 60 minutes arrive with NULL
+    `agent_signature`, the daemon is silently NOT signing — potentially
+    compromised, version-rolled-back, or daemon-bug. Sev2 because:
+      * The unsigned heartbeats are still data the substrate accepts.
+      * Forward operation continues — checkin is soft-verified.
+      * But the cryptographic-attestation-chain claim (master BAA
+        Article 3.2) is undermined for the affected appliance.
+
+    Threshold per D1 protocol round-table 2026-05-13: 12 consecutive at
+    ~5-min cadence ≈ 60 minutes of silent unsigned heartbeats.
+
+    Resolves automatically once the appliance emits a signed heartbeat.
+    """
+    rows = await conn.fetch(
+        """
+        WITH recent_per_appliance AS (
+            SELECT
+                ah.site_id,
+                ah.appliance_id,
+                COUNT(*) FILTER (WHERE ah.agent_signature IS NULL) AS unsigned_count,
+                COUNT(*) AS total_count,
+                MAX(ah.observed_at) AS last_seen_at
+              FROM appliance_heartbeats ah
+              JOIN site_appliances sa
+                ON sa.appliance_id = ah.appliance_id
+               AND sa.site_id = ah.site_id
+             WHERE ah.observed_at > NOW() - INTERVAL '60 minutes'
+               AND sa.agent_public_key IS NOT NULL
+               AND sa.agent_public_key <> ''
+             GROUP BY ah.site_id, ah.appliance_id
+        )
+        SELECT site_id, appliance_id, unsigned_count, total_count, last_seen_at
+          FROM recent_per_appliance
+         WHERE unsigned_count >= 12
+         ORDER BY unsigned_count DESC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": str(r["appliance_id"]),
+                "unsigned_count": r["unsigned_count"],
+                "total_count": r["total_count"],
+                "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
+                "interpretation": (
+                    f"Appliance {r['appliance_id']} at site {r['site_id']} "
+                    f"has agent_public_key on file but emitted "
+                    f"{r['unsigned_count']} of {r['total_count']} heartbeats "
+                    f"in the last 60 minutes with NULL agent_signature. "
+                    f"Daemon is silently not signing — investigate version "
+                    f"+ evidence-submitter signing key state."
+                ),
+                "remediation": (
+                    "1. Check daemon version on the appliance — should be "
+                    "≥0.4.x with D1 signing path implemented (phonehome.go:827). "
+                    "2. Verify evidence_submitter.SigningKey() returns non-nil "
+                    "in daemon.go:867 runCheckin. "
+                    "3. If daemon is current AND signing key is present but "
+                    "signature is empty, check signing-loop errors in daemon "
+                    "logs (slog warning 'heartbeat signing failed'). "
+                    "4. If appliance was recently re-flashed, verify "
+                    "site_appliances.agent_public_key matches the new daemon's "
+                    "key (rotation grace is 15 minutes)."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_daemon_heartbeat_signature_invalid(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev1 — Appliance signature is present but does NOT verify under
+    any known pubkey.
+
+    Counsel Rule 4 compromise-detection class at multi-device-enterprise
+    fleet scale. When `signature_valid=FALSE` for ≥3 heartbeats in the
+    last 15 minutes, either (a) the appliance's signing key has been
+    replaced by an attacker (compromise), or (b) the canonical-payload
+    format has drifted between daemon and backend lockstep (engineering
+    bug). Sev1 because either explanation requires immediate operator
+    attention — compromise is bad; drift means signature verification
+    is broken platform-wide.
+
+    Threshold per D1 protocol round-table 2026-05-13: 3 consecutive at
+    ~5-min cadence ≈ 15 minutes of invalid signatures.
+
+    Resolves automatically once the appliance emits a signed heartbeat
+    that DOES verify under a known pubkey (either current or
+    previous-within-grace).
+    """
+    rows = await conn.fetch(
+        """
+        SELECT
+            ah.site_id,
+            ah.appliance_id,
+            COUNT(*) FILTER (WHERE ah.signature_valid = FALSE) AS invalid_count,
+            COUNT(*) AS total_count,
+            MAX(ah.observed_at) AS last_seen_at
+          FROM appliance_heartbeats ah
+         WHERE ah.observed_at > NOW() - INTERVAL '15 minutes'
+           AND ah.signature_valid IS NOT NULL
+         GROUP BY ah.site_id, ah.appliance_id
+        HAVING COUNT(*) FILTER (WHERE ah.signature_valid = FALSE) >= 3
+         ORDER BY invalid_count DESC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": str(r["appliance_id"]),
+                "invalid_count": r["invalid_count"],
+                "total_count": r["total_count"],
+                "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
+                "interpretation": (
+                    f"Appliance {r['appliance_id']} at site {r['site_id']} "
+                    f"emitted {r['invalid_count']} of {r['total_count']} "
+                    f"heartbeats in the last 15 minutes with "
+                    f"signature_valid=FALSE. Either the signing key has "
+                    f"been replaced (compromise) OR the canonical-payload "
+                    f"format drifted between daemon and backend."
+                ),
+                "remediation": (
+                    "1. SEV1 — escalate to operator immediately. "
+                    "2. Inspect the appliance's agent_public_key vs the "
+                    "daemon's actual signing key (SSH the appliance and "
+                    "check evidence-submitter state). "
+                    "3. If the keys match, the canonical-payload format "
+                    "has drifted — diff phonehome.go:837 vs "
+                    "signature_auth.py::_heartbeat_canonical_payload. "
+                    "All 4 lockstep surfaces (daemon, backend verifier, "
+                    "this runbook, auditor kit verify.sh) MUST agree. "
+                    "4. If the keys do NOT match, treat as potential "
+                    "compromise: rotate the appliance's agent_public_key "
+                    "via the standard rotation path, isolate, investigate."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_daemon_on_legacy_path_b(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev3-info until 2026-08-13, then sev2 — appliance is using legacy
+    path B for heartbeat verification (daemon did NOT supply
+    heartbeat_timestamp; backend reconstructed ±60s window).
+
+    D1 protocol round-table 2026-05-13 chose hybrid (option c): path A
+    (daemon-supplied heartbeat_timestamp) for daemon v0.5.0+; path B
+    (backend reconstruction) for backward-compat with pre-v0.5.0
+    daemons. After the 2026-08-13 deprecation deadline (90 days from
+    launch), every appliance should have rolled forward to v0.5.0+.
+    Daemons still on path B past that date are stuck on legacy protocol
+    and should be upgraded.
+
+    Sev3-info today (informational, no operator action required).
+    Auto-escalates to sev2 after 2026-08-13. Tracks fleet-rollout
+    progress on the substrate dashboard.
+    """
+    from datetime import date
+    DEPRECATION_DATE = date(2026, 8, 13)
+    today = date.today()
+    is_past_deprecation = today >= DEPRECATION_DATE
+
+    rows = await conn.fetch(
+        """
+        SELECT
+            ah.site_id,
+            ah.appliance_id,
+            COUNT(*) AS path_b_count,
+            MAX(ah.observed_at) AS last_seen_at
+          FROM appliance_heartbeats ah
+         WHERE ah.observed_at > NOW() - INTERVAL '24 hours'
+           AND ah.signature_canonical_format = 'v1b-reconstruct'
+         GROUP BY ah.site_id, ah.appliance_id
+        HAVING COUNT(*) >= 12
+         ORDER BY path_b_count DESC
+         LIMIT 50
+        """
+    )
+    days_until_deprecation = (DEPRECATION_DATE - today).days
+
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": str(r["appliance_id"]),
+                "path_b_count": r["path_b_count"],
+                "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
+                "deprecation_deadline": DEPRECATION_DATE.isoformat(),
+                "days_until_deprecation": days_until_deprecation,
+                "is_past_deprecation": is_past_deprecation,
+                "interpretation": (
+                    f"Appliance {r['appliance_id']} at site {r['site_id']} "
+                    f"emitted {r['path_b_count']} heartbeats in the last "
+                    f"24h using legacy path B (backend reconstructed the "
+                    f"±60s timestamp window because the daemon did not "
+                    f"supply heartbeat_timestamp natively). Daemon should "
+                    f"be upgraded to v0.5.0+ before "
+                    f"{DEPRECATION_DATE.isoformat()} "
+                    f"({'PAST' if is_past_deprecation else f'{days_until_deprecation} days remaining'})."
+                ),
+                "remediation": (
+                    "Upgrade the daemon on this appliance to v0.5.0 or later. "
+                    "The v0.5.0 daemon includes the HeartbeatTimestamp field "
+                    "in CheckinRequest, enabling path A verification "
+                    "(daemon-supplied timestamp; deterministic; not "
+                    "skew-window-dependent). Path B is the fastest credible "
+                    "stopgap for the legacy fleet, but path A is the "
+                    "auditor-preferred verification mode."
                 ),
             },
         )
