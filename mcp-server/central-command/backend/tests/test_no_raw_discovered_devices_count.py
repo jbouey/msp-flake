@@ -56,7 +56,7 @@ _MIGRATION_MARKER = "canonical-migration: device_count_per_site"
 # compliance_frameworks.py + sites.py readers Gate A missed). Phase 2 owns
 # enumerating-and-migrating each. Phase 2 Batch 1 (partners.py × 4)
 # dropped 22 → 18 on 2026-05-13.
-BASELINE_MAX = 18
+BASELINE_MAX = 14
 
 
 def _raw_count_in_file(path: pathlib.Path) -> int:

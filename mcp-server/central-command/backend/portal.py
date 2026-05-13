@@ -1247,11 +1247,26 @@ async def get_portal_home(
             WHERE site_id = :sid AND deleted_at IS NULL
         """), {"sid": site_id})
         devices["appliances"] = int(arow.scalar() or 0)
+        # canonical-migration: device_count_per_site — Phase 2 Batch 1 (Task #74)
+        # Count workstation/server devices seen in last 7d. CTE-JOIN-back
+        # because canonical_devices.device_type is majority-vote winner
+        # (may not reflect the freshest discovered_devices observation's
+        # type). last_seen_at lives in canonical_devices directly.
         wrow = await execute_with_retry(db, text("""
-            SELECT COUNT(*) FROM discovered_devices
-            WHERE site_id = :sid
-              AND device_type IN ('workstation', 'server')
-              AND last_seen_at > NOW() - INTERVAL '7 days'
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id,
+                       cd.last_seen_at AS cd_last_seen_at, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = :sid
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
+            SELECT COUNT(*) FROM dd_freshest
+            WHERE device_type IN ('workstation', 'server')
+              AND cd_last_seen_at > NOW() - INTERVAL '7 days'
         """), {"sid": site_id})
         devices["workstations"] = int(wrow.scalar() or 0)
     except Exception:
@@ -2129,12 +2144,24 @@ async def get_client_org_overview(
 
         site_ids = [r['site_id'] for r in site_rows]
 
-        # Aggregate compliance
+        # canonical-migration: device_count_per_site — Phase 2 Batch 1 (Task #74)
+        # CTE-JOIN-back to discovered_devices for compliance_status filter
+        # (canonical_devices doesn't carry compliance_status today).
         compliance = await conn.fetchrow("""
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = ANY($1)
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT count(*) as total_devices,
-                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant,
-                count(*) FILTER (WHERE compliance_status = 'drifted') as drifted
-            FROM discovered_devices WHERE site_id = ANY($1)
+                count(*) FILTER (WHERE compliance_status = 'compliant') as compliant,  -- noqa: deprecated-compliance-status — Phase 2 portal aggregation
+                count(*) FILTER (WHERE compliance_status = 'drifted') as drifted  -- noqa: deprecated-compliance-status — Phase 2 portal aggregation
+            FROM dd_freshest
         """, site_ids)
 
         # Aggregate workstations

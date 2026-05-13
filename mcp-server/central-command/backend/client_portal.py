@@ -1284,10 +1284,21 @@ async def get_client_devices_at_risk(
         # Get device info from discovered_devices for enrichment (hostname, ip, device_type)
         device_info = {}
         try:
+            # canonical-migration: device_count_per_site — Phase 2 Batch 1 (Task #74)
             devices = await conn.fetch("""
-                SELECT d.hostname, d.ip_address, d.device_type, d.os_name, d.compliance_status
-                FROM discovered_devices d
-                WHERE d.site_id = $1
+                WITH dd_freshest AS (
+                    SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                      FROM canonical_devices cd
+                      JOIN discovered_devices dd
+                        ON dd.site_id = cd.site_id
+                       AND dd.ip_address = cd.ip_address
+                       AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                     WHERE cd.site_id = $1
+                     ORDER BY cd.canonical_id, dd.last_seen_at DESC
+                )
+                SELECT d.hostname, d.ip_address, d.device_type, d.os_name,
+                       d.compliance_status  -- noqa: deprecated-compliance-status — Phase 2 client portal enrichment
+                FROM dd_freshest d
             """, site_id)
             for d in devices:
                 hn = (d["hostname"] or "").lower()
@@ -4724,12 +4735,26 @@ async def get_unregistered_devices(
         )
         exclude_ips = {row["ip"].strip('"') for row in appliance_ips}
 
+        # canonical-migration: device_count_per_site — Phase 2 Batch 1 (Task #74)
+        # Take-over worklist read — canonical_devices.canonical_id replaces
+        # dd.id as the row identity (single physical device per row instead
+        # of per-appliance observation duplicates).
         devices = await conn.fetch("""
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = $1
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT dd.id, dd.ip_address, dd.mac_address, dd.hostname,
                    dd.os_name, dd.distro, dd.device_type, dd.device_status,
                    dd.probe_ssh, dd.probe_winrm, dd.ad_joined,
                    dd.first_seen_at, dd.last_seen_at
-            FROM discovered_devices dd
+            FROM dd_freshest dd
             WHERE dd.site_id = $1
             AND dd.device_status IN ('take_over_available', 'ad_managed')
             AND dd.device_type IN ('workstation', 'server', 'unknown')
@@ -4800,6 +4825,15 @@ async def register_device(
 
     async with org_connection(pool, org_id=org_id) as conn:
         # Verify site + device belong to this org
+        # canonical-migration: device_count_per_site — Phase 2 SKIP (Task #74 Gate A v2)
+        # This is a write-path primary-key lookup: device_id is the
+        # discovered_devices.id (auto-increment, NOT canonical_id). The
+        # device-registration flow takes the raw discovered_devices row
+        # by its specific id (passed in URL) and writes site_credentials
+        # against it. Migrating to canonical_devices would change row
+        # identity semantics — the client UI POSTs against the specific
+        # discovered_devices.id; the canonical_id would be a different
+        # value. KEEP THE RAW READ + ratchet allowance.
         device = await conn.fetchrow("""
             SELECT id, ip_address, hostname, mac_address, device_status, probe_ssh, probe_winrm
             FROM discovered_devices
