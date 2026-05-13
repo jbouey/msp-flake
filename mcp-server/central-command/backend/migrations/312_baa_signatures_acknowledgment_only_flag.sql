@@ -33,23 +33,27 @@
 
 BEGIN;
 
--- Add the flag with safe default for any new rows that aren't
--- yet aware of the column.
+-- Add the flag with DEFAULT TRUE. PostgreSQL's ALTER TABLE ... ADD
+-- COLUMN ... DEFAULT semantics populate the new column with TRUE for
+-- every existing row WITHOUT issuing UPDATE statements (metadata-only
+-- backfill since PG11). This is intentional: `baa_signatures` is
+-- append-only via `prevent_baa_signature_modification()` (mig 224) to
+-- enforce HIPAA §164.316(b)(2)(i) 7-year retention. Any explicit
+-- UPDATE would be REJECTED by the trigger.
+--
+-- Per outside counsel 2026-05-13: every row with
+-- baa_version='v1.0-2026-04-15' represents a click-through
+-- acknowledgment, NOT a formal HIPAA BAA signature. The DEFAULT TRUE
+-- correctly classifies all pre-v2.0 rows.
 ALTER TABLE baa_signatures
     ADD COLUMN IF NOT EXISTS is_acknowledgment_only BOOLEAN NOT NULL DEFAULT TRUE;
-
--- Backfill all existing rows. Per outside counsel 2026-05-13: every
--- row with baa_version='v1.0-2026-04-15' represents a click-through
--- acknowledgment, NOT a formal HIPAA BAA signature.
-UPDATE baa_signatures
-   SET is_acknowledgment_only = TRUE
- WHERE baa_version = 'v1.0-2026-04-15';
 
 -- Flip the column default to FALSE going forward. New rows must be
 -- explicit about which class they are; default-FALSE ensures any
 -- v2.0+ signature path that doesn't set the flag explicitly is
 -- treated as a real BAA signature (the safer-when-omitted direction
--- once v2.0 is live).
+-- once v2.0 is live). This is a metadata change — does NOT touch
+-- existing rows, so does NOT trigger the append-only block.
 --
 -- Two-step rationale: (1) the column had to land with DEFAULT TRUE
 -- so the backfill is no-op-safe; (2) flipping default to FALSE
