@@ -2294,6 +2294,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="INFORMATIONAL until 2026-08-13 deprecation deadline, then sev2. An appliance has emitted heartbeats with signature_canonical_format='v1b-reconstruct' (i.e. backend reconstructed the ±60s timestamp window because daemon did NOT supply heartbeat_timestamp — daemon version is pre-v0.5.0). After 2026-08-13 deprecation deadline, this becomes sev2: every appliance should have rolled forward to v0.5.0+ which supplies heartbeat_timestamp natively (path A). Allows fleet operators to track daemon-rollout progress. Runbook: substrate_runbooks/daemon_on_legacy_path_b.md.",
         check=lambda c: _check_daemon_on_legacy_path_b(c),
     ),
+    Assertion(
+        name="canonical_compliance_score_drift",
+        severity="sev2",
+        description="A customer-facing endpoint returned a compliance_score value that differs from the canonical helper output for the same inputs by more than 0.5. Counsel Rule 1 runtime half — pairs with the static AST gate (test_canonical_metrics_registry.py, Phase 0+1 shipped) which catches non-canonical-delegation drift. This invariant catches non-canonical-value drift (the endpoint went through a code path that produces a different value than the canonical helper would). Substrate samples 10% of customer-facing requests into canonical_metric_samples (Phase 2b decorator); this assertion verifies samples match canonical helper output. Runbook: substrate_runbooks/canonical_compliance_score_drift.md.",
+        check=lambda c: _check_canonical_compliance_score_drift(c),
+    ),
 ]
 
 
@@ -3112,6 +3118,19 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "(daemon-supplied timestamp, deterministic, auditor-preferred). "
             "Tracks fleet-rollout progress. See "
             "substrate_runbooks/daemon_on_legacy_path_b.md."
+        ),
+    },
+    "canonical_compliance_score_drift": {
+        "display_name": "Customer-facing compliance score diverges from canonical helper",
+        "recommended_action": (
+            "A customer-facing endpoint returned a compliance_score value "
+            "more than 0.5 different from what compute_compliance_score "
+            "produces for the same inputs. Inspect details.endpoint_path "
+            "+ details.delta to identify which surface drifted. Likely "
+            "uses one of the allowlist 'migrate'-class entries in "
+            "canonical_metrics.py — drive-down PR should migrate that "
+            "endpoint to delegate to the canonical helper. See "
+            "substrate_runbooks/canonical_compliance_score_drift.md."
         ),
     },
 }
@@ -6059,6 +6078,121 @@ async def _check_daemon_on_legacy_path_b(conn: asyncpg.Connection) -> List[Viola
         )
         for r in rows
     ]
+
+
+async def _check_canonical_compliance_score_drift(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """sev2 — Counsel Rule 1 runtime drift detector (Task #64 Phase 2c).
+
+    For each recent customer-facing sample in `canonical_metric_samples`
+    (last 15 minutes, classification='customer-facing'), recompute the
+    canonical helper with the SAME kwargs the endpoint used + compare to
+    the captured value. Differences >0.5 indicate a non-canonical code
+    path produced a different value than the canonical helper would —
+    Rule 1 runtime violation.
+
+    Three-layer defense-in-depth (Carol Gate A v4):
+      1. CHECK constraint blocks invalid `classification` writes (mig 314)
+      2. Partial index `WHERE classification='customer-facing'` physically
+         excludes operator-internal samples from drift-scan
+      3. The WHERE clause below explicitly filters to customer-facing —
+         this lens
+
+    Cache-bypass + tolerance per Gate A v4:
+      - `_skip_cache=True` — substrate's recompute must NOT hit the 60s
+        TTL cache, or the comparison collapses to a no-op within TTL
+        window
+      - tolerance `0.5` — accommodates legitimate boundary-NOW-shift
+        variability (sample captured at t=0, recompute at t=N seconds
+        later; the window has slid by N seconds; small numeric drift is
+        legitimate). Still tight enough to catch real non-canonical-path
+        drift (typically >1.0).
+
+    Runbook: substrate_runbooks/canonical_compliance_score_drift.md.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT sample_id, tenant_id, captured_at, captured_value,
+               endpoint_path, helper_input
+          FROM canonical_metric_samples
+         WHERE metric_class = 'compliance_score'
+           AND classification = 'customer-facing'
+           AND captured_at > NOW() - INTERVAL '15 minutes'
+           AND captured_value IS NOT NULL
+         ORDER BY captured_at DESC
+         LIMIT 50
+        """
+    )
+    out: List[Violation] = []
+    for r in rows:
+        helper_input = r["helper_input"] or {}
+        if isinstance(helper_input, str):
+            import json as _json
+            try:
+                helper_input = _json.loads(helper_input)
+            except Exception:
+                continue
+        site_ids = helper_input.get("site_ids") or []
+        if not site_ids:
+            continue
+        window_days = helper_input.get("window_days", 30)
+        include_incidents = bool(helper_input.get("include_incidents", False))
+        try:
+            from compliance_score import compute_compliance_score
+        except ImportError:
+            from .compliance_score import compute_compliance_score  # type: ignore
+        try:
+            helper_result = await compute_compliance_score(
+                conn, site_ids=site_ids,
+                window_days=window_days,
+                include_incidents=include_incidents,
+                _skip_cache=True,
+            )
+        except Exception:
+            continue  # helper error is not drift; substrate skips
+        helper_score = helper_result.overall_score
+        if helper_score is None or r["captured_value"] is None:
+            continue
+        try:
+            captured_value = float(r["captured_value"])
+            helper_score_f = float(helper_score)
+        except (TypeError, ValueError):
+            continue
+        if abs(helper_score_f - captured_value) > 0.5:
+            out.append(
+                Violation(
+                    site_id=(site_ids[0] if site_ids else None),
+                    details={
+                        "sample_id": str(r["sample_id"]),
+                        "tenant_id": str(r["tenant_id"]),
+                        "endpoint_path": r["endpoint_path"],
+                        "captured_value": captured_value,
+                        "canonical_value": helper_score_f,
+                        "delta": round(helper_score_f - captured_value, 2),
+                        "captured_at": r["captured_at"].isoformat(),
+                        "interpretation": (
+                            f"Endpoint {r['endpoint_path']} returned "
+                            f"{captured_value} for tenant "
+                            f"{r['tenant_id']} but canonical helper "
+                            f"produces {helper_score_f} for the same "
+                            f"inputs. Non-canonical computation path "
+                            f"is in use OR a bug exists between the "
+                            f"helper and the endpoint's response shape."
+                        ),
+                        "remediation": (
+                            f"Inspect {r['endpoint_path']} source: it "
+                            f"should delegate to "
+                            f"compliance_score.compute_compliance_score. "
+                            f"Likely uses one of the allowlist "
+                            f"`migrate`-class entries (db_queries, "
+                            f"frameworks, etc.) — drive-down PR migrates "
+                            f"that path to canonical helper."
+                        ),
+                    },
+                )
+            )
+    return out
 
 
 # --- Engine ----------------------------------------------------------

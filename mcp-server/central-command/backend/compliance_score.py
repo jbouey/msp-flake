@@ -160,6 +160,7 @@ async def compute_compliance_score(
     *,
     include_incidents: bool = False,
     window_days: Optional[int] = DEFAULT_WINDOW_DAYS,
+    _skip_cache: bool = False,
 ) -> ComplianceScore:
     """Canonical compliance score for an org or single site.
 
@@ -215,7 +216,12 @@ async def compute_compliance_score(
     # Auditor-export `window_days=None` paths bypass — fresh chain
     # read every time. Bounded-window paths share a 60s TTL across
     # dashboard / reports / per-site surfaces.
-    _cache_enabled = _should_cache_score(window_days)
+    # _skip_cache=True (Task #64 Phase 2c, substrate-invariant-only):
+    # bypass cache-read AND cache-write so the substrate invariant's
+    # recompute against a captured sample produces a fresh result —
+    # the 60s cache would otherwise collapse the comparison to a no-op
+    # within TTL window, defeating drift detection.
+    _cache_enabled = _should_cache_score(window_days) and not _skip_cache
     _cache_key = None
     if _cache_enabled:
         from .perf_cache import cache_get, cache_set
