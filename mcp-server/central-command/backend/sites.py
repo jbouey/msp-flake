@@ -4228,7 +4228,19 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     _hb_verify_result = None
                     if _hb_sig:
                         try:
-                            from signature_auth import verify_heartbeat_signature
+                            # Production runs `dashboard_api` as a PACKAGE
+                            # (main.py imports `from dashboard_api.sites import ...`,
+                            # cwd is /app not /app/dashboard_api). Bare
+                            # `from signature_auth` fails with ModuleNotFoundError.
+                            # Relative-first-then-absolute fallback so prod
+                            # AND local-dev (where backend/ is the cwd) both work.
+                            # Pre-fix this silently fell into the soft-verify
+                            # except below — D1 was COMPLETELY INERT in prod,
+                            # every heartbeat got signature_valid=NULL.
+                            try:
+                                from .signature_auth import verify_heartbeat_signature
+                            except ImportError:
+                                from signature_auth import verify_heartbeat_signature  # type: ignore
                             _hb_verify_result = await verify_heartbeat_signature(
                                 conn,
                                 site_id=checkin.site_id,

@@ -1880,7 +1880,7 @@ async def get_healing_metrics_for_site(db: AsyncSession, site_id: str) -> Dict[s
     order_rate = (completed_orders / total_orders * 100) if total_orders > 0 else None
 
     return {
-        "healing_success_rate": round(healing_rate, 1),
+        "healing_success_rate": round(healing_rate, 1) if healing_rate is not None else 0.0,
         "order_execution_rate": round(order_rate, 1) if order_rate is not None else 0.0,
         "incidents_24h": inc_row.last_24h if inc_row else 0,
         "last_incident": inc_row.last_incident if inc_row else None,
@@ -1939,7 +1939,14 @@ async def get_all_healing_metrics(db: AsyncSession) -> Dict[str, Dict[str, Any]]
         order_rate = (completed / total_orders * 100) if total_orders > 0 else None
 
         results[site_id] = {
-            "healing_success_rate": round(healing_rate, 1),
+            # healing_rate is None when total_incidents=0 (line 1935 above).
+            # Pre-fix: round(None, 1) raised TypeError → entire
+            # /api/dashboard/fleet endpoint 500'd → sidebar showed "0 sites
+            # connected" even though sites existed. Every healthy site with
+            # zero incidents triggered the failure — net effect 100% outage
+            # of the fleet overview surface. Sibling guard already correct
+            # at order_execution_rate line below.
+            "healing_success_rate": round(healing_rate, 1) if healing_rate is not None else 0.0,
             "order_execution_rate": round(order_rate, 1) if order_rate is not None else 0.0,
             "incidents_24h": inc.last_24h if inc else 0,
             "last_incident": inc.last_incident if inc else None,
@@ -1979,7 +1986,7 @@ async def get_global_healing_metrics(db: AsyncSession) -> Dict[str, Any]:
     order_rate = (completed_orders / total_orders * 100) if total_orders > 0 else None
 
     return {
-        "healing_success_rate": round(healing_rate, 1),
+        "healing_success_rate": round(healing_rate, 1) if healing_rate is not None else 0.0,
         "order_execution_rate": round(order_rate, 1) if order_rate is not None else 0.0,
         "incidents_24h": inc_row.last_24h if inc_row else 0,
         "total_incidents": total_incidents,
