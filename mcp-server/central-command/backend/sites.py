@@ -2197,7 +2197,10 @@ async def relocate_appliance(
                 order_now, order_expires,
                 target_appliance_id=appliance_id,
             )
-            from .signing_backend import current_signing_method
+            try:
+                from .signing_backend import current_signing_method
+            except ImportError:
+                from signing_backend import current_signing_method  # type: ignore
             row = await conn.fetchrow(
                 """
                 INSERT INTO fleet_orders (
@@ -3146,7 +3149,10 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
         expires_at = now + timedelta(hours=24)
         parameters = {"site_id": site_id, "reason": f"Admin {action} healing"}
 
-        from .signing_backend import current_signing_method
+        try:
+            from .signing_backend import current_signing_method
+        except ImportError:
+            from signing_backend import current_signing_method  # type: ignore
         row = await conn.fetchrow("""
             INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
                                       nonce, signature, signed_payload, signing_method)

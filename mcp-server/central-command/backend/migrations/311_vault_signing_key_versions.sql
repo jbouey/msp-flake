@@ -41,7 +41,16 @@ CREATE TABLE IF NOT EXISTS vault_signing_key_versions (
     known_good BOOLEAN NOT NULL DEFAULT FALSE,
     approved_by TEXT,                  -- operator email when known_good flipped to TRUE
     approved_at TIMESTAMPTZ,           -- timestamp of approval
-    UNIQUE (key_name, key_version)
+    UNIQUE (key_name, key_version),
+    -- Approval-pair invariant (Gate B retro P0 Steve #2 2026-05-12):
+    -- known_good=TRUE without approved_by+approved_at would let an
+    -- attacker with UPDATE privilege fast-track unauthorized rotation
+    -- past the startup invariant. CHECK enforces the trio is set
+    -- together. The trigger blocks individual UPDATE drift on
+    -- immutable columns; this CHECK adds the cross-column shape.
+    CONSTRAINT vault_signing_key_versions_approval_pair CHECK (
+        NOT known_good OR (approved_by IS NOT NULL AND approved_at IS NOT NULL)
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_vault_signing_key_versions_known_good

@@ -363,7 +363,10 @@ async def remediate_cve(cve_id: str, body: CVERemediateRequest, user: dict = Dep
                 0, "healing", parameters, now, expires_at
             )
 
-            from .signing_backend import current_signing_method
+            try:
+                from .signing_backend import current_signing_method
+            except ImportError:
+                from signing_backend import current_signing_method  # type: ignore
             row = await conn.fetchrow("""
                 INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
                                           nonce, signature, signed_payload, signing_method)

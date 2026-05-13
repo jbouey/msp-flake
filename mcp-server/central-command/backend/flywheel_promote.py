@@ -850,7 +850,10 @@ async def issue_sync_promoted_rule_orders(
             0, "sync_promoted_rule", params, now, expires_at,
         )
         try:
-            from .signing_backend import current_signing_method
+            try:
+                from .signing_backend import current_signing_method
+            except ImportError:
+                from signing_backend import current_signing_method  # type: ignore
             await conn.execute(
                 """
                 INSERT INTO fleet_orders (
