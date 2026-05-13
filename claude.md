@@ -253,6 +253,7 @@ Two additional rules in the 10-rule enumeration: **(8) Subprocessors classified 
 
 ## Rules
 
+- **Migration numbers are claimed via the RESERVED_MIGRATIONS ledger (Task #59 Session 220-2026-05-13).** Every new `migrations/NNN_*.sql` file MUST be pre-claimed: add a row to `mcp-server/central-command/backend/migrations/RESERVED_MIGRATIONS.md` AND drop a line-anchored `<!-- mig-claim:NNN task:#TT -->` HTML-comment marker in the design doc (outside code fences). CI gate `tests/test_migration_number_collision.py` enforces no double-claims, no claims-on-shipped, marker↔ledger parity, ≤30 active rows, stale rows need per-row justification. When the migration ships, REMOVE the ledger row in the same commit. Pattern emerged after 3-of-6 designs collided on mig numbers in a single Gate A sweep.
 - **Debugging: root cause first.** No fixes without investigation. Trace data flow backward. One hypothesis at a time. 3+ failed fixes = question architecture. (Full process: `.claude/skills/docs/workflow/workflow.md`)
 - **Verify before claiming done.** Run the actual command, read the output, show evidence. No "should pass" or "probably works."
 - Use `now_utc()` not `datetime.utcnow()`
