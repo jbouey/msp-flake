@@ -719,6 +719,17 @@
     "triggered_at",
     "updated_at"
   ],
+  "canonical_metric_samples": [
+    "captured_at",
+    "captured_value",
+    "classification",
+    "endpoint_path",
+    "helper_input",
+    "metric_class",
+    "sample_id",
+    "site_id",
+    "tenant_id"
+  ],
   "companion_notes": [
     "companion_user_id",
     "created_at",

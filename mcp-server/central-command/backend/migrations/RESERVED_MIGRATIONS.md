@@ -13,7 +13,6 @@
 | Number | Status | Claimed-by (design doc) | Claimed-at | Expected ship | Task | Notes |
 |--------|--------|------------------------|------------|---------------|------|-------|
 | 311 | BLOCKED | (Vault P0 bundle — see audit/coach-vault-phase-c-gate-a-2026-05-12.md) | 2026-05-12 | 2026-05-27 | #43 | BLOCKED on staging precondition + 24-48h reverse-shadow before cut |
-| 314 | in_progress | audit/canonical-metric-drift-invariant-design-2026-05-13.md | 2026-05-13 | 2026-05-20 | #50 | Phase 2a `canonical_metric_samples` per Mechanism B (Gate A v2 APPROVE-WITH-FIXES) |
 | 315 | reserved | audit/substrate-mttr-soak-v2-design-2026-05-13.md | 2026-05-13 | 2026-05-20 | #98 | renumbered from claimed 311 per Gate A P0 |
 | 316 | reserved | (load harness v2.1 — pending re-design per Gate A BLOCK) | 2026-05-13 | 2026-05-23 | #38 | renumbered from claimed 310 (already shipped) |
 | 317 | reserved | (P-F9 profitability v2 — pending re-design per Gate A BLOCK) | 2026-05-13 | 2026-05-30 | #58 | `partner_profitability_assumptions` table |
