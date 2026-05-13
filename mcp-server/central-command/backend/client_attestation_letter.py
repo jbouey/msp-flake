@@ -209,9 +209,43 @@ async def _gather_facts(
             score_result = await compute_compliance_score(
                 conn, site_ids, window_days=DEFAULT_PERIOD_DAYS,
             )
-            sc = score_result.get("score") if isinstance(score_result, dict) else None
+            # compute_compliance_score returns ComplianceScore dataclass
+            # (compliance_score.py:55-71). Prior code used a dict-shape
+            # access guarded by a legacy type check that was always
+            # False against the dataclass — sc was always None and every
+            # F1 PDF shipped overall_score=None. Counsel Rule 1 (canonical
+            # delegation) was nominally followed but the result was
+            # silently discarded. Use dataclass attribute access.
+            sc = score_result.overall_score
             if sc is not None:
                 overall_score = int(round(float(sc)))
+
+            # Counsel Rule 1 runtime sampling — F1 attestation letter is
+            # the highest-stakes customer-facing artifact (Ed25519-signed
+            # PDF shipped to clinic customers as proof of compliance).
+            # 10% stochastic capture for substrate drift verification.
+            try:
+                try:
+                    from .canonical_metrics_sampler import sample_metric_response
+                except ImportError:
+                    from canonical_metrics_sampler import sample_metric_response  # type: ignore
+                await sample_metric_response(
+                    conn,
+                    metric_class="compliance_score",
+                    tenant_id=str(client_org_id),
+                    captured_value=(
+                        float(overall_score) if overall_score is not None else None
+                    ),
+                    endpoint_path="f1:attestation_letter",
+                    helper_input={
+                        "site_ids": site_ids,
+                        "window_days": DEFAULT_PERIOD_DAYS,
+                        "include_incidents": False,
+                    },
+                    classification="customer-facing",
+                )
+            except Exception:
+                pass  # sampler is best-effort
     except Exception:
         logger.warning("attestation_letter_score_compute_failed", exc_info=True)
         overall_score = None
