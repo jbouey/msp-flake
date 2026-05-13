@@ -20,6 +20,8 @@ from .fleet import get_pool
 from .auth import require_auth
 from .tenant_middleware import admin_connection, admin_transaction
 from .order_signing import sign_fleet_order
+# Vault P0 Gate A redo-2 P0 #6 — module-level import (no function-body try/except).
+from .signing_backend import current_signing_method
 
 logger = structlog.get_logger(__name__)
 
@@ -365,8 +367,8 @@ async def remediate_cve(cve_id: str, body: CVERemediateRequest, user: dict = Dep
 
             row = await conn.fetchrow("""
                 INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
-                                          nonce, signature, signed_payload)
-                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+                                          nonce, signature, signed_payload, signing_method)
+                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7, $8)
                 RETURNING id, created_at
             """,
                 "healing",
@@ -376,6 +378,7 @@ async def remediate_cve(cve_id: str, body: CVERemediateRequest, user: dict = Dep
                 nonce,
                 signature,
                 signed_payload,
+                current_signing_method(),
             )
 
             order_id = row["id"]

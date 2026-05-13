@@ -62,7 +62,9 @@ CREATE TABLE fleet_orders (
     nonce TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '1 day'
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '1 day',
+    -- Mig 177 column (Vault Phase C P0 #3 — write path). Fixture mirrors prod.
+    signing_method TEXT NOT NULL DEFAULT 'file'
 );
 
 CREATE TABLE compliance_bundles (

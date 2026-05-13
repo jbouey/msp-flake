@@ -16,6 +16,8 @@ from .fleet import get_pool
 from .tenant_middleware import admin_connection, admin_transaction  # noqa: F401
 from .auth import require_admin
 from .order_signing import sign_admin_order, sign_fleet_order
+# Vault P0 Gate A redo-2 P0 #6 — module-level import (no function-body try/except).
+from .signing_backend import current_signing_method
 
 logger = logging.getLogger(__name__)
 
@@ -1081,8 +1083,8 @@ async def create_fleet_order(order: FleetOrderCreate, user: dict = Depends(requi
     async with admin_transaction(pool) as conn:
         row = await conn.fetchrow("""
             INSERT INTO fleet_orders (order_type, parameters, skip_version, status, expires_at, created_by,
-                                      nonce, signature, signed_payload)
-            VALUES ($1, $2::jsonb, $3, 'active', $4, $5, $6, $7, $8)
+                                      nonce, signature, signed_payload, signing_method)
+            VALUES ($1, $2::jsonb, $3, 'active', $4, $5, $6, $7, $8, $9)
             RETURNING id, order_type, skip_version, status, created_at, expires_at
         """,
             order.order_type,
@@ -1091,6 +1093,7 @@ async def create_fleet_order(order: FleetOrderCreate, user: dict = Depends(requi
             expires_at,
             user.get("username") or user.get("email"),
             *sign_fleet_order(0, order.order_type, order.parameters, now, expires_at),
+            current_signing_method(),
         )
 
         # Count how many appliances will receive vs skip
@@ -1550,8 +1553,8 @@ async def create_fleet_order_for_site(
 
     row = await conn.fetchrow("""
         INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
-                                  nonce, signature, signed_payload)
-        VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+                                  nonce, signature, signed_payload, signing_method)
+        VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7, $8)
         RETURNING id
     """,
         order_type,
@@ -1561,6 +1564,7 @@ async def create_fleet_order_for_site(
         nonce,
         signature,
         signed_payload,
+        current_signing_method(),
     )
 
     if row:

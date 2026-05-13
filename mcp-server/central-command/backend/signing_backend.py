@@ -432,6 +432,34 @@ def get_signing_backend():
     return _BACKEND_SINGLETON
 
 
+def current_signing_method() -> str:
+    """Return the active PRIMARY backend's name for fleet_orders.signing_method.
+
+    Vault Phase C P0 #3 (audit/coach-vault-p0-bundle-gate-a-redo-2-2026-05-13.md):
+    column was added in mig 177 but every INSERT defaulted to 'file'.
+    Call-site code now writes this value at INSERT time. After Phase C
+    cutover this returns 'vault'; during shadow mode it returns whichever
+    backend the env names as PRIMARY (typically 'file').
+
+    Returns: 'file' | 'vault'. NEVER 'shadow' — the shadow wrapper itself
+    doesn't produce signatures.
+
+    Safe to call before backend init — env fallback if singleton-build raises.
+    Module-level callsite imports ONLY (CI gate test_no_dual_import_for_
+    signing_method.py enforces) — never inside try/except inside function
+    bodies (iter-1 revert root cause class).
+    """
+    try:
+        backend = get_signing_backend()
+    except Exception:
+        return SIGNING_BACKEND_PRIMARY if SIGNING_BACKEND == "shadow" else SIGNING_BACKEND
+    primary = getattr(backend, "_primary", backend)
+    name = getattr(primary, "name", "file")
+    if name == "shadow":
+        return "file"
+    return name
+
+
 def reset_singleton() -> None:
     """For tests + in-process env changes only. Force the next call
     to _build_backend to re-read env."""

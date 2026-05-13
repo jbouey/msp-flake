@@ -106,7 +106,9 @@ CREATE TABLE fleet_orders (
     order_type TEXT NOT NULL,
     parameters JSONB DEFAULT '{}'::jsonb,
     status TEXT DEFAULT 'active',
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Mig 177 column (Vault Phase C P0 #3 — write path). Fixture mirrors prod.
+    signing_method TEXT NOT NULL DEFAULT 'file'
 );
 
 CREATE TABLE fleet_order_completions (

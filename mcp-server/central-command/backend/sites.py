@@ -20,6 +20,8 @@ from enum import Enum
 from .fleet import get_pool
 from .auth import require_auth, require_operator, require_admin
 from .shared import require_appliance_bearer, async_session as _reconcile_session
+# Vault P0 Gate A redo-2 P0 #6 — module-level import (no function-body try/except).
+from .signing_backend import current_signing_method
 # _reconcile_session: SQLAlchemy admin-pool sessionmaker. We use the admin
 # posture deliberately for inline reconcile issuance — it matches the
 # posture of the POST /api/appliances/reconcile endpoint (which uses
@@ -2201,9 +2203,9 @@ async def relocate_appliance(
                 """
                 INSERT INTO fleet_orders (
                     order_type, parameters, status, expires_at, created_by,
-                    nonce, signature, signed_payload
+                    nonce, signature, signed_payload, signing_method
                 )
-                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+                VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7, $8)
                 RETURNING id
                 """,
                 "reprovision",
@@ -2213,6 +2215,7 @@ async def relocate_appliance(
                 nonce,
                 signature,
                 signed_payload,
+                current_signing_method(),
             )
             fleet_order_id = str(row["id"])
             logger.info(
@@ -3146,8 +3149,8 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
 
         row = await conn.fetchrow("""
             INSERT INTO fleet_orders (order_type, parameters, status, expires_at, created_by,
-                                      nonce, signature, signed_payload)
-            VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+                                      nonce, signature, signed_payload, signing_method)
+            VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7, $8)
             RETURNING id, created_at
         """,
             order_type,
@@ -3155,6 +3158,7 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
             expires_at,
             user.get("username") or user.get("email"),
             *sign_fleet_order(0, order_type, parameters, now, expires_at),
+            current_signing_method(),
         )
 
         # Audit log

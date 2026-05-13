@@ -30,6 +30,15 @@ from typing import Any, Dict, Optional
 
 import asyncpg
 
+# Module-level import per Vault P0 Gate A redo-2 P0 #6 (audit/coach-vault-p0-bundle-
+# gate-a-redo-2-2026-05-13.md). Function-body imports inside try/except hide
+# ImportError silently — iter-1 revert root cause. CI gate
+# tests/test_no_dual_import_for_signing_method.py enforces.
+try:
+    from .signing_backend import current_signing_method
+except ImportError:  # pragma: no cover - non-package import context (some tests)
+    from signing_backend import current_signing_method  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -854,8 +863,8 @@ async def issue_sync_promoted_rule_orders(
                 """
                 INSERT INTO fleet_orders (
                     order_type, parameters, status, expires_at, created_by,
-                    nonce, signature, signed_payload
-                ) VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7)
+                    nonce, signature, signed_payload, signing_method
+                ) VALUES ($1, $2::jsonb, 'active', $3, $4, $5, $6, $7, $8)
                 """,
                 "sync_promoted_rule",
                 json.dumps(params),
@@ -864,6 +873,7 @@ async def issue_sync_promoted_rule_orders(
                 nonce,
                 signature,
                 signed_payload,
+                current_signing_method(),
             )
             created += 1
         except Exception as e:

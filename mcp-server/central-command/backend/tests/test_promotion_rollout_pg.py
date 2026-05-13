@@ -85,7 +85,9 @@ CREATE TABLE fleet_orders (
     created_by TEXT,
     nonce TEXT,
     signature TEXT,
-    signed_payload TEXT
+    signed_payload TEXT,
+    -- Mig 177 column (Vault Phase C P0 #3 — write path). Fixture mirrors prod schema.
+    signing_method TEXT NOT NULL DEFAULT 'file'
 );
 
 CREATE TABLE fleet_order_completions (

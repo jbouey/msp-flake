@@ -91,7 +91,9 @@ CREATE TABLE runbooks (
 CREATE TABLE fleet_orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     parameters JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Mig 177 column (Vault Phase C P0 #3 — write path). Fixture mirrors prod.
+    signing_method TEXT NOT NULL DEFAULT 'file'
 );
 
 CREATE TABLE fleet_order_completions (

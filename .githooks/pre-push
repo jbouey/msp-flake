@@ -322,6 +322,14 @@ SOURCE_LEVEL_TESTS=(
     # (P2 class — framework_sync reads, runbook catalog, discovery)
     # and blocks NEW @router decorators without auth deps from landing.
     "tests/test_no_anonymous_privileged_endpoints.py"
+    # 2026-05-13 Vault Phase C P0 cross-cutting. Pins every *_pg.py
+    # fixture's CREATE TABLE fleet_orders to include mig 177's
+    # signing_method column — closes iter-2 revert root cause.
+    "tests/test_pg_fixture_fleet_orders_column_parity.py"
+    # 2026-05-13 Vault Phase C P0 #6. Bans function-body imports of
+    # current_signing_method from signing_backend — closes iter-1
+    # revert root cause (silent ImportError → INSERT skip).
+    "tests/test_no_dual_import_for_signing_method.py"
 )
 if [ "$ISO_CHANGED" -eq 1 ] || [ "$BACKEND_CHANGED" -eq 1 ]; then
     echo "[pre-push] source-level governance pytests..."
