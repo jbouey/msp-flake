@@ -49,7 +49,6 @@ Result surfaced via:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import pathlib
@@ -57,14 +56,6 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
-
-# Vault probe timeout. WireGuard-internal Vault should respond in ms;
-# 5s gives a 100x safety margin without making startup feel slow. The
-# iter-3 revert root cause was an UNBOUNDED Vault probe at startup
-# blocking container boot — `/health` never returned, deploy timed out
-# at 120s. Lock the bound here. P0 #1 from
-# audit/coach-vault-p0-bundle-gate-a-redo-2-2026-05-13.md.
-_VAULT_PROBE_TIMEOUT_S: float = 5.0
 
 
 SIGNING_KEY_PATH = os.getenv("SIGNING_KEY_FILE", "/app/secrets/signing.key")
@@ -102,92 +93,6 @@ async def _check_table_exists(conn, table_name: str) -> bool:
         table_name,
     )
     return row is not None
-
-
-async def _check_vault_key_version(conn) -> "tuple[bool, str]":
-    """Vault probe + key-version pinning check.
-
-    Wrapped by `asyncio.wait_for(timeout=5s)` at the caller. Touches
-    network + DB. Bootstrap: first observation INSERTs with
-    known_good=FALSE via ON CONFLICT DO NOTHING (P0 #3 — NEVER DO
-    UPDATE; that was the prior side-effect that masked
-    last_observed_at drift signals).
-
-    Returns (ok, detail).
-    """
-    try:
-        from .signing_backend import get_signing_backend
-    except ImportError:
-        from signing_backend import get_signing_backend  # type: ignore
-    backend = get_signing_backend()
-    # Shadow wrapper exposes _shadow as the Vault backend; pure Vault
-    # backend is the backend itself.
-    vault_backend = getattr(backend, "_shadow", None) or backend
-    if hasattr(vault_backend, "key_version_and_pubkey"):
-        key_version, pubkey_hex = vault_backend.key_version_and_pubkey()
-    else:
-        # Fallback: pubkey-only, version from env.
-        pubkey_hex = vault_backend.public_key().hex()
-        key_version = int(os.getenv("VAULT_SIGNING_KEY_VERSION", "1"))
-    key_name = os.getenv("VAULT_SIGNING_KEY_NAME", "osiriscare-signing")
-
-    known_good = await conn.fetchrow(
-        """
-        SELECT key_version, pubkey_hex
-          FROM vault_signing_key_versions
-         WHERE key_name = $1::text AND known_good = TRUE
-         ORDER BY approved_at DESC NULLS LAST LIMIT 1
-        """,
-        key_name,
-    )
-
-    if known_good is None:
-        # Bootstrap path — P0 #3 mandates ON CONFLICT DO NOTHING (never
-        # DO UPDATE; the latter was the prior side-effect class).
-        # Casts per P0 #8 (asyncpg prepare-phase type inference under
-        # PgBouncer).
-        await conn.execute(
-            """
-            INSERT INTO vault_signing_key_versions
-                (key_name, key_version, pubkey_hex, pubkey_b64)
-            VALUES
-                ($1::text, $2::int, $3::text, encode(decode($3::text, 'hex'), 'base64'))
-            ON CONFLICT (key_name, key_version) DO NOTHING
-            """,
-            key_name, key_version, pubkey_hex,
-        )
-        return True, (
-            f"BOOTSTRAP: vault key v{key_version} observed; row "
-            f"inserted with known_good=FALSE. Operator must approve: "
-            f"UPDATE vault_signing_key_versions SET "
-            f"known_good=TRUE, approved_by='<email>', approved_at=NOW() "
-            f"WHERE key_name='{key_name}' AND key_version={key_version};"
-        )
-    if (
-        known_good["key_version"] != key_version
-        or known_good["pubkey_hex"] != pubkey_hex
-    ):
-        # Forensic INSERT of the unauthorized version (still ON CONFLICT
-        # DO NOTHING — never overwrite a known row).
-        await conn.execute(
-            """
-            INSERT INTO vault_signing_key_versions
-                (key_name, key_version, pubkey_hex, pubkey_b64)
-            VALUES
-                ($1::text, $2::int, $3::text, encode(decode($3::text, 'hex'), 'base64'))
-            ON CONFLICT (key_name, key_version) DO NOTHING
-            """,
-            key_name, key_version, pubkey_hex,
-        )
-        return False, (
-            f"DRIFT: vault returned key v{key_version} pubkey "
-            f"{pubkey_hex[:16]}... but known_good is v"
-            f"{known_good['key_version']} pubkey "
-            f"{known_good['pubkey_hex'][:16]}... Possible unauthorized "
-            f"rotation. Inspect Vault audit log; approve new version "
-            f"via SQL if legitimate."
-        )
-    return True, ""
 
 
 async def check_all_invariants(conn) -> List[InvariantResult]:
@@ -301,37 +206,6 @@ async def check_all_invariants(conn) -> List[InvariantResult]:
         ok = False
         detail = f"signing key unreadable at {SIGNING_KEY_PATH}: {e}"
     results.append(InvariantResult("INV-SIGNING-KEY", ok, detail))
-
-    # ── Vault Transit key-version pinning ────────────────────────
-    # P0 #1: ENTIRE Vault probe wrapped in `asyncio.wait_for(timeout=5s)`.
-    # The prior reverted version (iter-3 root cause) wrapped only the
-    # inner Transit read, leaving `get_signing_backend()` singleton-build
-    # (AppRole login) as the hang surface — container startup blocked,
-    # /health never returned, deploy timed out at 120s.
-    #
-    # Idle when SIGNING_BACKEND=file (no Vault to probe).
-    signing_backend_env = os.getenv("SIGNING_BACKEND", "file").lower()
-    if signing_backend_env in ("vault", "shadow"):
-        try:
-            ok, detail = await asyncio.wait_for(
-                _check_vault_key_version(conn),
-                timeout=_VAULT_PROBE_TIMEOUT_S,
-            )
-        except asyncio.TimeoutError:
-            ok = False
-            detail = (
-                f"vault probe exceeded {_VAULT_PROBE_TIMEOUT_S}s — "
-                f"startup proceeding non-blocking. Check Vault host "
-                f"reachability (curl -sk https://10.100.0.3:8200/v1/sys/health) "
-                f"+ WireGuard tunnel state. Re-validate after probe completes."
-            )
-        except Exception as e:
-            ok = False
-            detail = f"vault probe raised: {e}"
-    else:
-        ok = True
-        detail = "vault backend not configured (SIGNING_BACKEND=file)"
-    results.append(InvariantResult("INV-SIGNING-BACKEND-VAULT", ok, detail))
 
     # ── Magic-link tracking table ────────────────────────────────
     ok = await _check_table_exists(conn, "privileged_access_magic_links")

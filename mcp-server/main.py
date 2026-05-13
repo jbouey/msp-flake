@@ -1630,34 +1630,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Check registry load failed (using hardcoded fallback): {e}")
 
-    # Vault Phase C P0 #2 — Eager-warm the signing backend BEFORE
-    # invariants check. The signing_backend singleton init touches
-    # network (AppRole login over WireGuard); lazy init from inside
-    # INV-SIGNING-BACKEND-VAULT can hang. Wrapping the warm here with
-    # a 5s timeout means a worst-case 10s startup delay (5s warm +
-    # 5s INV probe) even if Vault is unreachable — startup proceeds
-    # non-blocking either way.
-    #
-    # Note: asyncio.wait_for cancels the FUTURE but cannot kill the
-    # OS thread. P1 followup tracked (hvac socket-timeout in
-    # signing_backend.py to bound the thread itself).
-    try:
-        from dashboard_api.signing_backend import get_signing_backend
-        await asyncio.wait_for(
-            asyncio.to_thread(get_signing_backend),
-            timeout=5.0,
-        )
-        logger.info("vault_eager_warm_ok")
-    except asyncio.TimeoutError:
-        logger.error(
-            "vault_eager_warm_timeout — INV-SIGNING-BACKEND-VAULT "
-            "will report drift; container starts anyway."
-        )
-    except Exception as e:
-        logger.error(
-            "vault_eager_warm_failed", error=str(e), exc_info=True,
-        )
-
     # Phase 15 enterprise hygiene — verify DB-layer security invariants
     # are intact on every startup. A missing trigger = a chain-of-custody
     # vulnerability that must be surfaced loud, not quietly depended on.
