@@ -1206,9 +1206,21 @@ async def report_incident(
                 get_consent_mode,
             )
             consent_class_id = classify_runbook_to_class(runbook_id)
-            consent_result = await verify_consent_active(
-                db, site_id=incident.site_id, class_id=consent_class_id,
-            )
+            # Savepoint isolation (Task #82, sibling of sites.py:4244 fix
+            # in commit 3ec431c8 + ALLOWLIST decrement in
+            # test_soft_verify_uses_savepoint.py). Without begin_nested(),
+            # a verifier exception poisons the SQLAlchemy AsyncSession
+            # txn state → 5 downstream writes on the same session
+            # silently fail (orders INSERT, incidents UPDATE, remediation
+            # steps INSERT, consent ledger INSERT, L3-escalation UPDATE).
+            # NOTE: verify_consent_active (runbook_consent.py:692) is
+            # PURE READ today (single SELECT, no writes). Maya Gate A:
+            # if it ever gains a side-effect write, the savepoint
+            # rollback semantics flip and need re-review.
+            async with db.begin_nested():
+                consent_result = await verify_consent_active(
+                    db, site_id=incident.site_id, class_id=consent_class_id,
+                )
             logger.info(
                 "runbook_consent_check",
                 site_id=incident.site_id,

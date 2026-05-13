@@ -47,9 +47,6 @@ _VERIFIER_PATTERNS = (
 # enumeration. Locked at len(ALLOWLIST) == 2 — adding entries requires
 # updating the lock assertion below.
 ALLOWLIST = frozenset({
-    # SQLAlchemy AsyncSession callsite. Fix-forward task tracked at
-    # the Task #79 commit body. Shadow-mode masks until Phase 3 enforce.
-    "agent_api.py:verify_consent_active",
     # Handler raises HTTPException 401 unconditionally on verifier
     # failure → conn never reused after raise → savepoint moot. Noqa-
     # worthy but counted in ALLOWLIST for explicitness.
@@ -146,12 +143,15 @@ def _file_violations(path: pathlib.Path) -> list[str]:
 
 
 def test_allowlist_lock():
-    """Lock the allowlist at len() == 2. Adding new entries requires
+    """Lock the allowlist at len() == 1. Adding new entries requires
     updating this assertion in lockstep — prevents quietly growing the
     list of soft-verify-without-savepoint patterns.
+
+    2026-05-13: decremented from 2 to 1 after Task #82 fixed
+    agent_api.py:verify_consent_active (commit forthcoming).
     """
-    assert len(ALLOWLIST) == 2, (
-        f"ALLOWLIST length is {len(ALLOWLIST)} — expected exactly 2. "
+    assert len(ALLOWLIST) == 1, (
+        f"ALLOWLIST length is {len(ALLOWLIST)} — expected exactly 1. "
         f"Adding entries requires updating this lock + Gate A review of "
         f"the new callsite. Subtracting entries (fixing them) requires "
         f"updating this lock down to {len(ALLOWLIST) - 1}."
