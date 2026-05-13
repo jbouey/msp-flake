@@ -98,30 +98,63 @@ COMMENT ON COLUMN canonical_devices.device_type IS
 -- Phase 1 backfill — idempotent INSERT-SELECT from existing discovered_devices.
 -- Reads from the source table directly; the reconciliation loop takes over
 -- for ongoing tick-by-tick refresh.
+--
+-- Implementation note: majority-vote computed in CTE (not correlated
+-- subquery) — the prior shape `(SELECT ... WHERE dd2.mac = COALESCE(dd.mac, ''))`
+-- referenced ungrouped `dd.mac_address` from the outer GROUP BY
+-- expression even though the GROUP key was `COALESCE(dd.mac_address, '')`.
+-- PG strict-mode rejects the bare column reference in the subquery.
+-- The CTE-based shape below precomputes the majority vote per
+-- (site, ip, mac_key) once, then joins to the aggregate INSERT-SELECT.
+WITH per_observation AS (
+    SELECT
+        dd.site_id,
+        dd.ip_address,
+        COALESCE(dd.mac_address, '') AS mac_key,
+        dd.mac_address,
+        dd.appliance_id,
+        dd.device_type,
+        dd.first_seen_at,
+        dd.last_seen_at
+      FROM discovered_devices dd
+),
+type_votes AS (
+    SELECT site_id, ip_address, mac_key, device_type,
+           COUNT(DISTINCT appliance_id) AS vote_count
+      FROM per_observation
+     WHERE device_type IS NOT NULL
+     GROUP BY site_id, ip_address, mac_key, device_type
+),
+majority_vote AS (
+    SELECT site_id, ip_address, mac_key, device_type AS winning_device_type
+      FROM (
+        SELECT site_id, ip_address, mac_key, device_type,
+               ROW_NUMBER() OVER (
+                   PARTITION BY site_id, ip_address, mac_key
+                   ORDER BY vote_count DESC, device_type ASC
+               ) AS rn
+          FROM type_votes
+      ) t
+     WHERE rn = 1
+)
 INSERT INTO canonical_devices (site_id, ip_address, mac_address, device_type,
                                first_seen_at, last_seen_at, observed_by_appliances,
                                reconciled_at)
 SELECT
-    dd.site_id,
-    dd.ip_address,
-    (ARRAY_AGG(dd.mac_address) FILTER (WHERE dd.mac_address IS NOT NULL))[1] AS mac_address,
-    (SELECT dt FROM (
-        SELECT device_type AS dt, COUNT(DISTINCT appliance_id) AS vc
-          FROM discovered_devices dd2
-         WHERE dd2.site_id = dd.site_id
-           AND dd2.ip_address = dd.ip_address
-           AND COALESCE(dd2.mac_address, '') = COALESCE(dd.mac_address, '')
-           AND dd2.device_type IS NOT NULL
-         GROUP BY device_type
-         ORDER BY vc DESC, device_type ASC
-         LIMIT 1
-    ) t) AS device_type,
-    MIN(dd.first_seen_at) AS first_seen_at,
-    MAX(dd.last_seen_at) AS last_seen_at,
-    ARRAY_AGG(DISTINCT dd.appliance_id) AS observed_by_appliances,
+    p.site_id,
+    p.ip_address,
+    (ARRAY_AGG(p.mac_address) FILTER (WHERE p.mac_address IS NOT NULL))[1] AS mac_address,
+    mv.winning_device_type,
+    MIN(p.first_seen_at) AS first_seen_at,
+    MAX(p.last_seen_at) AS last_seen_at,
+    ARRAY_AGG(DISTINCT p.appliance_id) AS observed_by_appliances,
     NOW() AS reconciled_at
-FROM discovered_devices dd
-GROUP BY dd.site_id, dd.ip_address, COALESCE(dd.mac_address, '')
+FROM per_observation p
+LEFT JOIN majority_vote mv
+    ON mv.site_id = p.site_id
+   AND mv.ip_address = p.ip_address
+   AND mv.mac_key = p.mac_key
+GROUP BY p.site_id, p.ip_address, p.mac_key, mv.winning_device_type
 ON CONFLICT (site_id, ip_address, mac_dedup_key) DO NOTHING;
 
 -- Audit-log row.
