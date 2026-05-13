@@ -771,7 +771,36 @@ async def get_site_devices(
     """
     pool = await get_pool()
 
+    # canonical-migration: device_count_per_site — Phase 1 via canonical_devices (Task #73)
+    # Pre-fix: SELECT d.* FROM discovered_devices returned 3-7 rows per
+    # physical device on multi-appliance sites (each appliance's ARP scan
+    # creates its own row). Empirical at north-valley-branch-2: 36 raw
+    # rows for 22 distinct physical devices, ~63% over-count visible on
+    # the device inventory page.
+    # Fix: drive the row set from canonical_devices (mig 319), JOIN BACK
+    # to discovered_devices for fields canonical doesn't carry today
+    # (os_name, hostname, device_status, scan flags). Use DISTINCT ON
+    # (canonical_id) ordered by last_seen_at DESC so the freshest
+    # observation per canonical row wins.
     query = """
+        WITH dd_freshest AS (
+            SELECT DISTINCT ON (cd.canonical_id)
+                   cd.canonical_id,
+                   cd.site_id,
+                   cd.ip_address,
+                   cd.mac_address,
+                   cd.first_seen_at AS cd_first_seen_at,
+                   cd.last_seen_at AS cd_last_seen_at,
+                   cd.device_type,
+                   dd.*
+              FROM canonical_devices cd
+              JOIN discovered_devices dd
+                ON dd.site_id = cd.site_id
+               AND dd.ip_address = cd.ip_address
+               AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+             WHERE cd.site_id = $1
+             ORDER BY cd.canonical_id, dd.last_seen_at DESC
+        )
         SELECT
             d.*,
             a.host_id as appliance_hostname,
@@ -781,7 +810,7 @@ async def get_site_devices(
             w.compliance_status as ws_compliance_status,
             w.compliance_percentage as ws_compliance_pct,
             w.last_compliance_check as ws_last_check
-        FROM discovered_devices d
+        FROM dd_freshest d
         JOIN v_appliances_current a ON d.appliance_id = a.id
         LEFT JOIN workstations w ON w.site_id = a.site_id
             AND (w.ip_address = d.ip_address OR UPPER(w.hostname) = UPPER(d.hostname))

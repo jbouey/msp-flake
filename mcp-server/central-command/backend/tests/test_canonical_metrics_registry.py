@@ -61,7 +61,7 @@ _BACKEND = pathlib.Path(__file__).resolve().parent.parent
 # Phase 3 drive-down where each migration drops the count.
 # ─────────────────────────────────────────────────────────────────────
 
-BASELINE_MAX = 7  # 6 compliance_score + 1 baa_on_file `migrate` entries.
+BASELINE_MAX = 26  # 6 compliance_score + 1 baa_on_file + 19 device_count_per_site (Task #73 Phase 1 — Phase 2 drives device_count to 0).
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ def test_allowlist_classifications_are_valid():
     'operator_only'. Bare entries (no classification) fail the gate —
     Task #50 Gate B P1-3 required explicit classification.
     """
-    valid_classifications = {"migrate", "operator_only"}
+    valid_classifications = {"migrate", "operator_only", "write_path"}
     for metric_class, spec in CANONICAL_METRICS.items():
         for entry in spec.get("allowlist", []):
             classification = entry.get("classification")

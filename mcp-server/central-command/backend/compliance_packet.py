@@ -168,6 +168,17 @@ def get_control_for_check(check_type: str, framework: str = "hipaa") -> dict:
     return {"control": hipaa_entry["control"], "description": hipaa_entry["description"]}
 
 
+# Compliance packet methodology version. Bumped 2026-05-13 to 2.0 with
+# Task #73 Phase 1: device counts now derive from canonical_devices
+# (mig 319) — a unique physical device per (site, IP, MAC) per site.
+# Pre-2.0 packets counted raw discovered_devices rows; multi-appliance
+# sites may have over-counted devices observed by multiple appliances
+# on the same network. Past Ed25519-signed packets remain immutable
+# per Article 8 (Bridge Clause) of MASTER_BAA_v1.0_INTERIM.md.
+# Distinct from auditor-kit kit_version (separate artifact, currently 2.1).
+_PACKET_METHODOLOGY_VERSION = "2.0"
+
+
 class CompliancePacket:
     """Generate compliance packet from real evidence data.
 
@@ -1154,18 +1165,41 @@ class CompliancePacket:
         return {"total_incidents": 0, "resolved": 0, "resolution_rate": 0, "l1_auto": 0, "l2_llm": 0, "l3_human": 0}
 
     async def _get_device_inventory(self) -> Dict:
-        """Device inventory summary for the reporting period."""
+        """Device inventory summary for the reporting period.
+
+        Task #73 Phase 1 migration (Counsel Rule 1): COUNT comes from
+        canonical_devices (mig 319). Pre-fix this used raw discovered_devices
+        → multi-appliance sites' counts were inflated by per-appliance
+        observation duplicates (e.g. north-valley-branch-2 had 36 raw
+        rows for 22 distinct physical devices, ~63% over-count).
+        Per-OS / compliance / managed filters join back to discovered_devices
+        for fields not yet in canonical schema (Path A per Gate A v2 plan).
+        """
         try:
+            # canonical-migration: device_count_per_site — Phase 1 via canonical_devices CTE join (Task #73)
             result = await self.db.execute(
-                text("""SELECT
+                text("""WITH dd_freshest AS (
+                    SELECT DISTINCT ON (cd.canonical_id)
+                           cd.canonical_id,
+                           dd.os_name,
+                           dd.compliance_status,
+                           dd.device_status
+                      FROM canonical_devices cd
+                      JOIN discovered_devices dd
+                        ON dd.site_id = cd.site_id
+                       AND dd.ip_address = cd.ip_address
+                       AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                     WHERE cd.site_id = :sid
+                     ORDER BY cd.canonical_id, dd.last_seen_at DESC
+                )
+                SELECT
                     COUNT(*) as total,
                     COUNT(*) FILTER (WHERE os_name ILIKE '%windows%') as windows,
                     COUNT(*) FILTER (WHERE os_name ILIKE '%linux%') as linux,
                     COUNT(*) FILTER (WHERE os_name ILIKE '%mac%' OR os_name ILIKE '%darwin%') as macos,
                     COUNT(*) FILTER (WHERE compliance_status = 'compliant') as compliant,
                     COUNT(*) FILTER (WHERE device_status = 'agent_active') as managed
-                FROM discovered_devices
-                WHERE site_id = :sid"""),
+                FROM dd_freshest"""),
                 {"sid": self.site_id},
             )
             row = result.fetchone()
@@ -1431,6 +1465,14 @@ To independently verify any Bitcoin anchor:
 
 ---
 
+## Methodology
+
+_Packet methodology version: {{ packet_methodology_version }} (updated 2026-05-13)_
+
+Device counts as of methodology version 2.0 use **per-site canonical device records** — a unique physical device identified by `(IP address, MAC address)` per site is counted once. Prior to 2026-05-13, multi-appliance sites' device counts reflected raw observations from each appliance and may have over-counted devices observed by multiple appliances on the same network. Past packets remain Ed25519-signed and immutable under the cryptographic-attestation chain.
+
+---
+
 ## Administrative & Physical Controls
 
 These controls require organizational attestation — they cannot be verified by automated scanning.
@@ -1466,4 +1508,12 @@ providing an auditable trail of human decisions in the remediation workflow.
 Bitcoin blockchain anchors provide independent, immutable timestamp anchoring that verifies evidence generation time.
 **Disclaimer:** This report represents automated monitoring observations and does not constitute HIPAA compliance certification. Consult qualified compliance professionals for formal assessments.
 """)
-        return template.render(**data)
+        # Inject methodology version (Task #73 Phase 1, Counsel Rule 1).
+        # Pre-fix the packet inherited an implicit "version 1.0" by absence;
+        # explicit declaration enables auditors to reconcile pre/post-2026-05-13
+        # device-count methodology.
+        data_with_version = dict(data)
+        data_with_version.setdefault(
+            "packet_methodology_version", _PACKET_METHODOLOGY_VERSION
+        )
+        return template.render(**data_with_version)

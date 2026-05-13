@@ -288,6 +288,87 @@ async def flywheel_reconciliation_loop():
         await asyncio.sleep(1800)  # 30 minutes
 
 
+async def canonical_devices_reconciliation_loop():
+    """Maintain canonical_devices (Task #73 Phase 1, mig 319) per Counsel
+    Rule 1 + Rule 4.
+
+    Every 60s, UPSERT one row per (site_id, ip_address, mac_dedup_key)
+    from the latest discovered_devices observations. Multi-appliance
+    same-(ip,mac) observations collapse to one canonical row. The
+    device_type field is set via majority vote across observing
+    appliances, with alphabetical UTF-8 codepoint tiebreaker for
+    multi-way ties (user decision 2026-05-13 AskUserQuestion).
+
+    observed_by_appliances UUID[] preserves per-appliance source-of-
+    record so coverage-degradation (Counsel Rule 4) is detectable —
+    a canonical row with array_length 1 when expected_appliances_count
+    >1 is a signal that 2 of 3 appliances aren't seeing the device.
+
+    Runbook: substrate_runbooks/canonical_devices_freshness.md
+    Substrate invariant: canonical_devices_freshness (sev2, fires
+    on staleness > 60min).
+    """
+    await asyncio.sleep(120)  # Wait 2 min after startup
+    while True:
+        _hb("canonical_devices_reconciliation")
+        try:
+            from dashboard_api.fleet import get_pool
+            from dashboard_api.tenant_middleware import admin_transaction
+
+            pool = await get_pool()
+            async with admin_transaction(pool) as conn:
+                # Single-statement UPSERT — same shape as mig 319's
+                # backfill but with DO UPDATE so ongoing observation
+                # changes propagate.
+                await conn.execute("""
+                    INSERT INTO canonical_devices (
+                        site_id, ip_address, mac_address, device_type,
+                        first_seen_at, last_seen_at,
+                        observed_by_appliances, reconciled_at
+                    )
+                    SELECT
+                        dd.site_id,
+                        dd.ip_address,
+                        (ARRAY_AGG(dd.mac_address)
+                            FILTER (WHERE dd.mac_address IS NOT NULL))[1],
+                        (SELECT dt FROM (
+                            SELECT device_type AS dt,
+                                   COUNT(DISTINCT appliance_id) AS vc
+                              FROM discovered_devices dd2
+                             WHERE dd2.site_id = dd.site_id
+                               AND dd2.ip_address = dd.ip_address
+                               AND COALESCE(dd2.mac_address, '')
+                                   = COALESCE(dd.mac_address, '')
+                               AND dd2.device_type IS NOT NULL
+                             GROUP BY device_type
+                             ORDER BY vc DESC, device_type ASC
+                             LIMIT 1
+                        ) t),
+                        MIN(dd.first_seen_at),
+                        MAX(dd.last_seen_at),
+                        ARRAY_AGG(DISTINCT dd.appliance_id),
+                        NOW()
+                    FROM discovered_devices dd
+                    WHERE dd.last_seen_at > NOW() - INTERVAL '24 hours'
+                    GROUP BY dd.site_id, dd.ip_address,
+                             COALESCE(dd.mac_address, '')
+                    ON CONFLICT (site_id, ip_address, mac_dedup_key)
+                    DO UPDATE SET
+                        mac_address = EXCLUDED.mac_address,
+                        device_type = EXCLUDED.device_type,
+                        last_seen_at = EXCLUDED.last_seen_at,
+                        observed_by_appliances =
+                            EXCLUDED.observed_by_appliances,
+                        reconciled_at = NOW()
+                """)
+        except Exception as e:
+            logger.exception(
+                f"canonical_devices reconciliation error: {e}"
+            )
+
+        await asyncio.sleep(60)  # 60s tick
+
+
 async def temporal_decay_loop():
     """Phase 6: exponentially decay evidence in platform_pattern_stats.
 

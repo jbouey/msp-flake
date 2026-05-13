@@ -719,6 +719,19 @@
     "triggered_at",
     "updated_at"
   ],
+  "canonical_devices": [
+    "canonical_id",
+    "created_at",
+    "device_type",
+    "first_seen_at",
+    "ip_address",
+    "last_seen_at",
+    "mac_address",
+    "mac_dedup_key",
+    "observed_by_appliances",
+    "reconciled_at",
+    "site_id"
+  ],
   "canonical_metric_samples": [
     "captured_at",
     "captured_value",

@@ -126,6 +126,48 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
     # engineering question. Per Task #50 Gate A P0 #1 logic, including
     # a TBD entry is itself a Rule 1 violation — so this metric class
     # is absent from this registry until its own Gate A completes.
+    "device_count_per_site": {
+        # Canonical: canonical_devices table (mig 319, Task #73 Phase 1).
+        # Multi-appliance same-(ip,mac) observations collapse via 60s
+        # reconciliation loop. Phase 1 migrates compliance_packet.py +
+        # device_sync.get_site_devices; Phase 2 migrates remaining 17.
+        "canonical_helper": "canonical_devices table — read DISTINCT canonical_id per site_id",
+        "allowlist": [
+            # Operator-only callsites — Prometheus + per-appliance audit trail
+            {"signature": "prometheus_metrics.*", "classification": "operator_only"},
+            {"signature": "appliance_trace.*", "classification": "operator_only"},
+            # Substrate invariants — raw reads are by design
+            {"signature": "assertions._check_discovered_devices_freshness", "classification": "operator_only"},
+            # Write paths — INSERT/UPDATE/DELETE callsites
+            {"signature": "device_sync._compute_*", "classification": "write_path"},
+            {"signature": "device_sync.merge_*", "classification": "write_path"},
+            {"signature": "health_monitor.*owner_appliance*", "classification": "write_path"},
+            # DISTINCT-aggregation callsites — already deduping
+            {"signature": "sites.py:5090-5116", "classification": "operator_only"},
+            # Phase 2 migration targets — remaining customer-facing readers.
+            # 17 entries; ratchet baseline in test_no_raw_discovered_devices_count.py.
+            {"signature": "partners.py:1892", "classification": "migrate"},
+            {"signature": "partners.py:2587", "classification": "migrate"},
+            {"signature": "partners.py:2595", "classification": "migrate"},
+            {"signature": "partners.py:2602", "classification": "migrate"},
+            {"signature": "portal.py:1251", "classification": "migrate"},
+            {"signature": "portal.py:2137", "classification": "migrate"},
+            {"signature": "client_portal.py:1289", "classification": "migrate"},
+            {"signature": "client_portal.py:4732", "classification": "migrate"},
+            {"signature": "routes.py:5313", "classification": "migrate"},
+            {"signature": "routes.py:5322", "classification": "migrate"},
+            {"signature": "routes.py:5331", "classification": "migrate"},
+            {"signature": "routes.py:5762", "classification": "migrate"},
+            {"signature": "routes.py:5857", "classification": "migrate"},
+            {"signature": "routes.py:6396", "classification": "migrate"},
+            {"signature": "routes.py:8592", "classification": "migrate"},
+            {"signature": "sites.py:1897", "classification": "migrate"},
+            {"signature": "sites.py:5644", "classification": "migrate"},
+            {"signature": "sites.py:7271", "classification": "migrate"},
+            {"signature": "background_tasks.py:1048", "classification": "migrate"},
+        ],
+        "display_null_passthrough_required": False,
+    },
 }
 
 

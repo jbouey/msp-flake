@@ -2300,6 +2300,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="A customer-facing endpoint returned a compliance_score value that differs from the canonical helper output for the same inputs by more than 0.5. Counsel Rule 1 runtime half — pairs with the static AST gate (test_canonical_metrics_registry.py, Phase 0+1 shipped) which catches non-canonical-delegation drift. This invariant catches non-canonical-value drift (the endpoint went through a code path that produces a different value than the canonical helper would). Substrate samples 10% of customer-facing requests into canonical_metric_samples (Phase 2b decorator); this assertion verifies samples match canonical helper output. Runbook: substrate_runbooks/canonical_compliance_score_drift.md.",
         check=lambda c: _check_canonical_compliance_score_drift(c),
     ),
+    Assertion(
+        name="canonical_devices_freshness",
+        severity="sev2",
+        description="The 60s reconciliation loop that maintains canonical_devices (mig 319, Task #73) has not updated any row for an active site in >60min. Monthly compliance packet PDFs + device-inventory page may show stale counts. Counsel Rule 1 runtime parity — pairs with discovered_devices_freshness (existing). Runbook: substrate_runbooks/canonical_devices_freshness.md.",
+        check=lambda c: _check_canonical_devices_freshness(c),
+    ),
 ]
 
 
@@ -3131,6 +3137,20 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "canonical_metrics.py — drive-down PR should migrate that "
             "endpoint to delegate to the canonical helper. See "
             "substrate_runbooks/canonical_compliance_score_drift.md."
+        ),
+    },
+    "canonical_devices_freshness": {
+        "display_name": "Canonical Devices Reconciliation Loop Stale",
+        "recommended_action": (
+            "The 60s background loop that maintains canonical_devices "
+            "(mig 319) has not updated rows for an active site in "
+            ">60min. Monthly compliance packet PDFs + the device-"
+            "inventory page may show stale counts (the underlying "
+            "discovered_devices data is still being collected — only "
+            "the deduplicated view is stale). Check /admin/substrate-"
+            "health for bg_loop_silent OR inspect ERROR logs for "
+            "canonical_devices UPSERT failures. See "
+            "substrate_runbooks/canonical_devices_freshness.md."
         ),
     },
 }
@@ -6193,6 +6213,80 @@ async def _check_canonical_compliance_score_drift(
                 )
             )
     return out
+
+
+async def _check_canonical_devices_freshness(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """sev2 — Counsel Rule 1 sibling of canonical_compliance_score_drift.
+
+    The reconciliation loop that maintains canonical_devices (Task #73
+    Phase 1, mig 319) ticks every 60s. If a site has discovered_devices
+    rows recently updated but canonical_devices.reconciled_at > 60min
+    stale, the loop has stalled OR is wedged on that site. Customers
+    may see stale device counts in their monthly compliance packet
+    PDFs (compliance_packet.py emits the canonical count post-migration)
+    + the device-inventory page (device_sync.get_site_devices reads
+    canonical post-migration).
+
+    Per discovered_devices_freshness sibling: filter site_appliances
+    where status='online' and deleted_at IS NULL — only active sites.
+    """
+    rows = await conn.fetch(
+        """
+        WITH active_sites AS (
+            SELECT DISTINCT sa.site_id
+              FROM site_appliances sa
+             WHERE sa.deleted_at IS NULL
+               AND sa.status = 'online'
+        ),
+        site_freshness AS (
+            SELECT s.site_id,
+                   MAX(cd.reconciled_at) AS last_reconciled_at,
+                   COUNT(cd.canonical_id) AS canonical_row_count
+              FROM active_sites s
+         LEFT JOIN canonical_devices cd ON cd.site_id = s.site_id
+             GROUP BY s.site_id
+        )
+        SELECT site_id, last_reconciled_at, canonical_row_count,
+               CASE
+                 WHEN last_reconciled_at IS NULL THEN NULL
+                 ELSE EXTRACT(EPOCH FROM (NOW() - last_reconciled_at))/60
+               END AS minutes_stale
+          FROM site_freshness
+         WHERE last_reconciled_at IS NULL
+            OR last_reconciled_at < NOW() - INTERVAL '60 minutes'
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "last_reconciled_at": (
+                    r["last_reconciled_at"].isoformat()
+                    if r["last_reconciled_at"] else None
+                ),
+                "canonical_row_count": r["canonical_row_count"],
+                "minutes_stale": (
+                    float(r["minutes_stale"]) if r["minutes_stale"] is not None else None
+                ),
+                "interpretation": (
+                    "Canonical devices reconciliation loop has not "
+                    "updated this site in >60 minutes. Customer-facing "
+                    "device counts (compliance_packet PDF + device "
+                    "inventory page) may be stale."
+                ),
+                "remediation": (
+                    "Check /admin/substrate-health for bg_loop_silent. "
+                    "Inspect mcp-server logs for ERROR-level "
+                    "'canonical_devices' UPSERT failures. If wedged on "
+                    "a specific site, restart mcp-server to re-init "
+                    "background_tasks."
+                ),
+            },
+        )
+        for r in rows
+    ]
 
 
 # --- Engine ----------------------------------------------------------
