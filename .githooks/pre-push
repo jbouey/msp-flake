@@ -122,6 +122,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_no_sql_function_interval_concat.py"
     "tests/test_canonical_not_used_for_compliance_bundles.py"
     "tests/test_canonical_metrics_registry.py"
+    "tests/test_migration_number_collision.py"
     "tests/test_no_direct_site_id_update.py"
     "tests/test_admin_transaction_for_multistatement.py"
     "tests/test_frontend_mutation_csrf.py"
