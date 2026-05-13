@@ -110,6 +110,22 @@ _LIFESPAN_INLINE_LOOPS = {
     # them is unreliable — manual verification on edit.
     "ots_upgrade",
     "fleet_order_expiry",
+    # 2026-05-12 BUG 2 followup — 5 main.py-inline loops. Heartbeats
+    # manually verified at the body of each loop's while True / while not
+    # _bg_shutdown block:
+    #   - flywheel: record_heartbeat("flywheel") at main.py:_flywheel_promotion_loop
+    #   - reconciliation: _hb("reconciliation") at main.py:_reconciliation_loop
+    #   - unregistered_device_alerts: record_heartbeat in
+    #     background_tasks.unregistered_device_alert_loop (called via
+    #     main.py wrapper _unregistered_device_alert_loop)
+    #   - partner_payout: _hb("partner_payout") at main.py:_partner_payout_loop
+    #   - flywheel_federation_snapshot: record_heartbeat at
+    #     main.py:_flywheel_federation_snapshot_loop
+    "flywheel",
+    "reconciliation",
+    "unregistered_device_alerts",
+    "partner_payout",
+    "flywheel_federation_snapshot",
 }
 
 _BACKEND_DIR = pathlib.Path(__file__).resolve().parent.parent

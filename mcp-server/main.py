@@ -1505,6 +1505,12 @@ async def _flywheel_federation_snapshot_loop():
 
     await asyncio.sleep(1800)  # 30-min startup delay
     while True:
+        # bg_loop_silent heartbeat — Session 220 BUG 2 followup 2026-05-12.
+        try:
+            from dashboard_api.bg_heartbeat import record_heartbeat
+            record_heartbeat("flywheel_federation_snapshot")
+        except Exception:
+            pass
         try:
             pool = await _get_pool()
             async with _admin_tx(pool) as conn:
@@ -1890,6 +1896,8 @@ async def lifespan(app: FastAPI):
                 yield (y, m)
 
         while not _bg_shutdown.is_set():
+            # bg_loop_silent heartbeat — Session 220 BUG 2 followup 2026-05-12.
+            _hb("partner_payout")
             try:
                 now = datetime.now(timezone.utc)
                 for year, month in _ended_months(now, CATCH_UP_MONTHS):

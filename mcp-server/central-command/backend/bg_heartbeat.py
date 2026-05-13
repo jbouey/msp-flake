@@ -129,6 +129,14 @@ EXPECTED_INTERVAL_S: Dict[str, int] = {
     "client_telemetry_retention": 86400,        # 24h
     "data_hygiene_gc": 86400,                   # 24h
     "relocation_finalize": 60,                  # 60s post-startup tick
+    # 2026-05-12 BUG 2 followup — 5 main.py-inline loops (lifespan nested
+    # closures + top-level main.py loops). Listed in _LIFESPAN_INLINE_LOOPS
+    # in both test files since AST-walking nested closures is unreliable.
+    "flywheel": 1800,                           # main.py:_flywheel_promotion_loop — 30 min
+    "reconciliation": 3600,                     # main.py:_reconciliation_loop — hourly no-op
+    "unregistered_device_alerts": 3600,         # background_tasks.unregistered_device_alert_loop — hourly
+    "partner_payout": 3600,                     # main.py:_partner_payout_loop — hourly catch-up
+    "flywheel_federation_snapshot": 86400,      # main.py:_flywheel_federation_snapshot_loop — daily
 }
 
 # Loops with dynamic/work-driven cadence that don't have a single static

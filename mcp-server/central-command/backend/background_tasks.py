@@ -1001,6 +1001,12 @@ async def unregistered_device_alert_loop():
 
     await asyncio.sleep(300)  # Wait for startup
     while True:
+        # bg_loop_silent heartbeat — Session 220 BUG 2 followup 2026-05-12.
+        try:
+            from .bg_heartbeat import record_heartbeat
+            record_heartbeat("unregistered_device_alerts")
+        except Exception:
+            pass
         try:
             pool = await get_pool()
             async with pool.acquire() as conn:

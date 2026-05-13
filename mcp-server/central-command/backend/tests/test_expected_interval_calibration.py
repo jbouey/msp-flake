@@ -102,6 +102,17 @@ _LIFESPAN_INLINE_LOOPS = {
     # 2026-05-02 followup #44). Nested-closure parsing limitations.
     "ots_upgrade",
     "fleet_order_expiry",
+    # 2026-05-12 BUG 2 followup — 5 main.py-inline loops (top-level
+    # _flywheel_promotion_loop + _flywheel_federation_snapshot_loop +
+    # lifespan nested _reconciliation_loop + _partner_payout_loop +
+    # _unregistered_device_alert_loop thin wrapper around
+    # background_tasks.unregistered_device_alert_loop). Nested-closure
+    # AST parsing is unreliable; cadence verified manually on edit.
+    "flywheel",
+    "reconciliation",
+    "unregistered_device_alerts",
+    "partner_payout",
+    "flywheel_federation_snapshot",
 }
 
 _BACKEND_DIR = pathlib.Path(__file__).resolve().parent.parent
