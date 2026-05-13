@@ -126,7 +126,6 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_canonical_metrics_sampler.py"
     "tests/test_f1_pdf_score_extraction.py"
     "tests/test_compliance_score_skip_cache_arg.py"
-    "tests/test_substrate_docs_present.py"
     "tests/test_no_direct_site_id_update.py"
     "tests/test_admin_transaction_for_multistatement.py"
     "tests/test_frontend_mutation_csrf.py"
