@@ -2275,6 +2275,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         description="One or more is_chronic=TRUE rows in incident_recurrence_velocity have computed_at older than 10 minutes — the freshness window the agent_api.py recurrence detector uses. Sev3 SPOF guard (Steve P0-B Gate A finding): bg_loop_silent (sev2) covers complete death of recurrence_velocity_loop; this catches the partial-degradation case where the loop runs slowly or specific chronic rows haven't been recomputed recently. Forward operation continues — new incidents still attempt the velocity read and log the stale signal — but chronic escalation may be delayed until the loop catches up.",
         check=lambda c: _check_recurrence_velocity_stale(c),
     ),
+    Assertion(
+        name="signing_backend_drifted_from_vault",
+        severity="sev2",
+        description="Vault Phase C P0 #4 — fires when the container's expected signing backend (from SIGNING_BACKEND env, or SIGNING_BACKEND_PRIMARY when env=shadow) does not match the observed fleet_orders.signing_method distribution in last hour. Detects silent fallback to disk-key signing (env says vault, observed says file — the exact post-cutover regression Phase C was meant to prevent) OR write-path regression (signing_method column not being written). Audit/coach-vault-p0-bundle-gate-a-redo-2-2026-05-13.md.",
+        check=lambda c: _check_signing_backend_drifted_from_vault(c),
+    ),
 ]
 
 
@@ -3050,6 +3056,21 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "windows) — non-actionable, will resolve. If bg_loop_silent "
             "is also firing, restart the background_tasks loop. Sev3 "
             "SPoF guard (Steve P0-B, Gate A 2026-05-12)."
+        ),
+    },
+    "signing_backend_drifted_from_vault": {
+        "display_name": "Signing backend drifted from Vault",
+        "recommended_action": (
+            "Container expected signing backend (from SIGNING_BACKEND "
+            "env) does not match observed fleet_orders.signing_method "
+            "in last hour. Causes: (a) silent fallback to disk-key "
+            "signing — investigate WG tunnel 10.100.0.2↔10.100.0.3 + "
+            "Vault host seal state; (b) container env desynced after "
+            "partial restart — verify via docker exec printenv; (c) "
+            "INSERT call-site missed current_signing_method() — grep "
+            "INSERT INTO fleet_orders for the 9-column form. Vault "
+            "Phase C P0 #4 (audit/coach-vault-p0-bundle-gate-a-redo-2-"
+            "2026-05-13.md)."
         ),
     },
 }
@@ -5767,6 +5788,68 @@ async def _check_recurrence_velocity_stale(conn: asyncpg.Connection) -> List[Vio
             },
         )
         for r in rows
+    ]
+
+
+async def _check_signing_backend_drifted_from_vault(conn: asyncpg.Connection) -> List[Violation]:
+    """Sev2 — Container expected signing backend disagrees with observed
+    fleet_orders.signing_method in last hour.
+
+    Vault Phase C P0 #4 (audit/coach-vault-p0-bundle-gate-a-redo-2-
+    2026-05-13.md). Mismatch = chain-of-custody drift on the production
+    signing path. Carve-out: SIGNING_BACKEND=shadow compares against
+    SIGNING_BACKEND_PRIMARY (the shadow wrapper itself doesn't sign).
+    """
+    import os as _os
+    sel = _os.getenv("SIGNING_BACKEND", "file").lower()
+    primary = _os.getenv("SIGNING_BACKEND_PRIMARY", "file").lower()
+    if sel == "shadow":
+        expected = primary
+    else:
+        expected = sel
+    rows = await conn.fetch(
+        """
+        SELECT signing_method, COUNT(*) AS n
+          FROM fleet_orders
+         WHERE created_at > NOW() - INTERVAL '1 hour'
+         GROUP BY signing_method
+        """
+    )
+    if not rows:
+        return []
+    observed_methods = {r["signing_method"]: r["n"] for r in rows}
+    unexpected = {
+        method: count
+        for method, count in observed_methods.items()
+        if method != expected
+    }
+    if not unexpected:
+        return []
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "expected_signing_method": expected,
+                "observed_methods": observed_methods,
+                "unexpected_count": sum(unexpected.values()),
+                "interpretation": (
+                    f"Container SIGNING_BACKEND env declares expected="
+                    f"{expected!r} but {sum(unexpected.values())} fleet_orders "
+                    f"in the last hour signed via {list(unexpected.keys())!r}. "
+                    f"Either (a) silent fallback to disk-key signing — the "
+                    f"exact regression Phase C was meant to prevent, (b) "
+                    f"container env desynced after partial restart, or (c) "
+                    f"INSERT call-site missing current_signing_method() "
+                    f"(P0 #3 regression)."
+                ),
+                "remediation": (
+                    "Check container env: docker exec mcp-server printenv | "
+                    "grep SIGNING_BACKEND. Check Vault reachability. If "
+                    "Vault unreachable, the failover policy is documented "
+                    "in docs/security/vault-transit-migration.md."
+                ),
+            },
+        )
     ]
 
 
