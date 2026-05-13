@@ -1,127 +1,169 @@
-# `canonical_metric_drift` Substrate Invariant — Design (Task #50 Phase 2, Counsel Rule 1)
+# `canonical_compliance_score_drift` Substrate Invariant — Design v2 (Task #50 Phase 2, Counsel Rule 1)
 
-> **Counsel Rule 1 (gold authority):** every customer-facing metric must declare a canonical source. The CI gate (Phase 0+1, shipped) is the static-AST half. This substrate invariant is the RUNTIME half — per Task #50 Gate B P0-A, the comparison MUST be **display-time vs chain-time** (most recent signed `compliance_bundles` row), NOT display-time vs fresh-helper-recompute. Same-helper-same-data proves nothing; chain-time comparison materializes the Master BAA Article 3.2 cryptographic-attestation-chain claim without double-building (chain already exists; invariant reads its head).
+> **v2 changes (Gate A v1 BLOCK → Mechanism B pivot per fork recommendation, 2026-05-13):**
+>
+> Gate A v1 returned BLOCK with 3 P0s — Mechanism C (re-run helper against chain-attested input) was not implementable against today's codebase:
+> 1. P0-E1 (Steve): `compute_compliance_score` accepts only relative `window_days: int`, not absolute window bounds. Mechanism C requires API extension that was out of scope.
+> 2. P0-E2 (Steve): `compliance_bundles` rows attest raw per-scan `checks[]` from ONE scan at ONE timestamp — they do NOT carry an aggregated compliance score. The "chain-attested score" comparison was a category error.
+> 3. P0-C1 (Coach): `signed_data TEXT` (mig 012) already stores canonical signed payload. Adding `attested_compliance_score` as sibling unsigned column would be double-build AND cryptographically meaningless (Ed25519 sig wouldn't cover it).
+>
+> **Pivot:** v2 design uses Mechanism B (response-sampling table). The invariant samples customer-facing endpoint responses + verifies they match canonical-helper output **right now** (no chain involvement, no Article 3.2 risk). This catches **non-canonical-value drift** — cases where a non-canonical code path produces a different value than the canonical helper would have. Pairs with the existing static AST gate (Phase 0+1 shipped) which catches **non-canonical-delegation drift** (a code path that doesn't go through the canonical helper at all).
+>
+> Renamed `canonical_metric_drift` → `canonical_compliance_score_drift` per Gate A v1 Coach lens — honest narrow scope. Separate invariants for `baa_on_file`, `runbook_id_canonical`, `l2_resolution_tier` will design separately (the latter two have substrate precedents at `assertions.py:1051` + `:1101` to EXTEND, not duplicate).
 
-> **Multi-device-enterprise lens:** at multi-tenant scale, a substrate invariant that detects drift between customer-facing surface values and chain-attested values is the auditor-grade evidence that "what we show customers matches what we attested." Without it, the canonical-source registry is a static-AST claim with no runtime proof.
+> **Counsel Rule 1 framing:** static AST gate (already shipped Phase 0+1) is the **compile-time** half — catches inline computations that don't go through canonical helper. This runtime invariant is the **runtime** half — catches when a customer-facing endpoint returns a value that differs from what the canonical helper would produce.
+
+> **Multi-device-enterprise lens:** at multi-tenant scale, a runtime drift detector is the auditor-grade evidence that customer-facing values match canonical helper output, not just claim-by-static-analysis.
 
 ---
 
 ## §1 — The invariant's contract
 
-For every tenant T with a recent signed `compliance_bundles` row containing a chain-attested value for metric M:
+For every recent **sample** captured from a customer-facing endpoint that returned a `compliance_score` for tenant T:
 
-**Invariant:** the canonical helper's CURRENT output for tenant T's metric M either (a) matches the chain-attested value OR (b) chain-attestation has rolled forward to a newer bundle that reflects the current state.
+**Invariant:** the canonical helper's output for tenant T's compliance score at the sample's time-of-capture matches the sample's reported value (within ±0.1 rounding tolerance).
 
-**Violation:** the canonical helper's output diverges from chain-attested value AND no newer bundle exists explaining the drift.
-
-Two divergence classes:
-
-| Class | Likely cause | Severity |
-|---|---|---|
-| **Class A — helper-output ≠ chain-head, chain is fresh** | Canonical helper logic changed semantics without re-attesting the chain. Bug. | sev2 |
-| **Class B — helper-output ≠ chain-head, chain is stale** | Chain hasn't been re-attested recently; helper reflects newer state. Expected drift. | sev3-info (operational, not bug) |
-
-The invariant auto-resolves once chain-attestation rolls forward (Class B → Class A transition self-heals).
+**Violation:** the sample's reported value differs from canonical-helper output → the endpoint computed via a non-canonical path that produced a different value → Rule 1 runtime violation.
 
 ---
 
-## §2 — Display-time capture — three mechanisms considered
+## §2 — Mechanism B — response-sampling table
 
-Per Gate B P0-A: "display-time" comparison needs a captured display value. The substrate engine doesn't make HTTP requests, so we need an in-DB source for the "what was displayed" reading.
+<!-- mig-claim: 314 task:#50 -->
 
-### Mechanism A — Re-compute via canonical helper (REJECTED per Gate B P0-A)
+### Schema (mig 314 — Phase 2a)
 
-Substrate calls `compute_compliance_score(conn, site_ids)` and compares vs `compliance_bundles` head. Gate B explicitly rejected this — "two calls to the same helper proves nothing."
+```sql
+CREATE TABLE IF NOT EXISTS canonical_metric_samples (
+    sample_id       UUID NOT NULL DEFAULT gen_random_uuid(),
+    metric_class    TEXT NOT NULL,         -- 'compliance_score' (v2 scope)
+    tenant_id       UUID NOT NULL,         -- client_org_id
+    site_id         TEXT NULL,             -- optional per-site
+    captured_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    captured_value  NUMERIC(5,1) NULL,     -- the value the endpoint returned
+    endpoint_path   TEXT NOT NULL,         -- e.g. /api/client/reports/current
+    helper_input    JSONB NULL,            -- the inputs (site_ids, window_days)
+                                           -- the endpoint passed to helper
+    PRIMARY KEY (sample_id, captured_at)
+) PARTITION BY RANGE (captured_at);
 
-### Mechanism B — Response-sampling table (HEAVY)
+-- Monthly partitions, 30-day retention (Maya P3 from forks):
+-- samples > 30 days old auto-pruned by partition_maintainer_loop.
+CREATE INDEX IF NOT EXISTS idx_canonical_metric_samples_tenant
+    ON canonical_metric_samples (tenant_id, metric_class, captured_at DESC);
+```
 
-Wrap customer-facing endpoints with a decorator that writes the response to a sampling table (`customer_metric_response_samples`); invariant reads the sample table.
-
-PRO: actual response captured.
-CON: heavy infrastructure; samples consume DB space; sampling cadence + retention design needed; high implementation cost.
-
-### Mechanism C — Helper-output recorded into compliance_bundles signing chain (CHOSEN)
-
-Every signed `compliance_bundles` row already contains the attested metric values (compliance scores, evidence counts, check statuses) at attestation time. The "chain-time" value IS the bundle's content. The "display-time" value comes from the canonical helper at invariant-query-time. The substrate invariant compares these two — but crucially, the helper's output is computed against THE SAME data the chain attested (rather than fresh data) by querying compliance_bundles + reconstructing the helper's input from the bundle's `period_start`/`period_end`/`check_window`.
-
-In other words: the invariant asks "given the same input data the chain was attested against, does the canonical helper still produce the same output?" If yes, the helper hasn't drifted. If no, the helper's semantics changed and the chain is now stale.
-
-This is the auditor-grade comparison Gate B P0-A demanded:
-- It's NOT fresh-helper-recompute (which proves nothing) — it's helper-recompute against the chain's input.
-- It IS chain-time comparison — the chain attested a specific value at a specific input; the invariant verifies the helper still produces that value for that input.
-- Class A (helper diverged) is detected.
-- Class B (chain stale but helper still consistent under chain's input) is NOT a violation — the helper would produce the same output if given the chain's input again.
-
----
-
-## §3 — Invariant query shape (Mechanism C)
+### Endpoint decorator (Phase 2b)
 
 ```python
-async def _check_canonical_metric_drift(conn: asyncpg.Connection) -> List[Violation]:
-    """Sev2 — canonical helper's output diverges from chain-attested
-    value when given the same input data the chain attested against.
+# canonical_metrics_sampler.py
+from canonical_metrics import CANONICAL_METRICS
 
-    For each tenant with a signed compliance_bundles row from the
-    last 7 days, this invariant:
-      1. Reads the bundle's attested metric value(s).
-      2. Reads the bundle's attestation input (period_start, period_end,
-         site_ids covered).
-      3. Re-runs the canonical helper against that SAME input.
-      4. Compares helper output to chain-attested value.
-      5. If they differ (Class A drift), fires sev2.
+async def sample_metric_response(
+    conn,
+    metric_class: str,
+    tenant_id: str,
+    captured_value: float | None,
+    endpoint_path: str,
+    helper_input: dict,
+) -> None:
+    """Write a customer-facing response sample for substrate-invariant
+    drift-detection. Soft-fail: never blocks the endpoint response.
+    """
+    if metric_class not in CANONICAL_METRICS:
+        return  # not a tracked metric class
+    try:
+        await conn.execute(
+            """
+            INSERT INTO canonical_metric_samples
+                (metric_class, tenant_id, captured_value,
+                 endpoint_path, helper_input)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+            """,
+            metric_class, tenant_id, captured_value,
+            endpoint_path, json.dumps(helper_input),
+        )
+    except Exception:
+        logger.warning("sample_metric_response soft-fail; skipping")
+```
+
+Sampling cadence: **10% of customer-facing requests** (stochastic; configured via `SAMPLE_RATE = 0.1`). Trades full-coverage for table-size + insert-cost discipline.
+
+Phase 2b — decorate the 6 currently-known endpoints that return `compliance_score`:
+- `/api/client/dashboard`
+- `/api/client/reports/current`
+- `/api/client/sites/{id}/compliance-health`
+- `/api/partners/me/portfolio` (per-site sub-rows)
+- `/api/admin/orgs/{id}/audit-report` (operator surface, sampled but classification ≠ customer-facing — exclude from drift fire)
+- Any future F-series PDF generator that surfaces score
+
+### Substrate invariant (Phase 2c)
+
+```python
+async def _check_canonical_compliance_score_drift(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev2 — customer-facing endpoint returned a compliance_score
+    value that differs from canonical-helper output.
+
+    For each recent sample (last 15 minutes), recompute the canonical
+    helper using the sample's helper_input + compare to captured_value.
+    Differences > 0.1 indicate the endpoint went through a non-canonical
+    code path that produces different values.
     """
     rows = await conn.fetch(
         """
-        SELECT
-            cb.site_id,
-            cb.bundle_id,
-            cb.period_start,
-            cb.period_end,
-            cb.signed_at,
-            -- The bundle's attested metric value (extracted from
-            -- the canonical signed payload).
-            cb.attested_compliance_score
-          FROM compliance_bundles cb
-         WHERE cb.signed_at > NOW() - INTERVAL '7 days'
-           AND cb.attested_compliance_score IS NOT NULL
-           AND cb.deleted_at IS NULL  -- soft-delete filter
-        """,
+        SELECT sample_id, tenant_id, captured_at, captured_value,
+               endpoint_path, helper_input
+          FROM canonical_metric_samples
+         WHERE metric_class = 'compliance_score'
+           AND captured_at > NOW() - INTERVAL '15 minutes'
+           AND captured_value IS NOT NULL
+         ORDER BY captured_at DESC
+         LIMIT 50
+        """
     )
     out: List[Violation] = []
     for r in rows:
-        # Re-run canonical helper against the chain's input
         from compliance_score import compute_compliance_score
-        helper_result = await compute_compliance_score(
-            conn,
-            site_ids=[r["site_id"]],
-            window_start=r["period_start"],
-            window_end=r["period_end"],
-        )
+        helper_input = r["helper_input"] or {}
+        site_ids = helper_input.get("site_ids", [])
+        window_days = helper_input.get("window_days", 30)
+        if not site_ids:
+            continue
+        try:
+            helper_result = await compute_compliance_score(
+                conn, site_ids=site_ids, window_days=window_days,
+            )
+        except Exception:
+            continue  # helper error is not drift; substrate skips
         helper_score = helper_result.get("score")
-        chain_score = r["attested_compliance_score"]
-        # Allow up to 0.1% rounding tolerance (compliance scores
-        # are decimal with floor at 0.1).
-        if helper_score is None or abs(helper_score - chain_score) > 0.1:
+        if helper_score is None or r["captured_value"] is None:
+            continue
+        if abs(helper_score - r["captured_value"]) > 0.1:
             out.append(Violation(
-                site_id=r["site_id"],
+                site_id=(site_ids[0] if site_ids else None),
                 details={
-                    "bundle_id": r["bundle_id"],
-                    "chain_attested_score": chain_score,
-                    "helper_current_score": helper_score,
-                    "chain_attested_at": r["signed_at"].isoformat(),
+                    "sample_id": str(r["sample_id"]),
+                    "tenant_id": str(r["tenant_id"]),
+                    "endpoint_path": r["endpoint_path"],
+                    "captured_value": r["captured_value"],
+                    "canonical_value": helper_score,
+                    "captured_at": r["captured_at"].isoformat(),
                     "interpretation": (
-                        f"Canonical helper output ({helper_score}) "
-                        f"diverges from chain-attested value "
-                        f"({chain_score}) for bundle {r['bundle_id']} "
-                        f"at site {r['site_id']}. Helper semantics may "
-                        f"have changed without re-attestation."
+                        f"Endpoint {r['endpoint_path']} returned "
+                        f"{r['captured_value']} for tenant "
+                        f"{r['tenant_id']} but canonical helper produces "
+                        f"{helper_score} for the same inputs. Non-canonical "
+                        f"computation path is in use."
                     ),
                     "remediation": (
-                        "Investigate: did compute_compliance_score "
-                        "change recently? If yes, re-attest the affected "
-                        "compliance_bundles. If no, suspect data "
-                        "corruption or schema-migration drift in the "
-                        "underlying check tables."
+                        f"Inspect {r['endpoint_path']} source: it should "
+                        f"delegate to compliance_score.compute_compliance_score. "
+                        f"Likely uses one of the allowlist `migrate`-class "
+                        f"entries (db_queries.get_compliance_scores_for_site, "
+                        f"frameworks.get_compliance_scores, etc.) — drive-down "
+                        f"PR migrates that path to canonical helper."
                     ),
                 },
             ))
@@ -130,80 +172,60 @@ async def _check_canonical_metric_drift(conn: asyncpg.Connection) -> List[Violat
 
 ---
 
-## §4 — Tolerance + thresholds
+## §3 — What this invariant detects vs the static gate
 
-- **Floating-point tolerance:** 0.1 (compliance scores have decimal floor of 0.1 per `compute_compliance_score` rounding).
-- **Recency window:** last 7 days of signed bundles (older bundles are pre-canonical-helper-deployment; not in scope).
-- **Per-tenant limit:** 50 violations max per tick (avoid runaway scan; if more than 50, surface as a meta-finding "widespread drift — investigate platform-wide").
-- **Auto-resolution window:** invariant clears when chain rolls forward (new bundle attests current helper output).
+| Class | Caught by | Example |
+|---|---|---|
+| **Non-canonical delegation** — code path doesn't go through canonical helper at all | Static AST gate (Phase 0+1 already shipped) | `db_queries.get_compliance_scores_for_site` computes `passed / total * 100` inline; doesn't import compliance_score module |
+| **Non-canonical value drift** — code path produces a numerically-different output than canonical helper | This runtime invariant (Phase 2) | `db_queries.get_compliance_scores_for_site` returns 85.5 but `compute_compliance_score` returns 84.7 for same input (different window default, different latest-per-check semantics, etc.) |
+| **Display-time rendering drift** — endpoint returns canonical helper output but template renders a different value | Captured here only IF the endpoint samples its OWN response (vs the helper's output) | Template incorrectly rounds, coerces null, etc. |
+
+Together: compile-time + runtime coverage of Rule 1 for `compliance_score`.
 
 ---
 
-## §5 — Mechanism C precondition
+## §4 — Auditor-grade evidence
 
-The `compliance_bundles.attested_compliance_score` column does NOT exist today. The invariant requires this column to be populated at bundle-signing time. Migration design:
+When OCR asks "show me how you guarantee customer-facing compliance scores match canonical truth," the answer is:
 
-```sql
--- mig 314 (or next-available): attested_compliance_score column.
-ALTER TABLE compliance_bundles
-  ADD COLUMN IF NOT EXISTS attested_compliance_score NUMERIC(5,1) NULL;
-COMMENT ON COLUMN compliance_bundles.attested_compliance_score IS
-  'Compliance score (0-100, 1-decimal) attested in this bundle at sign '
-  'time. Populated by compliance_packet.sign_bundle when computing the '
-  'canonical signed payload. NULL for pre-2026-05-13 bundles + any '
-  'bundle that doesn''t attest a compliance score.';
-```
+1. **Static gate** `test_canonical_metrics_registry.py` — every customer-facing endpoint either delegates to `compute_compliance_score` or is in the allowlist with explicit classification.
+2. **Runtime invariant** `canonical_compliance_score_drift` — periodically samples 10% of customer-facing responses + verifies the sample matches canonical-helper output for the same input. Drift fires sev2 substrate alert.
+3. **Allowlist drive-down** — Phase 3 reduces the allowlist from 7 entries to 0 over 3-5 sprints, with coach pass per migration.
 
-The signing path (likely `compliance_packet.sign_bundle` or `evidence_chain.sign`) must populate this column from the canonical helper's output at sign-time. This is a TWO-PHASE rollout:
-- Phase 2a: mig 314 + signing-path update (column populates for NEW bundles).
-- Phase 2b: substrate invariant ships ONCE there's enough population in the column (e.g. 7 days worth of bundles).
+Neither gate is the master BAA Article 3.2 cryptographic-attestation-chain claim (that's the Ed25519+OTS chain itself). This invariant is a Rule 1 helper-semantic-and-delegation-drift detector.
+
+---
+
+## §5 — Implementation order
+
+**Phase 2a:** mig 314 — `canonical_metric_samples` table + monthly partition + index. Class-B Gate A on the schema (small).
+
+**Phase 2b:** `sample_metric_response` helper module + endpoint decorators on the 6 known endpoints. Soft-fail wrap (never blocks endpoint). Class-B Gate A on the decorator pattern (review for soft-fail + sample-rate + helper_input capture correctness).
+
+**Phase 2c:** `_check_canonical_compliance_score_drift` Assertion in `assertions.py` + `_DISPLAY_METADATA` entry + `substrate_runbooks/canonical_compliance_score_drift.md`. Class-B Gate A on the query shape + threshold tuning.
+
+**Phase 3:** unblocked once Phase 2 lands — drive-down allowlist's 7 `migrate` entries one PR at a time per the v3 design.
 
 ---
 
 ## §6 — Multi-device-enterprise lens
 
 At multi-tenant scale (N customers × M sites):
-- Each tenant produces ~1 signed bundle per day → ~30 bundles/30d-window per tenant.
-- N=50 customers × 30 bundles = 1500 bundles in the 7-day window.
-- Each invariant tick reads 1500 rows + runs the canonical helper 1500 times.
-- Canonical-helper cost is ~50ms each (asyncpg query + Python arithmetic).
-- Total tick cost: ~75 seconds per tick.
-- Substrate engine runs every 60s — this invariant would dominate the tick.
+- 10% sample rate × ~6 endpoints × ~5 customer-facing requests/site/day = ~3 samples/site/day per customer
+- N=50 customers × ~3 samples = 150 samples/day per tenant-class
+- 30-day retention partition: ~4500 samples in DB total
+- Substrate invariant scans last 15 minutes = small slice (<50 rows typically)
+- Tick cost: ~10 helper calls × ~5ms each = ~50ms — well under 60s tick budget
 
-**Mitigation:** sample-based rather than full-scan. Random-sample 10% of bundles per tick; full-tenant coverage every 10 ticks (~10 min). Trades full-real-time-coverage for tick-cost-discipline.
-
-```python
-# Sample 10% of bundles per tick.
-SAMPLE_RATE = 0.1
-sample_size = max(10, int(SAMPLE_RATE * total_bundle_count))
-```
+Affordable at multi-tenant scale. Sample-rate can be tuned down (5% or lower) if scale grows.
 
 ---
 
-## §7 — Open questions for Class-B Gate A
+## §7 — Open questions for Class-B Gate A v2
 
-- (a) Mechanism C vs Mechanism B — Mechanism C requires a schema column (mig 314) + signing-path update. Is the marginal complexity worth it vs Mechanism B's separate sampling table?
-- (b) Tolerance value 0.1 — is 1-decimal precision right, or should the invariant accept up to 1.0 drift (treating score as integer-grade)?
-- (c) Recency window 7 days — appropriate, or should it be a rolling window matching the canonical compliance-score helper's default 30-day window?
-- (d) Sample rate 10% — too low (slow detection of platform-wide drift) or too high (tick cost)?
-- (e) Cross-task lockstep: should this invariant ship in the SAME commit as the Task #50 Phase 0+1 already shipped, or as a follow-up sprint? (Per Gate B P0-A: must land BEFORE drive-down begins. Drive-down hasn't begun yet, so timing-wise both are valid.)
-- (f) Per-class scope: this design covers `compliance_score` only. The other 3 CANONICAL_METRICS classes (baa_on_file, runbook_id_canonical, l2_resolution_tier) need their own invariant queries or this invariant extends to cover all. Single-invariant-multi-class is more complex but auditor-friendlier.
-
----
-
-## §8 — Implementation order
-
-**Phase 2a (this commit's design covers, separate impl PR):**
-1. Mig 314: `compliance_bundles.attested_compliance_score` column.
-2. Update `compliance_packet.sign_bundle` (or equivalent) to populate column at sign-time.
-3. Class-B Gate A on mig 314 + signing-path change.
-
-**Phase 2b (subsequent PR, after 7d of population data):**
-1. Add `_check_canonical_metric_drift` to `assertions.py` with this design's query shape.
-2. Add `daemon_canonical_metric_drift_*` to `_DISPLAY_METADATA`.
-3. Add `substrate_runbooks/canonical_metric_drift.md`.
-4. Add fixture parity for `attested_compliance_score` in pg-tests.
-5. Class-B Gate A + Gate B on the substrate invariant.
-
-**Phase 3 (drive-down — unblocked once Phase 2 lands):**
-- Migrate the 7 `migrate`-class allowlist entries one PR at a time per the Phase 3 plan in `audit/canonical-source-registry-design-2026-05-13.md`.
+- (a) Endpoint enumeration: are the 6 `compliance_score`-returning endpoints exhaustive? Source-grep for `compliance_score` / `overall_score` keys in response payloads to verify.
+- (b) `helper_input` JSONB capture: what's the canonical input shape? site_ids + window_days seems right but the helper may take more kwargs.
+- (c) 0.1 tolerance: same as Mechanism C; verify against `compute_compliance_score` rounding.
+- (d) 10% sample rate: too high (DB pressure) or too low (slow drift detection)?
+- (e) Operator-facing endpoint samples: capture them but classify as `operator_only` and exclude from drift fire (already noted in §2). Per-class disposition?
+- (f) Cross-task lockstep with Task #54 PHI-pre-merge gate: should sampling-decorator add a `# phi_boundary: <classification> — <reason>` marker to each decorated endpoint? Could pair the rollouts.
