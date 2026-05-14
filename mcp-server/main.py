@@ -2222,6 +2222,7 @@ async def lifespan(app: FastAPI):
         mesh_consistency_check_loop,
         flywheel_reconciliation_loop,
         canonical_devices_reconciliation_loop,  # Task #73 Phase 1, mig 319
+        canonical_metric_samples_pruner_loop,   # Task #65 Phase 2d, mig 314
         l2_auto_candidate_loop,
         recurrence_velocity_loop,
         recurrence_auto_promotion_loop,
@@ -2264,6 +2265,7 @@ async def lifespan(app: FastAPI):
         ("mesh_consistency", mesh_consistency_check_loop),
         ("flywheel_reconciliation", flywheel_reconciliation_loop),
         ("canonical_devices_reconciliation", canonical_devices_reconciliation_loop),
+        ("canonical_metric_samples_pruner", canonical_metric_samples_pruner_loop),
         ("temporal_decay", temporal_decay_loop),
         ("regime_change_detector", regime_change_detector_loop),
         ("threshold_tuner", threshold_tuner_loop),

@@ -1644,6 +1644,111 @@ async def partition_maintainer_loop():
         await asyncio.sleep(PARTITION_MAINTAINER_INTERVAL_SECONDS)
 
 
+CANONICAL_METRIC_SAMPLES_RETENTION_DAYS = 30
+CANONICAL_METRIC_SAMPLES_LOOKAHEAD_MONTHS = 3
+
+
+async def canonical_metric_samples_pruner_loop():
+    """Maintain canonical_metric_samples partitions (Task #65 Phase 2d,
+    Counsel Rule 1 runtime-side closure).
+
+    Mig 314 created canonical_metric_samples partitioned by captured_at
+    with 3 initial monthly partitions (2026_05/06/07). This loop:
+      1. DROPs partitions whose entire range is older than 30 days
+         (DETACH PARTITION CONCURRENTLY first, then DROP TABLE — PG16.11
+         supports CONCURRENTLY, avoids AccessExclusiveLock on the parent
+         that would block the substrate invariant + sampler INSERTs).
+      2. CREATEs the next N months of partitions ahead of the cliff
+         (3-month lookahead matching partition_maintainer_loop).
+
+    Sibling pattern: partition_maintainer_loop (background_tasks.py:1591).
+    Same DDL-needs-superuser constraint — open a direct asyncpg conn to
+    MIGRATION_DATABASE_URL per tick (the app role mcp_app via PgBouncer
+    lacks CREATE/DROP/ALTER on schema public). Never holds the superuser
+    socket long.
+
+    Gate A APPROVE-WITH-FIXES (audit/coach-phase-2d-pruner-gate-a-2026-
+    05-13.md): P0-S1 _migration_db_url not admin_transaction; P0-M1
+    DETACH CONCURRENTLY on PG16; P0-C1 CancelledError handler; P0-S2
+    raw regex strings.
+    """
+    import asyncpg as _asyncpg
+    import re as _re
+    from datetime import date, timedelta
+
+    # Anchored partition-name pattern. Raw string (P0-S2).
+    _PARTITION_RE = _re.compile(r"^canonical_metric_samples_(\d{4})_(\d{2})$")
+
+    await asyncio.sleep(3600)  # 1h after startup
+    while True:
+        _hb("canonical_metric_samples_pruner")
+        try:
+            today = date.today()
+            cutoff = today - timedelta(days=CANONICAL_METRIC_SAMPLES_RETENTION_DAYS)
+            conn = await _asyncpg.connect(_migration_db_url())
+            try:
+                # --- Prune: drop partitions fully older than retention ---
+                child_rows = await conn.fetch(
+                    """
+                    SELECT child.relname AS name
+                      FROM pg_inherits i
+                      JOIN pg_class child ON child.oid = i.inhrelid
+                      JOIN pg_class parent ON parent.oid = i.inhparent
+                     WHERE parent.relname = 'canonical_metric_samples'
+                    """
+                )
+                for row in child_rows:
+                    name = row["name"]
+                    m = _PARTITION_RE.match(name)
+                    if not m:
+                        continue
+                    p_year, p_month = int(m.group(1)), int(m.group(2))
+                    # Partition's upper bound is the first of the NEXT month.
+                    nb_year = p_year + (1 if p_month == 12 else 0)
+                    nb_month = 1 if p_month == 12 else p_month + 1
+                    partition_upper = date(nb_year, nb_month, 1)
+                    if partition_upper < cutoff:
+                        # DETACH CONCURRENTLY first (PG16.11) — no parent
+                        # AccessExclusiveLock — then DROP the detached table.
+                        await conn.execute(
+                            f"ALTER TABLE canonical_metric_samples "
+                            f"DETACH PARTITION {name} CONCURRENTLY"
+                        )
+                        await conn.execute(f"DROP TABLE IF EXISTS {name}")
+                        logger.info(
+                            "canonical_metric_samples_partition_pruned",
+                            partition=name,
+                        )
+                # --- Maintain: create next N months ahead of the cliff ---
+                for offset in range(1, CANONICAL_METRIC_SAMPLES_LOOKAHEAD_MONTHS + 1):
+                    year = today.year + ((today.month - 1 + offset) // 12)
+                    month = ((today.month - 1 + offset) % 12) + 1
+                    start = date(year, month, 1)
+                    end_year = year + (1 if month == 12 else 0)
+                    end_month = 1 if month == 12 else month + 1
+                    end = date(end_year, end_month, 1)
+                    partition = f"canonical_metric_samples_{year:04d}_{month:02d}"
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {partition}
+                        PARTITION OF canonical_metric_samples
+                        FOR VALUES FROM ('{start.isoformat()}')
+                                    TO ('{end.isoformat()}')
+                        """
+                    )
+            finally:
+                await conn.close()
+            logger.info("canonical_metric_samples_pruner_tick_complete")
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.error(
+                "canonical_metric_samples_pruner_loop_failed",
+                exc_info=True,
+            )
+        await asyncio.sleep(86400)  # daily
+
+
 # ─── Phase 15 closing: enterprise appliance offline detection ──────
 
 APPLIANCE_STALE_THRESHOLD_MINUTES = 5
