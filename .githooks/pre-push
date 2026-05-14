@@ -122,6 +122,8 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_substrate_docs_present.py"
     "tests/test_soft_verify_uses_savepoint.py"
     "tests/test_no_uuid_cast_on_text_column.py"
+    "tests/test_no_param_cast_against_mismatched_column.py"
+    "tests/test_schema_fixture_parity.py"
     "tests/test_export_endpoints_column_drift.py"
     "tests/test_import_shape_in_package_context.py"
     "tests/test_pydantic_contract_check.py"
