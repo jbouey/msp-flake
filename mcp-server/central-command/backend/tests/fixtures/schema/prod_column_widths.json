@@ -1743,6 +1743,17 @@
     "provider": 50,
     "status": 30
   },
+  "v_l2_outcomes": {
+    "decided_runbook_id": 255,
+    "incident_id": 255,
+    "incident_status": 50,
+    "incident_type": 100,
+    "llm_model": 100,
+    "pattern_signature": 255,
+    "resolution_tier": 10,
+    "severity": 50,
+    "site_id": 255
+  },
   "v_learning_failures": {
     "execution_id": 255,
     "failure_type": 50,

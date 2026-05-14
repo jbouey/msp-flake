@@ -523,6 +523,17 @@
     "site_id": "text",
     "tenant_id": "uuid"
   },
+  "canonical_metric_samples_2026_08": {
+    "captured_at": "timestamp with time zone",
+    "captured_value": "numeric",
+    "classification": "text",
+    "endpoint_path": "text",
+    "helper_input": "jsonb",
+    "metric_class": "text",
+    "sample_id": "uuid",
+    "site_id": "text",
+    "tenant_id": "uuid"
+  },
   "check_control_mappings": {
     "check_id": "character varying",
     "confidence": "numeric",

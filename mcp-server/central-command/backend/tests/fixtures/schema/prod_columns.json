@@ -523,6 +523,17 @@
     "site_id",
     "tenant_id"
   ],
+  "canonical_metric_samples_2026_08": [
+    "captured_at",
+    "captured_value",
+    "classification",
+    "endpoint_path",
+    "helper_input",
+    "metric_class",
+    "sample_id",
+    "site_id",
+    "tenant_id"
+  ],
   "check_control_mappings": [
     "check_id",
     "confidence",
