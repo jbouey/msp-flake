@@ -6437,21 +6437,29 @@ async def export_site_data(
             workstations.append(d)
 
         # Discovered devices
-        # Column-drift fix 2026-05-13 (Task #76 Commit 1): pre-fix SELECT
-        # referenced `vendor` (column does NOT exist in discovered_devices
-        # schema) + `first_seen`/`last_seen` (actual columns are
-        # `first_seen_at`/`last_seen_at`). Endpoint /sites/{id}/export
-        # would 500 on first call; admin-only never exercised so silent
-        # latent bug. Fix: drop `vendor`, alias *_at columns to preserve
-        # dict(row) serializer keys (downstream JSON consumers may depend
-        # on them). Per Gate A audit/coach-routes-column-drift-gate-a-2026-05-13.md
+        # canonical-migration: device_count_per_site — Phase 2 Batch 2 (Task #76 Commit 2)
+        # Drops the multi-appliance same-(ip,mac) duplicates that
+        # admin-export was previously over-counting at multi-appliance
+        # sites. Pre-Commit-1 the endpoint 500'd entirely (column drift,
+        # see commit e7d5233b); Commit 2 now migrates the freshness
+        # source to canonical_devices via the proven CTE-JOIN-back.
         device_rows = await conn.fetch("""
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = $1
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT id, site_id, mac_address, ip_address, hostname,
-                   device_type, compliance_status,
+                   device_type,
+                   compliance_status,  -- noqa: deprecated-compliance-status — Phase 2 admin export
                    first_seen_at AS first_seen,
                    last_seen_at AS last_seen
-            FROM discovered_devices
-            WHERE site_id = $1
+            FROM dd_freshest
             ORDER BY last_seen_at DESC NULLS LAST
         """, site_id)
         devices = []
@@ -8644,20 +8652,26 @@ async def generate_site_compliance_packet(
         await check_site_access_pool(conn, user, site_id)
 
         # --- Site info ---
-        # Column-drift fix 2026-05-13 (Task #76 Commit 1): pre-fix SELECT
-        # referenced `os_type` (column is `os_name`) + `last_seen` (column
-        # is `last_seen_at`). Endpoint /admin/sites/{id}/compliance-packet
-        # would 500 on first call; admin-only never exercised so silent
-        # latent bug — §164.524 timeliness risk per Maya P0. Fix: alias
-        # columns to preserve dict(row) serializer keys. Per Gate A
-        # audit/coach-routes-column-drift-gate-a-2026-05-13.md
+        # canonical-migration: device_count_per_site — Phase 2 Batch 2 (Task #76 Commit 2)
+        # /admin/sites/{id}/compliance-packet now reads canonical_devices.
+        # Pre-Commit-1 endpoint 500'd entirely (column drift, commit e7d5233b);
+        # Commit 2 fixes the over-counting from multi-appliance ARP scans.
         devices = await conn.fetch("""
+            WITH dd_freshest AS (
+                SELECT DISTINCT ON (cd.canonical_id) cd.canonical_id, dd.*
+                  FROM canonical_devices cd
+                  JOIN discovered_devices dd
+                    ON dd.site_id = cd.site_id
+                   AND dd.ip_address = cd.ip_address
+                   AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                 WHERE cd.site_id = $1
+                 ORDER BY cd.canonical_id, dd.last_seen_at DESC
+            )
             SELECT hostname,
                    os_name AS os_type,
-                   compliance_status,
+                   compliance_status,  -- noqa: deprecated-compliance-status — Phase 2 admin packet
                    last_seen_at AS last_seen
-            FROM discovered_devices
-            WHERE site_id = $1
+            FROM dd_freshest
             ORDER BY last_seen_at DESC NULLS LAST
         """, site_id)
 
