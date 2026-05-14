@@ -69,15 +69,26 @@ _CLIENT_SIGNUP = _BACKEND / "client_signup.py"
 # monitoring-active, compliance alert, partner non-engagement) — all
 # 4 rewritten to class-hint plain literals in the same commit.
 #
-# email_alerts.py is DELIBERATELY EXCLUDED from this allowlist at
-# Phase 0: it's mixed-recipient (operator-class subjects at lines
-# 257/780/820/1584 + 1 latent send_companion_alert_email org_name
-# leak to clinic-side at line 820). The SRA-reminder subject at
-# line 947 IS customer-facing and was rewritten in the same commit
-# to a class-hint plain literal — but the module as a whole cannot
-# enter _OPAQUE_MODULES without structural recipient-split first.
-# Phase 1 design (own Gate A) addresses email_alerts.py module-level
-# gating + the line-820 latent leak fix.
+# email_alerts.py is mixed-recipient and CANNOT enter _OPAQUE_MODULES
+# (that would trip test_operator_modules_are_not_in_opaque_scope and
+# force the legitimate operator subject opaque too — the shared AST
+# walkers have no per-callsite carve-out). Instead, Task #57 Phase 1
+# (Gate A 2026-05-14, audit/coach-email-alerts-opacity-fix-gate-a-2026-
+# 05-14.md) did per-callsite opaque subject rewrites + the module
+# stays in OPERATOR_ALLOWLIST. The 4 subject callsites resolved as:
+#   - send_critical_alert (L523) → EXEMPT: recipient is hard-coded
+#     administrator@osiriscare.net (operator channel); `title` embeds
+#     site_id/host_id by design across 16+ internal callers.
+#   - send_companion_alert_email (L826) → FIXED: subject opaque
+#     "[OsirisCare] Compliance Alert"; body drops org_name (companion
+#     is a clinic-adjacent third party), keeps generic module_label.
+#   - send_partner_weekly_digest (L1165) → FIXED: subject drops
+#     partner_brand; body unchanged (partner contact_email is the
+#     authenticated-equivalent audience for their own digest).
+#   - send_consent_request_email (L1287) → FIXED: subject opaque
+#     "[OsirisCare] Consent Request"; body stays verbose (this email
+#     IS the magic-link consent feature — recipient needs context).
+# Pinned by test_email_alerts_customer_facing_subjects_opaque below.
 _ALERT_ROUTER = _BACKEND / "alert_router.py"
 
 _OPAQUE_MODULES = (
@@ -616,4 +627,66 @@ def test_operator_modules_are_not_in_opaque_scope():
         f"Operator-facing modules incorrectly placed in opaque "
         f"scope: {[p.name for p in overlap]}. Operator channels "
         f"are intentionally verbose."
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Task #57 Phase 1: email_alerts.py is mixed-recipient — can't enter
+# _OPAQUE_MODULES, so per-callsite opaque subject rewrites + this
+# narrow pin instead. Gate A 2026-05-14.
+# ──────────────────────────────────────────────────────────────────────
+
+_EMAIL_ALERTS = _BACKEND / "email_alerts.py"
+
+
+def test_email_alerts_customer_facing_subjects_opaque():
+    """The 3 customer-facing subject callsites in email_alerts.py MUST
+    NOT interpolate org/clinic/partner identifying context (Counsel
+    Rule 7 — subject is the unauthenticated-by-definition surface).
+
+    Positive control (Coach requirement): send_critical_alert is
+    DELIBERATELY excluded — its recipient is hard-coded
+    administrator@osiriscare.net (operator channel). If a future
+    contributor "helpfully" opaque's it, this test's positive-control
+    assertion catches the over-correction.
+    """
+    src = _EMAIL_ALERTS.read_text()
+
+    # The 3 customer-facing subjects must be the opaque literals.
+    customer_facing_opaque_subjects = [
+        '"[OsirisCare] Compliance Alert"',          # send_companion_alert_email L826
+        'f"[OsirisCare] Partner Week in Review',    # send_partner_weekly_digest L1165
+        '"[OsirisCare] Consent Request"',           # send_consent_request_email L1287
+    ]
+    missing = [s for s in customer_facing_opaque_subjects if s not in src]
+    assert not missing, (
+        f"email_alerts.py customer-facing subjects regressed away from "
+        f"opaque form: {missing}. Per Task #57 Gate A these subjects "
+        f"must NOT carry org/clinic/partner names — Counsel Rule 7."
+    )
+
+    # Forbidden: the pre-fix leaky subject shapes must NOT reappear.
+    forbidden_subject_fragments = [
+        'overdue for {org_name}',                        # old L826
+        "{partner_brand or 'OsirisCare'} · Week in review",  # old L1165
+        "{partner_brand or 'OsirisCare'} · Consent requested",  # old L1287
+    ]
+    regressed = [f for f in forbidden_subject_fragments if f in src]
+    assert not regressed, (
+        f"email_alerts.py leaky subject shape REGRESSED: {regressed}. "
+        f"These interpolate org_name / partner_brand into the SMTP "
+        f"subject line — Counsel Rule 7 violation."
+    )
+
+    # Positive control — send_critical_alert stays operator-verbose.
+    # The `[CRITICAL] {title}` subject is INTENTIONAL (operator channel,
+    # hard-coded internal recipient). If this assertion fails, someone
+    # over-corrected an operator-channel subject.
+    assert 'f"[CRITICAL] {title}"' in src, (
+        "send_critical_alert subject was changed away from "
+        '`f"[CRITICAL] {title}"`. That subject is INTENTIONALLY '
+        "operator-verbose — recipient is hard-coded "
+        "administrator@osiriscare.net (operator channel), and `title` "
+        "embeds site_id/host_id by design across 16+ internal callers. "
+        "Do not opaque operator-channel subjects (Task #57 Gate A)."
     )

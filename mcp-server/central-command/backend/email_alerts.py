@@ -823,7 +823,15 @@ async def send_companion_alert_email(
 
     try:
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[OsirisCare] Compliance Alert: {module_label} overdue for {org_name}"
+        # Opaque-mode (Task #57, Gate A 2026-05-14): subject is the
+        # unauthenticated-by-definition surface — NO org/clinic name.
+        # Recipient is a companion (clinic-adjacent third party), so the
+        # body also drops org_name (clinic-identifying); module_label
+        # ("Risk Assessment") is generic enough to keep the alert
+        # actionable. Counsel Rule 7. Sibling pattern: the 3 already-
+        # opaque modules (cross_org_site_relocate, client_owner_transfer,
+        # client_user_email_rename).
+        msg["Subject"] = "[OsirisCare] Compliance Alert"
         msg["From"] = SMTP_FROM
         msg["To"] = to_email
 
@@ -834,15 +842,15 @@ async def send_companion_alert_email(
 
 Hi {companion_name},
 
-The following compliance module has not met its expected status by the target date:
+A compliance module has not met its expected status by the target date:
 
-  Client:          {org_name}
   Module:          {module_label}
   Expected Status: {expected_status.replace('_', ' ').title()}
   Current Status:  {current_status.replace('_', ' ').title()}
   Target Date:     {target_date}{desc_line}
 
-Please review this client's progress in the Companion Portal.
+Please sign in to the Companion Portal to see which client this concerns
+and review their progress.
 
 ---
 This is an automated alert from OsirisCare Central Command.
@@ -888,12 +896,8 @@ This is an automated alert from OsirisCare Central Command.
         </div>
         <div class="content">
             <p style="margin:0 0 16px;color:#1A1A18;">Hi {html.escape(companion_name)},</p>
-            <p style="margin:0 0 16px;color:#6B6B66;">A compliance module has not reached its expected status by the target date.</p>
+            <p style="margin:0 0 16px;color:#6B6B66;">A compliance module has not reached its expected status by the target date. Sign in to the Companion Portal to see which client this concerns.</p>
 
-            <div class="field">
-                <div class="field-label">Client</div>
-                <div class="field-value" style="font-size:16px;font-weight:600;">{html.escape(org_name)}</div>
-            </div>
             <div class="field">
                 <div class="field-label">Module</div>
                 <div class="field-value">{html.escape(module_label)}</div>
@@ -1162,7 +1166,11 @@ def send_partner_weekly_digest(
     )
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"{partner_brand or 'OsirisCare'} · Week in review · {week_label}"
+    # Opaque-mode (Task #57, Gate A 2026-05-14): subject drops
+    # partner_brand (unauthenticated-channel surface, Counsel Rule 7).
+    # Body is unchanged — the partner contact_email IS the legitimate
+    # authenticated-equivalent audience for their own digest.
+    msg["Subject"] = f"[OsirisCare] Partner Week in Review · {week_label}"
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
     msg.attach(MIMEText(text_body, "plain"))
@@ -1284,7 +1292,12 @@ def send_consent_request_email(
     )
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"{partner_brand or 'OsirisCare'} · Consent requested for {class_display_name}"
+    # Opaque-mode (Task #57, Gate A 2026-05-14): subject drops
+    # partner_brand + class_display_name (unauthenticated-channel
+    # surface, Counsel Rule 7). Body stays verbose — this email IS the
+    # magic-link consent-request feature; the recipient (clinic practice
+    # manager) needs the context to act on the single-use link.
+    msg["Subject"] = "[OsirisCare] Consent Request"
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
     msg.attach(MIMEText(text_body, "plain"))
