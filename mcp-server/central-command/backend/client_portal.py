@@ -1222,6 +1222,32 @@ async def get_site_compliance_health(
             conn, [site_id], include_incidents=True,
         )
 
+        # Counsel Rule 1 runtime sampling — per-site compliance-health
+        # passes include_incidents=True (Task #84). Capturing the kwarg
+        # in helper_input is the v3 P0-E4 trigger fix — substrate Phase
+        # 2c invariant recomputes with matching kwargs to avoid false-
+        # positive drift fires.
+        try:
+            from .canonical_metrics_sampler import sample_metric_response
+            await sample_metric_response(
+                conn,
+                metric_class="compliance_score",
+                tenant_id=str(org_id),
+                captured_value=(
+                    float(canonical.overall_score)
+                    if canonical.overall_score is not None else None
+                ),
+                endpoint_path="/api/client/sites/{site_id}/compliance-health",
+                helper_input={
+                    "site_ids": [site_id],
+                    "window_days": 30,
+                    "include_incidents": True,
+                },
+                classification="customer-facing",
+            )
+        except Exception:
+            pass  # sampler is best-effort
+
         return {
             "site_id": site_id,
             "clinic_name": site["clinic_name"],
@@ -1887,6 +1913,29 @@ async def get_current_compliance_snapshot(user: dict = Depends(require_client_us
         # as the dashboard top tile and the per-site infographic.
         from .compliance_score import compute_compliance_score
         score_result = await compute_compliance_score(conn, site_ids)
+
+        # Counsel Rule 1 runtime sampling (Task #84) — /api/client/reports/current
+        # uses default kwargs (include_incidents=False, window_days=30).
+        try:
+            from .canonical_metrics_sampler import sample_metric_response
+            await sample_metric_response(
+                conn,
+                metric_class="compliance_score",
+                tenant_id=str(org_id),
+                captured_value=(
+                    float(score_result.overall_score)
+                    if score_result.overall_score is not None else None
+                ),
+                endpoint_path="/api/client/reports/current",
+                helper_input={
+                    "site_ids": site_ids,
+                    "window_days": 30,
+                    "include_incidents": False,
+                },
+                classification="customer-facing",
+            )
+        except Exception:
+            pass  # sampler is best-effort
 
         # The Reports page also shows per-check details (audit-grade
         # listing). Pull the latest-per-check separately so we can
