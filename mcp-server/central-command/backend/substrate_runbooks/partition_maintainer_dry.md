@@ -5,14 +5,20 @@
 
 ## What this means (plain English)
 
-Four tables in this schema are **monthly partitioned**:
+Five tables in this schema are **monthly partitioned**:
 
-| Table                  | Partition class    | Migration |
-|------------------------|--------------------|-----------|
-| `compliance_bundles`   | Evidence chain     | 138       |
-| `portal_access_log`    | HIPAA audit log    | 138       |
-| `appliance_heartbeats` | Liveness ledger    | 121       |
-| `promoted_rule_events` | Flywheel ledger    | 181       |
+| Table                      | Partition class         | Migration |
+|----------------------------|-------------------------|-----------|
+| `compliance_bundles`       | Evidence chain          | 138       |
+| `portal_access_log`        | HIPAA audit log         | 138       |
+| `appliance_heartbeats`     | Liveness ledger         | 121       |
+| `promoted_rule_events`     | Flywheel ledger         | 181       |
+| `canonical_metric_samples` | Counsel Rule 1 sampling | 314       |
+
+> **`canonical_metric_samples` has NO `_default` partition.** A wedged
+> `canonical_metric_samples_pruner_loop` does not bloat a default — it
+> fails next-month INSERTs outright. For this table the invariant is a
+> hard-failure detector, not a performance-degradation one.
 
 `partition_maintainer_loop` (and `heartbeat_partition_maintainer_loop`
 for `appliance_heartbeats`) run daily and create the next 3 months of
@@ -47,7 +53,7 @@ partition health for query performance, which auditors observe.
   `bg_loop_silent` for `partition_maintainer` or
   `heartbeat_partition_maintainer`.
 - **Schema drift in the partition naming convention.** This invariant
-  pattern-matches against four conventions (see SQL in `assertions.py
+  pattern-matches against the known conventions (see SQL in `assertions.py
   ::_check_partition_maintainer_dry`); a migration that changed the
   convention without updating this invariant would false-fire here
   AND silently mask real partition gaps. **Desired failure mode.**
@@ -62,12 +68,13 @@ partition health for query performance, which auditors observe.
 
 The invariant matches these substring patterns in child names:
 
-| Parent table         | Pattern (next month = 2026-05) |
-|----------------------|-------------------------------|
-| `compliance_bundles` | `2026_05`                     |
-| `portal_access_log`  | `2026_05`                     |
-| `appliance_heartbeats` | `y202605`                   |
-| `promoted_rule_events` | `202605`                    |
+| Parent table               | Pattern (next month = 2026-05) |
+|----------------------------|--------------------------------|
+| `compliance_bundles`       | `2026_05`                      |
+| `portal_access_log`        | `2026_05`                      |
+| `appliance_heartbeats`     | `y202605`                      |
+| `promoted_rule_events`     | `202605`                       |
+| `canonical_metric_samples` | `2026_05`                      |
 
 A child whose name contains the substring is considered "covers
 that month." Loose match is intentional — partial-month or
@@ -83,7 +90,8 @@ backfill-style partitions still satisfy.
      JOIN pg_class parent ON parent.oid = i.inhparent
      JOIN pg_class child ON child.oid = i.inhrelid
     WHERE parent.relname IN ('compliance_bundles','portal_access_log',
-                              'appliance_heartbeats','promoted_rule_events')
+                              'appliance_heartbeats','promoted_rule_events',
+                              'canonical_metric_samples')
       AND child.relname NOT LIKE '%_default'
     GROUP BY parent.relname;
    ```
@@ -143,3 +151,7 @@ loop won't restart.
   Closes the post-c270bb76 audit Fork 1 P1: "Partition-maintainer
   drought is uninstrumented — only compliance_bundles outcome-layer
   covered; 3 other partitioned tables are blind."
+- 2026-05-14 — added `canonical_metric_samples` (mig 314) as the 5th
+  monitored table (Task #65a). Unlike the other four it has NO
+  `_default` partition, so a wedged `canonical_metric_samples_pruner_loop`
+  fails next-month INSERTs outright rather than bloating a default.

@@ -8,10 +8,11 @@ get deterministic test cases.
 
 The invariant queries pg_inherits via asyncpg fetch + checks each
 parent's children for next-month substring patterns:
-- compliance_bundles:    `_YYYY_MM`
-- portal_access_log:     `_YYYY_MM`
-- appliance_heartbeats:  `_yYYYYMM`
-- promoted_rule_events:  `_YYYYMM`
+- compliance_bundles:       `_YYYY_MM`
+- portal_access_log:        `_YYYY_MM`
+- appliance_heartbeats:     `_yYYYYMM`
+- promoted_rule_events:     `_YYYYMM`
+- canonical_metric_samples: `_YYYY_MM`
 """
 from __future__ import annotations
 
@@ -43,10 +44,11 @@ def _run(coro):
 
 
 # Frozen test date: 2026-04-30 → next month suffix patterns are:
-#   compliance_bundles:    `2026_05`
-#   portal_access_log:     `2026_05`
-#   appliance_heartbeats:  `y202605`
-#   promoted_rule_events:  `202605`
+#   compliance_bundles:       `2026_05`
+#   portal_access_log:        `2026_05`
+#   appliance_heartbeats:     `y202605`
+#   promoted_rule_events:     `202605`
+#   canonical_metric_samples: `2026_05`
 _FROZEN_NOW = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
 
 
@@ -59,8 +61,8 @@ def _mock_now():
     )
 
 
-def test_partition_maintainer_dry_clean_all_4_have_next_month():
-    """All 4 critical partitioned tables have next-month coverage.
+def test_partition_maintainer_dry_clean_all_5_have_next_month():
+    """All 5 critical partitioned tables have next-month coverage.
     Returns 0 violations — steady-state for a healthy
     partition_maintainer_loop."""
     rows = [
@@ -73,6 +75,9 @@ def test_partition_maintainer_dry_clean_all_4_have_next_month():
          "children": ["appliance_heartbeats_y202605", "appliance_heartbeats_y202604"]},
         {"parent_table": "promoted_rule_events",
          "children": ["promoted_rule_events_202605", "promoted_rule_events_202604"]},
+        {"parent_table": "canonical_metric_samples",
+         "children": ["canonical_metric_samples_2026_05",
+                      "canonical_metric_samples_2026_04"]},
     ]
     conn = _FakeConn(rows)
     with patch("datetime.datetime") as mock_dt:
@@ -100,6 +105,9 @@ def test_partition_maintainer_dry_fires_when_compliance_bundles_missing():
          "children": ["appliance_heartbeats_y202605", "appliance_heartbeats_y202604"]},
         {"parent_table": "promoted_rule_events",
          "children": ["promoted_rule_events_202605", "promoted_rule_events_202604"]},
+        {"parent_table": "canonical_metric_samples",
+         "children": ["canonical_metric_samples_2026_05",
+                      "canonical_metric_samples_2026_04"]},
     ]
     conn = _FakeConn(rows)
     with patch("datetime.datetime") as mock_dt:
@@ -128,6 +136,8 @@ def test_partition_maintainer_dry_year_boundary_dec_to_jan():
          "children": ["appliance_heartbeats_y202701"]},
         {"parent_table": "promoted_rule_events",
          "children": ["promoted_rule_events_202701"]},
+        {"parent_table": "canonical_metric_samples",
+         "children": ["canonical_metric_samples_2027_01"]},  # has next-month
     ]
     conn = _FakeConn(rows)
     dec_now = datetime(2026, 12, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -145,7 +155,7 @@ def test_partition_maintainer_dry_year_boundary_dec_to_jan():
 
 
 def test_partition_maintainer_dry_fires_per_missing_parent():
-    """All 4 tables missing next-month. Expect 4 violations."""
+    """All 5 tables missing next-month. Expect 5 violations."""
     rows = [
         {"parent_table": "compliance_bundles",
          "children": ["compliance_bundles_2026_04"]},
@@ -155,17 +165,20 @@ def test_partition_maintainer_dry_fires_per_missing_parent():
          "children": ["appliance_heartbeats_y202604"]},
         {"parent_table": "promoted_rule_events",
          "children": ["promoted_rule_events_202604"]},
+        {"parent_table": "canonical_metric_samples",
+         "children": ["canonical_metric_samples_2026_04"]},
     ]
     conn = _FakeConn(rows)
     with patch("datetime.datetime") as mock_dt:
         mock_dt.now.return_value = _FROZEN_NOW
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
         violations = _run(assertions._check_partition_maintainer_dry(conn))
-    assert len(violations) == 4, (
-        f"All 4 missing must fire 4, got {len(violations)}"
+    assert len(violations) == 5, (
+        f"All 5 missing must fire 5, got {len(violations)}"
     )
     parents = {v.details["parent_table"] for v in violations}
     assert parents == {
         "compliance_bundles", "portal_access_log",
         "appliance_heartbeats", "promoted_rule_events",
+        "canonical_metric_samples",
     }

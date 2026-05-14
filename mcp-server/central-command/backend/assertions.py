@@ -1427,7 +1427,10 @@ async def _check_partition_maintainer_dry(conn: asyncpg.Connection) -> List[Viol
     Partitioned tables: `compliance_bundles` (mig 138, evidence chain),
     `portal_access_log` (mig 138, audit), `appliance_heartbeats`
     (mig 121, liveness ledger), `promoted_rule_events` (mig 181,
-    flywheel ledger).
+    flywheel ledger), `canonical_metric_samples` (mig 314, Counsel
+    Rule 1 runtime sampling — no `_default` partition, so a wedged
+    `canonical_metric_samples_pruner_loop` makes next-month INSERTs
+    fail outright).
 
     `partition_maintainer_loop` is supposed to keep ≥3 months of
     forward partitions. If it's wedged or dead, next-month INSERTs
@@ -1439,10 +1442,11 @@ async def _check_partition_maintainer_dry(conn: asyncpg.Connection) -> List[Viol
 
     Naming conventions (live in migrations; if these drift, this
     invariant breaks loud — desired):
-    - compliance_bundles:    `_YYYY_MM`
-    - portal_access_log:     `_YYYY_MM`
-    - appliance_heartbeats:  `_yYYYYMM`
-    - promoted_rule_events:  `_YYYYMM`
+    - compliance_bundles:       `_YYYY_MM`
+    - portal_access_log:        `_YYYY_MM`
+    - appliance_heartbeats:     `_yYYYYMM`
+    - promoted_rule_events:     `_YYYYMM`
+    - canonical_metric_samples: `_YYYY_MM`
     """
     from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
@@ -1464,7 +1468,8 @@ async def _check_partition_maintainer_dry(conn: asyncpg.Connection) -> List[Viol
           JOIN pg_class parent ON parent.oid = i.inhparent
           JOIN pg_class child ON child.oid = i.inhrelid
          WHERE parent.relname IN ('compliance_bundles', 'portal_access_log',
-                                   'appliance_heartbeats', 'promoted_rule_events')
+                                   'appliance_heartbeats', 'promoted_rule_events',
+                                   'canonical_metric_samples')
            AND child.relname NOT LIKE '%_default%'
          GROUP BY parent.relname
         """
@@ -2224,7 +2229,7 @@ ALL_ASSERTIONS: List[Assertion] = [
     Assertion(
         name="partition_maintainer_dry",
         severity="sev1",
-        description="A critical partitioned table (compliance_bundles, portal_access_log, appliance_heartbeats, promoted_rule_events) has NO partition for next month. INSERTs land in the _default partition (bloats it + degrades query plans) or fail if no default exists. Indicates partition_maintainer_loop / heartbeat_partition_maintainer_loop are wedged. Round-table 2026-05-01 Block 4 P1 closure.",
+        description="A critical partitioned table (compliance_bundles, portal_access_log, appliance_heartbeats, promoted_rule_events, canonical_metric_samples) has NO partition for next month. INSERTs land in the _default partition (bloats it + degrades query plans) or fail if no default exists (canonical_metric_samples has NO default — wedge = INSERT failures). Indicates partition_maintainer_loop / heartbeat_partition_maintainer_loop / canonical_metric_samples_pruner_loop are wedged. Round-table 2026-05-01 Block 4 P1 closure; canonical_metric_samples added 2026-05-14 (Task #65a).",
         check=lambda c: _check_partition_maintainer_dry(c),
     ),
     Assertion(
@@ -2741,13 +2746,16 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
         "display_name": "Next-month partition missing on critical table",
         "recommended_action": "Partition coverage exhausted on a critical "
             "partitioned table (compliance_bundles / portal_access_log / "
-            "appliance_heartbeats / promoted_rule_events). The "
+            "appliance_heartbeats / promoted_rule_events / "
+            "canonical_metric_samples). The "
             "partition_maintainer_loop is supposed to keep ≥3 months of "
             "forward partitions; if this fires, the loop is wedged or "
             "dead. Without next-month partitions, INSERTs land in the "
             "_default partition (bloats it; degrades query plans for "
             "auditor kits proportionally) or fail outright if no default "
-            "exists. Steps: (1) check bg_loop_silent for "
+            "exists (canonical_metric_samples has NO default partition — "
+            "a wedged canonical_metric_samples_pruner_loop = INSERT "
+            "failures). Steps: (1) check bg_loop_silent for "
             "'partition_maintainer' or 'heartbeat_partition_maintainer'. "
             "(2) Manually run `CREATE TABLE IF NOT EXISTS <parent>_<suffix>"
             " PARTITION OF <parent> FOR VALUES FROM (...) TO (...)` to "
