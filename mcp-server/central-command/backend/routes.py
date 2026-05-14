@@ -6437,12 +6437,22 @@ async def export_site_data(
             workstations.append(d)
 
         # Discovered devices
+        # Column-drift fix 2026-05-13 (Task #76 Commit 1): pre-fix SELECT
+        # referenced `vendor` (column does NOT exist in discovered_devices
+        # schema) + `first_seen`/`last_seen` (actual columns are
+        # `first_seen_at`/`last_seen_at`). Endpoint /sites/{id}/export
+        # would 500 on first call; admin-only never exercised so silent
+        # latent bug. Fix: drop `vendor`, alias *_at columns to preserve
+        # dict(row) serializer keys (downstream JSON consumers may depend
+        # on them). Per Gate A audit/coach-routes-column-drift-gate-a-2026-05-13.md
         device_rows = await conn.fetch("""
             SELECT id, site_id, mac_address, ip_address, hostname,
-                   device_type, vendor, compliance_status, first_seen, last_seen
+                   device_type, compliance_status,
+                   first_seen_at AS first_seen,
+                   last_seen_at AS last_seen
             FROM discovered_devices
             WHERE site_id = $1
-            ORDER BY last_seen DESC NULLS LAST
+            ORDER BY last_seen_at DESC NULLS LAST
         """, site_id)
         devices = []
         for row in device_rows:
@@ -8634,11 +8644,21 @@ async def generate_site_compliance_packet(
         await check_site_access_pool(conn, user, site_id)
 
         # --- Site info ---
+        # Column-drift fix 2026-05-13 (Task #76 Commit 1): pre-fix SELECT
+        # referenced `os_type` (column is `os_name`) + `last_seen` (column
+        # is `last_seen_at`). Endpoint /admin/sites/{id}/compliance-packet
+        # would 500 on first call; admin-only never exercised so silent
+        # latent bug — §164.524 timeliness risk per Maya P0. Fix: alias
+        # columns to preserve dict(row) serializer keys. Per Gate A
+        # audit/coach-routes-column-drift-gate-a-2026-05-13.md
         devices = await conn.fetch("""
-            SELECT hostname, os_type, compliance_status, last_seen
+            SELECT hostname,
+                   os_name AS os_type,
+                   compliance_status,
+                   last_seen_at AS last_seen
             FROM discovered_devices
             WHERE site_id = $1
-            ORDER BY last_seen DESC NULLS LAST
+            ORDER BY last_seen_at DESC NULLS LAST
         """, site_id)
 
         agents = await conn.fetch("""

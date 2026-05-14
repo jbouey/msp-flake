@@ -1899,7 +1899,8 @@ async def get_partner_site_topology(
                  WHERE cd.site_id = $1
                  ORDER BY cd.canonical_id, dd.last_seen_at DESC
             )
-            SELECT id, hostname, ip_address, device_type, last_seen,
+            SELECT id, hostname, ip_address, device_type,
+                   last_seen_at AS last_seen,
                    device_status, owner_appliance_id
             FROM dd_freshest
             ORDER BY ip_address, hostname
