@@ -55,8 +55,9 @@ _MIGRATION_MARKER = "canonical-migration: device_count_per_site"
 # (raw grep returned more callsites than Gate A v2 fork enumerated — e.g.
 # compliance_frameworks.py + sites.py readers Gate A missed). Phase 2 owns
 # enumerating-and-migrating each. Phase 2 Batch 1 (partners.py × 4)
-# dropped 22 → 18 on 2026-05-13.
-BASELINE_MAX = 6
+# dropped 22 → 18 on 2026-05-13. Phase 2 Batch 2 close-out (Task #75,
+# sites.py pending_deploys hot-path carve-out) dropped 6 → 5 on 2026-05-14.
+BASELINE_MAX = 5
 
 
 def _raw_count_in_file(path: pathlib.Path) -> int:

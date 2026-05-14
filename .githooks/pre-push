@@ -125,6 +125,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_no_param_cast_against_mismatched_column.py"
     "tests/test_schema_fixture_parity.py"
     "tests/test_baa_artifacts_no_heartbeat_verification_overclaim.py"
+    "tests/test_pending_deploys_dedup.py"
     "tests/test_export_endpoints_column_drift.py"
     "tests/test_import_shape_in_package_context.py"
     "tests/test_pydantic_contract_check.py"

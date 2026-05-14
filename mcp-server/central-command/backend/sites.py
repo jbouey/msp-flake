@@ -5651,14 +5651,33 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
     pending_deploys = []
     try:
         async with tenant_connection(pool, site_id=checkin.site_id) as deploy_conn:
+            # canonical-migration: device_count_per_site — Phase 2 Batch 2 carve-out (Task #75)
+            # Hot path (every appliance checkin). CTE-JOIN-back collapses
+            # multi-appliance same-(ip,mac) duplicates so LIMIT 5 counts
+            # DISTINCT canonical devices, not raw observations — pre-fix a
+            # 3-appliance site's duplicated rows could starve real devices
+            # out of the deploy batch. device_status='pending_deploy' stays
+            # OUTSIDE the CTE: once a canonical device's freshest observation
+            # is 'deploying' it drops out, so no re-deploy. local_device_id
+            # comes through dd.* unchanged — the UPDATE below stays keyed on it.
             pending_rows = await deploy_conn.fetch("""
+                WITH dd_freshest AS (
+                    SELECT DISTINCT ON (cd.canonical_id)
+                           cd.canonical_id, dd.*
+                      FROM canonical_devices cd
+                      JOIN discovered_devices dd
+                        ON dd.site_id = cd.site_id
+                       AND dd.ip_address = cd.ip_address
+                       AND COALESCE(dd.mac_address, '') = cd.mac_dedup_key
+                     WHERE cd.site_id = $1
+                     ORDER BY cd.canonical_id, dd.last_seen_at DESC
+                )
                 SELECT dd.local_device_id, dd.ip_address, dd.hostname, dd.os_name,
                        sc.encrypted_data, sc.credential_type
-                FROM discovered_devices dd
+                FROM dd_freshest dd
                 JOIN site_credentials sc ON sc.site_id = $1
                     AND sc.credential_name LIKE dd.hostname || ' (%'
-                WHERE dd.site_id = $1
-                    AND dd.device_status = 'pending_deploy'
+                WHERE dd.device_status = 'pending_deploy'
                 LIMIT 5
             """, checkin.site_id)
 
