@@ -453,12 +453,32 @@ export const AdminSubstrateHealth: React.FC = () => {
                             {v.recommended_action}
                           </div>
                         )}
-                        <div className="mt-2 flex items-center gap-3 text-[11px] text-white/50">
+                        <div className="mt-2 flex items-center gap-3 text-[11px] text-white/50 flex-wrap">
                           <span className="font-mono">{v.invariant}</span>
                           <span>·</span>
                           <span>{v.site_id || 'global'}</span>
                           <span>·</span>
-                          <span>open {Math.round(v.minutes_open)}m</span>
+                          {/* Task #81: surface age + refresh status so operators
+                              know a 4h-old detected_at means "firing for 4h" not
+                              "stale alert closed". Pre-fix the minutes_open
+                              micro-line was buried; operators anchored on
+                              detected_at and concluded "old alert."
+                              Per Task #80 diagnosis 2026-05-13 the substrate
+                              engine refreshes last_seen_at every tick — a fresh
+                              last_seen_at + an old detected_at = still firing. */}
+                          <span
+                            className={`px-1.5 py-0.5 rounded font-medium ${
+                              v.minutes_open >= 60
+                                ? 'bg-amber-500/20 text-amber-200'
+                                : 'bg-white/10 text-white/70'
+                            }`}
+                            title={`First detected: ${v.detected_at}\nLast refreshed: ${v.last_seen_at}\n\nThe substrate engine ticks every 60s. last_seen_at advances on every tick that re-detects the violation. detected_at + minutes_open together = "has been firing for X minutes," not "alert is X minutes stale."`}
+                          >
+                            firing for {Math.round(v.minutes_open)}m
+                          </span>
+                          <span className="text-white/40">
+                            (refreshed {relTime(v.last_seen_at)})
+                          </span>
                         </div>
                         <div className="mt-2 flex items-center gap-2 flex-wrap">
                           <button
