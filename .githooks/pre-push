@@ -121,6 +121,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_assertion_metadata_complete.py"
     "tests/test_substrate_docs_present.py"
     "tests/test_soft_verify_uses_savepoint.py"
+    "tests/test_no_uuid_cast_on_text_column.py"
     "tests/test_pydantic_contract_check.py"
     "tests/test_openapi_schema_in_sync.py"
     "tests/test_consumer_contract_check.py"
