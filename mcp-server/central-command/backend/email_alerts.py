@@ -335,8 +335,14 @@ async def get_partner_email_branding(partner_id: Optional[str]) -> Optional[dict
     if not partner_id:
         return None
     try:
-        # Local import to avoid module-load ordering issues
-        from shared import get_pool, admin_connection  # type: ignore
+        # Local import to avoid module-load ordering issues.
+        # Relative-first-then-absolute (Task #72): production runs
+        # dashboard_api as a package — bare `from shared import` fails
+        # in prod context. Same class as 2026-05-13 dashboard outage.
+        try:
+            from .shared import get_pool, admin_connection
+        except ImportError:
+            from shared import get_pool, admin_connection  # type: ignore
         pool = await get_pool()
         async with admin_connection(pool) as conn:
             row = await conn.fetchrow(

@@ -210,7 +210,15 @@ async def get_audit_readiness(org_id: int, user: dict = Depends(require_auth)):
             # admin flag AND a formal (non-acknowledgment-only) signature.
             # See baa_status.is_baa_on_file_verified docstring + the
             # v1.0-INTERIM master BAA at docs/legal/MASTER_BAA_v1.0_INTERIM.md.
-            from baa_status import is_baa_on_file_verified
+            # Relative-first-then-absolute (Task #72): production runs
+            # `dashboard_api` as a package (cwd=/app); bare import would
+            # raise ModuleNotFoundError + the outer try-except would
+            # silently mask "BAA verified" state. Same class as the
+            # 2026-05-13 dashboard outage (sites.py:4231 fix adb7671a).
+            try:
+                from .baa_status import is_baa_on_file_verified
+            except ImportError:
+                from baa_status import is_baa_on_file_verified  # type: ignore
             baa_verified = await is_baa_on_file_verified(conn, org_id)
 
             # Gather site IDs for this org.
