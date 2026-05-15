@@ -4340,10 +4340,26 @@ async def download_auditor_kit(
 
     # 1. Site identity + clinic name + partner attribution
     site_row = (await db.execute(text("""
-        SELECT site_id, clinic_name, partner_id, client_org_id FROM sites WHERE site_id = :sid
+        SELECT site_id, clinic_name, partner_id, client_org_id, synthetic
+        FROM sites WHERE site_id = :sid
     """), {"sid": site_id})).fetchone()
     if not site_row:
         raise HTTPException(404, "Site not found")
+
+    # Task #66 B1 / #102 — Synthetic-site refusal. The synthetic
+    # site (mig 315, status='inactive' quarantined) exists for the
+    # MTTR soak substrate-engine ground-truth. Its evidence chain
+    # is real (the substrate engine MUST tick on it, per the noqa-
+    # allowlisted invariant scans in assertions.py) but it MUST NOT
+    # leak into a customer-facing or partner-facing auditor kit.
+    # Admin callers are allowed (investigation/verification of the
+    # soak's positive control). Counsel Rule 4: synthetic-site
+    # evidence in a real auditor's kit = orphan-coverage leak.
+    if site_row.synthetic and auth_method != "admin":
+        raise HTTPException(
+            status_code=404,
+            detail="Site not found",
+        )
 
     # 2. Partner brand for white-labeled presentation layer. The cryptographic
     #    attribution always remains OsirisCare (substrate owns the Ed25519 keys
