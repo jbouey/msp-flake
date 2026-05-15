@@ -57,7 +57,10 @@ from typing import Any, Dict, Optional
 
 from fastapi import Depends, HTTPException, Request
 
-import baa_status
+try:
+    from . import baa_status
+except ImportError:  # pragma: no cover — non-package context (tests)
+    import baa_status  # type: ignore
 
 logger = logging.getLogger(__name__)
 
