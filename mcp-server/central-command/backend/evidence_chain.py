@@ -4340,7 +4340,7 @@ async def download_auditor_kit(
 
     # 1. Site identity + clinic name + partner attribution
     site_row = (await db.execute(text("""
-        SELECT site_id, clinic_name, partner_id FROM sites WHERE site_id = :sid
+        SELECT site_id, clinic_name, partner_id, client_org_id FROM sites WHERE site_id = :sid
     """), {"sid": site_id})).fetchone()
     if not site_row:
         raise HTTPException(404, "Site not found")
@@ -4926,6 +4926,16 @@ async def download_auditor_kit(
             "action": "auditor_kit_download",
             "target": f"site:{site_row.site_id}",
             "details": _json.dumps({
+                # site_id + client_org_id denormalized at top-level for the
+                # sensitive_workflow_advanced_without_baa substrate invariant
+                # (Task #92): the invariant scans this audit-log for
+                # auditor_kit_download events from gated auth branches
+                # (client_portal + partner_portal). Pulling these out of
+                # `target` (site:<id>) into `details` keeps the invariant
+                # SQL simple + survives later org reparenting (snapshot of
+                # ownership at download time).
+                "site_id": site_row.site_id,
+                "client_org_id": str(site_row.client_org_id) if site_row.client_org_id else None,
                 "auth_method": auth_method,
                 "user_id": auth_user_id,
                 "partner_id": auth_partner_id,
