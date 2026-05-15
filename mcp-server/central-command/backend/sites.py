@@ -813,7 +813,7 @@ async def list_sites(
                 s.onboarding_stage,
                 s.client_org_id,
                 co.name as org_name
-            FROM site_appliances sa
+            FROM site_appliances sa  -- noqa: site-appliances-deleted-include — `sa.deleted_at IS NULL` is appended downstream via the dynamic `where_clauses` list (see line 828); outside the gate's 8-line window so explicit marker required
             LEFT JOIN sites s ON s.site_id = sa.site_id
             LEFT JOIN client_orgs co ON co.id = s.client_org_id
         """
@@ -2593,7 +2593,7 @@ async def move_appliance(
     async with tenant_connection(pool, site_id=site_id) as conn:
         # Verify appliance exists in source site
         existing = await conn.fetchrow(
-            "SELECT appliance_id FROM site_appliances WHERE appliance_id = $1 AND site_id = $2",
+            "SELECT appliance_id FROM site_appliances WHERE appliance_id = $1 AND site_id = $2",  # noqa: site-appliances-deleted-include — operator-only per-appliance relocate verification; relocating a soft-deleted appliance (recovery path) must succeed
             appliance_id, site_id,
         )
         if not existing:
@@ -2609,7 +2609,7 @@ async def move_appliance(
         # Update appliance_provisioning by MAC address.
         # MAC lives on site_appliances (M1: legacy appliances table dropped).
         mac_row = await conn.fetchrow(
-            "SELECT mac_address FROM site_appliances WHERE appliance_id = $1",
+            "SELECT mac_address FROM site_appliances WHERE appliance_id = $1",  # noqa: site-appliances-deleted-include — operator-only relocate MAC lookup (PK); soft-deleted appliance recovery path requires its MAC
             appliance_id,
         )
         if mac_row and mac_row["mac_address"]:
@@ -2693,11 +2693,12 @@ async def clear_stale_appliances(site_id: str, request: ClearStaleRequest, user:
             SELECT COUNT(*) FROM site_appliances
             WHERE site_id = $1
             AND (last_checkin IS NULL OR last_checkin < $2)
+            AND deleted_at IS NULL
         """, site_id, cutoff)
 
         # Delete stale appliances
         result = await conn.execute("""
-            DELETE FROM site_appliances
+            DELETE FROM site_appliances  -- noqa: site-appliances-deleted-include — admin destructive op (stale cleanup); hard-deletes BOTH soft-deleted-stale AND not-yet-soft-deleted stale rows (intentional)
             WHERE site_id = $1
             AND (last_checkin IS NULL OR last_checkin < $2)
         """, site_id, cutoff)
@@ -2729,6 +2730,7 @@ async def broadcast_order(site_id: str, order: BroadcastOrderCreate, user: dict 
         appliances = await conn.fetch("""
             SELECT appliance_id FROM site_appliances
             WHERE site_id = $1
+              AND deleted_at IS NULL
         """, site_id)
 
         if not appliances:
@@ -3179,7 +3181,7 @@ async def _toggle_healing(site_id: str, enabled: bool, user: dict):
 
         # Get appliance(s) for this site
         appliances = await conn.fetch(
-            "SELECT appliance_id FROM site_appliances WHERE site_id = $1",
+            "SELECT appliance_id FROM site_appliances WHERE site_id = $1 AND deleted_at IS NULL",
             site_id,
         )
         if not appliances:
@@ -4028,7 +4030,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     continue  # skip self
                 other_aid = f"{checkin.site_id}-{normalize_mac(other_mac)}"
                 mac_overlap = await conn.fetchrow(
-                    "SELECT appliance_id, mac_address FROM site_appliances WHERE appliance_id = $1",
+                    "SELECT appliance_id, mac_address FROM site_appliances WHERE appliance_id = $1",  # noqa: site-appliances-deleted-include — checkin-handler MAC-overlap detection; orphan-recovery scenario where a soft-deleted appliance is still calling home needs to be detected
                     other_aid,
                 )
                 if mac_overlap:
@@ -4059,7 +4061,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             if probe_ips:
                 ip_overlap = await conn.fetchrow("""
                     SELECT appliance_id, mac_address, hostname
-                    FROM site_appliances
+                    FROM site_appliances  -- noqa: site-appliances-deleted-include — checkin-handler IP-overlap detection; 5-sec window implicitly excludes long-soft-deleted, but a re-flashed soft-deleted appliance calling home in the same window must be detected
                     WHERE site_id = $1
                       AND appliance_id != $2
                       AND last_checkin > NOW() - INTERVAL '5 seconds'
@@ -4077,7 +4079,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         if _ghost_detected:
             # Skip Steps 1-3 — use the canonical appliance from the ghost check
             last_checkin_time = await conn.fetchval(
-                "SELECT last_checkin FROM site_appliances WHERE appliance_id = $1",
+                "SELECT last_checkin FROM site_appliances WHERE appliance_id = $1",  # noqa: site-appliances-deleted-include — checkin-handler last_checkin probe (PK); ghost-detect canonical-id path may resolve to a soft-deleted row
                 canonical_id
             )
         else:
@@ -4088,7 +4090,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             # Use FOR UPDATE to prevent concurrent check-ins from racing.
             existing = await conn.fetch("""
                 SELECT appliance_id, hostname, mac_address, first_checkin
-                FROM site_appliances
+                FROM site_appliances  -- noqa: site-appliances-deleted-include — checkin-handler existing-appliance MAC lookup; re-provisioning a soft-deleted appliance under the same MAC must surface the existing row
                 WHERE site_id = $1
                 AND UPPER(REPLACE(REPLACE(mac_address, ':', ''), '-', '')) = $2
                 ORDER BY last_checkin DESC NULLS LAST
@@ -4113,13 +4115,13 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             # === STEP 2: Delete duplicates (if any) ===
             if merge_from_ids:
                 await conn.execute("""
-                    DELETE FROM site_appliances
+                    DELETE FROM site_appliances  -- noqa: site-appliances-deleted-include — checkin-handler merge cleanup hard-deletes consolidated rows by appliance_id ANY-array; intentionally hard-deletes both already-soft-deleted and active rows
                     WHERE appliance_id = ANY($1)
                 """, merge_from_ids)
 
             # Fetch previous last_checkin for credential freshness comparison
             last_checkin_time = await conn.fetchval(
-                "SELECT last_checkin FROM site_appliances WHERE appliance_id = $1",
+                "SELECT last_checkin FROM site_appliances WHERE appliance_id = $1",  # noqa: site-appliances-deleted-include — checkin-handler credential-freshness probe (PK); needs to compare against the most-recent checkin regardless of soft-delete state
                 canonical_id
             )
 
@@ -4142,7 +4144,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # tear it down. This is the automatic enforcement of "no persistent access."
         if _boot_source == 'installed_disk' and not _ghost_detected:
             prev_health = await conn.fetchval(
-                "SELECT daemon_health->>'boot_source' FROM site_appliances WHERE appliance_id = $1",
+                "SELECT daemon_health->>'boot_source' FROM site_appliances WHERE appliance_id = $1",  # noqa: site-appliances-deleted-include — checkin-handler boot-source diff (live-USB → installed-disk transition); orphan-recovery scenario reads prior daemon_health regardless of soft-delete
                 canonical_id
             )
             if prev_health == 'live_usb':
@@ -4371,7 +4373,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                 async with conn.transaction():
                     rec = await conn.fetchrow("""
                         SELECT display_name, hostname, recovered_at, offline_event_count
-                        FROM site_appliances
+                        FROM site_appliances  -- noqa: site-appliances-deleted-include — checkin-handler recovery-detection 30s window; orphan-recovery flow needs to detect just-revived soft-deleted appliance
                         WHERE appliance_id = $1
                           AND recovered_at IS NOT NULL
                           AND recovered_at > NOW() - INTERVAL '30 seconds'
@@ -4478,7 +4480,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         if not _ghost_detected:
             try:
                 current_display = await conn.fetchval(
-                    "SELECT display_name FROM site_appliances WHERE appliance_id = $1",
+                    "SELECT display_name FROM site_appliances WHERE appliance_id = $1",  # noqa: site-appliances-deleted-include — checkin-handler display-name lookup (PK); revived-soft-deleted appliance keeps its prior display name
                     canonical_id
                 )
                 if not current_display:
@@ -4526,7 +4528,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         if not _ghost_detected and last_checkin_time and checkin.ip_addresses:
             try:
                 old_ips_row = await conn.fetchval(
-                    "SELECT ip_addresses FROM site_appliances WHERE appliance_id = $1",
+                    "SELECT ip_addresses FROM site_appliances WHERE appliance_id = $1",  # noqa: site-appliances-deleted-include — checkin-handler IP-change detection (PK); orphan-recovery scenario compares against prior IPs regardless of soft-delete
                     canonical_id
                 )
                 if old_ips_row:
@@ -4613,7 +4615,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # NOT to sites.agent_public_key. Multi-appliance sites would
         # otherwise alternate-overwrite a single site-level row on
         # every checkin while the per-MAC row stays stale, breaking
-        # sigauth (which reads from site_appliances). The 2026-04-25
+        # sigauth (which reads the appliances table). The 2026-04-25
         # signature_verification_failures invariant on north-valley-
         # branch-2 fired exactly this way: two daemons at one site
         # ROTATED the dead sites.agent_public_key 100+ times/hour
@@ -4871,7 +4873,8 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         AND (
                             hostname IN (SELECT DISTINCT unnest(string_to_array(
                                 regexp_replace(ip_addresses::text, '[\[\]" ]', '', 'g'), ','))
-                                FROM site_appliances WHERE site_id = $1)
+                                FROM site_appliances WHERE site_id = $1)  -- noqa: site-appliances-deleted-include — checkin-handler IP-set extraction for hostname-elision; includes deleted rows so historical IP correlations remain detectable
+
                             OR hostname = 'router.lan'
                             OR hostname LIKE '%.1'
                         )
@@ -4955,7 +4958,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             async with conn.transaction():
                 sibling_rows = await conn.fetch("""
                     SELECT mac_address, ip_addresses
-                    FROM site_appliances
+                    FROM site_appliances  -- noqa: site-appliances-deleted-include — checkin-handler sibling-lookup for IP-overlap detection; status='online' WHERE excludes most soft-deleted rows, but in orphan-recovery scenario a re-flashed deleted appliance could be flagged status='online' and must be detected
                     WHERE site_id = $1
                     AND appliance_id != $2
                     AND status = 'online'
@@ -5337,7 +5340,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             async with conn.transaction():
                 online_appliances = await conn.fetch("""
                     SELECT appliance_id, mac_address
-                    FROM site_appliances
+                    FROM site_appliances  -- noqa: site-appliances-deleted-include — checkin-handler online-appliance enumeration for hostname-resolution; status='online' + 5-min checkin window naturally excludes long-soft-deleted, but orphan-recovery requires visibility
                     WHERE site_id = $1
                     AND status = 'online'
                     AND last_checkin > NOW() - INTERVAL '5 minutes'
@@ -5611,7 +5614,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
             async with conn.transaction():
                 appliance = await conn.fetchrow("""
                     SELECT trigger_enumeration, trigger_immediate_scan
-                    FROM site_appliances
+                    FROM site_appliances  -- noqa: site-appliances-deleted-include — checkin-handler trigger-flag probe (PK); orphan-recovery checkin may still have pending scan flags to honor
                     WHERE appliance_id = $1
                 """, canonical_id)
 
@@ -6441,7 +6444,7 @@ async def trigger_workstation_scan(site_id: str, user: dict = Depends(require_op
         # Find the first online appliance for this site
         appliance = await conn.fetchrow("""
             SELECT appliance_id
-            FROM site_appliances
+            FROM site_appliances  -- noqa: site-appliances-deleted-include — admin "pick best appliance for site" fallback; status='online' filter already excludes soft-deleted (status set to 'deleted' on soft-delete)
             WHERE site_id = $1 AND status = 'online'
             ORDER BY last_checkin DESC
             LIMIT 1

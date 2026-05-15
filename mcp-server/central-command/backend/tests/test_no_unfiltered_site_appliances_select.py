@@ -115,7 +115,25 @@ BACKEND_DIR = REPO_ROOT / "mcp-server" / "central-command" / "backend"
 #     fleet status / fleet rollup / install-funnel forensic /
 #     site-detail full view / bulk-update path).
 # 41 → 23. Only sites.py remains.
-BASELINE_MAX = 23
+# 2026-05-15 (continued, same session) — sites.py 23 → 0:
+#   - 4 real filter adds (admin stale-cleanup count + post-cleanup
+#     verify + admin appliance-list-by-site enumeration, sites.py
+#     line 816 dynamic-where pattern marker since the where_clauses
+#     list adds `sa.deleted_at IS NULL` downstream outside the
+#     8-line window).
+#   - 18 markers (checkin-handler system paths: MAC overlap, IP
+#     overlap, last_checkin probe, MAC-based existing lookup,
+#     merge cleanup DELETE, credential-freshness probe, boot-source
+#     diff, recovery-detection, display-name lookup, IP-change
+#     detection, IP-set extraction, sibling-row lookup, online-
+#     enumeration, trigger-flag probe, online-appliance picker,
+#     relocate-verify, MAC PK lookup, "stale cleanup" DELETE).
+#   - 1 docstring reword (line 4618 mentioning site_appliances in
+#     prose).
+# 81 → 0. Total Session 220 ratchet drive-down: 100% closure.
+# Any future bare-FROM-site_appliances without filter or marker
+# fails CI hard.
+BASELINE_MAX = 0
 
 _FROM_PATTERN = re.compile(r"\bFROM\s+site_appliances\b", re.IGNORECASE)
 _NOQA_PATTERN = re.compile(
