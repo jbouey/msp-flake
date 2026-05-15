@@ -130,6 +130,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_baa_gated_workflows_lockstep.py"
     "tests/test_no_primary_email_update_orphans_baa.py"
     "tests/test_substrate_invariant_sensitive_workflow_baa.py"
+    "tests/test_no_baa_signatures_trigger_disable_outside_migrations.py"
     "tests/test_export_endpoints_column_drift.py"
     "tests/test_import_shape_in_package_context.py"
     "tests/test_pydantic_contract_check.py"

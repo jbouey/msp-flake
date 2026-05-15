@@ -281,7 +281,8 @@ async def sign_baa(req: SignupBaaSign, request: Request) -> Dict[str, Any]:
     pool = await get_pool()
     async with admin_connection(pool) as conn, conn.transaction():
         row = await conn.fetchrow(
-            "SELECT email, stripe_customer_id, plan, expires_at, completed_at "
+            "SELECT email, stripe_customer_id, plan, practice_name, state, "
+            "       expires_at, completed_at "
             "FROM signup_sessions WHERE signup_id = $1 FOR UPDATE",
             req.signup_id,
         )
@@ -296,24 +297,56 @@ async def sign_baa(req: SignupBaaSign, request: Request) -> Dict[str, Any]:
         client_ip = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent", "")[:500]
 
+        # Task #93 v2 Option E (audit/coach-93-v2-signup-flow-reorder-
+        # gate-a-2026-05-15.md): pre-generate the client_org UUID
+        # Python-side and materialize the client_orgs row HERE — same
+        # admin_transaction as the baa_signatures INSERT — so the FK
+        # added in mig 321 is set at INSERT time. The row lands in
+        # status='pending_provisioning'; the Stripe-webhook idempotency
+        # path (_materialize_self_serve_tenant) promotes it to 'active'
+        # later. ON CONFLICT (primary_email) survives the rare case
+        # where the user re-signs the BAA for an org that already has
+        # a row (e.g. re-using an email after a deprovision).
+        client_org_uuid = uuid.uuid4()
+        practice_name = row["practice_name"] or row["email"] or "Practice"
+        org_row = await conn.fetchrow(
+            """
+            INSERT INTO client_orgs
+                (id, name, primary_email, billing_email, state,
+                 stripe_customer_id, status)
+            VALUES ($1, $2, $3, $3, $4, $5, 'pending_provisioning')
+            ON CONFLICT (primary_email) DO UPDATE SET
+                stripe_customer_id = COALESCE(
+                    client_orgs.stripe_customer_id, EXCLUDED.stripe_customer_id
+                ),
+                updated_at = NOW()
+            RETURNING id
+            """,
+            client_org_uuid, practice_name, row["email"],
+            row["state"], row["stripe_customer_id"],
+        )
+        client_org_id = org_row["id"]
+
         await conn.execute(
             """
             INSERT INTO baa_signatures
-                (signature_id, email, stripe_customer_id, signer_name,
-                 signer_ip, signer_user_agent, baa_version, baa_text_sha256,
-                 metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+                (signature_id, email, client_org_id, stripe_customer_id,
+                 signer_name, signer_ip, signer_user_agent, baa_version,
+                 baa_text_sha256, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
             """,
-            signature_id, row["email"], row["stripe_customer_id"],
+            signature_id, row["email"], client_org_id,
+            row["stripe_customer_id"],
             req.signer_name, client_ip, user_agent,
             BAA_VERSION, req.baa_text_sha256,
             json.dumps({"signup_id": req.signup_id, "plan": row["plan"]}),
         )
         await conn.execute(
             "UPDATE signup_sessions "
-            "   SET baa_signature_id = $1, baa_signed_at = NOW() "
-            " WHERE signup_id = $2",
-            signature_id, req.signup_id,
+            "   SET baa_signature_id = $1, baa_signed_at = NOW(), "
+            "       client_org_id = $2 "
+            " WHERE signup_id = $3",
+            signature_id, client_org_id, req.signup_id,
         )
 
     logger.info(
@@ -713,6 +746,13 @@ async def _materialize_self_serve_tenant(
     baa_signature_id = signup_row.get("baa_signature_id")
 
     # 1. client_orgs — idempotent on (primary_email).
+    #
+    # Task #93 v2 (2026-05-15): the row MAY already exist from the
+    # /signup/sign-baa endpoint (status='pending_provisioning'). In
+    # that case the ON CONFLICT branch promotes it to 'active' now
+    # that the BAA is confirmed (baa_signature_id present). Pre-#93
+    # the row was always created HERE, so the legacy 'pending' →
+    # 'active' promotion stays as a fallback.
     org_status = "active" if baa_signature_id else "pending"
     org_row = await conn.fetchrow(
         """
@@ -724,9 +764,13 @@ async def _materialize_self_serve_tenant(
                 CASE WHEN $5 = 'active' THEN NOW() ELSE NULL END)
         ON CONFLICT (primary_email) DO UPDATE SET
             stripe_customer_id = COALESCE(client_orgs.stripe_customer_id, EXCLUDED.stripe_customer_id),
-            -- Promote pending → active when BAA confirmed; never demote.
+            -- Promote pending OR pending_provisioning → active when
+            -- BAA confirmed; never demote. pending_provisioning is the
+            -- v2 (#93) sign-baa-time status; pending is the legacy
+            -- path where sign-baa hadn't yet materialized the row.
             status = CASE
-                WHEN client_orgs.status = 'pending' AND EXCLUDED.status = 'active'
+                WHEN client_orgs.status IN ('pending', 'pending_provisioning')
+                     AND EXCLUDED.status = 'active'
                     THEN 'active'
                 ELSE client_orgs.status
             END,

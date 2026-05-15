@@ -456,6 +456,7 @@
   "baa_signatures": {
     "baa_text_sha256": "text",
     "baa_version": "text",
+    "client_org_id": "uuid",
     "email": "text",
     "is_acknowledgment_only": "boolean",
     "metadata": "jsonb",
@@ -4684,6 +4685,7 @@
     "baa_signed_at": "timestamp with time zone",
     "billing_contact_name": "text",
     "checkout_session_id": "text",
+    "client_org_id": "uuid",
     "completed_at": "timestamp with time zone",
     "created_at": "timestamp with time zone",
     "email": "text",

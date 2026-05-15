@@ -456,6 +456,7 @@
   "baa_signatures": [
     "baa_text_sha256",
     "baa_version",
+    "client_org_id",
     "email",
     "is_acknowledgment_only",
     "metadata",
@@ -4684,6 +4685,7 @@
     "baa_signed_at",
     "billing_contact_name",
     "checkout_session_id",
+    "client_org_id",
     "completed_at",
     "created_at",
     "email",
