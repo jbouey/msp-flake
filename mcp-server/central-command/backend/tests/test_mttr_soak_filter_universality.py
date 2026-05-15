@@ -57,6 +57,33 @@ _SOAK_EXCLUSION_PATTERNS = [
     r"site_id\s*=\s*:[a-z_]+",
     r"WHERE\s+s?\.?id\s*=",
     r"WHERE\s+i?\.?id\s*=",
+    # Task #66 B1 — synthetic-column filter (the Phase 4 v2 universal
+    # predicate). Carol P0-C1: prefer `IS NOT TRUE` (NULL-safe vs
+    # a future LEFT JOIN nulling the column) but accept `IS FALSE`
+    # for the partial index path on substrate_violations.synthetic.
+    r"s?\.?synthetic\s+IS\s+NOT\s+TRUE",
+    r"s?\.?synthetic\s+IS\s+FALSE",
+    r"NOT\s+s?\.?synthetic\b",
+    # Substrate-engine carve-out marker — invariant scans MUST tick on
+    # the synthetic site (that's the soak target). Rows segregate
+    # downstream via substrate_violations.synthetic (mig 323).
+    r"#\s*noqa:\s*synthetic-allowlisted",
+    # Org-scoped / partner-scoped queries — synthetic site has NULL
+    # client_org_id + NULL partner_id, so any predicate that filters
+    # by a specific org/partner id excludes it implicitly.
+    r"client_org_id\s*=\s*\$\d+",
+    r"client_org_id\s*=\s*:[a-z_]+",
+    r"client_org_id\s*IS\s+NOT\s+NULL",
+    r"\bpartner_id\s*=\s*\$\d+",
+    r"\bpartner_id\s*=\s*:[a-z_]+",
+    # Incidents JOIN sites where the sites scope is parameterized.
+    r"i\.site_id\s*=",
+    r"a\.site_id\s*=",
+    # f-string filter interpolation — the actual filter string is
+    # composed above the SQL; if the Python file contains `synthetic`
+    # in any form within ~30 lines before/after the FROM, accept it.
+    # The {where_clause} sigil is the conventional shape.
+    r"\{where_clause\}",
 ]
 
 # FROM-clause matches that we INTEND to scan.
@@ -96,38 +123,47 @@ def _scan_file(rel_path: str) -> list[str]:
     return violations
 
 
+# Ratchet baseline. Task #66 B1 hardened this from soft→hard
+# 2026-05-15. The 14 load-bearing callsites identified in Gate A
+# (audit/coach-66-b1-concrete-plan-gate-a-2026-05-14.md) now carry
+# `synthetic IS NOT TRUE`; broader scope-pattern matches drop the
+# residual to 19. Drive-down to 0 is task #B1-FU (Phase 4 v2
+# universal predicate completion). The ratchet pins regressions:
+# any new bare-FROM-sites/incidents callsite without a recognized
+# exclusion or allowlist entry fails CI.
+RATCHET_BASELINE = 19
+
+
 def test_universal_enumeration_filter_sweep_baseline():
-    """Phase 4 v1 review (BLOCK verdict, 2026-05-11) found that the
-    v1 design promised universal filter coverage but never
-    implemented it. Mig 304 quarantine handles the specific
-    contamination via `status='inactive'` — every backend query that
-    uses `WHERE s.status != 'inactive'` already excludes the
-    synthetic site by name.
+    """Hard ratchet (Task #66 B1, 2026-05-15) — was a soft sweep
+    pre-B1. The 14 load-bearing callsites Gate A identified are now
+    filtered with `synthetic IS NOT TRUE` (or the appropriate per-
+    callsite predicate). Broader scope patterns (client_org_id,
+    partner_id, JOIN-scoped i.site_id, f-string `{where_clause}`)
+    are now recognized as soak-exclusions because the synthetic
+    site's NULL client_org_id + NULL partner_id implicitly excludes
+    it under such predicates.
 
-    This sweep is a SOFT gate (logs only, doesn't fail CI) because
-    the universal-soak-test predicate is a Phase 4 v2 deliverable
-    not yet specified. The hard gate is:
-      `test_alertmanager_soak_suppress_implemented` (P0-3)
-      `test_synthetic_soak_site_remains_quarantined` (mig 304 pin)
+    Drive-down to 0: file a B1 followup task for each residual
+    callsite — most are likely real misses needing a filter, OR
+    truly-cannot-be-scoped (`SELECT COUNT(*) FROM incidents` for
+    total volume) needing ALLOWLIST entries with rationale.
 
-    The soft sweep surfaces the AMOUNT of admin/federation/flywheel
-    code that lacks an EXPLICIT soak filter — Phase 4 v2's universal
-    predicate will need to retrofit this surface.
+    Mig 304 quarantine (status='inactive') is the live safety net
+    until the ratchet drives to 0.
     """
     all_violations: list[str] = []
     for fname in _SCAN_FILES:
         all_violations.extend(_scan_file(fname))
-    # Soft gate — informational baseline. Phase 4 v2 will tighten
-    # this once the universal soak predicate is finalized in the v2
-    # design doc. Until then, mig 304 quarantine (status='inactive'
-    # + WHERE filter) is the active protection. The count below
-    # quantifies the residual retrofit surface for v2.
-    print(
-        f"[mttr-soak universal-filter sweep] {len(all_violations)} "
-        f"queries enumerate sites/incidents without an explicit "
-        f"soak-exclusion predicate. Mig 304 quarantine (status="
-        f"'inactive') protects these for v1 quarantine state; v2 "
-        f"will add a universal predicate.",
+    assert len(all_violations) <= RATCHET_BASELINE, (
+        f"mttr-soak universal-filter sweep regressed: "
+        f"{len(all_violations)} bare FROM sites/incidents callsites "
+        f"without an explicit soak-exclusion predicate > baseline "
+        f"{RATCHET_BASELINE}. Either add a synthetic-aware filter "
+        f"(`AND synthetic IS NOT TRUE`), add a site-scope predicate, "
+        f"add the file:line to ALLOWLIST with rationale, OR drive the "
+        f"baseline DOWN if you intentionally closed callsites.\n"
+        + "\n".join(f"  {v}" for v in all_violations[:30])
     )
 
 
