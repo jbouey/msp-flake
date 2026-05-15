@@ -41,6 +41,12 @@ AUTH_TOKENS = {
     "require_install_token", "_require_install_token",
     "require_csrf", "require_scrape_or_admin", "require_stripe",
     "require_active_partner_agreements", "require_super_admin",
+    # Task #52 (2026-05-15): factory that returns Depends(_check) — the
+    # endpoint sig reads `user: dict = require_active_baa("workflow_key")`
+    # (no outer Depends wrapper needed). It internally stacks on
+    # require_client_owner. Recognized via the bare-word AUTH_TOKENS
+    # fallback in _has_auth_token.
+    "require_active_baa",
     "require_session", "require_user", "require_billing_role",
     "require_tech_role", "require_operator",
     "require_signing_authority", "require_signed_appliance",
