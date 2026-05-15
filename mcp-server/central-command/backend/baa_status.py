@@ -175,3 +175,125 @@ async def baa_signature_status(
     result = dict(row)
     result["verified"] = bool(result["admin_flag"]) and bool(result["has_formal_signature"])
     return result
+
+
+# ─────────────────────────────────────────────────────────────────
+# Enforcement predicate (Task #52, Counsel Rule 6)
+# ─────────────────────────────────────────────────────────────────
+#
+# `baa_enforcement_ok()` is a DELIBERATELY SEPARATE predicate from
+# `is_baa_on_file_verified()` above. They answer different questions:
+#
+#   is_baa_on_file_verified()  — "may a customer-facing artifact CLAIM
+#                                 'BAA on file'?"  ANDs in the
+#                                 admin-flipped `baa_on_file` flag.
+#   baa_enforcement_ok()       — "may this org ADVANCE a sensitive
+#                                 workflow?"  Does NOT require the
+#                                 admin flag.
+#
+# Why the split (Task #52 Gate A P0-2): the platform is in demo
+# posture — `client_orgs.baa_on_file = FALSE` for every org today
+# ("we have not flipped anything", per user 2026-05-13). If the
+# enforcement gate reused `is_baa_on_file_verified()`, EVERY customer
+# would be blocked from EVERY gated workflow the instant Task #52
+# deploys. The contract (master BAA Exhibit C) conditions enforcement
+# on the customer's SIGNATURE, not on an internal operational flag —
+# so the enforcement predicate checks signature-exists + not-expired
+# ONLY.
+
+# The BAA version currently required for enforcement to pass. A
+# signature must be for this version or later. v1.0-INTERIM is the
+# first HIPAA-complete instrument (2026-05-13); v2.0 (outside-counsel
+# hardened, target 2026-06-03) will supersede it — bump this constant
+# in the same commit that ships the v2.0 re-sign flow.
+#
+# NOTE: comparison is done numerically on the parsed (major, minor)
+# tuple via `_parse_baa_version()` — NOT lexically — so v10.0 > v2.0
+# holds. Pinned by tests/test_baa_version_ordering.py.
+CURRENT_REQUIRED_BAA_VERSION = "v1.0-INTERIM"
+
+
+def _parse_baa_version(raw: Optional[str]) -> tuple:
+    """Parse a baa_version string into a comparable (major, minor)
+    int tuple. Returns (-1, -1) for unparseable/None — sorts below
+    everything so an unparseable signature never satisfies the gate.
+
+    Handles the shapes that actually appear in `baa_signatures`:
+      'v1.0-INTERIM'  -> (1, 0)
+      'v1.0-2026-04-15' -> (1, 0)
+      'v2.0'          -> (2, 0)
+      'v10.0'         -> (10, 0)   # lexical compare would break here
+    """
+    if not raw:
+        return (-1, -1)
+    import re
+    m = re.match(r"v?(\d+)\.(\d+)", str(raw).strip(), re.IGNORECASE)
+    if not m:
+        return (-1, -1)
+    return (int(m.group(1)), int(m.group(2)))
+
+
+async def baa_enforcement_ok(
+    conn: asyncpg.Connection,
+    client_org_id: str,
+    *,
+    required_version: str = CURRENT_REQUIRED_BAA_VERSION,
+) -> bool:
+    """Return TRUE iff the org may ADVANCE a BAA-gated sensitive
+    workflow (Task #52, Counsel Rule 6).
+
+    TRUE requires BOTH:
+      1. At least one `baa_signatures` row for the org's primary_email
+         with `is_acknowledgment_only = FALSE` AND a parsed version
+         >= `required_version` (formal signature for the current
+         required BAA version or later).
+      2. `client_orgs.baa_expiration_date` is NULL or in the future
+         (not date-expired).
+
+    Does NOT require `client_orgs.baa_on_file = TRUE` — see the module
+    comment above (Gate A P0-2). Fail-closed: missing org → FALSE.
+
+    Args:
+        conn: asyncpg connection (admin-scoped — reads client_orgs +
+              baa_signatures, both admin tables).
+        client_org_id: UUID of the client_org.
+        required_version: the minimum BAA version a signature must
+              carry. Defaults to CURRENT_REQUIRED_BAA_VERSION.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT
+            co.primary_email,
+            co.baa_expiration_date,
+            (
+                co.baa_expiration_date IS NULL
+                OR co.baa_expiration_date > CURRENT_DATE
+            ) AS not_expired
+          FROM client_orgs co
+         WHERE co.id = $1
+        """,
+        client_org_id,
+    )
+    if row is None:
+        logger.warning(
+            "baa_enforcement_ok: client_org_id=%s not found; returning FALSE",
+            client_org_id,
+        )
+        return False
+    if not row["not_expired"]:
+        return False
+
+    required = _parse_baa_version(required_version)
+    sig_rows = await conn.fetch(
+        """
+        SELECT bs.baa_version
+          FROM baa_signatures bs
+         WHERE LOWER(bs.email) = LOWER($1)
+           AND bs.is_acknowledgment_only = FALSE
+        """,
+        row["primary_email"],
+    )
+    for sig in sig_rows:
+        if _parse_baa_version(sig["baa_version"]) >= required:
+            return True
+    return False
