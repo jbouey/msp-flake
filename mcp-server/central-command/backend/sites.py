@@ -231,6 +231,23 @@ async def create_site_api(request: Request, user: dict = Depends(require_auth)):
             row = await conn.fetchrow("SELECT id FROM client_orgs ORDER BY created_at LIMIT 1")
             client_org_id = str(row["id"]) if row else None
 
+        # BAA enforcement (Task #90, Counsel Rule 6) — BAA Exhibit C
+        # names new_site_onboarding as a CE-state mutation. This is an
+        # admin path so per the Carol carve-out the operator is NOT
+        # blocked; the call logs a baa_enforcement_bypass row to
+        # admin_audit_log so the sensitive_workflow_advanced_without_baa
+        # substrate invariant excludes legitimate operator actions.
+        from .baa_enforcement import enforce_or_log_admin_bypass
+        await enforce_or_log_admin_bypass(
+            conn,
+            client_org_id,
+            "new_site_onboarding",
+            actor_user_id=user.get("id"),
+            actor_email=(user.get("email") or "").lower().strip() or "unknown-admin",
+            request=request,
+            target=f"site:{site_id}",
+        )
+
         try:
             await conn.execute("""
                 INSERT INTO sites (site_id, clinic_name, contact_name, contact_email,
@@ -1120,9 +1137,34 @@ class CredentialCreate(BaseModel):
 
 
 @router.post("/{site_id}/credentials")
-async def add_credential(site_id: str, cred: CredentialCreate, user: dict = Depends(require_operator)):
+async def add_credential(site_id: str, cred: CredentialCreate, request: Request, user: dict = Depends(require_operator)):
     """Add a credential for a site. Appliances will pull this on next check-in. Requires operator or admin access."""
     pool = await get_pool()
+
+    # BAA enforcement (Task #90, Counsel Rule 6) — BAA Exhibit C names
+    # new_credential_entry as a CE-state mutation. This is an admin
+    # path so per the Carol carve-out the operator is NOT blocked; the
+    # call logs a baa_enforcement_bypass admin_audit_log row when the
+    # site's owning org has no active BAA. Must run in admin context
+    # (admin_audit_log is admin-scoped); the original INSERT below
+    # stays in tenant_connection for the site_credentials RLS path.
+    from .baa_enforcement import enforce_or_log_admin_bypass
+    async with admin_transaction(pool) as admin_conn:
+        org_id = await admin_conn.fetchval(
+            "SELECT client_org_id::text FROM sites WHERE site_id = $1",
+            site_id,
+        )
+        if not org_id:
+            raise HTTPException(status_code=404, detail=f"Site '{site_id}' not found")
+        await enforce_or_log_admin_bypass(
+            admin_conn,
+            org_id,
+            "new_credential_entry",
+            actor_user_id=user.get("id"),
+            actor_email=(user.get("email") or "").lower().strip() or "unknown-admin",
+            request=request,
+            target=f"site:{site_id}:credential:{cred.credential_type}:{cred.credential_name}",
+        )
 
     # Build credential data as JSON
     cred_data_dict = {

@@ -77,9 +77,11 @@ CURRENT_REQUIRED_BAA_VERSION = baa_status.CURRENT_REQUIRED_BAA_VERSION
 # enforce_or_log_admin_bypass, baa_gate_passes) in at least one
 # backend .py. Pinned by tests/test_baa_gated_workflows_lockstep.py.
 BAA_GATED_WORKFLOWS = frozenset({
-    "owner_transfer",       # client_owner_transfer.py — initiate + ack
-    "cross_org_relocate",   # cross_org_site_relocate.py — initiate (admin)
-    "evidence_export",      # evidence_chain.py — auditor-kit download
+    "owner_transfer",        # client_owner_transfer.py — initiate + ack
+    "cross_org_relocate",    # cross_org_site_relocate.py — initiate (admin)
+    "evidence_export",       # evidence_chain.py — auditor-kit download
+    "new_site_onboarding",   # sites.py — create_site_api (admin)
+    "new_credential_entry",  # sites.py — add_credential (admin/operator)
 })
 
 # Workflows named in BAA Exhibit C but DEFERRED out of v1, each with a
@@ -89,16 +91,9 @@ _DEFERRED_WORKFLOWS = {
     "partner_admin_transfer": (
         "Partner-internal admin role swap — no client_org_id to resolve; "
         "baa_enforcement_ok() is client-org-scoped. Needs its own Gate A "
-        "for the partner BA-subcontractor-agreement predicate. Follow-up "
-        "task filed."
-    ),
-    "new_site_onboarding": (
-        "Endpoint not located in the Task #52 Gate A review (P1-3). "
-        "Follow-up task filed to locate + wire the site-create mutation."
-    ),
-    "new_credential_entry": (
-        "Endpoint not located in the Task #52 Gate A review (P1-3). "
-        "Follow-up task filed to locate + wire the credential-add mutation."
+        "for the partner BA-subcontractor-agreement predicate (#94 Gate A "
+        "noted this may not need BAA gating at all — it's partner-internal, "
+        "not a CE-self-service action). Follow-up task filed."
     ),
     "ingest": (
         "Ingest-blocking deferred per the Task #52 Gate A Counsel lens — "
