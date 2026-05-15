@@ -140,6 +140,7 @@ async def _check_appliance_health():
             WHERE sa.offline_since IS NOT NULL
               AND sa.offline_since < $1
               AND sa.offline_notified = false
+              AND sa.deleted_at IS NULL
         """, threshold_warn)
 
         for row in warn_appliances:
@@ -181,6 +182,7 @@ async def _check_appliance_health():
             WHERE sa.offline_since IS NOT NULL
               AND sa.offline_since < $1
               AND sa.offline_notified = true
+              AND sa.deleted_at IS NULL
               AND NOT EXISTS (
                   SELECT 1 FROM notifications n
                   WHERE n.site_id = sa.site_id
@@ -826,6 +828,7 @@ async def _check_auth_failures():
             LEFT JOIN sites s ON s.site_id = sa.site_id
             WHERE sa.auth_failure_count >= 5
               AND sa.auth_failure_since IS NOT NULL
+              AND sa.deleted_at IS NULL
               AND NOT EXISTS (
                   SELECT 1 FROM notifications n
                   WHERE n.site_id = sa.site_id
@@ -885,6 +888,7 @@ async def _check_mesh_isolation():
             FROM site_appliances
             WHERE status = 'online'
               AND last_checkin > NOW() - INTERVAL '5 minutes'
+              AND deleted_at IS NULL
             GROUP BY site_id
             HAVING COUNT(*) >= 2
         """)
@@ -898,6 +902,7 @@ async def _check_mesh_isolation():
                 WHERE site_id = $1::text
                   AND status = 'online'
                   AND last_checkin > NOW() - INTERVAL '5 minutes'
+                  AND deleted_at IS NULL
             """, site_id)
 
             def _parse_dh(app):

@@ -438,7 +438,7 @@ async def get_client_appliances(site_id: str, db: AsyncSession = Depends(get_db)
         text("""
             SELECT id, appliance_id, hostname, ip_addresses, agent_version,
                    status, last_checkin, first_checkin
-            FROM site_appliances WHERE site_id = :site_id
+            FROM site_appliances WHERE site_id = :site_id AND deleted_at IS NULL
         """),
         {"site_id": site_id}
     )
@@ -2283,7 +2283,7 @@ async def get_dashboard_sla_strip(user: dict = Depends(auth_module.require_auth)
                 SELECT
                     COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') AS online,
                     COUNT(*) AS total
-                FROM site_appliances
+                FROM site_appliances  -- noqa: site-appliances-deleted-include — admin SLA-strip fleet availability percent; total includes all rows so the online% is true denominator-inclusive (operator metric)
             """)
             if row and row["total"] and row["total"] > 0:
                 online_appliances_pct = float(row["online"]) / float(row["total"]) * 100
@@ -3629,6 +3629,7 @@ async def get_attention_required(db: AsyncSession = Depends(get_db), user: dict 
             LEFT JOIN sites s ON s.site_id = sa.site_id
             WHERE (sa.last_checkin < NOW() - INTERVAL '30 minutes'
             OR sa.last_checkin IS NULL)
+            AND sa.deleted_at IS NULL
             {"AND s.client_org_id = ANY(:org_ids)" if org_scope else ""}
             ORDER BY sa.last_checkin ASC NULLS FIRST
             LIMIT 20
@@ -3705,7 +3706,7 @@ async def get_client_stats(site_id: str, db: AsyncSession = Depends(get_db), use
     appliance_result = await execute_with_retry(db,text("""
         SELECT COUNT(*) as total,
                COUNT(*) FILTER (WHERE status = 'online') as online
-        FROM site_appliances WHERE site_id = :site_id
+        FROM site_appliances WHERE site_id = :site_id AND deleted_at IS NULL
     """), {"site_id": site_id})
     app_row = appliance_result.fetchone()
 
@@ -5093,7 +5094,7 @@ async def get_organization_health(
                 WHERE last_checkin IS NULL OR last_checkin <= NOW() - INTERVAL '1 hour'
             ) as offline
         FROM site_appliances
-        WHERE site_id = ANY(:site_ids)
+        WHERE site_id = ANY(:site_ids) AND deleted_at IS NULL
     """), {"site_ids": site_ids})
     fleet = fleet_result.fetchone()
 
@@ -6558,7 +6559,7 @@ async def export_site_data(
         appliance_rows = await conn.fetch("""
             SELECT appliance_id, hostname, mac_address, ip_addresses,
                    agent_version, status, last_checkin, first_checkin
-            FROM site_appliances
+            FROM site_appliances  -- noqa: site-appliances-deleted-include — admin /api/sites/{site_id}/full detail view; operator wants to see decommissioned appliances in the site history
             WHERE site_id = $1
         """, site_id)
         appliances = []
@@ -6825,7 +6826,7 @@ async def decommission_site(
 
         # 4. Create fleet orders to stop appliances
         appliances = await conn.fetch(
-            "SELECT appliance_id FROM site_appliances WHERE site_id = $1",
+            "SELECT appliance_id FROM site_appliances WHERE site_id = $1 AND deleted_at IS NULL",
             site_id,
         )
         stop_orders_created = 0
@@ -7481,7 +7482,7 @@ async def get_vpn_status(user: dict = Depends(auth_module.require_auth)):
             SELECT DISTINCT ON (s.site_id)
                    s.site_id, s.clinic_name, s.status, s.wg_ip, s.wg_pubkey,
                    s.wg_connected_at, sa.last_checkin, sa.agent_version,
-                   (SELECT COUNT(*) FROM site_appliances
+                   (SELECT COUNT(*) FROM site_appliances  -- noqa: site-appliances-deleted-include — admin VPN-fleet status; operator wants total historical appliance count per site
                     WHERE site_id = s.site_id) AS appliance_count
             FROM sites s
             LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
@@ -7778,7 +7779,8 @@ async def apply_industry_preset(
 
         # Get all appliances for this site
         appliances = await conn.fetch(
-            "SELECT appliance_id FROM site_appliances WHERE site_id = $1", site_id
+            "SELECT appliance_id FROM site_appliances WHERE site_id = $1",  # noqa: site-appliances-deleted-include — admin bulk-update path; operator may want to update soft-deleted rows (config/version metadata) during recovery
+            site_id
         )
 
         updated_count = 0
@@ -8006,7 +8008,7 @@ async def get_system_health(
                         WHEN sa.last_checkin > NOW() - INTERVAL '15 minutes' THEN 'stale'
                         ELSE 'offline' END as status,
                    sa.last_checkin
-            FROM site_appliances sa
+            FROM site_appliances sa  -- noqa: site-appliances-deleted-include — admin fleet-rollup view; soft-deleted bins into 'offline' status naturally via stale last_checkin
             LEFT JOIN sites s ON s.site_id = sa.site_id
         """)
 
@@ -8206,7 +8208,7 @@ async def get_installation_sla(
                        ist.first_outbound_success_at        AS net_ready_at,
                        EXTRACT(EPOCH FROM (sa.first_checkin - ist.first_seen))/60             AS minutes_to_auth_up,
                        EXTRACT(EPOCH FROM (ist.first_outbound_success_at - ist.first_seen))/60 AS minutes_to_net_up
-                  FROM site_appliances sa
+                  FROM site_appliances sa  -- noqa: site-appliances-deleted-include — install-funnel forensic; 30-day first_checkin walk includes since-decommissioned appliances for time-to-auth-up history
                   LEFT JOIN install_sessions ist
                          ON LOWER(ist.mac_address) = LOWER(sa.mac_address)
                         AND ist.site_id = sa.site_id
@@ -8226,7 +8228,7 @@ async def get_installation_sla(
                        NULL::timestamptz AS net_ready_at,
                        EXTRACT(EPOCH FROM (sa.first_checkin - ist.first_seen))/60 AS minutes_to_auth_up,
                        NULL::double precision AS minutes_to_net_up
-                  FROM site_appliances sa
+                  FROM site_appliances sa  -- noqa: site-appliances-deleted-include — install-funnel forensic (auth-only variant); 30-day first_checkin walk includes since-decommissioned appliances
                   LEFT JOIN install_sessions ist
                          ON LOWER(ist.mac_address) = LOWER(sa.mac_address)
                         AND ist.site_id = sa.site_id
@@ -8701,6 +8703,7 @@ async def generate_site_compliance_packet(
             SELECT appliance_id, hostname, agent_version, status, last_checkin
             FROM site_appliances
             WHERE site_id = $1
+              AND deleted_at IS NULL
             ORDER BY last_checkin DESC NULLS LAST
         """, site_id)
 

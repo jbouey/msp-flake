@@ -102,7 +102,20 @@ BACKEND_DIR = REPO_ROOT / "mcp-server" / "central-command" / "backend"
 # health_monitor.py:5. These need careful per-callsite classification
 # (customer-facing endpoints + operator-alert noise-suppression
 # behavioral change) — deferred to a dedicated drive-down session.
-BASELINE_MAX = 41
+# 2026-05-15 (continued) — finished health_monitor + routes.py:
+#   - health_monitor.py 5→0 — added `AND sa.deleted_at IS NULL`
+#     real filter to all 4 notification scans (offline-warning,
+#     offline-critical, auth-failure escalation, mesh online-count
+#     rollup, mesh per-site fetch). BEHAVIORAL CHANGE: stops
+#     alerting on soft-deleted appliances; operator already chose
+#     to delete them so alerts are noise.
+#   - routes.py 13→0 — 6 real filter adds (customer-facing list
+#     endpoints + admin "stop appliances" fleet-order + site-detail
+#     site_id-scoped views) + 7 markers (admin SLA-strip / VPN
+#     fleet status / fleet rollup / install-funnel forensic /
+#     site-detail full view / bulk-update path).
+# 41 → 23. Only sites.py remains.
+BASELINE_MAX = 23
 
 _FROM_PATTERN = re.compile(r"\bFROM\s+site_appliances\b", re.IGNORECASE)
 _NOQA_PATTERN = re.compile(
