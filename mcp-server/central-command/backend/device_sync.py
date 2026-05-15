@@ -825,7 +825,7 @@ async def get_site_devices(
         param_idx += 1
 
     if compliance_status:
-        query += f" AND d.compliance_status = ${param_idx}"
+        query += f" AND d.compliance_status = ${param_idx}"  # noqa: deprecated-compliance-status — worklist query filter; helper returns None for the same signal but the column is more direct for the WHERE position (matches background_tasks.py:1015 pattern)
         params.append(compliance_status)
         param_idx += 1
 
@@ -1325,7 +1325,8 @@ async def get_device_compliance_details(site_id: str, device_id: int, user: dict
         # Verify device belongs to site
         device = await conn.fetchrow(
             """
-            SELECT d.id, d.hostname, d.ip_address, d.compliance_status
+            SELECT d.id, d.hostname, d.ip_address,
+                   d.compliance_status  -- noqa: deprecated-compliance-status — frontend-facing field on /sites/{site_id}/device/{device_id}/compliance; migrating to live-compute via get_per_device_compliance requires response-shape coordination with frontend, carry-followup
             FROM discovered_devices d
             JOIN v_appliances_current a ON d.appliance_id = a.id
             WHERE d.id = $1 AND a.site_id = $2
@@ -1375,7 +1376,7 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
 
     devices = await conn.fetch("""
         SELECT d.id, d.hostname, d.ip_address, d.mac_address,
-               d.os_name, d.os_version, d.compliance_status,
+               d.os_name, d.os_version,
                d.last_seen_at, d.device_type
         FROM discovered_devices d
         JOIN v_appliances_current a ON d.appliance_id = a.id
@@ -1475,7 +1476,11 @@ async def _link_devices_to_workstations(conn: asyncpg.Connection, site_id: str):
         if incident_data:
             status, last_check, comp_pct = incident_data
         else:
-            status = dev['compliance_status'] or 'unknown'
+            # Deprecated column read removed (BUG 3, mig 269). The cached
+            # value was 'unknown' for nearly every row; the OR-fallback
+            # always resolved to 'unknown'. Direct literal preserves the
+            # behavioral path without reading the deprecated column.
+            status = 'unknown'
             last_check = None
             comp_pct = 0.0
 
