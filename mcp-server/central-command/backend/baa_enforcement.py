@@ -89,11 +89,20 @@ BAA_GATED_WORKFLOWS = frozenset({
 # these and does NOT require an enforcing callsite for them.
 _DEFERRED_WORKFLOWS = {
     "partner_admin_transfer": (
-        "Partner-internal admin role swap — no client_org_id to resolve; "
-        "baa_enforcement_ok() is client-org-scoped. Needs its own Gate A "
-        "for the partner BA-subcontractor-agreement predicate (#94 Gate A "
-        "noted this may not need BAA gating at all — it's partner-internal, "
-        "not a CE-self-service action). Follow-up task filed."
+        "INTENTIONALLY UN-GATED — Task #90 Gate A 2026-05-15 (audit/"
+        "coach-90-partner-admin-transfer-decision-gate-a-2026-05-15.md) "
+        "concluded the workflow does not perform services involving PHI "
+        "per §164.504(e): grep confirmed zero CE-state references "
+        "(no client_org_id, sites, compliance_bundles, or site_credentials) "
+        "in partner_admin_transfer.py. The partner-MSP's BA-Subcontractor "
+        "agreement with Osiris is on separate commercial paper (not yet "
+        "tracked in schema); the master BAA's Exhibit C names 5 enforcement-"
+        "gated workflows and partner_admin_transfer is correctly absent. The "
+        "new admin's SUBSEQUENT BAA-gated actions are already gated at the "
+        "5 active workflow gates. Gating the role swap itself would add zero "
+        "§164.504(e) safety AND would risk a §164.524 access-right downside "
+        "if partner ops paralyze (delayed CE access-request fulfillment). "
+        "Not a follow-up — a determinate decision. Closes #90 fully."
     ),
     "ingest": (
         "Ingest-blocking deferred per the Task #52 Gate A Counsel lens — "
