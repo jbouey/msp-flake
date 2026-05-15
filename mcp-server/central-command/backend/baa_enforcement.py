@@ -195,32 +195,44 @@ async def enforce_or_log_admin_bypass(
     else:
         ok = await baa_status.baa_enforcement_ok(conn, client_org_id)
     if not ok:
+        # Savepoint isolation (CLAUDE.md asyncpg-savepoint-invariant): the
+        # caller passes us a `conn` already inside an `admin_transaction`
+        # block, so a raise here without an inner SAVEPOINT would poison
+        # the outer transaction and every subsequent statement in
+        # initiate_cross_org_relocate (the audit-row INSERT can raise on
+        # asyncpg.InterfaceError, FK drift, or jsonb shape) would fail
+        # with InFailedSQLTransactionError. Wrap in conn.transaction()
+        # so the audit-log INSERT becomes its own savepoint — failing
+        # rolls back ONLY the audit row, the outer txn proceeds.
         try:
-            await conn.execute(
-                """
-                INSERT INTO admin_audit_log (
-                    user_id, username, action, target, details, ip_address
-                ) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6)
-                """,
-                actor_user_id,
-                actor_email,
-                "baa_enforcement_bypass",
-                target,
-                json.dumps({
-                    "workflow": workflow,
-                    "client_org_id": client_org_id,
-                    "reason": (
-                        "admin advanced a BAA-gated workflow for an org "
-                        "with no active BAA — operator carve-out, logged "
-                        "for the sensitive_workflow_advanced_without_baa "
-                        "substrate invariant"
-                    ),
-                }),
-                request.client.host if request.client else None,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO admin_audit_log (
+                        user_id, username, action, target, details, ip_address
+                    ) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6)
+                    """,
+                    actor_user_id,
+                    actor_email,
+                    "baa_enforcement_bypass",
+                    target,
+                    json.dumps({
+                        "workflow": workflow,
+                        "client_org_id": client_org_id,
+                        "reason": (
+                            "admin advanced a BAA-gated workflow for an "
+                            "org with no active BAA — operator carve-out, "
+                            "logged for the sensitive_workflow_advanced_"
+                            "without_baa substrate invariant"
+                        ),
+                    }),
+                    request.client.host if request.client else None,
+                )
         except Exception:
             # No silent write failures (CLAUDE.md) — but an audit-log
-            # failure must NOT block a legitimate admin operation.
+            # failure must NOT block a legitimate admin operation. The
+            # savepoint above already rolled the failed INSERT back; the
+            # outer admin_transaction stays usable.
             logger.error(
                 "baa_enforcement_bypass audit-log write failed for "
                 "workflow=%s org=%s",
