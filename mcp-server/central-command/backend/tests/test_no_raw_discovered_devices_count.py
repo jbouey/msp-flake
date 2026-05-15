@@ -21,8 +21,11 @@ Ratchet semantics:
     inline marker (compliance_packet + device_sync as of Phase 1).
   - VIOLATIONS = SOURCE - EXEMPT_FILES - MIGRATED → must stay ≤ BASELINE_MAX.
 
-Pin: BASELINE_MAX = 22 today (Phase 2 readers to be migrated). Phase 2
-drives to 0.
+Pin: BASELINE_MAX = 0 (Phase 2 close-out 2026-05-15, Task #74).
+The 5 residual Phase-2-post readers were classified KEEP-RAW
+(write-path PK lookup OR per-appliance scan-target filter OR
+operator-only mesh debug) with inline `# canonical-migration:`
+markers placed within the 8-line marker-search window.
 """
 from __future__ import annotations
 
@@ -142,7 +145,9 @@ def test_raw_discovered_devices_count_under_baseline():
     """Count `FROM discovered_devices` occurrences across backend files
     NOT in EXEMPT_FILES and NOT preceded by the migration marker.
 
-    Frozen baseline = 17 (Phase 2 migration targets). Phase 2 drives to 0.
+    Frozen baseline = 0 (Phase 2 close-out 2026-05-15, Task #74). Any
+    future raw reader without an inline `# canonical-migration:`
+    marker (within the 8-line marker-search window) fails CI.
     """
     total = 0
     per_file: dict[str, int] = {}
