@@ -50,18 +50,28 @@ _BACKEND = pathlib.Path(__file__).resolve().parent.parent
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Frozen-baseline ratchet — Phase 0 captures today's count of inline
-# customer-facing metric computations. Drive-down decrements this
-# baseline one PR at a time via per-line `canonical-migration:` markers.
+# Frozen-baseline ratchet — counts inline customer-facing metric
+# computations classified as `migrate` in the canonical_metrics.py
+# allowlist. Drive-down decrements this baseline one PR at a time via
+# per-line `canonical-migration:` markers OR via reclassification
+# (`migrate` → `operator_only`/`write_path`) when a callsite turns out
+# to be a non-customer-facing read.
 #
-# Today (Phase 0 landing): 6 `migrate`-class entries in compliance_score
-# allowlist + 1 entry in baa_on_file = 7 known inline callsites pending
-# migration. We pin BASELINE_MAX at the union-of-allowlist-migrate-count
-# rather than re-scanning AST today — the source-grep happens during
-# Phase 3 drive-down where each migration drops the count.
+# Baseline composition (2026-05-15):
+#   - compliance_score: 6 migrate-class callsites (per-endpoint
+#     compute-then-emit paths pending delegation to compute_compliance_score)
+#   - baa_on_file: 1 migrate-class callsite
+#   - device_count_per_site: 19 migrate-class callsites
+#
+# Note: the raw-`FROM discovered_devices` ratchet (a SIBLING gate at
+# tests/test_no_raw_discovered_devices_count.py) is a DIFFERENT class
+# of callsite — it counts raw-SQL reads, not inline metric
+# computations. That sibling sits at BASELINE = 0 after #74 close-out;
+# this baseline tracks the INLINE-COMPUTATION subset which is still
+# Phase-3-drive-down territory.
 # ─────────────────────────────────────────────────────────────────────
 
-BASELINE_MAX = 26  # 6 compliance_score + 1 baa_on_file + 19 device_count_per_site (Task #73 Phase 1 — Phase 2 drives device_count to 0).
+BASELINE_MAX = 26  # 6 compliance_score + 1 baa_on_file + 19 device_count_per_site — Phase 3 drive-down pending (per-callsite delegation to canonical helpers).
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -84,10 +84,12 @@ _NOQA_PATTERN = re.compile(
 #     get_site_devices) — same-line noqa added; worklist-filter
 #     class matches existing background_tasks.py:1015 pattern.
 #   - device_sync.py:1328 (`/sites/{site_id}/device/{device_id}/
-#     compliance` endpoint) — SQL-string noqa with rationale:
-#     frontend-facing response field; live-compute migration via
-#     get_per_device_compliance requires response-shape coordination
-#     with frontend, carry-followup.
+#     compliance` endpoint) — STRUCTURALLY MIGRATED to live-compute
+#     via the same canonical aggregation rule as
+#     db_queries.get_per_device_compliance. The response's
+#     `compliance_status` field is derived inline from the `checks`
+#     rows fetched from device_compliance_details (the canonical
+#     source). No deprecated-column reader remains on this endpoint.
 #
 # Baseline 7 → 0. Any future reader without a noqa marker fails CI
 # hard. SQL-style `-- noqa:` and Python-style `# noqa:` both accepted.
