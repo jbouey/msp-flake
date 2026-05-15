@@ -939,7 +939,7 @@ async def _check_cross_org_relocate_chain_orphan(
         SELECT s.site_id,
                s.client_org_id::text AS current_org_id,
                s.prior_client_org_id::text AS prior_org_id
-          FROM sites s
+          FROM sites s  -- # noqa: synthetic-allowlisted — substrate engine MUST tick on synthetic site (Task #66 B1); rows segregate via substrate_violations.synthetic at INSERT time
          WHERE s.prior_client_org_id IS NOT NULL
         """
     )
@@ -1923,7 +1923,7 @@ async def _check_sensitive_workflow_advanced_without_baa(
                s.site_id AS site_id,
                s.site_id AS row_id,
                s.created_at AS advanced_at
-          FROM sites s
+          FROM sites s  -- # noqa: synthetic-allowlisted — substrate engine MUST tick on synthetic site (Task #66 B1); rows segregate via substrate_violations.synthetic at INSERT time
          WHERE s.created_at > NOW() - INTERVAL '30 days'
            AND s.client_org_id IS NOT NULL
         UNION ALL
@@ -6726,11 +6726,18 @@ async def run_assertions_once(pool) -> Dict[str, int]:
                     else:
                         try:
                             async with conn.transaction():
+                                # Task #66 B1: synthetic marker derived at
+                                # INSERT time from site_id pattern. NOT
+                                # threaded through the Violation dataclass —
+                                # the SQL itself is the source of truth so
+                                # callers can't forget to set it. mig 323
+                                # added the column NOT NULL DEFAULT FALSE.
                                 await conn.execute(
                                     """
                                     INSERT INTO substrate_violations
-                                          (invariant_name, severity, site_id, details)
-                                    VALUES ($1, $2, $3, $4::jsonb)
+                                          (invariant_name, severity, site_id, details, synthetic)
+                                    VALUES ($1, $2, $3, $4::jsonb,
+                                            $3 LIKE 'synthetic-%')
                                     """,
                                     a.name,
                                     a.severity,
