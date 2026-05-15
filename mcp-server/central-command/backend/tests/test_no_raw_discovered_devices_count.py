@@ -57,12 +57,21 @@ _MIGRATION_MARKER = "canonical-migration: device_count_per_site"
 # enumerating-and-migrating each. Phase 2 Batch 1 (partners.py × 4)
 # dropped 22 → 18 on 2026-05-13. Phase 2 Batch 2 close-out (Task #75,
 # sites.py pending_deploys hot-path carve-out) dropped 6 → 5 on 2026-05-14.
-BASELINE_MAX = 5
+# Phase 2 close-out (Task #74, 2026-05-15) classified all 5 residual readers
+# (client_portal.py:4888 + 4 sites.py readers) as KEEP-RAW: write-path PK
+# lookup OR per-appliance scan-target filter OR operator-only mesh debug.
+# Inline markers added to each within the 8-line marker-search window.
+# Baseline 5 → 0. Any future raw reader without a marker fails CI hard.
+BASELINE_MAX = 0
 
 
 def _raw_count_in_file(path: pathlib.Path) -> int:
     """Count `FROM discovered_devices` occurrences not preceded by a
-    migration marker within 5 lines above.
+    migration marker within 8 lines above. Window widened from 5 → 8
+    on 2026-05-15 (Task #74 Phase 2 close) to accommodate typical
+    SELECT column lists between the marker comment and the FROM
+    clause — a 5-column SELECT pushes a marker-above-fetch comment
+    7 lines above the FROM.
     """
     try:
         text = path.read_text(errors="ignore")
@@ -73,8 +82,8 @@ def _raw_count_in_file(path: pathlib.Path) -> int:
     for i, line in enumerate(lines):
         if "FROM discovered_devices" not in line:
             continue
-        # Look back 5 lines for the migration marker
-        window = lines[max(0, i - 5): i]
+        # Look back 8 lines for the migration marker
+        window = lines[max(0, i - 8): i]
         if any(_MIGRATION_MARKER in w for w in window):
             continue
         count += 1

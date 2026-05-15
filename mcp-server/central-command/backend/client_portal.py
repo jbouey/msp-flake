@@ -4873,16 +4873,13 @@ async def register_device(
     org_id = user["org_id"]
 
     async with org_connection(pool, org_id=org_id) as conn:
-        # Verify site + device belong to this org
-        # canonical-migration: device_count_per_site — Phase 2 SKIP (Task #74 Gate A v2)
-        # This is a write-path primary-key lookup: device_id is the
-        # discovered_devices.id (auto-increment, NOT canonical_id). The
-        # device-registration flow takes the raw discovered_devices row
-        # by its specific id (passed in URL) and writes site_credentials
-        # against it. Migrating to canonical_devices would change row
-        # identity semantics — the client UI POSTs against the specific
-        # discovered_devices.id; the canonical_id would be a different
-        # value. KEEP THE RAW READ + ratchet allowance.
+        # Verify site + device belong to this org.
+        # Rationale: write-path primary-key lookup. device_id is the
+        # discovered_devices.id (auto-increment); the device-
+        # registration flow POSTs against this specific row id and
+        # writes site_credentials against it. Migrating to
+        # canonical_devices would change row-identity semantics.
+        # canonical-migration: device_count_per_site — KEEP RAW (write-path PK lookup, Task #74 Gate A v2 SKIP)
         device = await conn.fetchrow("""
             SELECT id, ip_address, hostname, mac_address, device_status, probe_ssh, probe_winrm
             FROM discovered_devices

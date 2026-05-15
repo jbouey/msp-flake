@@ -1930,6 +1930,7 @@ async def get_mesh_scan_assignments(site_id: str, user: dict = Depends(require_a
     pool = await get_pool()
 
     async with tenant_connection(pool, site_id=site_id) as conn:
+        # canonical-migration: device_count_per_site — KEEP RAW (operator-only mesh-debug; owner_appliance_id is per-appliance audit trail, not the customer-facing count, Task #74 Gate A v2 SKIP)
         rows = await conn.fetch("""
             SELECT dd.ip_address, dd.hostname, dd.os_name,
                    dd.owner_appliance_id,
@@ -5140,6 +5141,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         owned_ips = set()
         discovered_ips = set()
         try:
+            # canonical-migration: device_count_per_site — KEEP RAW (per-appliance scan-target filter on owner_appliance_id; not a customer-facing count, Task #74 Gate A v2 SKIP)
             # Prefer ownership-based filter (migration 114+)
             own_rows = await conn.fetch("""
                 SELECT DISTINCT ip_address FROM discovered_devices
@@ -5149,6 +5151,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         except Exception:
             pass  # owner_appliance_id column may not exist yet
         if not owned_ips:
+            # canonical-migration: device_count_per_site — KEEP RAW (per-appliance fallback scan-target filter on appliance_id, Task #74 Gate A v2 SKIP)
             # Fallback: all devices this appliance discovered
             try:
                 disc_rows = await conn.fetch("""
@@ -5167,6 +5170,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
         # using discovery data so the daemon gets reachable targets.
         hostname_to_ip = {}
         try:
+            # canonical-migration: device_count_per_site — KEEP RAW (per-appliance hostname→IP lookup for credential delivery; not a count, Task #74 Gate A v2 SKIP)
             hn_rows = await conn.fetch("""
                 SELECT DISTINCT hostname, ip_address FROM discovered_devices
                 WHERE appliance_id = $1 AND hostname IS NOT NULL AND hostname != ''
