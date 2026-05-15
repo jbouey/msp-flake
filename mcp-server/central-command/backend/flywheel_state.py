@@ -526,7 +526,7 @@ class ZombieSiteTransition(Transition):
         rows = await conn.fetch(
             """
             SELECT pr.rule_id, pr.lifecycle_state, pr.site_id,
-                   (SELECT MAX(last_checkin) FROM site_appliances sa
+                   (SELECT MAX(last_checkin) FROM site_appliances sa  -- noqa: site-appliances-deleted-include — flywheel last-site-checkin probe; if all live appliances are soft-deleted, MAX(last_checkin) of the deleted rows is the best "site signal-of-life" available for the rollout decision
                     WHERE sa.site_id = pr.site_id) AS last_site_checkin
             FROM promoted_rules pr
             WHERE pr.lifecycle_state IN (

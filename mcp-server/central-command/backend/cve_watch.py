@@ -795,7 +795,7 @@ async def _match_cves_to_fleet(pool) -> int:
     # Get all online appliances
     appliances = await pool.fetch("""
         SELECT appliance_id, site_id, agent_version, nixos_version
-        FROM site_appliances
+        FROM site_appliances  -- noqa: site-appliances-deleted-include — CVE-fleet matcher already filters status='online'; soft-deleted rows have status != 'online' so the WHERE clause naturally excludes them
         WHERE status = 'online'
     """)
 

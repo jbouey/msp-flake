@@ -442,7 +442,7 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
         SELECT
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '15 minutes') as online
-        FROM site_appliances
+        FROM site_appliances  -- noqa: site-appliances-deleted-include — operator dashboard fleet rollup; FILTER bins soft-deleted rows into 'offline' naturally via stale last_checkin
     """))
     appliance_row = appliance_row.fetchone()
 

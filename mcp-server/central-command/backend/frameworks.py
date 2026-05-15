@@ -259,7 +259,7 @@ async def get_compliance_scores(
 
     # Resolve site_id once for the data-completeness query.
     site_q = await db.execute(
-        text("SELECT site_id FROM site_appliances WHERE appliance_id = :aid LIMIT 1"),
+        text("SELECT site_id FROM site_appliances WHERE appliance_id = :aid LIMIT 1"),  # noqa: site-appliances-deleted-include — natural-key resolution path (appliance_id → site_id); matches the rename-site-gate provisioning pattern, soft-deleted rows still resolve to their site
         {"aid": appliance_id},
     )
     site_row = site_q.fetchone()

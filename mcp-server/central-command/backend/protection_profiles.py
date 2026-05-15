@@ -469,7 +469,7 @@ async def trigger_discovery(
 
         # Find appliance for this site
         appliance = await conn.fetchrow("""
-            SELECT appliance_id FROM site_appliances
+            SELECT appliance_id FROM site_appliances  -- noqa: site-appliances-deleted-include — protection-profile assignment fallback; one-appliance-per-site customers may have only a soft-deleted appliance row, profile assignment still belongs to their site
             WHERE site_id = $1
             ORDER BY last_checkin DESC NULLS LAST
             LIMIT 1

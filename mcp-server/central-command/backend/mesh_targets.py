@@ -2,7 +2,8 @@
 Mesh target assignment + ACK API (#M3).
 
 Background: hash_ring.py historically computed target assignments purely
-from site_appliances. When site_appliances was lying about liveness (the
+from the appliances table. When the appliances table was lying about
+liveness (the
 Session 206 bug), targets got assigned to phantom appliances and
 silently never executed.
 

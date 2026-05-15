@@ -735,7 +735,7 @@ async def report_incident(
     appliance_id = str(appliance[0])
 
     canonical_result = await db.execute(
-        text("SELECT appliance_id FROM site_appliances WHERE site_id = :site_id ORDER BY last_checkin DESC NULLS LAST LIMIT 1"),
+        text("SELECT appliance_id FROM site_appliances WHERE site_id = :site_id ORDER BY last_checkin DESC NULLS LAST LIMIT 1"),  # noqa: site-appliances-deleted-include — incident-context canonical-appliance fallback; one-appliance-per-site customers may have only a soft-deleted row, the incident still belongs to them
         {"site_id": incident.site_id}
     )
     canonical_row = canonical_result.fetchone()
@@ -3064,7 +3064,7 @@ async def appliances_checkin(
         # Auto-generate iterative display_name for appliances sharing the same hostname
         existing = await db.execute(text("""
             SELECT appliance_id, display_name, hostname
-            FROM site_appliances
+            FROM site_appliances  -- noqa: site-appliances-deleted-include — display-name iteration; soft-deleted hostnames still count to avoid collisions if operator re-adds an appliance with the same hostname
             WHERE site_id = :site_id
             ORDER BY first_checkin, appliance_id
         """), {"site_id": req.site_id})

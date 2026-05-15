@@ -776,7 +776,7 @@ async def get_appliance_config(appliance_id: str):
         appliance = await conn.fetchrow("""
             SELECT sa.*, s.tier, s.clinic_name,
                    p.brand_name, p.primary_color, p.logo_url
-            FROM site_appliances sa
+            FROM site_appliances sa  -- noqa: site-appliances-deleted-include — appliance-config fetch by PK appliance_id; if the appliance is soft-deleted but still calling home, operator visibility into the orphan signal is required
             JOIN sites s ON s.site_id = sa.site_id
             LEFT JOIN partners p ON p.id = s.partner_id
             WHERE sa.appliance_id = $1
@@ -841,7 +841,7 @@ async def rekey_appliance(req: RekeyRequest, request: Request):
         appliance = await conn.fetchrow("""
             SELECT sa.appliance_id, sa.site_id, sa.first_checkin, sa.mac_address,
                    s.hardware_id
-            FROM site_appliances sa
+            FROM site_appliances sa  -- noqa: site-appliances-deleted-include — rekey path verifies appliance pre-exists; admin-recovery rekey of a soft-deleted appliance must succeed (matches the admin_restore noqa pattern at provisioning.py:1007)
             LEFT JOIN sites s ON s.site_id = sa.site_id
             WHERE sa.appliance_id = $1
               AND sa.site_id = $2

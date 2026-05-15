@@ -85,7 +85,24 @@ BACKEND_DIR = REPO_ROOT / "mcp-server" / "central-command" / "backend"
 # Also extended _NOQA_PATTERN to accept SQL-string `-- noqa:` style
 # in addition to Python `# noqa:` (same convention as
 # test_compliance_status_not_read.py). 81 → 56.
-BASELINE_MAX = 56
+# 2026-05-15 (continued, same session) — pushed further to 41:
+#   - evidence_chain.py 4→0 (bundle-signature verify, legacy migration
+#     fallback, 2 auditor-kit chain reads — all "include all by design"
+#     for historical-bundle verifiability).
+#   - provisioning.py 3→0 (admin-recovery rekey + appliance-config fetch
+#     + the 3rd was already marked at :1007 but outside window —
+#     bumped `_DELETED_AT_WINDOW_LINES` 6 → 8 so 8-line-back search
+#     catches the original marker).
+#   - agent_api.py 2→0 (canonical-appliance incident fallback + display-
+#     name iteration; both "include all" classes).
+#   - 6 singletons: flywheel_state, mesh_targets (docstring reword),
+#     frameworks, cve_watch (status='online' already excludes
+#     soft-deleted), db_queries, protection_profiles. 56 → 41.
+# Remaining 41 hits clustered in: sites.py:23 / routes.py:13 /
+# health_monitor.py:5. These need careful per-callsite classification
+# (customer-facing endpoints + operator-alert noise-suppression
+# behavioral change) — deferred to a dedicated drive-down session.
+BASELINE_MAX = 41
 
 _FROM_PATTERN = re.compile(r"\bFROM\s+site_appliances\b", re.IGNORECASE)
 _NOQA_PATTERN = re.compile(
@@ -97,7 +114,7 @@ _NOQA_PATTERN = re.compile(
     r"(?:--|#)\s*(?:#\s*)?noqa:\s*site-appliances-deleted-include",
     re.IGNORECASE,
 )
-_DELETED_AT_WINDOW_LINES = 6
+_DELETED_AT_WINDOW_LINES = 8  # 2026-05-15: bumped 6 → 8 to accommodate longer SELECT column lists between marker/filter and the FROM (same window-size as test_no_raw_discovered_devices_count.py)
 
 
 def _scan_unfiltered() -> list[str]:

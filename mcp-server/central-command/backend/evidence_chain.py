@@ -1090,7 +1090,7 @@ async def submit_evidence(
     if bundle.agent_public_key and len(bundle.agent_public_key) == 64:
         appliance_result = await db.execute(text("""
             SELECT appliance_id, agent_public_key
-            FROM site_appliances
+            FROM site_appliances  -- noqa: site-appliances-deleted-include — bundle-signature verification by pubkey; soft-deleted appliances with old keys remain legitimate signers of historical bundles, must be discoverable for accept-counter + heartbeat path
             WHERE site_id = :site_id AND agent_public_key = :key
             LIMIT 1
         """), {"site_id": site_id, "key": bundle.agent_public_key})
@@ -1212,7 +1212,7 @@ async def submit_evidence(
                         WHERE site_id = :site_id
                           AND agent_public_key IS NULL
                           AND appliance_id = (
-                            SELECT appliance_id FROM site_appliances
+                            SELECT appliance_id FROM site_appliances  -- noqa: site-appliances-deleted-include — legacy bundle.appliance_id IS NULL migration fallback; for one-appliance-per-site customers the soft-deleted appliance may be the only signer
                             WHERE site_id = :site_id
                             ORDER BY last_checkin DESC NULLS LAST LIMIT 1
                           )
@@ -2406,7 +2406,7 @@ async def get_site_public_keys(
             agent_public_key,
             first_checkin,
             last_checkin
-        FROM site_appliances
+        FROM site_appliances  -- noqa: site-appliances-deleted-include — auditor-kit identity chain MUST include decommissioned appliances; historical bundles signed by since-deleted appliances must remain verifiable forever
         WHERE site_id = :site_id
           AND agent_public_key IS NOT NULL
         ORDER BY first_checkin ASC
@@ -4430,7 +4430,7 @@ async def download_auditor_kit(
     pk_rows = (await db.execute(text("""
         SELECT appliance_id, display_name, hostname, agent_public_key,
                first_checkin, last_checkin
-        FROM site_appliances
+        FROM site_appliances  -- noqa: site-appliances-deleted-include — auditor-kit per-appliance pubkeys map MUST include decommissioned appliances for historical bundle verifiability (same rule as audit_package.py)
         WHERE site_id = :sid AND agent_public_key IS NOT NULL
         ORDER BY first_checkin ASC
     """), {"sid": site_id})).fetchall()
