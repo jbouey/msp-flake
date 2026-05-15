@@ -123,7 +123,7 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
     try:
         async with admin_transaction(pool) as conn:
             rows = await conn.fetch(
-                "SELECT last_checkin FROM site_appliances"
+                "SELECT last_checkin FROM site_appliances"  # noqa: site-appliances-deleted-include — operator-only Prometheus fleet gauge; needs all rows including soft-deleted (which bin into 'offline' via stale last_checkin)
             )
         counts = {"online": 0, "stale": 0, "offline": 0}
         for row in rows:
@@ -503,7 +503,7 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
         one_hour_ago = now - timedelta(hours=1)
         async with admin_transaction(pool) as conn:
             row = await conn.fetchrow(
-                "SELECT COUNT(*) AS cnt FROM site_appliances "
+                "SELECT COUNT(*) AS cnt FROM site_appliances "  # noqa: site-appliances-deleted-include — operator-only Prometheus checkin-rate gauge; time-window WHERE filter implicitly excludes stale-checkin soft-deleted rows
                 "WHERE last_checkin >= $1",
                 one_hour_ago,
             )
@@ -884,7 +884,7 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                             THEN (daemon_health->>'mesh_peer_count')::int
                             ELSE NULL END
                     ) as avg_peer_count
-                FROM site_appliances
+                FROM site_appliances  -- noqa: site-appliances-deleted-include — operator-only mesh-health gauge; 10-minute last_checkin filter implicitly excludes soft-deleted rows
                 WHERE last_checkin > NOW() - INTERVAL '10 minutes'
                 GROUP BY site_id
                 HAVING COUNT(*) > 1
@@ -919,7 +919,7 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                     SELECT site_id,
                            COUNT(*) FILTER (WHERE last_checkin > NOW() - INTERVAL '5 minutes') as online,
                            AVG((daemon_health->>'mesh_ring_size')::int) as ring
-                    FROM site_appliances
+                    FROM site_appliances  -- noqa: site-appliances-deleted-include — operator-only mesh-drift gauge; 10-minute last_checkin filter implicitly excludes soft-deleted rows
                     WHERE last_checkin > NOW() - INTERVAL '10 minutes'
                       AND daemon_health IS NOT NULL
                     GROUP BY site_id
@@ -941,7 +941,7 @@ async def prometheus_metrics(auth: dict = Depends(require_scrape_or_admin)):
                     WITH all_targets AS (
                         SELECT site_id,
                                jsonb_array_elements_text(assigned_targets) as target
-                        FROM site_appliances
+                        FROM site_appliances  -- noqa: site-appliances-deleted-include — operator-only mesh-coverage gauge; 10-minute last_checkin filter implicitly excludes soft-deleted rows
                         WHERE assigned_targets IS NOT NULL
                           AND last_checkin > NOW() - INTERVAL '10 minutes'
                     )

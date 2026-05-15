@@ -414,7 +414,13 @@ async def _query_fleet_metrics(
     conn,
     site_filter: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Query fleet connectivity metrics from site_appliances."""
+    """Query operator-only fleet connectivity metrics.
+
+    Soft-deleted rows are intentionally included so 'max_offline_minutes'
+    can surface decommissioned appliances that are still calling home
+    out-of-band (orphan-recovery signal). Counted in 'total' but
+    contribute to 'offline' bucket via stale last_checkin.
+    """
     where = ""
     args: list = []
     if site_filter:
@@ -432,7 +438,7 @@ async def _query_fleet_metrics(
                     WHERE last_checkin <= NOW() - INTERVAL '15 minutes'
                 )
             )) / 60.0 AS max_offline_minutes
-        FROM site_appliances
+        FROM site_appliances  -- noqa: site-appliances-deleted-include — operator-only fleet rollup; soft-deleted included to detect decommissioned-but-still-checking-in appliances
         {where}
     """, *args)
 

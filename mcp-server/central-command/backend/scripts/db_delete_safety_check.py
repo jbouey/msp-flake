@@ -3,9 +3,9 @@
 tables.
 
 Session 210-B 2026-04-25 hardening #4. Today's orphan appliance bug
-(`84:3A:5B:91:B6:61`) was caused by a manual `DELETE FROM
-site_appliances WHERE appliance_id='...'` that took out a row WITHOUT
-considering that:
+(`84:3A:5B:91:B6:61`) was caused by a manual `DELETE` on the
+`site_appliances` table for `appliance_id='...'` that took out a
+row WITHOUT considering that:
 
   - api_keys for the appliance stayed in the table
   - the daemon was alive and continued calling /api/appliances/checkin
@@ -79,28 +79,28 @@ IMPACT_MAPS: Dict[str, List[Tuple[str, str]]] = {
                    COUNT(*) FILTER (WHERE status NOT IN ('resolved','closed')) AS unresolved
               FROM incidents
              WHERE site_id = (
-                 SELECT site_id FROM site_appliances WHERE appliance_id = $1
+                 SELECT site_id FROM site_appliances WHERE appliance_id = $1  -- noqa: site-appliances-deleted-include — pre-DELETE forensic impact analysis MUST see all rows including soft-deleted
              )
         """),
         ("install_sessions", """
             SELECT COUNT(*) AS n
               FROM install_sessions
              WHERE mac_address = (
-                 SELECT mac_address FROM site_appliances WHERE appliance_id = $1
+                 SELECT mac_address FROM site_appliances WHERE appliance_id = $1  -- noqa: site-appliances-deleted-include — pre-DELETE forensic mac lookup, must include soft-deleted
              )
         """),
         ("discovered_devices", """
             SELECT COUNT(*) AS n
               FROM discovered_devices
              WHERE LOWER(mac_address) = (
-                 SELECT LOWER(mac_address) FROM site_appliances WHERE appliance_id = $1
+                 SELECT LOWER(mac_address) FROM site_appliances WHERE appliance_id = $1  -- noqa: site-appliances-deleted-include — pre-DELETE forensic case-fold mac, must include soft-deleted
              )
         """),
         ("fleet_orders_pending", """
             SELECT COUNT(*) AS n
               FROM fleet_orders
              WHERE site_id = (
-                 SELECT site_id FROM site_appliances WHERE appliance_id = $1
+                 SELECT site_id FROM site_appliances WHERE appliance_id = $1  -- noqa: site-appliances-deleted-include — pre-DELETE forensic impact analysis MUST see all rows including soft-deleted
              )
                AND status IN ('pending', 'active')
         """),
@@ -109,7 +109,7 @@ IMPACT_MAPS: Dict[str, List[Tuple[str, str]]] = {
         ("site_appliances", """
             SELECT COUNT(*) AS n,
                    COUNT(*) FILTER (WHERE deleted_at IS NULL) AS active
-              FROM site_appliances WHERE site_id = $1
+              FROM site_appliances WHERE site_id = $1  -- noqa: site-appliances-deleted-include — forensic count by status (FILTER projects both deleted and active counts)
         """),
         ("api_keys", """
             SELECT COUNT(*) AS n,
@@ -132,7 +132,7 @@ IMPACT_MAPS: Dict[str, List[Tuple[str, str]]] = {
                 sa.appliance_id,
                 sa.last_checkin,
                 EXTRACT(EPOCH FROM (NOW() - sa.last_checkin))/60 AS minutes_silent
-              FROM site_appliances sa
+              FROM site_appliances sa  -- noqa: site-appliances-deleted-include — pre-DELETE forensic alive-check; need to know if the orphaned-by-delete appliance is still calling home
              WHERE sa.appliance_id = (
                  SELECT appliance_id FROM api_keys WHERE id = $1
              )

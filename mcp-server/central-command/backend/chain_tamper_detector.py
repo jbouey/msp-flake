@@ -126,7 +126,7 @@ async def chain_tamper_detector_loop():
                 site_rows = await conn.fetch(
                     """
                     SELECT DISTINCT site_id
-                    FROM site_appliances
+                    FROM site_appliances  -- noqa: site-appliances-deleted-include — forensic tamper-detector walks all sites with recent appliance presence; 24h window implicitly excludes long-soft-deleted via stale last_checkin
                     WHERE last_checkin > NOW() - INTERVAL '24 hours'
                     """
                 )

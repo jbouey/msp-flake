@@ -30,10 +30,10 @@ async def _create_update_orders_for_appliances(conn, rollout_id: UUID, stage: in
     This is the key function that triggers actual updates by creating orders
     that appliances will fetch during their next check-in cycle.
 
-    Orders are created for every appliance in site_appliances that belongs to
-    a site with an appliance in this rollout stage. The appliance_id used is
-    the canonical format from site_appliances (site-MAC with colons), which
-    matches how appliances identify themselves during checkin.
+    Orders are created for every appliance in the appliances table that
+    belongs to a site with an appliance in this rollout stage. The
+    appliance_id used is the canonical format (site-MAC with colons),
+    which matches how appliances identify themselves during checkin.
     """
     import uuid
 
@@ -103,7 +103,7 @@ async def _create_update_orders_for_appliances(conn, rollout_id: UUID, stage: in
                 ON CONFLICT DO NOTHING
                 """,
                 order_id,
-                app["appliance_id"],  # canonical format from site_appliances
+                app["appliance_id"],  # canonical format (site-MAC with colons)
                 app["site_id"],
                 json.dumps(parameters),
                 now,
@@ -1098,13 +1098,13 @@ async def create_fleet_order(order: FleetOrderCreate, user: dict = Depends(requi
 
         # Count how many appliances will receive vs skip
         if order.skip_version:
-            total = await conn.fetchval("SELECT COUNT(*) FROM site_appliances")
+            total = await conn.fetchval("SELECT COUNT(*) FROM site_appliances")  # noqa: site-appliances-deleted-include — admin fleet-order target count; intentionally includes all rows (operator decides scope, soft-deleted rows are filtered downstream by daemon-side checkin)
             will_skip = await conn.fetchval(
-                "SELECT COUNT(*) FROM site_appliances WHERE agent_version = $1",
+                "SELECT COUNT(*) FROM site_appliances WHERE agent_version = $1",  # noqa: site-appliances-deleted-include — admin fleet-order will-skip count; matches the total above (inclusive scope)
                 order.skip_version
             )
         else:
-            total = await conn.fetchval("SELECT COUNT(*) FROM site_appliances")
+            total = await conn.fetchval("SELECT COUNT(*) FROM site_appliances")  # noqa: site-appliances-deleted-include — admin fleet-order target count; intentionally includes all rows
             will_skip = 0
 
         logger.info(
@@ -1150,7 +1150,7 @@ async def list_fleet_orders(
             LIMIT $2
         """, status, limit)
 
-        total_appliances = await conn.fetchval("SELECT COUNT(*) FROM site_appliances")
+        total_appliances = await conn.fetchval("SELECT COUNT(*) FROM site_appliances")  # noqa: site-appliances-deleted-include — admin fleet-order rollup; total includes all (delivered_count is the partial)
 
         return [{
             "id": str(r["id"]),
@@ -1207,7 +1207,7 @@ async def get_fleet_order_delivery(order_id: str, user: dict = Depends(require_a
         """, UUID(order_id))
 
         total_appliances = await conn.fetchval(
-            "SELECT COUNT(*) FROM site_appliances WHERE last_checkin > NOW() - INTERVAL '24 hours'"
+            "SELECT COUNT(*) FROM site_appliances WHERE last_checkin > NOW() - INTERVAL '24 hours'"  # noqa: site-appliances-deleted-include — admin fleet-order detail; 24h checkin window already implicitly filters soft-deleted (stale-checkin) rows
         )
 
         return {
@@ -1242,7 +1242,7 @@ async def get_dead_letter_orders(limit: int = Query(default=50, ge=1), user: dic
             SELECT fo.id, fo.order_type, fo.parameters, fo.status,
                    fo.created_at, fo.expires_at, fo.created_by,
                    COUNT(fc.appliance_id) as delivered_count,
-                   (SELECT COUNT(*) FROM site_appliances
+                   (SELECT COUNT(*) FROM site_appliances  -- noqa: site-appliances-deleted-include — admin dead-letter rollup; target_count is the snapshot at fleet-order creation, intentionally includes all rows checking in at that point
                     WHERE last_checkin > fo.created_at) as target_count
             FROM fleet_orders fo
             LEFT JOIN fleet_order_completions fc ON fc.fleet_order_id = fo.id
@@ -1250,7 +1250,7 @@ async def get_dead_letter_orders(limit: int = Query(default=50, ge=1), user: dic
             AND fo.status IN ('active', 'expired')
             GROUP BY fo.id
             HAVING COUNT(fc.appliance_id) < (
-                SELECT COUNT(*) FROM site_appliances
+                SELECT COUNT(*) FROM site_appliances  -- noqa: site-appliances-deleted-include — admin dead-letter HAVING filter; matches the target_count subquery above (snapshot at fleet-order creation, inclusive scope)
                 WHERE last_checkin > fo.created_at
             )
             ORDER BY fo.expires_at DESC

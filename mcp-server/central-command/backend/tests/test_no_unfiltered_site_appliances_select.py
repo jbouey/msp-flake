@@ -72,11 +72,30 @@ BACKEND_DIR = REPO_ROOT / "mcp-server" / "central-command" / "backend"
 # 2026-05-11 Session 219 Commit 2 zero-auth hardening filtered 2
 # provisioning.py queries (status UPDATE + heartbeat MAC lookup) +
 # added noqa to cross-site forensic 403 audit lookup. 83 → 81.
-BASELINE_MAX = 81
+# 2026-05-15 Task #74 follow-up operator/forensic marker sweep:
+# db_delete_safety_check.py (5 inline `-- noqa:` SQL-string markers +
+# 1 docstring reword), prometheus_metrics.py (5 operator-metric
+# markers across fleet-checkin / mesh-health / mesh-drift / mesh-
+# coverage gauges), retention_verifier.py (retention-window walk),
+# chain_tamper_detector.py (forensic site walk), audit_package.py
+# (auditor-kit pubkey map MUST include decommissioned appliances
+# for historical evidence verifiability), ops_health.py (operator-
+# rollup docstring reword + marker), fleet_updates.py (admin
+# fleet-order target/dead-letter rollups + 2 docstring rewords).
+# Also extended _NOQA_PATTERN to accept SQL-string `-- noqa:` style
+# in addition to Python `# noqa:` (same convention as
+# test_compliance_status_not_read.py). 81 → 56.
+BASELINE_MAX = 56
 
 _FROM_PATTERN = re.compile(r"\bFROM\s+site_appliances\b", re.IGNORECASE)
 _NOQA_PATTERN = re.compile(
-    r"#\s*noqa:\s*site-appliances-deleted-include", re.IGNORECASE
+    # Accept both Python-style (`# noqa:`) and SQL-string-style
+    # (`-- noqa:`) markers. SQL-style is valid here because the noqa
+    # often sits inside a triple-quoted SQL string where Python `#`
+    # is invalid SQL syntax in strict mode. Same convention as
+    # test_compliance_status_not_read.py.
+    r"(?:--|#)\s*(?:#\s*)?noqa:\s*site-appliances-deleted-include",
+    re.IGNORECASE,
 )
 _DELETED_AT_WINDOW_LINES = 6
 

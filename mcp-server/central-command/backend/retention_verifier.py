@@ -166,7 +166,7 @@ async def retention_verifier_loop():
                 site_rows = await conn.fetch(
                     """
                     SELECT DISTINCT site_id
-                    FROM site_appliances
+                    FROM site_appliances  -- noqa: site-appliances-deleted-include — retention sweep; soft-deleted appliances still count as 'site present in retention window' for evidence-retention verification
                     WHERE last_checkin > NOW() - INTERVAL '90 days'
                     """
                 )

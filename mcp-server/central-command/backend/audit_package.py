@@ -203,7 +203,7 @@ class AuditPackage:
         rows = await conn.fetch(
             """
             SELECT appliance_id, agent_public_key
-            FROM site_appliances
+            FROM site_appliances  -- noqa: site-appliances-deleted-include — auditor-kit pubkey map MUST include soft-deleted appliances; historical evidence bundles signed by since-decommissioned appliances need their pubkeys to remain verifiable
             WHERE site_id = $1 AND agent_public_key IS NOT NULL
             """,
             self.site_id,
