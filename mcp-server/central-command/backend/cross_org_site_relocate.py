@@ -58,6 +58,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
 from .auth import require_admin
+from .baa_enforcement import enforce_or_log_admin_bypass
 from .chain_attestation import emit_privileged_attestation
 from .client_portal import _audit_client_action, get_client_user_from_session
 from .fleet import get_pool
@@ -633,9 +634,25 @@ async def initiate_cross_org_relocate(
         # Steve preconditions
         await _check_no_pending_owner_transfers(conn, source_org_id, body.target_org_id)
 
-        # BAA precondition checked at target-accept (we don't want to
-        # block initiate just because the BAA is a few hours away from
-        # being signed — but the flow can't complete without it).
+        # BAA enforcement (Task #52, Counsel Rule 6) — the SOURCE org
+        # must have an active formal BAA to advance a cross-org
+        # relocate. This endpoint is require_admin, so per the Gate A
+        # carve-out the admin is NOT blocked (the platform operator is
+        # not the Covered Entity) — but an admin advancing the workflow
+        # for a source org with no active BAA is audit-logged as a
+        # bypass so the sensitive_workflow_advanced_without_baa
+        # substrate invariant can tell an operator action from an
+        # un-gated code-path leak. (Distinct from the TARGET org's
+        # receipt-auth checked at target-accept — mig 283.)
+        await enforce_or_log_admin_bypass(
+            conn,
+            source_org_id,
+            "cross_org_relocate",
+            actor_user_id=user.get("id"),
+            actor_email=actor_email,
+            request=request,
+            target=f"site:{body.site_id}",
+        )
 
         # Per-source-org cooling-off + expiry
         prefs = await conn.fetchrow(

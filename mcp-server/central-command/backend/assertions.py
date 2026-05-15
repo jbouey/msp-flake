@@ -1840,6 +1840,106 @@ async def _check_heartbeat_write_divergence(conn: asyncpg.Connection) -> List[Vi
     return out
 
 
+async def _check_sensitive_workflow_advanced_without_baa(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev1 — a BAA-gated sensitive workflow ADVANCED in the last 30
+    days for a client_org with no active formal BAA (Task #52,
+    Counsel Rule 6; §164.504(e) — the BAA must be in place before the
+    BA performs services involving PHI).
+
+    List 3 of the BAA enforcement lockstep. The CI gate
+    (test_baa_gated_workflows_lockstep.py) catches an un-gated
+    endpoint at build time; THIS invariant is the runtime backstop —
+    it catches a code path that bypassed require_active_baa /
+    enforce_or_log_admin_bypass, OR an org whose BAA lapsed AFTER the
+    action advanced.
+
+    Scope: the two workflows with a DURABLE state-machine row —
+    `cross_org_relocate` (cross_org_site_relocate_requests) and
+    `owner_transfer` (client_org_owner_transfer_requests).
+    `evidence_export` is a transient point-in-time download with no
+    lingering state to assert against — it is gated inline only.
+
+    Admin carve-out: an admin-context advance writes a
+    `baa_enforcement_bypass` admin_audit_log row (enforce_or_log_
+    admin_bypass). Rows with a matching bypass entry are excluded —
+    they are legitimate operator actions, already audited.
+    """
+    try:
+        import baa_status
+    except ImportError:  # pragma: no cover — package-context fallback
+        from . import baa_status  # type: ignore
+
+    rows = await conn.fetch(
+        """
+        SELECT 'cross_org_relocate' AS workflow,
+               r.source_org_id::text AS org_id,
+               r.site_id AS site_id,
+               r.id::text AS row_id,
+               COALESCE(r.executed_at, r.source_release_at) AS advanced_at
+          FROM cross_org_site_relocate_requests r
+         WHERE COALESCE(r.executed_at, r.source_release_at)
+               > NOW() - INTERVAL '30 days'
+        UNION ALL
+        SELECT 'owner_transfer' AS workflow,
+               t.client_org_id::text AS org_id,
+               NULL AS site_id,
+               t.id::text AS row_id,
+               COALESCE(t.completed_at, t.current_ack_at) AS advanced_at
+          FROM client_org_owner_transfer_requests t
+         WHERE COALESCE(t.completed_at, t.current_ack_at)
+               > NOW() - INTERVAL '30 days'
+        """
+    )
+    violations: List[Violation] = []
+    # An org can appear on multiple rows — cache the predicate result.
+    ok_cache: Dict[str, bool] = {}
+    for row in rows:
+        org_id = row["org_id"]
+        if not org_id:
+            continue
+        if org_id not in ok_cache:
+            ok_cache[org_id] = await baa_status.baa_enforcement_ok(conn, org_id)
+        if ok_cache[org_id]:
+            continue
+        # No active BAA — was this a logged admin carve-out?
+        bypass = await conn.fetchval(
+            """
+            SELECT 1 FROM admin_audit_log
+             WHERE action = 'baa_enforcement_bypass'
+               AND details->>'workflow' = $1
+               AND details->>'client_org_id' = $2
+             LIMIT 1
+            """,
+            row["workflow"], org_id,
+        )
+        if bypass:
+            continue  # legitimate operator carve-out, already audited
+        violations.append(Violation(
+            site_id=row["site_id"],
+            details={
+                "workflow": row["workflow"],
+                "client_org_id": org_id,
+                "row_id": row["row_id"],
+                "advanced_at": (
+                    row["advanced_at"].isoformat()
+                    if row["advanced_at"] else None
+                ),
+                "interpretation": (
+                    f"workflow '{row['workflow']}' advanced for "
+                    f"client_org {org_id} which has NO active formal "
+                    f"BAA (baa_enforcement_ok=FALSE) and NO logged "
+                    f"admin carve-out — either a code path bypassed "
+                    f"require_active_baa/enforce_or_log_admin_bypass, "
+                    f"or the org's BAA lapsed after the action. "
+                    f"§164.504(e)."
+                ),
+            },
+        ))
+    return violations
+
+
 # Ordered list of registered assertions. Add new ones at the bottom.
 ALL_ASSERTIONS: List[Assertion] = [
     Assertion(
@@ -2316,6 +2416,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         severity="sev1",
         description="An appliance with a registered evidence-bundle public key has emitted ≥3 heartbeats in the last 15 minutes with `agent_signature IS NOT NULL` BUT `signature_valid IS NULL`. This is the verifier-crashed-silently class — backend tried to verify but hit an exception (e.g., ModuleNotFoundError on signature_auth import, missing pubkey row, decode failure) and stored NULL. Counsel Rule 4 PRIMARY (orphan-coverage — closes the gap that `daemon_heartbeat_unsigned` queries `agent_signature IS NULL` and `daemon_heartbeat_signature_invalid` queries `signature_valid IS NOT NULL`, so the NULL-despite-non-NULL-signature state silently slipped past both for ~13 days pre-fix 2026-05-13 adb7671a). Counsel Rule 3 SECONDARY — chain-of-custody for the signature chain. Sev1 because legitimate-but-unverified vs attacker-but-unverified are indistinguishable. Runbook: substrate_runbooks/daemon_heartbeat_signature_unverified.md.",
         check=lambda c: _check_daemon_heartbeat_signature_unverified(c),
+    ),
+    Assertion(
+        name="sensitive_workflow_advanced_without_baa",
+        severity="sev1",
+        description="A BAA-gated sensitive workflow (cross_org_relocate or owner_transfer) advanced in the last 30 days for a client_org with no active formal BAA (baa_status.baa_enforcement_ok=FALSE) and no logged admin carve-out. Task #52 (Counsel Rule 6 / §164.504(e)) — List 3 of the BAA-enforcement lockstep: the CI gate test_baa_gated_workflows_lockstep.py catches an un-gated endpoint at build time, this invariant is the runtime backstop for a code path that bypassed require_active_baa/enforce_or_log_admin_bypass OR an org whose BAA lapsed after the action. Admin-context advances write a baa_enforcement_bypass admin_audit_log row and are excluded. evidence_export is gated inline only (transient download — no durable state to assert). Runbook: substrate_runbooks/sensitive_workflow_advanced_without_baa.md.",
+        check=lambda c: _check_sensitive_workflow_advanced_without_baa(c),
     ),
 ]
 
@@ -3182,6 +3288,23 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "health for bg_loop_silent OR inspect ERROR logs for "
             "canonical_devices UPSERT failures. See "
             "substrate_runbooks/canonical_devices_freshness.md."
+        ),
+    },
+    "sensitive_workflow_advanced_without_baa": {
+        "display_name": "Sensitive workflow advanced without an active BAA",
+        "recommended_action": (
+            "A BAA-gated workflow (cross_org_relocate or owner_"
+            "transfer) advanced in the last 30 days for a client_org "
+            "with no active formal BAA and no logged admin carve-out. "
+            "Investigate: (1) confirm the org's BAA state via "
+            "baa_status.baa_signature_status() — if the BAA genuinely "
+            "lapsed AFTER the action, this is a real §164.504(e) gap; "
+            "(2) if the org never had a BAA, a code path bypassed "
+            "require_active_baa / enforce_or_log_admin_bypass — find "
+            "and gate it; (3) if it WAS a legitimate admin action, the "
+            "baa_enforcement_bypass audit row is missing — fix the "
+            "admin path to log it. See "
+            "substrate_runbooks/sensitive_workflow_advanced_without_baa.md."
         ),
     },
 }

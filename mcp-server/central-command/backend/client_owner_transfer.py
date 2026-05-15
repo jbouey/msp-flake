@@ -43,6 +43,7 @@ from .client_portal import (
     require_client_owner,
     require_client_user,
 )
+from .baa_enforcement import require_active_baa
 from .fleet import get_pool
 from .privileged_access_attestation import (
     PrivilegedAccessAttestationError,
@@ -357,7 +358,7 @@ async def _send_target_accept_email(
 async def initiate_owner_transfer(
     body: InitiateOwnerTransferRequest,
     request: Request,
-    user: dict = Depends(require_client_owner),
+    user: dict = require_active_baa("owner_transfer"),
 ) -> Dict[str, Any]:
     """Current owner initiates an ownership transfer.
 
@@ -529,7 +530,7 @@ async def ack_owner_transfer(
     transfer_id: str,
     body: AckOwnerTransferRequest,
     request: Request,
-    user: dict = Depends(require_client_owner),
+    user: dict = require_active_baa("owner_transfer"),
 ) -> Dict[str, Any]:
     """Current owner re-confirms the transfer. This unblocks the
     target-accept email send. Anti-accident friction: typed-literal

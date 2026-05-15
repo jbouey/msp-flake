@@ -4260,6 +4260,17 @@ async def download_auditor_kit(
     # per identity (admin user, client_user, partner_user, or the
     # legacy portal token's site identity).
     auth_method = (_auth or {}).get("method", "unknown")
+
+    # BAA enforcement (Task #52, Counsel Rule 6) — gate evidence_export
+    # for the two CE/partner branches; admin + legacy-token (external
+    # auditor) branches are carved out (the latter is §164.524-
+    # mandatory). Method-aware logic lives in the helper.
+    try:
+        from .baa_enforcement import check_baa_for_evidence_export
+    except ImportError:  # pragma: no cover — package-context fallback
+        from baa_enforcement import check_baa_for_evidence_export  # type: ignore
+    await check_baa_for_evidence_export(_auth, site_id)
+
     if auth_method == "admin":
         admin_user_id = (_auth or {}).get("user", {}).get("id") or "unknown"
         caller_key = f"admin:{admin_user_id}"
