@@ -146,9 +146,9 @@ async def get_fleet_overview(
     # Get site data with org info
     org_scope = user.get("org_scope")
     if org_scope:
-        where_clause = "WHERE s.status != 'inactive' AND s.client_org_id = ANY(:org_scope_ids)"
+        where_clause = "WHERE s.status != 'inactive' AND s.synthetic IS NOT TRUE AND s.client_org_id = ANY(:org_scope_ids)"
     else:
-        where_clause = "WHERE s.status != 'inactive'"
+        where_clause = "WHERE s.status != 'inactive' AND s.synthetic IS NOT TRUE"
     query_str = f"""
         SELECT
             s.site_id,
@@ -1554,6 +1554,7 @@ async def get_onboarding_pipeline(db: AsyncSession = Depends(get_db), user: dict
             scanning_at, baseline_at, active_at, created_at
         FROM sites
         WHERE onboarding_stage NOT IN ('active', 'compliant')
+          AND synthetic IS NOT TRUE
         ORDER BY created_at DESC
     """)
 
@@ -1634,7 +1635,10 @@ async def get_onboarding_metrics(db: AsyncSession = Depends(get_db), user: dict 
     """
     # Count sites by onboarding stage
     result = await execute_with_retry(db,text("""
-        SELECT onboarding_stage, COUNT(*) as count FROM sites GROUP BY onboarding_stage
+        SELECT onboarding_stage, COUNT(*) as count
+        FROM sites
+        WHERE synthetic IS NOT TRUE
+        GROUP BY onboarding_stage
     """))
     stage_counts = {row.onboarding_stage: row.count for row in result.fetchall()}
 
@@ -1662,13 +1666,17 @@ async def get_onboarding_metrics(db: AsyncSession = Depends(get_db), user: dict 
     # Calculate real metrics from sites table
     ship_result = await execute_with_retry(db,text("""
         SELECT AVG(EXTRACT(EPOCH FROM (shipped_at - lead_at)) / 86400.0)
-        FROM sites WHERE shipped_at IS NOT NULL AND lead_at IS NOT NULL
+        FROM sites
+        WHERE shipped_at IS NOT NULL AND lead_at IS NOT NULL
+          AND synthetic IS NOT TRUE
     """))
     avg_ship = round(ship_result.scalar() or 0.0, 1)
 
     active_result = await execute_with_retry(db,text("""
         SELECT AVG(EXTRACT(EPOCH FROM (active_at - lead_at)) / 86400.0)
-        FROM sites WHERE active_at IS NOT NULL AND lead_at IS NOT NULL
+        FROM sites
+        WHERE active_at IS NOT NULL AND lead_at IS NOT NULL
+          AND synthetic IS NOT TRUE
     """))
     avg_active = round(active_result.scalar() or 0.0, 1)
 
@@ -1676,6 +1684,7 @@ async def get_onboarding_metrics(db: AsyncSession = Depends(get_db), user: dict 
         SELECT COUNT(*) FROM sites
         WHERE onboarding_stage NOT IN ('active', 'compliant')
         AND created_at < NOW() - INTERVAL '14 days'
+        AND synthetic IS NOT TRUE
     """))
     stalled = stalled_result.scalar() or 0
 
@@ -1684,6 +1693,7 @@ async def get_onboarding_metrics(db: AsyncSession = Depends(get_db), user: dict 
         WHERE onboarding_stage = 'connectivity'
         AND connectivity_at IS NOT NULL
         AND connectivity_at < NOW() - INTERVAL '3 days'
+        AND synthetic IS NOT TRUE
     """))
     conn_issues = conn_result.scalar() or 0
 
@@ -2676,7 +2686,7 @@ async def get_consent_rollout_dashboard(
     # admin_transaction (Session 212): 6 admin reads in sequence.
     async with admin_transaction(pool) as conn:
         total_active_sites = await conn.fetchval(
-            "SELECT COUNT(*) FROM sites WHERE status != 'inactive'"
+            "SELECT COUNT(*) FROM sites WHERE status != 'inactive' AND synthetic IS NOT TRUE"
         ) or 0
 
         class_rows = await conn.fetch("""
@@ -3258,13 +3268,14 @@ async def get_stats_deltas(db: AsyncSession = Depends(get_db), user: dict = Depe
         l1_rate_delta = round(l1_rate_now - l1_rate_prev, 1)
 
         # --- Client count delta ---
-        sites_now = await execute_with_retry(db,text("SELECT COUNT(*) as cnt FROM sites"))
+        sites_now = await execute_with_retry(db,text("SELECT COUNT(*) as cnt FROM sites WHERE synthetic IS NOT TRUE"))
         sn = sites_now.fetchone()
 
         # Sites that existed 7 days ago (created_at <= 7 days ago)
         sites_prev = await execute_with_retry(db,text("""
             SELECT COUNT(*) as cnt FROM sites
             WHERE created_at <= NOW() - INTERVAL '7 days'
+              AND synthetic IS NOT TRUE
         """))
         sp = sites_prev.fetchone()
         clients_delta = (sn.cnt or 0) - (sp.cnt or 0)
@@ -3300,6 +3311,7 @@ async def get_fleet_posture(db: AsyncSession = Depends(get_db), user: dict = Dep
                     MAX(sa.last_checkin) as last_checkin
                 FROM sites s
                 LEFT JOIN site_appliances sa ON sa.site_id = s.site_id
+                WHERE s.synthetic IS NOT TRUE
                 GROUP BY s.site_id, s.clinic_name
             ),
             site_incidents AS (

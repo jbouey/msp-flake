@@ -3658,7 +3658,7 @@ async def list_partners(
         """)
 
         total_sites_row = await conn.fetchrow(
-            "SELECT COUNT(*) as total FROM sites WHERE partner_id IS NOT NULL"
+            "SELECT COUNT(*) as total FROM sites WHERE partner_id IS NOT NULL AND synthetic IS NOT TRUE"
         )
 
         # Fetch page with site counts joined
@@ -3673,6 +3673,7 @@ async def list_partners(
                 SELECT partner_id, COUNT(*) as cnt
                 FROM sites
                 WHERE partner_id IS NOT NULL
+                  AND synthetic IS NOT TRUE
                 GROUP BY partner_id
             ) sc ON sc.partner_id = p.id
             {where}

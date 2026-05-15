@@ -435,7 +435,7 @@ async def get_global_stats_from_db(db: AsyncSession) -> Dict[str, Any]:
 
     # NOTE: Queries run sequentially - SQLAlchemy AsyncSession does not
     # support concurrent operations on the same session.
-    site_row = await db.execute(text("SELECT COUNT(*) as total FROM sites"))
+    site_row = await db.execute(text("SELECT COUNT(*) as total FROM sites WHERE synthetic IS NOT TRUE"))
     site_row = site_row.fetchone()
 
     appliance_row = await db.execute(text("""

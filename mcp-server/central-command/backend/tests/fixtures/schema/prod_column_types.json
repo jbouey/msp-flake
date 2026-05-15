@@ -5027,7 +5027,8 @@
     "notification_id": "bigint",
     "resolved_at": "timestamp with time zone",
     "severity": "character varying",
-    "site_id": "character varying"
+    "site_id": "character varying",
+    "synthetic": "boolean"
   },
   "system_settings": {
     "id": "integer",
