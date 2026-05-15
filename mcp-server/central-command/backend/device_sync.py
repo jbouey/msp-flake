@@ -1322,11 +1322,14 @@ async def get_device_compliance_details(site_id: str, device_id: int, user: dict
     # admin_transaction (wave-45): get_device_compliance_details issues
     # 2 admin reads (device verify, check results join).
     async with admin_transaction(pool) as conn:
-        # Verify device belongs to site
+        # Verify device belongs to site. The deprecated cache column
+        # is NOT projected — the response's `compliance_status` field is
+        # derived live from the `checks` rows below using the canonical
+        # aggregation rule (matches db_queries.get_per_device_compliance
+        # + evidence_chain.py:1135-1146).
         device = await conn.fetchrow(
             """
-            SELECT d.id, d.hostname, d.ip_address,
-                   d.compliance_status  -- noqa: deprecated-compliance-status — frontend-facing field on /sites/{site_id}/device/{device_id}/compliance; migrating to live-compute via get_per_device_compliance requires response-shape coordination with frontend, carry-followup
+            SELECT d.id, d.hostname, d.ip_address
             FROM discovered_devices d
             JOIN v_appliances_current a ON d.appliance_id = a.id
             WHERE d.id = $1 AND a.site_id = $2
@@ -1348,11 +1351,26 @@ async def get_device_compliance_details(site_id: str, device_id: int, user: dict
             device_id,
         )
 
+    # Canonical aggregation rule: any fail/non_compliant → drifted; any
+    # warning (no fail) → warning; any pass/compliant (no fail/warning)
+    # → compliant; otherwise unknown. Matches the helper at
+    # db_queries.get_per_device_compliance() — single source of truth
+    # for the status taxonomy.
+    statuses = [(c["status"] or "").lower() for c in checks]
+    if any(s in ("fail", "non_compliant") for s in statuses):
+        live_status = "drifted"
+    elif any(s in ("warning", "warn") for s in statuses):
+        live_status = "warning"
+    elif any(s in ("pass", "compliant") for s in statuses):
+        live_status = "compliant"
+    else:
+        live_status = "unknown"
+
     return {
         "device_id": device_id,
         "hostname": device["hostname"],
         "ip_address": device["ip_address"],
-        "compliance_status": device["compliance_status"],
+        "compliance_status": live_status,
         "checks": [dict(row) for row in checks],
         "total_checks": len(checks),
         "passed": sum(1 for c in checks if c["status"] == "pass"),
