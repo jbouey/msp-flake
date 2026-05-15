@@ -9,13 +9,15 @@ A BAA-gated sensitive workflow **advanced** in the last 30 days for a
 `client_org` that has **no active formal BAA** — and there is **no
 logged admin carve-out** for it.
 
-The three workflows this invariant watches:
+The five workflows this invariant watches:
 
-| Workflow             | Source                                   | "Advanced" means |
-|----------------------|------------------------------------------|-------------------|
-| `cross_org_relocate` | `cross_org_site_relocate_requests`       | `source_release_at` or `executed_at` set |
-| `owner_transfer`     | `client_org_owner_transfer_requests`     | `current_ack_at` or `completed_at` set |
-| `evidence_export`    | `admin_audit_log WHERE action='auditor_kit_download'` | a download row written in the last 30 days |
+| Workflow                | Source                                   | "Advanced" means |
+|-------------------------|------------------------------------------|-------------------|
+| `cross_org_relocate`    | `cross_org_site_relocate_requests`       | `source_release_at` or `executed_at` set |
+| `owner_transfer`        | `client_org_owner_transfer_requests`     | `current_ack_at` or `completed_at` set |
+| `evidence_export`       | `admin_audit_log WHERE action='auditor_kit_download'` | a download row written in the last 30 days |
+| `new_site_onboarding`   | `sites`                                  | row `created_at` in the last 30 days |
+| `new_credential_entry`  | `site_credentials` JOIN `sites`          | credential `created_at` in the last 30 days |
 
 "No active formal BAA" = `baa_status.baa_enforcement_ok()` returns
 FALSE for the org: either no `baa_signatures` row with
@@ -156,3 +158,11 @@ find the un-gated code path.
   legacy-token carved out). Audit-row enrichment shipped in commit
   `5ce77722` so the scan can read `details->>'site_id'` +
   `details->>'client_org_id'` directly — no JOIN to `sites` required.
+- 2026-05-15 — Task #98 — extended scan to include `new_site_onboarding`
+  (via `sites` table) + `new_credential_entry` (via `site_credentials`
+  JOIN `sites`). Closes the runtime-backstop gap surfaced by Task #90
+  Gate B: those two workflows became gated when #90 moved them from
+  `_DEFERRED_WORKFLOWS` → `BAA_GATED_WORKFLOWS`, but the invariant
+  itself hadn't yet been taught to scan their evidence rows. A code
+  path that bypassed `enforce_or_log_admin_bypass` on either workflow
+  is now caught at runtime, not just at build time.

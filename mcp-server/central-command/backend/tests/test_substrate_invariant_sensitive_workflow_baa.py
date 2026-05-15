@@ -228,6 +228,56 @@ def test_invariant_sql_pins_evidence_export_method_filter():
     )
 
 
+def test_new_site_onboarding_and_credential_entry_branches_fire():
+    """Task #98 extensions: new_site_onboarding (scans sites) +
+    new_credential_entry (scans site_credentials JOIN sites). Both
+    use the state-machine bypass-row exclusion (they go through
+    enforce_or_log_admin_bypass, which writes a baa_enforcement_bypass
+    row on admin carve-out). A row with no BAA and no matching bypass
+    → Violation."""
+    conn = _make_conn(
+        union_rows=[
+            {"workflow": "new_site_onboarding", "org_id": "org-F",
+             "site_id": "site-F", "row_id": "site-F",
+             "advanced_at": _ts("2026-05-15T12:00:00")},
+            {"workflow": "new_credential_entry", "org_id": "org-G",
+             "site_id": "site-G", "row_id": "cred-1",
+             "advanced_at": _ts("2026-05-15T13:00:00")},
+        ],
+        bypass_map={},  # no bypass rows
+    )
+    with _patch_baa_ok({"org-F": False, "org-G": False}):
+        violations = _run(
+            assertions._check_sensitive_workflow_advanced_without_baa(conn)
+        )
+    workflows = sorted(v.details["workflow"] for v in violations)
+    assert workflows == ["new_credential_entry", "new_site_onboarding"], (
+        f"both new workflows must fire when no BAA + no bypass; got {workflows}"
+    )
+
+
+def test_new_site_onboarding_with_bypass_row_excluded():
+    """An admin advancing new_site_onboarding for a non-BAA org writes
+    a baa_enforcement_bypass row — the invariant excludes it."""
+    conn = _make_conn(
+        union_rows=[{
+            "workflow": "new_site_onboarding",
+            "org_id": "org-H",
+            "site_id": "site-H",
+            "row_id": "site-H",
+            "advanced_at": _ts("2026-05-15T12:00:00"),
+        }],
+        bypass_map={("new_site_onboarding", "org-H"): 1},
+    )
+    with _patch_baa_ok({"org-H": False}):
+        violations = _run(
+            assertions._check_sensitive_workflow_advanced_without_baa(conn)
+        )
+    assert violations == [], (
+        "matching bypass row must exclude new_site_onboarding violations"
+    )
+
+
 def test_invariant_sql_pins_evidence_export_action_filter():
     """Same shape pin for the action filter — the evidence_export
     branch MUST query `action='auditor_kit_download'` specifically.

@@ -1912,6 +1912,32 @@ async def _check_sensitive_workflow_advanced_without_baa(
          WHERE aal.action = 'auditor_kit_download'
            AND aal.created_at > NOW() - INTERVAL '30 days'
            AND aal.details->>'auth_method' IN ('client_portal','partner_portal')
+        UNION ALL
+        -- Task #98: new_site_onboarding scan via the sites table itself.
+        -- A site row created without a matching baa_enforcement_bypass
+        -- audit entry for a non-BAA org = a code path bypassed
+        -- enforce_or_log_admin_bypass entirely. Window matches the
+        -- other branches (30 days).
+        SELECT 'new_site_onboarding' AS workflow,
+               s.client_org_id::text AS org_id,
+               s.site_id AS site_id,
+               s.site_id AS row_id,
+               s.created_at AS advanced_at
+          FROM sites s
+         WHERE s.created_at > NOW() - INTERVAL '30 days'
+           AND s.client_org_id IS NOT NULL
+        UNION ALL
+        -- Task #98: new_credential_entry scan. site_credentials has
+        -- no client_org_id, so JOIN sites for the ownership snapshot.
+        SELECT 'new_credential_entry' AS workflow,
+               s.client_org_id::text AS org_id,
+               sc.site_id AS site_id,
+               sc.id::text AS row_id,
+               sc.created_at AS advanced_at
+          FROM site_credentials sc
+          JOIN sites s ON s.site_id = sc.site_id
+         WHERE sc.created_at > NOW() - INTERVAL '30 days'
+           AND s.client_org_id IS NOT NULL
         """
     )
     violations: List[Violation] = []
@@ -2450,7 +2476,7 @@ ALL_ASSERTIONS: List[Assertion] = [
     Assertion(
         name="sensitive_workflow_advanced_without_baa",
         severity="sev1",
-        description="A BAA-gated sensitive workflow (cross_org_relocate, owner_transfer, or evidence_export — 5 active gated workflows total post-#90; new_site_onboarding + new_credential_entry scan extension is task #98) advanced in the last 30 days for a client_org with no active formal BAA (baa_status.baa_enforcement_ok=FALSE) and no legitimate carve-out. Task #52 + #92 (Counsel Rule 6 / §164.504(e)) — List 3 of the BAA-enforcement lockstep: the CI gate test_baa_gated_workflows_lockstep.py catches an un-gated endpoint at build time, this invariant is the runtime backstop for a code path that bypassed require_active_baa / enforce_or_log_admin_bypass / check_baa_for_evidence_export OR an org whose BAA lapsed after the action. State-machine admin advances write a baa_enforcement_bypass admin_audit_log row and are excluded; evidence_export uses raise-403 (no bypass row), so its scan reads admin_audit_log auditor_kit_download rows filtered to client_portal+partner_portal auth_methods (admin + legacy-token ?token= carve-outs preserved). Runbook: substrate_runbooks/sensitive_workflow_advanced_without_baa.md.",
+        description="A BAA-gated sensitive workflow advanced in the last 30 days for a client_org with no active formal BAA (baa_status.baa_enforcement_ok=FALSE) and no legitimate carve-out. Tasks #52 + #92 + #98 (Counsel Rule 6 / §164.504(e)) — List 3 of the BAA-enforcement lockstep. 5 workflow scans: (1) cross_org_relocate via cross_org_site_relocate_requests, (2) owner_transfer via client_org_owner_transfer_requests, (3) evidence_export via admin_audit_log auditor_kit_download rows (denormalized site_id+client_org_id from commit 5ce77722, filtered to client_portal+partner_portal auth_methods), (4) new_site_onboarding via the sites table, (5) new_credential_entry via site_credentials JOIN sites. The CI gate test_baa_gated_workflows_lockstep.py catches an un-gated endpoint at build time; this invariant is the runtime backstop for a code path that bypassed require_active_baa / enforce_or_log_admin_bypass / check_baa_for_evidence_export OR an org whose BAA lapsed after the action. State-machine + admin-path advances write a baa_enforcement_bypass admin_audit_log row and are excluded; evidence_export uses raise-403 (no bypass row) and is method-aware (admin + legacy ?token= carved out). Runbook: substrate_runbooks/sensitive_workflow_advanced_without_baa.md.",
         check=lambda c: _check_sensitive_workflow_advanced_without_baa(c),
     ),
 ]
