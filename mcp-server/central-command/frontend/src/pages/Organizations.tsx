@@ -303,9 +303,14 @@ export const Organizations: React.FC = () => {
               setActionLoading(true);
               setActionError('');
               try {
+                // primary_email intentionally NOT sent (Task #95, 2026-05-15):
+                // the backend rejects/discards primary_email mutations on PUT
+                // /organizations/{id} since #91 — re-pointing primary_email
+                // silently orphans baa_signatures (joined by LOWER(email)).
+                // Until #93/#94 ship a BAA-aware rename helper, the email
+                // field below is read-only and we MUST NOT send it.
                 await organizationsApi.updateOrganization(editOrg.id, {
                   name: formData.get('name') as string,
-                  primary_email: formData.get('email') as string,
                   primary_phone: formData.get('phone') as string,
                   practice_type: formData.get('practice_type') as string,
                 });
@@ -323,7 +328,18 @@ export const Organizations: React.FC = () => {
               </div>
               <div>
                 <label className="block text-sm text-label-secondary mb-1">Email</label>
-                <input name="email" defaultValue={editOrg.primary_email} className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-primary" />
+                <input
+                  name="email"
+                  defaultValue={editOrg.primary_email}
+                  disabled
+                  readOnly
+                  className="w-full px-3 py-2 rounded-ios bg-fill-secondary border border-separator-light text-label-secondary opacity-60 cursor-not-allowed"
+                />
+                <p className="mt-1 text-xs text-label-tertiary">
+                  Read-only. Renaming the organization's email orphans
+                  its BAA signatures; the BAA-aware rename helper is
+                  pending (Task #94).
+                </p>
               </div>
               <div>
                 <label className="block text-sm text-label-secondary mb-1">Phone</label>
