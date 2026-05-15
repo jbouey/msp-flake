@@ -1855,16 +1855,24 @@ async def _check_sensitive_workflow_advanced_without_baa(
     enforce_or_log_admin_bypass, OR an org whose BAA lapsed AFTER the
     action advanced.
 
-    Scope: the two workflows with a DURABLE state-machine row —
+    Scope: the two state-machine workflows with a durable row —
     `cross_org_relocate` (cross_org_site_relocate_requests) and
-    `owner_transfer` (client_org_owner_transfer_requests).
-    `evidence_export` is a transient point-in-time download with no
-    lingering state to assert against — it is gated inline only.
+    `owner_transfer` (client_org_owner_transfer_requests) — PLUS
+    `evidence_export` (Task #92, 2026-05-15), scanned via the
+    `auditor_kit_download` rows in `admin_audit_log`. The audit row's
+    `details` carries `site_id` + `client_org_id` denormalized at
+    write time (commit 5ce77722), so this scan needs no JOIN to
+    `sites`. Only the `client_portal` + `partner_portal` `auth_method`
+    rows are scanned — admin + legacy `?token=` are carved out
+    (Carol carve-outs #3 + #4).
 
-    Admin carve-out: an admin-context advance writes a
-    `baa_enforcement_bypass` admin_audit_log row (enforce_or_log_
-    admin_bypass). Rows with a matching bypass entry are excluded —
-    they are legitimate operator actions, already audited.
+    Admin carve-out for the state-machine workflows: an admin-context
+    advance writes a `baa_enforcement_bypass` admin_audit_log row
+    (enforce_or_log_admin_bypass). Rows with a matching bypass entry
+    are excluded — legitimate operator actions, already audited.
+    evidence_export does NOT use the bypass row (its inline gate
+    raises 403 instead of logging a bypass), so the bypass-row
+    exclusion is guarded `if workflow != 'evidence_export'` below.
     """
     try:
         import baa_status
@@ -1890,6 +1898,20 @@ async def _check_sensitive_workflow_advanced_without_baa(
           FROM client_org_owner_transfer_requests t
          WHERE COALESCE(t.completed_at, t.current_ack_at)
                > NOW() - INTERVAL '30 days'
+        UNION ALL
+        -- Task #92: evidence_export scan via auditor_kit_download
+        -- audit rows. site_id + client_org_id are denormalized at
+        -- write time (commit 5ce77722). Filter to the two gated
+        -- branches; admin + legacy ?token= are excluded carve-outs.
+        SELECT 'evidence_export' AS workflow,
+               aal.details->>'client_org_id' AS org_id,
+               aal.details->>'site_id' AS site_id,
+               aal.id::text AS row_id,
+               aal.created_at AS advanced_at
+          FROM admin_audit_log aal
+         WHERE aal.action = 'auditor_kit_download'
+           AND aal.created_at > NOW() - INTERVAL '30 days'
+           AND aal.details->>'auth_method' IN ('client_portal','partner_portal')
         """
     )
     violations: List[Violation] = []
@@ -1904,18 +1926,26 @@ async def _check_sensitive_workflow_advanced_without_baa(
         if ok_cache[org_id]:
             continue
         # No active BAA — was this a logged admin carve-out?
-        bypass = await conn.fetchval(
-            """
-            SELECT 1 FROM admin_audit_log
-             WHERE action = 'baa_enforcement_bypass'
-               AND details->>'workflow' = $1
-               AND details->>'client_org_id' = $2
-             LIMIT 1
-            """,
-            row["workflow"], org_id,
-        )
-        if bypass:
-            continue  # legitimate operator carve-out, already audited
+        # Only the state-machine workflows use enforce_or_log_admin_bypass
+        # (which writes the baa_enforcement_bypass row). evidence_export
+        # uses check_baa_for_evidence_export, which RAISES 403 instead of
+        # logging a bypass — so an evidence_export violation here is
+        # unambiguously a gate-bypass or post-action BAA lapse, with no
+        # legitimate-operator escape hatch. Skip the bypass-row lookup
+        # for it (Task #92 Coach guard).
+        if row["workflow"] != "evidence_export":
+            bypass = await conn.fetchval(
+                """
+                SELECT 1 FROM admin_audit_log
+                 WHERE action = 'baa_enforcement_bypass'
+                   AND details->>'workflow' = $1
+                   AND details->>'client_org_id' = $2
+                 LIMIT 1
+                """,
+                row["workflow"], org_id,
+            )
+            if bypass:
+                continue  # legitimate operator carve-out, already audited
         violations.append(Violation(
             site_id=row["site_id"],
             details={
@@ -2420,7 +2450,7 @@ ALL_ASSERTIONS: List[Assertion] = [
     Assertion(
         name="sensitive_workflow_advanced_without_baa",
         severity="sev1",
-        description="A BAA-gated sensitive workflow (cross_org_relocate or owner_transfer) advanced in the last 30 days for a client_org with no active formal BAA (baa_status.baa_enforcement_ok=FALSE) and no logged admin carve-out. Task #52 (Counsel Rule 6 / §164.504(e)) — List 3 of the BAA-enforcement lockstep: the CI gate test_baa_gated_workflows_lockstep.py catches an un-gated endpoint at build time, this invariant is the runtime backstop for a code path that bypassed require_active_baa/enforce_or_log_admin_bypass OR an org whose BAA lapsed after the action. Admin-context advances write a baa_enforcement_bypass admin_audit_log row and are excluded. evidence_export is gated inline only (transient download — no durable state to assert). Runbook: substrate_runbooks/sensitive_workflow_advanced_without_baa.md.",
+        description="A BAA-gated sensitive workflow (cross_org_relocate, owner_transfer, or evidence_export) advanced in the last 30 days for a client_org with no active formal BAA (baa_status.baa_enforcement_ok=FALSE) and no legitimate carve-out. Task #52 + #92 (Counsel Rule 6 / §164.504(e)) — List 3 of the BAA-enforcement lockstep: the CI gate test_baa_gated_workflows_lockstep.py catches an un-gated endpoint at build time, this invariant is the runtime backstop for a code path that bypassed require_active_baa / enforce_or_log_admin_bypass / check_baa_for_evidence_export OR an org whose BAA lapsed after the action. State-machine admin advances write a baa_enforcement_bypass admin_audit_log row and are excluded; evidence_export uses raise-403 (no bypass row), so its scan reads admin_audit_log auditor_kit_download rows filtered to client_portal+partner_portal auth_methods (admin + legacy-token ?token= carve-outs preserved). Runbook: substrate_runbooks/sensitive_workflow_advanced_without_baa.md.",
         check=lambda c: _check_sensitive_workflow_advanced_without_baa(c),
     ),
 ]
@@ -3293,17 +3323,21 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
     "sensitive_workflow_advanced_without_baa": {
         "display_name": "Sensitive workflow advanced without an active BAA",
         "recommended_action": (
-            "A BAA-gated workflow (cross_org_relocate or owner_"
-            "transfer) advanced in the last 30 days for a client_org "
-            "with no active formal BAA and no logged admin carve-out. "
-            "Investigate: (1) confirm the org's BAA state via "
-            "baa_status.baa_signature_status() — if the BAA genuinely "
-            "lapsed AFTER the action, this is a real §164.504(e) gap; "
-            "(2) if the org never had a BAA, a code path bypassed "
-            "require_active_baa / enforce_or_log_admin_bypass — find "
-            "and gate it; (3) if it WAS a legitimate admin action, the "
-            "baa_enforcement_bypass audit row is missing — fix the "
-            "admin path to log it. See "
+            "A BAA-gated workflow (cross_org_relocate, owner_transfer, "
+            "or evidence_export) advanced in the last 30 days for a "
+            "client_org with no active formal BAA and no legitimate "
+            "carve-out. Investigate: (1) confirm the org's BAA state "
+            "via baa_status.baa_signature_status() — if the BAA "
+            "genuinely lapsed AFTER the action, this is a real "
+            "§164.504(e) gap; (2) if the org never had a BAA, a code "
+            "path bypassed require_active_baa / enforce_or_log_admin_"
+            "bypass / check_baa_for_evidence_export — find and gate "
+            "it; (3) for cross_org_relocate or owner_transfer, if it "
+            "WAS a legitimate admin action, the baa_enforcement_bypass "
+            "audit row is missing — fix the admin path to log it. "
+            "evidence_export does NOT use bypass rows (raises 403 "
+            "instead), so a violation there is unambiguously a gate-"
+            "bypass or post-action BAA lapse. See "
             "substrate_runbooks/sensitive_workflow_advanced_without_baa.md."
         ),
     },

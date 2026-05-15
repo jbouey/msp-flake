@@ -9,22 +9,34 @@ A BAA-gated sensitive workflow **advanced** in the last 30 days for a
 `client_org` that has **no active formal BAA** — and there is **no
 logged admin carve-out** for it.
 
-The two workflows this invariant watches both have a durable
-state-machine row:
+The three workflows this invariant watches:
 
-| Workflow             | Source table                        | "Advanced" means |
-|----------------------|-------------------------------------|-------------------|
-| `cross_org_relocate` | `cross_org_site_relocate_requests`  | `source_release_at` or `executed_at` set |
-| `owner_transfer`     | `client_org_owner_transfer_requests`| `current_ack_at` or `completed_at` set |
+| Workflow             | Source                                   | "Advanced" means |
+|----------------------|------------------------------------------|-------------------|
+| `cross_org_relocate` | `cross_org_site_relocate_requests`       | `source_release_at` or `executed_at` set |
+| `owner_transfer`     | `client_org_owner_transfer_requests`     | `current_ack_at` or `completed_at` set |
+| `evidence_export`    | `admin_audit_log WHERE action='auditor_kit_download'` | a download row written in the last 30 days |
 
 "No active formal BAA" = `baa_status.baa_enforcement_ok()` returns
 FALSE for the org: either no `baa_signatures` row with
 `is_acknowledgment_only = FALSE` at the current required version, OR
 `client_orgs.baa_expiration_date` is in the past.
 
-`evidence_export` (the third gated workflow) is **not** checked here —
-it is a transient point-in-time download with no lingering state to
-assert against. It is gated inline only, in `evidence_chain.py`.
+**`evidence_export` carve-outs (Task #92, 2026-05-15):** the scan only
+considers rows where `details->>'auth_method' IN ('client_portal',
+'partner_portal')`. The `admin` and legacy `?token=` branches are
+excluded — admin is the platform operator (Carol carve-out #3), and
+blocking the legacy-token external-auditor path would itself be a
+§164.524 access-right violation (Carol carve-out #4, legally
+mandatory). `site_id` and `client_org_id` are denormalized at audit-
+write time (`evidence_chain.py` enriched by commit 5ce77722) so the
+invariant SQL doesn't need a JOIN to `sites` — and the org-at-the-
+time-of-download is preserved against future reparenting. Unlike the
+two state-machine workflows, `evidence_export` does NOT use the
+`baa_enforcement_bypass` audit-row exclusion: its inline gate
+(`check_baa_for_evidence_export`) raises 403 rather than logging a
+bypass, so a violation here is unambiguously a gate-bypass or a
+post-action BAA lapse with no legitimate-operator escape hatch.
 
 ## Why this matters (architectural + legal)
 
@@ -138,3 +150,9 @@ find the un-gated code path.
   3 of the BAA-enforcement lockstep. Scoped to the two durable
   state-machine workflows (`cross_org_relocate`, `owner_transfer`);
   `evidence_export` is gated inline only.
+- 2026-05-15 — Task #92 — extended scan to include `evidence_export`
+  via `admin_audit_log WHERE action='auditor_kit_download'` (only the
+  `client_portal` + `partner_portal` auth-method branches; admin +
+  legacy-token carved out). Audit-row enrichment shipped in commit
+  `5ce77722` so the scan can read `details->>'site_id'` +
+  `details->>'client_org_id'` directly — no JOIN to `sites` required.
