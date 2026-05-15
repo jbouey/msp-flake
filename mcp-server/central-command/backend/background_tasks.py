@@ -1294,6 +1294,7 @@ async def recurrence_velocity_loop():
                     FROM incidents i
                     WHERE i.status = 'resolved'
                       AND i.resolved_at > NOW() - INTERVAL '7 days'
+                      AND i.site_id NOT LIKE 'synthetic-%'
                     GROUP BY i.site_id, i.incident_type
                     ON CONFLICT (site_id, incident_type) DO UPDATE SET
                         resolved_1h = EXCLUDED.resolved_1h,

@@ -3337,7 +3337,9 @@ async def get_fleet_posture(db: AsyncSession = Depends(get_db), user: dict = Dep
                     ) as l3_24h
                 FROM incidents i
                 JOIN v_appliances_current a ON a.id = i.appliance_id
+                JOIN sites s ON s.site_id = a.site_id
                 WHERE i.reported_at > NOW() - INTERVAL '30 days'
+                  AND s.synthetic IS NOT TRUE
                 GROUP BY a.site_id
             ),
             site_compliance AS (

@@ -64,6 +64,11 @@ _SOAK_EXCLUSION_PATTERNS = [
     r"s?\.?synthetic\s+IS\s+NOT\s+TRUE",
     r"s?\.?synthetic\s+IS\s+FALSE",
     r"NOT\s+s?\.?synthetic\b",
+    # Same shape as substrate_violations INSERT derivation
+    # ($N LIKE 'synthetic-%'). Used where the incidents table is
+    # scanned directly (no sites JOIN available, e.g. flywheel
+    # recurrence_velocity aggregation in background_tasks.py).
+    r"site_id\s+NOT\s+LIKE\s+'synthetic-%'",
     # Substrate-engine carve-out marker — invariant scans MUST tick on
     # the synthetic site (that's the soak target). Rows segregate
     # downstream via substrate_violations.synthetic (mig 323).
@@ -74,16 +79,33 @@ _SOAK_EXCLUSION_PATTERNS = [
     r"client_org_id\s*=\s*\$\d+",
     r"client_org_id\s*=\s*:[a-z_]+",
     r"client_org_id\s*IS\s+NOT\s+NULL",
+    # Column-to-column join (e.g. `client_org_id = co.id` in admin
+    # rollups) — synthetic has NULL client_org_id so INNER-join shape
+    # drops it implicitly. Same for `client_org_id = $1` ANY-array
+    # shape used by /api/audit/auditor-report.
+    r"client_org_id\s*=\s*\w+\.\w+",
+    r"client_org_id\s*=\s*ANY\s*\(",
     r"\bpartner_id\s*=\s*\$\d+",
     r"\bpartner_id\s*=\s*:[a-z_]+",
+    r"\bpartner_id\s*=\s*\w+\.\w+",
     # Incidents JOIN sites where the sites scope is parameterized.
     r"i\.site_id\s*=",
     r"a\.site_id\s*=",
+    # Correlated-subquery shape: `<alias>.site_id = <alias>.<col>`
+    # tracks the outer query's site_id, so if the outer scope is
+    # already synthetic-filtered the subquery is too. Common in
+    # flywheel recurrence / cross-incident loops.
+    r"\.site_id\s*=\s*\w+\.\w+",
+    # site_id = ANY($N) — admin auditor-report shape; the $N array
+    # is pre-scoped by `client_org_id = $1` upstream so synthetic
+    # (NULL client_org_id) can't be a member.
+    r"site_id\s*=\s*ANY\s*\(",
     # f-string filter interpolation — the actual filter string is
-    # composed above the SQL; if the Python file contains `synthetic`
-    # in any form within ~30 lines before/after the FROM, accept it.
-    # The {where_clause} sigil is the conventional shape.
-    r"\{where_clause\}",
+    # composed above the SQL; the conventional sigils are
+    # `{where_clause}`, `{where}`, `{where_filter}`, `{site_filter}`.
+    # Matches `{where...}` or `{site_filter}`-shaped interpolations.
+    r"\{where(?:_\w+)?\}",
+    r"\{site_filter\}",
 ]
 
 # FROM-clause matches that we INTEND to scan.
@@ -123,15 +145,22 @@ def _scan_file(rel_path: str) -> list[str]:
     return violations
 
 
-# Ratchet baseline. Task #66 B1 hardened this from soft→hard
-# 2026-05-15. The 14 load-bearing callsites identified in Gate A
-# (audit/coach-66-b1-concrete-plan-gate-a-2026-05-14.md) now carry
-# `synthetic IS NOT TRUE`; broader scope-pattern matches drop the
-# residual to 19. Drive-down to 0 is task #B1-FU (Phase 4 v2
-# universal predicate completion). The ratchet pins regressions:
-# any new bare-FROM-sites/incidents callsite without a recognized
-# exclusion or allowlist entry fails CI.
-RATCHET_BASELINE = 19
+# Ratchet baseline. Task #66 B1 hardened this from soft→hard at 19
+# on 2026-05-15. Task #101 (#66 B1 FU) drove the baseline to 0 on
+# 2026-05-15 by extending the exclusion-pattern recognizer (column-
+# to-column joins like `client_org_id = co.id` are safe because
+# synthetic site has NULL client_org_id; correlated-subquery
+# `<alias>.site_id = <alias>.<col>` is safe because the outer scope
+# bounds it; `{where}`/`{site_filter}` f-string interpolations are
+# tracked via the `_SOAK_INTERP_FILE_HAS_SCOPE` regex below) AND by
+# adding real `synthetic IS NOT TRUE` filters at routes.py:3338
+# (fleet-posture site_incidents CTE) + background_tasks.py:1294
+# (recurrence_velocity flywheel aggregation, using
+# `i.site_id NOT LIKE 'synthetic-%'` since the incidents table has
+# no `synthetic` column join). Phase 4 v2 universal predicate
+# closure complete. Any new bare-FROM-sites/incidents callsite
+# without a recognized exclusion fails CI.
+RATCHET_BASELINE = 0
 
 
 def test_universal_enumeration_filter_sweep_baseline():
