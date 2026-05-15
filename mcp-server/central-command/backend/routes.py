@@ -4763,7 +4763,15 @@ async def update_organization(
     body = await request.json()
     fields = []
     params: dict = {"org_id": org_id}
-    for key in ("name", "primary_email", "primary_phone", "practice_type", "provider_count", "status"):
+    # `primary_email` deliberately NOT in this list (Task #91, 2026-05-15):
+    # `baa_status.baa_enforcement_ok()` joins baa_signatures.email to
+    # client_orgs.primary_email via LOWER(). Re-pointing the org's
+    # primary_email here silently orphans every prior formal-BAA
+    # signature → the org gets blocked from every gated workflow. Until
+    # a BAA-aware rename helper exists (task #91-FU-B) that re-anchors
+    # signatures in the same transaction, this endpoint must NOT accept
+    # primary_email. Pinned by tests/test_no_primary_email_update_orphans_baa.py.
+    for key in ("name", "primary_phone", "practice_type", "provider_count", "status"):
         if key in body:
             fields.append(f"{key} = :{key}")
             params[key] = body[key]
