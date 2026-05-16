@@ -49,6 +49,7 @@ from dashboard_api.install_telemetry import router as install_telemetry_router
 from dashboard_api.client_telemetry import router as client_telemetry_router  # Session 210 Layer 3
 from dashboard_api.appliance_relocation_api import router as appliance_relocation_router
 from dashboard_api.chaos_lab import router as chaos_lab_router
+from dashboard_api.load_test_api import router as load_test_router
 from dashboard_api.public_status import public_status_router, admin_status_router
 from dashboard_api.mesh_targets import mesh_targets_router
 from dashboard_api.rescue import rescue_router
@@ -2438,6 +2439,7 @@ app.include_router(install_telemetry_router)  # v36: install failure + net-surve
 app.include_router(client_telemetry_router)   # Session 210: browser-side contract-drift telemetry
 app.include_router(appliance_relocation_router)  # v36: appliance move detection + ack (HIPAA §164.310(d)(1))
 app.include_router(chaos_lab_router)
+app.include_router(load_test_router)  # Task #62 v2.1 Commit 2 — load-harness run ledger
 app.include_router(public_status_router)
 # F4 — public /api/verify/attestation/{hash} (round-table 2026-05-06).
 # No auth; hash is 64 hex chars (SHA-256), unguessable. Insurance

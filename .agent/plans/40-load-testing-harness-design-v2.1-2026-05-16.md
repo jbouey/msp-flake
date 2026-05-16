@@ -6,6 +6,8 @@
 **Gate A:** `audit/coach-62-load-harness-v1-gate-a-2026-05-16.md` (Steve / Maya / Carol / Coach / Auditor / PM / Counsel — APPROVE-WITH-FIXES).
 **Companion:** task #94 plan-24 (substrate-MTTR soak v2 — share isolation pattern + sequencing pin).
 
+<!-- mig-claim:316 task:#62 -->
+
 This v2.1 supersedes v1 + the partial v2 packet (`audit/load-harness-v2-design-2026-05-13.md`). Read v1 for the why-now framing; this doc carries the ship-ready design.
 
 ---
