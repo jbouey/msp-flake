@@ -185,6 +185,46 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
     # skip the CTE and read `SELECT COUNT(*) FROM canonical_devices
     # WHERE site_id = $N` directly (3 callsites: partners.py:2595,
     # routes.py:5322, portal.py:1251).
+    "category_weighted_compliance_score": {
+        # Re-promoted from PLANNED_METRICS to CANONICAL_METRICS 2026-05-16
+        # (Task #103 Fork B follow-up). Fork B's audit found 2 customer-
+        # facing endpoints leaking this metric class inline — they
+        # duplicate the per-category HIPAA-weighted formula on their
+        # OWN bundle scans instead of delegating. Registering them as
+        # `migrate` surfaces the leaks to the CI gate so they can't
+        # drift further; the proper canonical-helper Class-B Gate A
+        # (Fork A spec at audit/coach-103-canonical-helper-extension-
+        # designs-2026-05-16.md §2) remains the long-term solution.
+        #
+        # De-facto canonical TODAY: db_queries.get_compliance_scores_
+        # for_site + db_queries.get_all_compliance_scores. These both
+        # compute `(pass + 0.5*warn) / total * 100` per category and
+        # weight by HIPAA_CATEGORY_WEIGHTS. They are classified
+        # operator_only because they're the source-of-truth pattern
+        # the leak callsites should delegate to.
+        "canonical_helper": (
+            "db_queries.get_compliance_scores_for_site (de-facto, "
+            "pending Fork A spec at audit/coach-103-canonical-helper-"
+            "extension-designs-2026-05-16.md §2 for proper extraction "
+            "to compute_category_weighted_score helper)"
+        ),
+        "allowlist": [
+            # De-facto canonical callsites — operator_only because
+            # they ARE the source-of-truth implementation today.
+            {"signature": "db_queries.get_compliance_scores_for_site", "classification": "operator_only"},
+            {"signature": "db_queries.get_all_compliance_scores", "classification": "operator_only"},
+            # Leak callsites found by Task #103 Fork B audit 2026-05-16
+            # — customer-facing endpoints compute the formula inline
+            # instead of delegating. Should refactor to either (a) call
+            # the de-facto canonical helpers OR (b) extract a shared
+            # _compute_category_weighted_scores(cat_pass, cat_fail,
+            # cat_warn, *, category_weights) primitive that all 4
+            # callsites share. Fork A spec recommends approach (b).
+            {"signature": "routes.get_admin_compliance_health", "classification": "migrate"},
+            {"signature": "client_portal.get_site_compliance_health", "classification": "migrate"},
+        ],
+        "display_null_passthrough_required": False,
+    },
     "device_count_per_site": {
         # Canonical: canonical_devices table (mig 319, Task #73 Phase 1).
         # Multi-appliance same-(ip,mac) observations collapse via 60s
@@ -319,52 +359,14 @@ PLANNED_METRICS: Dict[str, Dict[str, str]] = {
             "score formula change"
         ),
     },
-    "category_weighted_compliance_score": {
-        # HIPAA-weighted per-category compliance score with partial-
-        # credit-for-warnings methodology, surfaced by:
-        #   - db_queries.get_compliance_scores_for_site (single-site,
-        #     used by /api/portal/{site}?token=... legacy client surface
-        #     + routes.py:282/417 admin endpoints)
-        #   - db_queries.get_all_compliance_scores (all-sites batched
-        #     for admin dashboards routes.py:178/4701)
-        #
-        # Formula: per-category `(pass + 0.5*warn) / total * 100`,
-        # then weighted average across categories using
-        # HIPAA_CATEGORY_WEIGHTS (encryption + access_control get
-        # higher weight than the binary 6-equal-weight baseline of
-        # metrics.calculate_compliance_score).
-        #
-        # Canonical compute_compliance_score does NOT support either
-        # partial-credit-for-warnings OR per-category HIPAA weighting
-        # — it computes a simple bundle-level `passed/total*100` from
-        # the DISTINCT-ON-(site,check,host) latest-per-key snapshot.
-        # The customer-facing portal numbers WOULD CHANGE if these
-        # callers delegated to it. Carol Gate A P0 noted exactly
-        # this — portal frontend destructures `{patching,
-        # antivirus, ..., score, has_data}` keys and would silently
-        # render zeros for missing keys + a different score number.
-        #
-        # Task #103 Phase 3 Commit 3 (2026-05-15) — same
-        # implementation-discovery pattern as Commit 2: different
-        # legitimate methodology that should have its own canonical
-        # helper rather than being force-migrated into the wrong
-        # canonical class.
-        "canonical_helper_pending": (
-            "extend compute_compliance_score with optional "
-            "(category_breakdown=True, partial_credit_warnings=True, "
-            "weights=HIPAA_CATEGORY_WEIGHTS) parameters OR add a "
-            "sibling compute_category_weighted_score helper. Either "
-            "approach must preserve the existing {patching, "
-            "antivirus, backup, logging, firewall, encryption, "
-            "score, has_data} response shape for the portal "
-            "frontend (P0 Carol)."
-        ),
-        "blocks_until": (
-            "design + Class-B Gate A on category-weighted canonical "
-            "helper; shape-preservation parity test against portal + "
-            "admin dashboard surfaces"
-        ),
-    },
+    # NOTE 2026-05-16: `category_weighted_compliance_score` was promoted from
+    # PLANNED_METRICS to CANONICAL_METRICS following Task #103 Fork B leak
+    # audit — see the entry in CANONICAL_METRICS above. The de-facto
+    # canonical (db_queries.get_compliance_scores_for_site +
+    # get_all_compliance_scores) is the current source of truth; Fork A's
+    # spec (audit/coach-103-canonical-helper-extension-designs-2026-05-16.md
+    # §2) designs the proper canonical helper extraction that the 2 leak
+    # callsites will eventually delegate to.
     "per_framework_compliance_score": {
         # Per-framework score_percentage / is_compliant / at_risk /
         # data_completeness_pct surfaced by /api/frameworks/appliances/
