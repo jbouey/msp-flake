@@ -110,37 +110,49 @@ def test_soft_delete_filter_on_site_enumeration():
     )
 
 
-def test_dynamic_n_confirm_prompt():
-    """Gate A P0: count-confirm prompt must reference the ACTUAL N
-    (not a hardcoded constant or yes/no). Operator typing the same
-    number repeatedly builds muscle memory + defeats the defensive
-    friction purpose at scale."""
+def test_random_nonce_confirm_prompt():
+    """Gate A P0 (rev #125 closure): the confirm prompt must use a
+    per-invocation random NONCE that the operator types back. Pre-
+    rev the prompt asked operator to type the appliance COUNT — at
+    20-appliance scale operators build muscle memory ("always type
+    20") which defeats the defensive-friction purpose. Random nonce
+    forces fresh attention every time.
+
+    The nonce MUST come from `secrets.token_urlsafe(...)` or similar
+    cryptographic-RNG source (NOT os.urandom-piped-through-hex, NOT
+    random.choice — those are predictable or use the wrong RNG)."""
     src = _read_cli()
-    # Find the confirm input line(s)
-    # Pattern: input(...) where the preceding prompt mentions {N}
-    # or len(target_appliance_ids) or similar dynamic value.
+    # Find the confirm input line
     m = re.search(
         r"confirm\s*=\s*input\(.*?\)\.strip\(\)",
         src, re.DOTALL,
     )
     assert m, "could not locate confirm = input(...) in cmd_create"
-    # Look backward ~30 lines for an `N = ...` or similar dynamic
-    # binding before the input.
+    # Look backward ~30 lines for the nonce binding before the input
     before = src[: m.start()][-2000:]
-    # Pattern: `N = len(target_appliance_ids)` OR `f"...{N}..."` in
-    # the prompt string.
-    assert "N = len(" in before or "{N}" in before, (
-        "Count-confirm prompt does not reference a dynamic N "
-        "(expected `N = len(target_appliance_ids)` before the input "
-        "call). Hardcoded prompts defeat the defensive-friction "
-        "purpose."
+    # Pattern: `confirm_nonce = secrets.token_urlsafe(...)` before the
+    # input call. The cryptographic-RNG source is the load-bearing
+    # contract.
+    assert "secrets.token_urlsafe(" in before, (
+        "Confirm prompt must use `secrets.token_urlsafe(...)` for "
+        "the random nonce. Pre-#125 the prompt used appliance COUNT "
+        "(muscle-memory class at 20-appliance scale). Other RNG "
+        "sources (random.choice, os.urandom without urlsafe) are "
+        "either predictable or operator-hostile to type."
     )
-    # And the confirm-check compares against str(N) dynamically
+    # And the confirm-check compares against the nonce variable
     after = src[m.end(): m.end() + 500]
-    assert "str(N)" in after or "!= str(" in after, (
-        "Confirm-check must compare against the dynamic N, not a "
-        "hardcoded value."
+    assert "confirm_nonce" in after or "!= confirm_nonce" in after, (
+        "Confirm-check must compare against the per-invocation "
+        "`confirm_nonce`, not a hardcoded value or the appliance "
+        "count."
     )
+
+
+# Legacy alias — the dynamic-N test was renamed in #125. Keep the
+# old name pointed at the new test so any external CI config that
+# pinned the old name keeps working until rotated.
+test_dynamic_n_confirm_prompt = test_random_nonce_confirm_prompt
 
 
 def test_dry_run_field_allowlist():

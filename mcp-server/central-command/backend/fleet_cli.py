@@ -20,6 +20,7 @@ import json
 import os
 import re
 import secrets
+import secrets
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -375,34 +376,41 @@ async def cmd_create(args: argparse.Namespace) -> None:
             print(json.dumps(dry_out, indent=2, sort_keys=True))
             return
 
-        # ── Task #118 P0: count-confirm prompt for privileged --all-at-site
-        # Operator types the appliance COUNT back. Random-N prompt is the
-        # right shape (not yes/no) — defensive friction at 250-appliance
-        # scale.
+        # ── Task #118 P0 (rev #125): random-nonce confirm prompt for
+        # privileged --all-at-site. Pre-rev the prompt asked the
+        # operator to type the appliance COUNT back — at 20-appliance
+        # scale operators build muscle memory ("always type 20")
+        # which defeats the defensive-friction purpose. Random
+        # per-invocation token defeats memorization while staying
+        # short enough to type at the prompt. Closes Gate B P1-1.
         if (
             getattr(args, "all_at_site", None)
             and order_type in PRIVILEGED_ORDER_TYPES
             and not args.override_rate_limit
         ):
             N = len(target_appliance_ids)
+            # 6 bytes → 8-char URL-safe base64 → ~48 bits of entropy
+            # which is plenty for a single-invocation guard. Avoids
+            # confusing characters like 1/I/O/0 via url-safe charset.
+            confirm_nonce = secrets.token_urlsafe(6)
             print(
                 f"\nAbout to issue {order_type!r} to {N} appliances at site "
                 f"{args.all_at_site!r}.",
                 file=sys.stderr,
             )
             print(
-                f"This is a PRIVILEGED action. To confirm, type the "
-                f"appliance count back: {N}",
+                f"This is a PRIVILEGED action. To confirm, type this "
+                f"random token back: {confirm_nonce}",
                 file=sys.stderr,
             )
             try:
-                confirm = input("count: ").strip()
+                confirm = input("token: ").strip()
             except EOFError:
                 sys.exit("Confirmation aborted (no stdin).")
-            if confirm != str(N):
+            if confirm != confirm_nonce:
                 sys.exit(
-                    f"Confirmation failed (got {confirm!r}, expected {N!r}). "
-                    f"Aborting — no orders issued."
+                    f"Confirmation failed (got {confirm!r}, expected "
+                    f"{confirm_nonce!r}). Aborting — no orders issued."
                 )
 
         # ── Task #118 P0 + latent-bug fix: wrap bundle write + N
