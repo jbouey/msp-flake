@@ -278,6 +278,49 @@ async def test_d_trigger_rejects_missing_bundle(conn):
     )
 
 
+@pytest.mark.asyncio
+async def test_d2_trigger_rejects_missing_bundle_for_delegate_signing_key(
+    conn,
+):
+    """Gate B P1-A: test D variant for `delegate_signing_key` order_type
+    (added to v_privileged_types in mig 305). Defends against the
+    most likely future regression class: someone re-extracts mig 305's
+    function body but accidentally drops the delegate_signing_key
+    entry from v_privileged_types. Mig 305 was the Session 220 fix
+    for the zero-auth /delegate-key endpoint — losing privileged-chain
+    gating on this order_type would re-open the original CVE class."""
+    site_id = "site-no-bundle-d2"
+    nonexistent_bundle = "bundle-does-not-exist-d2-999"
+
+    with pytest.raises(asyncpg.RaiseError) as excinfo:
+        await conn.execute(
+            """
+            INSERT INTO fleet_orders
+              (order_type, parameters, status, expires_at, created_by,
+               nonce, signature, signed_payload)
+            VALUES ($1, $2::jsonb, 'active', now() + INTERVAL '24h',
+                    'test@example.com', 'n', 's', 'p')
+            """,
+            "delegate_signing_key",
+            (
+                f'{{"site_id":"{site_id}",'
+                f'"attestation_bundle_id":"{nonexistent_bundle}",'
+                f'"target_appliance_id":"aaaaaaaa-aaaa-aaaa-aaaa-'
+                f'aaaaaaaaaaaa"}}'
+            ),
+        )
+
+    assert "PRIVILEGED_CHAIN_VIOLATION" in str(excinfo.value), (
+        f"Expected delegate_signing_key (mig 305 addition) to also "
+        f"raise PRIVILEGED_CHAIN_VIOLATION when citing a missing "
+        f"bundle; got: {excinfo.value!r}. If this test fails after "
+        f"a future mig that re-extracts the trigger function body, "
+        f"the regression class is: delegate_signing_key dropped from "
+        f"v_privileged_types — see Session 220 #4 lesson "
+        f"(additive-only trigger body rule)."
+    )
+
+
 # ── Test F: mig 175 REJECTS cross-site bundle re-use ──────────────
 
 
