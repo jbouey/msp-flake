@@ -188,8 +188,12 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
     "device_count_per_site": {
         # Canonical: canonical_devices table (mig 319, Task #73 Phase 1).
         # Multi-appliance same-(ip,mac) observations collapse via 60s
-        # reconciliation loop. Phase 1 migrates compliance_packet.py +
-        # device_sync.get_site_devices; Phase 2 migrates remaining 17.
+        # reconciliation loop. Phase 1 (Task #73) migrated
+        # compliance_packet._get_device_inventory + device_sync.
+        # get_site_devices. Phase 2 (Task #74) drove the raw-FROM-
+        # discovered_devices ratchet to 0 across all 19 originally-
+        # flagged callsites (test_no_raw_discovered_devices_count.py
+        # BASELINE_MAX = 0 as of 2026-05-15).
         "canonical_helper": "canonical_devices table — read DISTINCT canonical_id per site_id",
         "allowlist": [
             # Operator-only callsites — Prometheus + per-appliance audit trail
@@ -203,27 +207,23 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
             {"signature": "health_monitor.*owner_appliance*", "classification": "write_path"},
             # DISTINCT-aggregation callsites — already deduping
             {"signature": "sites.py:5090-5116", "classification": "operator_only"},
-            # Phase 2 migration targets — remaining customer-facing readers.
-            # 17 entries; ratchet baseline in test_no_raw_discovered_devices_count.py.
-            {"signature": "partners.py:1892", "classification": "migrate"},
-            {"signature": "partners.py:2587", "classification": "migrate"},
-            {"signature": "partners.py:2595", "classification": "migrate"},
-            {"signature": "partners.py:2602", "classification": "migrate"},
-            {"signature": "portal.py:1251", "classification": "migrate"},
-            {"signature": "portal.py:2137", "classification": "migrate"},
-            {"signature": "client_portal.py:1289", "classification": "migrate"},
-            {"signature": "client_portal.py:4732", "classification": "migrate"},
-            {"signature": "routes.py:5313", "classification": "migrate"},
-            {"signature": "routes.py:5322", "classification": "migrate"},
-            {"signature": "routes.py:5331", "classification": "migrate"},
-            {"signature": "routes.py:5762", "classification": "migrate"},
-            {"signature": "routes.py:5857", "classification": "migrate"},
-            {"signature": "routes.py:6396", "classification": "migrate"},
-            {"signature": "routes.py:8592", "classification": "migrate"},
-            {"signature": "sites.py:1897", "classification": "migrate"},
-            {"signature": "sites.py:5644", "classification": "migrate"},
-            {"signature": "sites.py:7271", "classification": "migrate"},
-            {"signature": "background_tasks.py:1048", "classification": "migrate"},
+            # NOTE 2026-05-15 (Task #103 Phase 3 Commit 5 close-out):
+            # The previous 19 `migrate`-class line-anchored entries
+            # (partners.py / portal.py / client_portal.py / routes.py /
+            # sites.py / background_tasks.py) were REMOVED — verification
+            # showed: 4 entries had `canonical-migration: device_count_per_site`
+            # markers in place (already migrated by Task #74), 1 entry used
+            # the canonical CTE (dd_freshest_from_canonical), and 14 entries
+            # pointed at stale lines that had shifted past the original
+            # location (BUG 1 site_appliances drive-down + Phase 2 close-out
+            # rewrote large swaths of those files). The line-anchored
+            # ratchet shape is structurally fragile against ongoing
+            # refactors — the canonical migration tracking lives in
+            # test_no_raw_discovered_devices_count.py BASELINE_MAX (= 0
+            # since Task #74 2026-05-15) and the per-line inline
+            # `canonical-migration:` markers, NOT in this allowlist.
+            # Future device-count canonical drift will be caught by the
+            # sibling ratchet, not by re-adding line-anchored entries here.
         ],
         "display_null_passthrough_required": False,
     },
