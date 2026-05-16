@@ -87,6 +87,10 @@ async def is_baa_on_file_verified(
     intent is fail-closed: if the org is missing or in an unexpected
     state, the conservative answer is "not on file."
     """
+    # Task #93 v2 Commit 2 (2026-05-16): cut over from email-join to
+    # FK-join. baa_signatures.client_org_id (mig 321) is the structural
+    # FK; LOWER(bs.email) = LOWER(co.primary_email) was the orphan
+    # class — primary_email renames left signatures stranded.
     row = await conn.fetchrow(
         """
         SELECT (
@@ -94,7 +98,7 @@ async def is_baa_on_file_verified(
             AND EXISTS (
                 SELECT 1
                   FROM baa_signatures bs
-                 WHERE LOWER(bs.email) = LOWER(co.primary_email)
+                 WHERE bs.client_org_id = co.id
                    AND bs.is_acknowledgment_only = FALSE
             )
         ) AS verified
@@ -133,6 +137,9 @@ async def baa_signature_status(
     For customer-facing artifacts, prefer `is_baa_on_file_verified()`
     — this richer status is for operator surfaces only.
     """
+    # Task #93 v2 Commit 2 (2026-05-16): FK-join cutover. mig 321 added
+    # baa_signatures.client_org_id (NOT NULL FK). email-join was the
+    # orphan class — primary_email renames stranded signatures.
     row = await conn.fetchrow(
         """
         SELECT
@@ -142,22 +149,22 @@ async def baa_signature_status(
             (
                 SELECT bs2.baa_version
                   FROM baa_signatures bs2
-                 WHERE LOWER(bs2.email) = LOWER(co.primary_email)
+                 WHERE bs2.client_org_id = co.id
                  ORDER BY bs2.signed_at DESC
                  LIMIT 1
             ) AS latest_signature_version,
             (
                 SELECT bs2.signed_at
                   FROM baa_signatures bs2
-                 WHERE LOWER(bs2.email) = LOWER(co.primary_email)
+                 WHERE bs2.client_org_id = co.id
                  ORDER BY bs2.signed_at DESC
                  LIMIT 1
             ) AS latest_signature_at
           FROM client_orgs co
           LEFT JOIN baa_signatures bs
-            ON LOWER(bs.email) = LOWER(co.primary_email)
+            ON bs.client_org_id = co.id
          WHERE co.id = $1
-         GROUP BY co.id, co.baa_on_file, co.primary_email
+         GROUP BY co.id, co.baa_on_file
         """,
         client_org_id,
     )
@@ -260,10 +267,14 @@ async def baa_enforcement_ok(
         required_version: the minimum BAA version a signature must
               carry. Defaults to CURRENT_REQUIRED_BAA_VERSION.
     """
+    # Task #93 v2 Commit 2 (2026-05-16): FK-join cutover. Pre-fix this
+    # was a 2-step query (fetch primary_email, then fetch signatures by
+    # LOWER(email) join). Post-fix collapses to 1 step + uses
+    # baa_signatures.client_org_id FK directly. primary_email is no
+    # longer load-bearing for enforcement — orphan class closed.
     row = await conn.fetchrow(
         """
         SELECT
-            co.primary_email,
             co.baa_expiration_date,
             (
                 co.baa_expiration_date IS NULL
@@ -288,10 +299,10 @@ async def baa_enforcement_ok(
         """
         SELECT bs.baa_version
           FROM baa_signatures bs
-         WHERE LOWER(bs.email) = LOWER($1)
+         WHERE bs.client_org_id = $1
            AND bs.is_acknowledgment_only = FALSE
         """,
-        row["primary_email"],
+        client_org_id,
     )
     for sig in sig_rows:
         if _parse_baa_version(sig["baa_version"]) >= required:

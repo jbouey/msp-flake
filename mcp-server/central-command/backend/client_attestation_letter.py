@@ -99,17 +99,16 @@ def _canonical_attestation_payload(facts: Dict[str, Any]) -> str:
 async def _get_current_baa(
     conn: asyncpg.Connection, client_org_id: str
 ) -> Optional[Dict[str, Any]]:
-    """Return the most recent baa_signatures row for the org's
-    primary email. baa_signatures is keyed by email; the org's
-    primary_email is the canonical link.
+    """Return the most recent baa_signatures row for the org.
 
-    SQL aliases (`AS id`, `AS signer_email`) preserve the historical
-    dict-key contract this module's downstream consumers rely on
-    (`baa["id"]`, `baa["signer_email"]`). The live column names on
-    Migration 224's baa_signatures are `signature_id` + `email`; the
-    pre-2026-05-09 query referenced the wrong identifiers and 500'd
-    every self-serve-signed BAA org's first letter download. Cold-
-    onboarding adversarial walkthrough P0 #2 closure.
+    Task #93 v2 Commit 2 (2026-05-16): cut over from email-join to
+    FK-join. baa_signatures.client_org_id (mig 321, NOT NULL FK) is
+    now the structural link; the prior `LOWER(c.primary_email) =
+    LOWER(s.email)` join was the orphan class — every primary_email
+    rename stranded the letter's BAA lookup. SQL aliases (`AS id`,
+    `AS signer_email`) preserve the historical dict-key contract this
+    module's downstream consumers rely on (`baa["id"]`,
+    `baa["signer_email"]`).
     """
     row = await conn.fetchrow(
         """
@@ -119,7 +118,7 @@ async def _get_current_baa(
                s.signed_at,
                c.name            AS practice_name
           FROM baa_signatures s
-          JOIN client_orgs c ON LOWER(c.primary_email) = LOWER(s.email)
+          JOIN client_orgs c ON c.id = s.client_org_id
          WHERE c.id = $1
          ORDER BY s.signed_at DESC
          LIMIT 1
