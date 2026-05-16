@@ -97,9 +97,20 @@ _QUALIFIED_REF_PAT = re.compile(
 def _resolve_aliases(sql: str) -> dict[str, str]:
     """Find `FROM <table> [AS] <alias>` and `JOIN <table> [AS] <alias>`
     + return alias→table mapping. Bare `FROM <table>` (no alias) maps
-    the table to itself."""
+    the table to itself.
+
+    Iter-4 prod hardening (2026-05-16): also match f-string interpolated
+    `FROM {tbl} <alias>` patterns. Pre-hardening, the alias resolver
+    would skip these → alias.column refs slipped past the gate →
+    UndefinedColumnError fired in prod every 60s tick on the
+    synthetic_traffic_marker_orphan invariant. When the table is
+    f-string interpolated, we can't resolve to a real table — but we
+    still know the alias points at SOME table from a per-table loop,
+    so we mark it as `<f-string>` to force the column to be looked up
+    across ALL tables in the schema (pessimistic — passes only if
+    EVERY table in the schema has that column)."""
     aliases: dict[str, str] = {}
-    # Pattern: FROM tbl [AS] alias  /  JOIN tbl [AS] alias
+    # Standard: FROM tbl [AS] alias  /  JOIN tbl [AS] alias
     for m in re.finditer(
         r"\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?([a-z_][a-z0-9_]*))?",
         sql, re.IGNORECASE,
@@ -111,6 +122,16 @@ def _resolve_aliases(sql: str) -> dict[str, str]:
         if alias.upper() in ("ON", "WHERE", "AND", "OR", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "LATERAL"):
             alias = tbl
         aliases[alias.lower()] = tbl.lower()
+    # F-string interpolated tables: FROM {tbl} <alias>
+    for m in re.finditer(
+        r"\b(?:FROM|JOIN)\s+\{(\w+)\}\s+([a-z_][a-z0-9_]*)",
+        sql, re.IGNORECASE,
+    ):
+        alias = m.group(2).lower()
+        # Marker — the alias points at SOMETHING per-table; column
+        # refs through this alias must work for every table in the
+        # iteration set (pessimistic universal check).
+        aliases[alias] = "<f-string-interpolated>"
     return aliases
 
 
@@ -157,6 +178,35 @@ def test_every_substrate_invariant_sql_references_real_columns():
         "could not extract any `_check_*` function SQL — regex broken?"
     )
 
+    # Iter-4 prod hardening: for each `_check_*` function, also
+    # extract the per-table iteration tuple list (if any) so we know
+    # WHICH tables the f-string alias iterates over. Look for module-
+    # level constants like `_LOAD_TEST_SYNTHETIC_FORBIDDEN_TABLES`
+    # referenced in the function body — best-effort.
+    assertions_src = _ASSERTIONS.read_text()
+    iter_targets_by_fn: dict[str, set[str]] = {}
+    for fn_name, _ in fn_sql_pairs:
+        fn_body_m = re.search(
+            rf"async def {re.escape(fn_name)}\b.*?(?=\nasync def |\Z)",
+            assertions_src, re.DOTALL,
+        )
+        if not fn_body_m:
+            continue
+        body = fn_body_m.group(0)
+        # Look for `for ... in _SOME_CONSTANT_TABLES` patterns
+        for m in re.finditer(r"for\s+\w+(?:,\s*\w+)*\s+in\s+(_[A-Z_]+TABLES)\b", body):
+            const_name = m.group(1)
+            # Find the constant's definition in assertions.py
+            const_m = re.search(
+                rf"{re.escape(const_name)}\s*=\s*\(([^)]+)\)",
+                assertions_src, re.DOTALL,
+            )
+            if not const_m:
+                continue
+            # Extract table-name string literals inside the constant
+            tbls = set(re.findall(r'"([a-z_][a-z0-9_]*)"', const_m.group(1)))
+            iter_targets_by_fn.setdefault(fn_name, set()).update(tbls)
+
     for fn_name, sql in fn_sql_pairs:
         aliases = _resolve_aliases(sql)
         ctes = _cte_names(sql)
@@ -169,6 +219,29 @@ def test_every_substrate_invariant_sql_references_real_columns():
                 continue
             # Resolve alias → real table
             tbl = aliases.get(lhs, lhs)
+            # F-string interpolated table — validate column against
+            # EVERY table the iteration walks. If ANY iteration target
+            # lacks the column, fail (would raise UndefinedColumnError
+            # at runtime on that iteration).
+            if tbl == "<f-string-interpolated>":
+                iter_targets = iter_targets_by_fn.get(fn_name, set())
+                if not iter_targets:
+                    # Can't resolve the iteration scope — skip rather
+                    # than false-positive.
+                    continue
+                missing_in = sorted(
+                    t for t in iter_targets
+                    if t in schema_lc and col not in schema_lc[t]
+                )
+                if missing_in:
+                    failures.append(
+                        f"{fn_name}: f-string-interpolated table alias "
+                        f"{lhs!r} references column {col!r} but it does "
+                        f"NOT exist on {missing_in} (iter target list "
+                        f"per per-table loop). Will raise UndefinedColumn"
+                        f"Error at runtime on those iterations."
+                    )
+                continue
             # Skip if table is a known gap (PG internals)
             if tbl in _SCHEMA_GAPS or any(tbl.startswith(p) for p in ("pg_", "information_schema")):
                 continue

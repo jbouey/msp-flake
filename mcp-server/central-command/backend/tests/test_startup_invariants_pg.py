@@ -79,6 +79,28 @@ CREATE TABLE admin_audit_log (
 CREATE TABLE client_audit_log (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW());
 CREATE TABLE portal_access_log (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW());
 
+-- Mig 311 (Vault Phase C iter-4 Commit 2 2026-05-16). Required so
+-- INV-SIGNING-BACKEND-VAULT's bootstrap-INSERT works when the test
+-- env has VAULT_ADDR set. Matches mig 311 shape (10 cols + UNIQUE
+-- + CHECK + idx). Gate B iter-4 P1-1 closure.
+CREATE TABLE vault_signing_key_versions (
+    id                  BIGSERIAL    PRIMARY KEY,
+    key_name            TEXT         NOT NULL,
+    key_version         INTEGER      NOT NULL,
+    pubkey_hex          TEXT         NOT NULL,
+    pubkey_b64          TEXT         NOT NULL,
+    first_observed_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    last_observed_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    known_good          BOOLEAN      NOT NULL DEFAULT FALSE,
+    approved_by         TEXT         NULL,
+    approved_at         TIMESTAMPTZ  NULL,
+    UNIQUE (key_name, key_version),
+    CONSTRAINT vault_signing_key_versions_known_good_ck
+        CHECK (NOT known_good OR (approved_by IS NOT NULL AND approved_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_vault_signing_key_versions_known_good
+    ON vault_signing_key_versions (known_good) WHERE known_good = TRUE;
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Synthetic append-only trigger fn — mimics migration 151

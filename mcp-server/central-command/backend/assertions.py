@@ -2001,16 +2001,24 @@ async def _check_sensitive_workflow_advanced_without_baa(
 # Ships standalone of Commit 4 ops (CX22 + Vault Transit) — invariants
 # are code-only and can land + tick before any real load runs fire.
 
+# Customer-facing aggregation tables that MUST NEVER reference a
+# synthetic site_id. The compliance_bundles invariant above is sev1
+# (chain corruption); these are sev2 (visibility leak). All have
+# a `site_id` column — verified against prod_columns.json fixture.
+#
+# Per-table TIMESTAMP COLUMN — most have `created_at` but
+# `aggregated_pattern_stats` is rollup-only + tracks `first_seen` /
+# `last_seen` instead. Iter-4 Commit 2 prod runtime check (2026-05-16)
+# found that hardcoding `t.created_at` raised UndefinedColumnError
+# every 60s on aggregated_pattern_stats. Per-table override fixes.
+#
+# Adding a table here = declaring it customer-facing.
 _LOAD_TEST_SYNTHETIC_FORBIDDEN_TABLES = (
-    # Customer-facing aggregation tables that MUST NEVER reference a
-    # synthetic site_id. The compliance_bundles invariant below is sev1
-    # (chain corruption); these are sev2 (visibility leak). All have
-    # a `site_id` column — verified against prod_columns.json fixture.
-    # Adding a table here = declaring it customer-facing.
-    "incidents",
-    "l2_decisions",
-    "evidence_bundles",
-    "aggregated_pattern_stats",
+    # (table_name, timestamp_column_for_first_seen, timestamp_column_for_last_seen)
+    ("incidents", "created_at", "created_at"),
+    ("l2_decisions", "created_at", "created_at"),
+    ("evidence_bundles", "created_at", "created_at"),
+    ("aggregated_pattern_stats", "first_seen", "last_seen"),
 )
 
 
@@ -2249,12 +2257,20 @@ async def _check_synthetic_traffic_marker_orphan(
     rev1 via `except asyncpg.PostgresError`. Per fork verdict
     audit/coach-c5a-pha-94-closure-gate-b-2026-05-16.md P0-2."""
     violations: List[Violation] = []
-    for tbl in _LOAD_TEST_SYNTHETIC_FORBIDDEN_TABLES:
+    for tbl, first_ts_col, last_ts_col in _LOAD_TEST_SYNTHETIC_FORBIDDEN_TABLES:
+        # iter-4 prod runtime fix (2026-05-16): per-table timestamp
+        # column override — aggregated_pattern_stats has
+        # `first_seen`/`last_seen`, not `created_at`. Pre-fix the
+        # hardcoded `t.created_at` raised UndefinedColumnError every
+        # 60s tick on that table. The CI gate
+        # test_substrate_invariant_sql_columns_valid failed open
+        # because the alias resolver doesn't see f-string interpolated
+        # table names; gate hardening shipped alongside.
         rows = await conn.fetch(
             f"""
             SELECT t.site_id, COUNT(*) AS hit_count,
-                   MIN(t.created_at) AS first_seen,
-                   MAX(t.created_at) AS last_seen
+                   MIN(t.{first_ts_col}) AS first_seen,
+                   MAX(t.{last_ts_col}) AS last_seen
               FROM {tbl} t
               JOIN sites s ON s.site_id = t.site_id
              WHERE s.synthetic = TRUE
