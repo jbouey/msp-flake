@@ -3144,6 +3144,19 @@
     "published_to",
     "site_id"
   ],
+  "load_test_runs": [
+    "abort_reason",
+    "abort_requested_at",
+    "abort_requested_by",
+    "completed_at",
+    "metadata",
+    "run_id",
+    "scenario_sha",
+    "started_at",
+    "started_by",
+    "status",
+    "target_endpoints"
+  ],
   "log_entries": [
     "boot_id",
     "created_at",
@@ -5432,18 +5445,6 @@
     "site_id",
     "status",
     "workstation_id"
-  ],
-  "vault_signing_key_versions": [
-    "approved_at",
-    "approved_by",
-    "first_observed_at",
-    "id",
-    "key_name",
-    "key_version",
-    "known_good",
-    "last_observed_at",
-    "pubkey_b64",
-    "pubkey_hex"
   ],
   "watchdog_events": [
     "appliance_id",

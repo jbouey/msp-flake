@@ -3144,6 +3144,19 @@
     "published_to": "ARRAY",
     "site_id": "text"
   },
+  "load_test_runs": {
+    "abort_reason": "text",
+    "abort_requested_at": "timestamp with time zone",
+    "abort_requested_by": "text",
+    "completed_at": "timestamp with time zone",
+    "metadata": "jsonb",
+    "run_id": "uuid",
+    "scenario_sha": "text",
+    "started_at": "timestamp with time zone",
+    "started_by": "text",
+    "status": "text",
+    "target_endpoints": "ARRAY"
+  },
   "log_entries": {
     "boot_id": "character varying",
     "created_at": "timestamp with time zone",
@@ -5432,18 +5445,6 @@
     "site_id": "character varying",
     "status": "character varying",
     "workstation_id": "uuid"
-  },
-  "vault_signing_key_versions": {
-    "approved_at": "timestamp with time zone",
-    "approved_by": "text",
-    "first_observed_at": "timestamp with time zone",
-    "id": "bigint",
-    "key_name": "text",
-    "key_version": "integer",
-    "known_good": "boolean",
-    "last_observed_at": "timestamp with time zone",
-    "pubkey_b64": "text",
-    "pubkey_hex": "text"
   },
   "watchdog_events": {
     "appliance_id": "character varying",
