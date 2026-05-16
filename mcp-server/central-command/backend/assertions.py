@@ -978,6 +978,112 @@ async def _check_cross_org_relocate_chain_orphan(
     return violations
 
 
+async def _check_fleet_order_fanout_partial_completion(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev2 — a fleet_cli --all-at-site fan-out (one
+    privileged_access_attestation bundle covering N fleet_orders)
+    has at least one target appliance unacked > 6h post-issuance.
+
+    Task #128 closure (#118 Gate B P2-1, multi-device fan-out
+    follow-up). Per #118 (multi-device P1-2): --all-at-site creates
+    ONE bundle + N orders via the cross-link UPDATE pattern
+    (admin_audit_log.details->>'fleet_order_ids' jsonb array). At
+    fan-out scale (10-20 appliances), some target appliances may
+    be offline → fleet_order never acked → silent partial
+    completion. The operator sees the fan-out as 'issued' without
+    seeing 'K-of-N never executed'.
+
+    Sev2 per Gate A 2026-05-16 §P1-2: sibling parity with
+    `enable_emergency_access_failed_unack` (sev2); sev3 would fall
+    below operator-attention threshold for chain-of-trust-affected
+    fan-outs.
+
+    Algorithm:
+      - Scan admin_audit_log narrowed to action LIKE
+        'PRIVILEGED_ACCESS_%' over last 24h (Gate A P1-1: action
+        filter avoids the COUNT(*)-class timeout on the large
+        audit table)
+      - Filter rows with details ? 'fleet_order_ids' AND
+        jsonb_array_length > 1 (fan-out shape only)
+      - Filter rows older than NOW() - 6h (Gate A: matches daemon
+        heartbeat cadence + mig 161 retry window)
+      - jsonb_array_elements_text to unpack the fleet_order_ids
+        array into per-order rows
+      - LEFT JOIN fleet_order_completions ON fleet_order_id
+        (composite PK is (fleet_order_id, appliance_id) — Gate A
+        P0-1 fix: use `WHERE foc.fleet_order_id IS NULL` for
+        unmatched, NOT `foc.id IS NULL` because there's no `id`
+        column)
+      - Gate A P0-3 fix: 'skipped' status (appliance at
+        skip_version) is a successful completion — would
+        false-positive on every update_daemon fan-out to
+        already-updated boxes if omitted. NULL OR explicit-skip
+        excluded.
+      - LIMIT 100 to bound log spam under widespread offline
+        appliances
+
+    Cross-link gap caveat: fleet_cli.py:543 writes the
+    fleet_order_ids array via a best-effort try/except. If that
+    UPDATE fails, the invariant is blind to that fan-out entirely.
+    Tracked as separate followup task.
+    """
+    rows = await conn.fetch(
+        """
+        WITH fan_out_orders AS (
+            SELECT al.details->>'bundle_id'           AS bundle_id,
+                   al.action                          AS audit_action,
+                   al.created_at                      AS issued_at,
+                   jsonb_array_elements_text(al.details->'fleet_order_ids') AS fleet_order_id_text,
+                   jsonb_array_length(al.details->'fleet_order_ids') AS fan_out_size
+              FROM admin_audit_log al
+             WHERE al.action LIKE 'PRIVILEGED_ACCESS_%'
+               AND al.created_at > NOW() - INTERVAL '24 hours'
+               AND al.created_at < NOW() - INTERVAL '6 hours'
+               AND al.details ? 'fleet_order_ids'
+               AND jsonb_array_length(al.details->'fleet_order_ids') > 1
+        )
+        SELECT fob.bundle_id,
+               fob.audit_action,
+               fob.issued_at,
+               fob.fan_out_size,
+               fob.fleet_order_id_text,
+               EXTRACT(EPOCH FROM (NOW() - fob.issued_at))/3600 AS hours_unacked
+          FROM fan_out_orders fob
+          LEFT JOIN fleet_order_completions foc
+            ON foc.fleet_order_id::text = fob.fleet_order_id_text
+           AND foc.status IN ('completed', 'acknowledged', 'skipped')
+         WHERE foc.fleet_order_id IS NULL
+         ORDER BY fob.issued_at DESC
+         LIMIT 100
+        """
+    )
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "bundle_id": r["bundle_id"],
+                "audit_action": r["audit_action"],
+                "issued_at": r["issued_at"].isoformat() if r["issued_at"] else None,
+                "fan_out_size": int(r["fan_out_size"]),
+                "fleet_order_id": r["fleet_order_id_text"],
+                "hours_unacked": float(r["hours_unacked"] or 0),
+                "interpretation": (
+                    f"fleet_order {r['fleet_order_id_text']!r} from "
+                    f"fan-out bundle {r['bundle_id']!r} (size "
+                    f"{int(r['fan_out_size'])}) issued "
+                    f"{float(r['hours_unacked'] or 0):.1f}h ago has "
+                    f"NO completion (completed/acknowledged/skipped) "
+                    f"in fleet_order_completions. Likely target "
+                    f"appliance offline > 6h, daemon not pulling "
+                    f"orders, or fleet_order_completion writer broken."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
 async def _check_bundle_chain_position_gap(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -2848,6 +2954,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=_check_bundle_chain_position_gap,
     ),
     Assertion(
+        name="fleet_order_fanout_partial_completion",
+        severity="sev2",
+        description="A fleet_cli --all-at-site fan-out (one privileged_access_attestation bundle covering N fleet_orders) has at least one target appliance unacked > 6h post-issuance. Per #118 (multi-device P1-2): fan-out creates ONE bundle + N orders via admin_audit_log.details->>'fleet_order_ids' jsonb array. At scale, some target appliances may be offline → silent partial completion. The operator sees the fan-out as 'issued' without seeing 'K-of-N never executed'. Sev2 per Gate A 2026-05-16 sibling parity with enable_emergency_access_failed_unack. 'skipped' status counts as ack (appliance at skip_version — Gate A P0-3 false-positive avoidance). Runbook: substrate_runbooks/fleet_order_fanout_partial_completion.md.",
+        check=_check_fleet_order_fanout_partial_completion,
+    ),
+    Assertion(
         name="cross_org_relocate_baa_receipt_unauthorized",
         severity="sev1",
         description="A completed cross_org_site_relocate_requests row has a target_org_id whose baa_relocate_receipt_signature_id (and addendum_signature_id) are both NULL. Outside-counsel approval (2026-05-06) condition #2 requires that the receiving org's BAA or addendum expressly authorize receipt of transferred site compliance records, recorded as a signature_id on the org row. Endpoint check at target-accept refuses without it; this invariant catches post-execute drift (admin un-authorizing the org after relocate completed, or a code-path bypass that skipped the check). Mig 283.",
@@ -3299,6 +3411,26 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "/api/journal/upload is reachable from the site's egress allowlist. "
             "Without this, forensics after an incident cannot use the hash-chained "
             "journal archive for that appliance.",
+    },
+    "fleet_order_fanout_partial_completion": {
+        "display_name": "Fleet-order fan-out has K-of-N unacked at 6h+",
+        "recommended_action": (
+            "SEV2 — a privileged --all-at-site fan-out has one or "
+            "more target appliances unacked > 6h. Investigate via: "
+            "(1) `SELECT * FROM fleet_orders WHERE id = "
+            "'<details.fleet_order_id>'` to see the target_appliance"
+            "_id; (2) `SELECT * FROM site_appliances WHERE "  # noqa: site-appliances-deleted-include — operator-instruction example string in display_metadata, not an executable query
+            "appliance_id = '<...>'` to check last_checkin + status; "
+            "(3) if appliance is online but daemon isn't pulling, "
+            "tail mcp-server logs for `appliance_id={...}` to find "
+            "the auth-failure / fleet-order-pull errors. Common "
+            "causes: appliance offline > 6h, daemon stuck on prior "
+            "order, fleet_order_completion writer broken. If "
+            "appliance is genuinely decommissioned, mark soft-"
+            "delete + reissue fan-out with --target-appliance-id "
+            "for the remaining live appliances. See substrate_"
+            "runbooks/fleet_order_fanout_partial_completion.md."
+        ),
     },
     "bundle_chain_position_gap": {
         "display_name": "Evidence chain has a position gap (chain-integrity violation)",

@@ -38,6 +38,7 @@ DROP TABLE IF EXISTS privileged_access_magic_links CASCADE;
 DROP TABLE IF EXISTS admin_audit_log CASCADE;
 DROP TABLE IF EXISTS client_audit_log CASCADE;
 DROP TABLE IF EXISTS portal_access_log CASCADE;
+DROP TABLE IF EXISTS fleet_order_completions CASCADE;
 DROP TABLE IF EXISTS fleet_orders CASCADE;
 DROP TABLE IF EXISTS compliance_bundles CASCADE;
 DROP TABLE IF EXISTS vault_signing_key_versions CASCADE;
@@ -79,6 +80,18 @@ CREATE TABLE admin_audit_log (
 
 CREATE TABLE client_audit_log (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW());
 CREATE TABLE portal_access_log (id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW());
+
+-- Mig 049 fleet_order_completions — required for #128
+-- fleet_order_fanout_partial_completion invariant's LEFT JOIN. Gate
+-- A iter-128 P0-2 closure: PREREQ_SCHEMA per-test fixture must DROP
+-- + CREATE in lockstep with the runtime invariant's read path.
+CREATE TABLE fleet_order_completions (
+    fleet_order_id UUID NOT NULL REFERENCES fleet_orders(id) ON DELETE CASCADE,
+    appliance_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'completed',
+    completed_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (fleet_order_id, appliance_id)
+);
 
 -- Mig 311 (Vault Phase C iter-4 Commit 2 2026-05-16). Required so
 -- INV-SIGNING-BACKEND-VAULT's bootstrap-INSERT works when the test
