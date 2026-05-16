@@ -1,36 +1,55 @@
 """CI gate: ban `UPDATE client_orgs SET primary_email = …` outside a
 BAA-aware rename helper (Task #91, Counsel Rule 6).
 
-`baa_status.baa_enforcement_ok()` (Task #52) decides whether an org may
-advance a BAA-gated workflow by joining `baa_signatures.email` to
-`client_orgs.primary_email` via `LOWER()`. Re-pointing primary_email
-silently orphans every prior formal-BAA signature for that org → the
-org is blocked from every gated workflow with no path back except an
-admin DB intervention.
+## Status update 2026-05-16 — orphan class structurally closed
 
-This is not theoretical: until 2026-05-15, `routes.py PUT
-/organizations/{org_id}` accepted `primary_email` in its body and
-rewrote the column. The accepted-fields tuple was scrubbed in the same
-commit that introduced this gate (#91 P0). No live caller depends on
-the rename today.
+Task #93 v2 Commit 2 (`4af4ddc9`) migrated all 4 BAA readers in
+`baa_status.py` + `client_attestation_letter.py` from the email-join
+shape (`LOWER(bs.email) = LOWER(co.primary_email)`) to the FK-join
+shape (`bs.client_org_id = co.id`) backed by `baa_signatures.client_
+org_id` (mig 321 — NOT NULL FK). The original safety motivation for
+this gate — "a primary_email rename silently orphans the BAA
+signature" — is now **structurally impossible** for the enforcement
+predicate, the attestation letter lookup, and the signature_status
+read. A primary_email change leaves the BAA signatures intact and
+fully reachable via FK; `baa_enforcement_ok()` continues to return
+the correct answer pre/post-rename.
 
-The right structural fix is a BAA-aware rename helper that issues a
-new `baa_signatures` INSERT (the table is append-only — `trg_baa_no_
-update` from mig 224 forbids UPDATE+DELETE for §164.316(b)(2)(i)
-7-year retention) re-anchored at the new email in the same
-transaction. Filed as task #91-FU-B. A longer-term structural fix is
-adding `baa_signatures.client_org_id` as a FK so the join is by
-client_org_id rather than email — filed as task #91-FU-A.
+Task #94 (BAA-aware primary_email rename helper) was **superseded
+by #93 C2** for the safety class. The display surfaces that render
+`baa_signatures.email` continue to show the signer email at time of
+signing, which is the legally correct rendering (the signature
+attaches to the email at the moment of commitment — re-rendering
+with current-primary-email would misrepresent the signature event
+per §164.504(e)).
 
-Until those land, NO code path may mutate `client_orgs.primary_email`.
+## Why the gate stays active
 
-Exemption mechanism (mirrors test_no_direct_site_id_update.py):
+The gate continues to enforce "no bare `UPDATE primary_email`" for
+three reasons distinct from the original safety class:
+
+  1. **Audit-trail discipline** — any primary_email mutation should
+     flow through a controlled path that writes admin_audit_log +
+     captures the actor + reason. Bare UPDATEs from routes.py would
+     bypass that.
+  2. **No live caller needs primary_email rename today** — until a
+     concrete consumer surfaces, the cleanest posture is "blocked
+     by default." Re-enabling rename can ship in the same commit
+     that introduces a real caller.
+  3. **Future-proofing** — if customers later want self-service
+     primary_email rename (rare; usually paired with OAuth-provider
+     change), the helper path is built once + audited once + the
+     gate enforces a single re-entry point.
+
+## Exemption mechanism (mirrors test_no_direct_site_id_update.py)
+
   * Per-line: append `# noqa: primary-email-baa-gate — <reason>`
     (Python), `// noqa: primary-email-baa-gate — <reason>` (TS/Go),
     or `-- noqa: primary-email-baa-gate — <reason>` (SQL) on the line
     that contains the SET clause. The reason is mandatory.
-  * File-level: only this test file and #91-FU-B's BAA-aware rename
-    helper (when shipped) will need the exemption.
+  * File-level: only this test file carries the marker today. A
+    future BAA-aware rename helper (when a real consumer surfaces)
+    will need the exemption.
 
 Comment-only lines (starting with `--`, `#`, `//`) are skipped to avoid
 false positives on documentation.
