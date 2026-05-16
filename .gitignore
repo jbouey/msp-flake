@@ -9,6 +9,12 @@ deploy/prometheus/
 deploy/setup-on-main-cpu.sh
 node_modules/
 .DS_Store
+
+# Transient fork-isolation worktrees created by Agent(isolation="worktree").
+# Per memory feedback_parallel_fork_isolation.md — concurrent forks MUST use
+# worktree isolation; their working trees live under this path and should
+# NOT be committed (disposable per-fork snapshots).
+.claude/worktrees/
 *.egg-info/
 venv/
 .env
