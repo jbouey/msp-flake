@@ -42,12 +42,22 @@ def test_compute_compliance_score_has_skip_cache_kwarg():
 def test_skip_cache_kwarg_bypasses_cache_logic():
     """Source-walk: when _skip_cache=True, the cache-enabled gate must
     short-circuit. This is the LOAD-BEARING contract the substrate
-    invariant depends on.
-    """
+    invariant depends on. Pin loosened in Phase A (Task #83) to allow
+    _should_cache_score() to take additional bound args (window_start/
+    window_end) — the contract is `_skip_cache` ANDed via `not`, not
+    the exact arg list."""
+    import re
     src = inspect.getsource(compliance_score.compute_compliance_score)
-    # The gate is `_cache_enabled = _should_cache_score(window_days) and not _skip_cache`
-    assert "_should_cache_score(window_days) and not _skip_cache" in src, (
+    # Match: `_should_cache_score(...) and not _skip_cache` with any
+    # arg list in the parens.
+    pat = re.compile(
+        r"_should_cache_score\s*\([^)]*\)\s+and\s+not\s+_skip_cache",
+        re.DOTALL,
+    )
+    assert pat.search(src), (
         "Cache-enabled gate must AND in `not _skip_cache`. Without "
         "this, `_skip_cache=True` would still hit the cache and "
-        "produce stale comparisons in the substrate invariant."
+        "produce stale comparisons in the substrate invariant. "
+        "Phase A (Task #83) — _should_cache_score may take additional "
+        "args (window_start/window_end) but the AND-in must remain."
     )

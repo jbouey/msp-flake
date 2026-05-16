@@ -132,9 +132,19 @@ DEFAULT_WINDOW_DAYS = 30
 _SCORE_CACHE_TTL_SECONDS = 60.0
 
 
-def _should_cache_score(window_days: Optional[int]) -> bool:
+def _should_cache_score(
+    window_days: Optional[int],
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
+) -> bool:
     """Cache the bounded-window paths only. Auditor-export
-    `window_days=None` bypasses — fresh chain read every time."""
+    `window_days=None` (no bounds at all) bypasses — fresh chain read
+    every time. Fixed-window paths (window_start / window_end set)
+    DO cache — deterministic on the bounded range. Phase A (Task #83)
+    addition: distinguish (a) unbounded all-time (no cache) from
+    (b) bounded by date range (cache OK, deterministic on bounds)."""
+    if window_start is not None or window_end is not None:
+        return True
     return window_days is not None
 
 
@@ -142,15 +152,22 @@ def _score_cache_key(
     site_ids: List[str],
     include_incidents: bool,
     window_days: Optional[int],
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
 ) -> tuple:
     """Cache key MUST include the tenant scope (site_ids tuple) so RLS
     isolation is preserved at the cache layer. Sorted for stability;
-    site_ids list ordering is otherwise undefined."""
+    site_ids list ordering is otherwise undefined. Phase A (Task #83):
+    window_start + window_end folded in so fixed-window callsites
+    (monthly / quarterly packets) get their own cache entries
+    distinct from rolling-window callers."""
     return (
         "compute_compliance_score",
         tuple(sorted(site_ids)),
         bool(include_incidents),
         window_days,
+        window_start.isoformat() if window_start else None,
+        window_end.isoformat() if window_end else None,
     )
 
 
@@ -160,6 +177,8 @@ async def compute_compliance_score(
     *,
     include_incidents: bool = False,
     window_days: Optional[int] = DEFAULT_WINDOW_DAYS,
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
     _skip_cache: bool = False,
 ) -> ComplianceScore:
     """Canonical compliance score for an org or single site.
@@ -172,9 +191,21 @@ async def compute_compliance_score(
                            the failure count (matches the per-site
                            compliance-health endpoint shape).
         window_days: lookback window for the canonical query. Default
-                     90 (round-table 30 verdict). Pass None to query
+                     30 (round-table verdict). Pass None to query
                      all-time — used by auditor-export contexts that
                      need the full chain.
+        window_start, window_end: Phase A (Task #83) — fixed-window
+                     params for monthly / quarterly / split-window
+                     callsites that need a date-range bound that does
+                     NOT roll with NOW(). When EITHER is set,
+                     `window_days` is IGNORED. Semantics:
+                       both set    → checked_at BETWEEN [start, end)
+                       only start  → checked_at >= start  (end = NOW)
+                       only end    → checked_at <  end    (start = -infinity)
+                     Used by monthly compliance packets, quarterly
+                     summary, stats-delta 7d-ago comparison. Cache
+                     key includes the resolved bounds so different
+                     bounded ranges don't collide.
 
     Returns:
         ComplianceScore — see class docstring. The `window_description`
@@ -195,11 +226,30 @@ async def compute_compliance_score(
         "X checks haven't been run since <date>" so they can
         diagnose stale appliances themselves.
     """
-    window_description = (
-        f"Latest result per (site, check_type, hostname), last {window_days} days"
-        if window_days is not None
-        else "Latest result per (site, check_type, hostname), all-time"
-    )
+    # Phase A (Task #83): when window_start/end is set, window_days is
+    # IGNORED. Build the description from whichever shape is in play.
+    if window_start is not None or window_end is not None:
+        if window_start is not None and window_end is not None:
+            window_description = (
+                f"Latest result per (site, check_type, hostname), "
+                f"{window_start.date().isoformat()} to {window_end.date().isoformat()}"
+            )
+        elif window_start is not None:
+            window_description = (
+                f"Latest result per (site, check_type, hostname), "
+                f"from {window_start.date().isoformat()} to now"
+            )
+        else:
+            window_description = (
+                f"Latest result per (site, check_type, hostname), "
+                f"all-time through {window_end.date().isoformat()}"
+            )
+    else:
+        window_description = (
+            f"Latest result per (site, check_type, hostname), last {window_days} days"
+            if window_days is not None
+            else "Latest result per (site, check_type, hostname), all-time"
+        )
 
     if not site_ids:
         return ComplianceScore(
@@ -221,20 +271,61 @@ async def compute_compliance_score(
     # recompute against a captured sample produces a fresh result —
     # the 60s cache would otherwise collapse the comparison to a no-op
     # within TTL window, defeating drift detection.
-    _cache_enabled = _should_cache_score(window_days) and not _skip_cache
+    _cache_enabled = (
+        _should_cache_score(window_days, window_start, window_end)
+        and not _skip_cache
+    )
     _cache_key = None
     if _cache_enabled:
         from .perf_cache import cache_get, cache_set
-        _cache_key = _score_cache_key(site_ids, include_incidents, window_days)
+        _cache_key = _score_cache_key(
+            site_ids, include_incidents, window_days, window_start, window_end,
+        )
         _cached_result = cache_get(_cache_key)
         if _cached_result is not None:
             return _cached_result
 
     # Latest result per (site, check_type, hostname) across all bundles
-    # the caller can see under their RLS context. Bounded by window_days
-    # (default 30) per round-table 30 — drops the unnest from ~777K rows
-    # to ~50K for typical orgs.
-    if window_days is None:
+    # the caller can see under their RLS context. Three shapes:
+    #   (a) window_start/end set → bounded by date range (Phase A)
+    #   (b) window_days set      → bounded by NOW() - N days (default)
+    #   (c) both None            → all-time (auditor-export)
+    if window_start is not None or window_end is not None:
+        # Phase A (Task #83) — fixed-window. window_days is IGNORED.
+        # Build WHERE based on which bounds are set. Cache-safe because
+        # the bounds are passed as resolved datetimes, not NOW()-relative.
+        clauses = ["cb.site_id = ANY($1)"]
+        params: list = [site_ids]
+        if window_start is not None:
+            params.append(window_start)
+            clauses.append(f"cb.checked_at >= ${len(params)}::timestamptz")
+        if window_end is not None:
+            params.append(window_end)
+            clauses.append(f"cb.checked_at < ${len(params)}::timestamptz")
+        rows = await conn.fetch(
+            f"""
+            WITH unnested AS (
+                SELECT
+                    cb.site_id,
+                    cb.checked_at,
+                    c->>'check'    AS check_type,
+                    c->>'status'   AS check_status,
+                    COALESCE(c->>'hostname', c->>'host', '') AS hostname
+                  FROM compliance_bundles cb,
+                       jsonb_array_elements(cb.checks) AS c
+                 WHERE {' AND '.join(clauses)}
+            ),
+            latest AS (
+                SELECT DISTINCT ON (site_id, check_type, hostname)
+                    site_id, check_type, check_status, hostname, checked_at
+                  FROM unnested
+                 ORDER BY site_id, check_type, hostname, checked_at DESC
+            )
+            SELECT site_id, check_status, checked_at FROM latest
+            """,
+            *params,
+        )
+    elif window_days is None:
         rows = await conn.fetch(
             """
             WITH unnested AS (

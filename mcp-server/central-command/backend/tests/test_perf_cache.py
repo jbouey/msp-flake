@@ -142,10 +142,18 @@ def test_score_cache_key_includes_tenant_scope():
 def test_compute_compliance_score_source_shape():
     """Source-shape gate — the function MUST consult the cache for
     bounded-window paths AND write back on miss. Pinned via AST-walk
-    over the source string."""
+    over the source string. Phase A (Task #83) loosened the literal-
+    arg-list pin to a regex so window_start/window_end can be added
+    to _should_cache_score without re-litigating this gate."""
+    import re
     src = (_BACKEND / "compliance_score.py").read_text()
-    # Bounded-window cache check at the top of the body.
-    assert "_should_cache_score(window_days)" in src
+    # Bounded-window cache check at the top of the body — accept any
+    # arg list inside the parens (window_days, plus optional bounds).
+    assert re.search(r"_should_cache_score\s*\([^)]*\)", src), (
+        "compute_compliance_score must call _should_cache_score(...). "
+        "Phase A allows additional bound args; the call itself must "
+        "remain so the cache gate exists."
+    )
     assert "cache_get(_cache_key)" in src
     # Write-back at the final return.
     assert "cache_set(_cache_key, _result, _SCORE_CACHE_TTL_SECONDS)" in src

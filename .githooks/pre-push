@@ -155,6 +155,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_no_load_test_marker_in_compliance_bundles.py"
     "tests/test_load_harness_wave1_paths_exist.py"
     "tests/test_load_test_api_shape.py"
+    "tests/test_compliance_score_fixed_window.py"
     "tests/test_no_sql_function_interval_concat.py"
     "tests/test_canonical_not_used_for_compliance_bundles.py"
     "tests/test_canonical_metrics_registry.py"
