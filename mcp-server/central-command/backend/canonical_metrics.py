@@ -131,7 +131,19 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
         "canonical_helper": "baa_status.is_baa_on_file_verified",
         "permitted_inline_in_module": "baa_status",
         "allowlist": [
-            {"signature": "client_attestation_letter._get_current_baa", "classification": "migrate"},
+            # RECLASSIFIED 2026-05-15 (Task #103 Phase 3 Commit 4, implementation-
+            # discovery override of original `migrate` classification): row-fetch
+            # for compliance-letter rendering — returns dict(id, signer_email,
+            # signer_name, signed_at, practice_name). Canonical
+            # `is_baa_on_file_verified` returns a BOOLEAN state predicate
+            # (verified yes/no). Different output SHAPE, but the function
+            # already queries the canonical source-of-truth (`baa_signatures`
+            # table JOIN `client_orgs` on LOWER(primary_email)) with the same
+            # join logic as the canonical helper. Same canonical source, just
+            # row-fetch flavor instead of boolean flavor. Letter rendering
+            # NEEDS the signer attribution (auditor evidence chain — §164.504
+            # documentation). Not a state-check class.
+            {"signature": "client_attestation_letter._get_current_baa", "classification": "operator_only"},
             # partner_portfolio_attestation paths to be added once
             # source-grep confirms callsite shape.
         ],
