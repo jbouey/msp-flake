@@ -71,7 +71,7 @@ _BACKEND = pathlib.Path(__file__).resolve().parent.parent
 # Phase-3-drive-down territory.
 # ─────────────────────────────────────────────────────────────────────
 
-BASELINE_MAX = 22  # 2 compliance_score + 1 baa_on_file + 19 device_count_per_site — Phase 3 drive-down in progress. Commit 1 (2026-05-15) reclassified metrics.calculate_compliance_score + frameworks.get_compliance_scores + frameworks.get_appliance_compliance_scores as operator_only. Commit 2 (2026-05-15) reclassified compliance_packet.CompliancePacket._calculate_compliance_score as operator_only (implementation-discovery override of Gate A MIGRATE verdict — packet is per-month historical snapshot, canonical helper is current-state rolling window; new PLANNED_METRICS entry historical_period_compliance_score blocks future drift).
+BASELINE_MAX = 20  # 0 compliance_score + 1 baa_on_file + 19 device_count_per_site — Phase 3 compliance_score slice CLOSED via reclassification 2026-05-15. All 6 original migrate entries reclassified as `operator_only` after per-entry methodology inspection revealed each implements a DISTINCT metric class from the canonical bundle-aggregator helper (compute_compliance_score). Three NEW PLANNED_METRICS entries register the un-canonicalized classes so they cannot leak onto new customer surfaces: historical_period_compliance_score (packet PDF — per-month snapshot), category_weighted_compliance_score (HIPAA-weighted per-category w/ partial-credit-for-warnings — portal + admin dashboards), per_framework_compliance_score (per-framework rollup from compliance_scores table). Each blocks-until its own Class-B Gate A on a canonical helper extension.
 
 
 # ─────────────────────────────────────────────────────────────────────

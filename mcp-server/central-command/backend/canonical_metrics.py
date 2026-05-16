@@ -93,8 +93,21 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
             # semantics → different metric class. See PLANNED_METRICS.
             # historical_period_compliance_score for the canonical-pending entry.
             {"signature": "compliance_packet.CompliancePacket._calculate_compliance_score", "classification": "operator_only"},
-            {"signature": "db_queries.get_compliance_scores_for_site", "classification": "migrate"},
-            {"signature": "db_queries.get_all_compliance_scores", "classification": "migrate"},
+            # RECLASSIFIED 2026-05-15 (Task #103 Phase 3 Commit 3, implementation-
+            # discovery override of Gate A MIGRATE verdict): HIPAA-weighted
+            # per-category methodology with partial-credit-for-warnings —
+            # `score = ((pass + 0.5*warn) / total) * 100` averaged per category
+            # then weighted by HIPAA_CATEGORY_WEIGHTS (encryption + access_control
+            # higher weight). Canonical compute_compliance_score uses simple
+            # `passed/total*100` with NO partial credit and NO per-category
+            # HIPAA weighting. Distinct customer-facing methodology — different
+            # metric class. See PLANNED_METRICS.category_weighted_compliance_score
+            # for the canonical-pending entry.
+            {"signature": "db_queries.get_compliance_scores_for_site", "classification": "operator_only"},
+            # RECLASSIFIED 2026-05-15 (same Commit 3): batched all-sites variant
+            # of get_compliance_scores_for_site — identical methodology, same
+            # metric class. Reclassified together.
+            {"signature": "db_queries.get_all_compliance_scores", "classification": "operator_only"},
             # RECLASSIFIED 2026-05-15 (Task #103 Gate A): reads denormalized
             # `compliance_scores` table populated by a separate pipeline (per-
             # framework rollup with score_percentage/is_compliant/at_risk/
@@ -292,6 +305,52 @@ PLANNED_METRICS: Dict[str, Dict[str, str]] = {
             "design + Class-B Gate A on period-bounded canonical "
             "helper; methodology-version cohort plan for any packet "
             "score formula change"
+        ),
+    },
+    "category_weighted_compliance_score": {
+        # HIPAA-weighted per-category compliance score with partial-
+        # credit-for-warnings methodology, surfaced by:
+        #   - db_queries.get_compliance_scores_for_site (single-site,
+        #     used by /api/portal/{site}?token=... legacy client surface
+        #     + routes.py:282/417 admin endpoints)
+        #   - db_queries.get_all_compliance_scores (all-sites batched
+        #     for admin dashboards routes.py:178/4701)
+        #
+        # Formula: per-category `(pass + 0.5*warn) / total * 100`,
+        # then weighted average across categories using
+        # HIPAA_CATEGORY_WEIGHTS (encryption + access_control get
+        # higher weight than the binary 6-equal-weight baseline of
+        # metrics.calculate_compliance_score).
+        #
+        # Canonical compute_compliance_score does NOT support either
+        # partial-credit-for-warnings OR per-category HIPAA weighting
+        # — it computes a simple bundle-level `passed/total*100` from
+        # the DISTINCT-ON-(site,check,host) latest-per-key snapshot.
+        # The customer-facing portal numbers WOULD CHANGE if these
+        # callers delegated to it. Carol Gate A P0 noted exactly
+        # this — portal frontend destructures `{patching,
+        # antivirus, ..., score, has_data}` keys and would silently
+        # render zeros for missing keys + a different score number.
+        #
+        # Task #103 Phase 3 Commit 3 (2026-05-15) — same
+        # implementation-discovery pattern as Commit 2: different
+        # legitimate methodology that should have its own canonical
+        # helper rather than being force-migrated into the wrong
+        # canonical class.
+        "canonical_helper_pending": (
+            "extend compute_compliance_score with optional "
+            "(category_breakdown=True, partial_credit_warnings=True, "
+            "weights=HIPAA_CATEGORY_WEIGHTS) parameters OR add a "
+            "sibling compute_category_weighted_score helper. Either "
+            "approach must preserve the existing {patching, "
+            "antivirus, backup, logging, firewall, encryption, "
+            "score, has_data} response shape for the portal "
+            "frontend (P0 Carol)."
+        ),
+        "blocks_until": (
+            "design + Class-B Gate A on category-weighted canonical "
+            "helper; shape-preservation parity test against portal + "
+            "admin dashboard surfaces"
         ),
     },
     "per_framework_compliance_score": {
