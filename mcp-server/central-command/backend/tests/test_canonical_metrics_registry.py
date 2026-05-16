@@ -71,7 +71,7 @@ _BACKEND = pathlib.Path(__file__).resolve().parent.parent
 # Phase-3-drive-down territory.
 # ─────────────────────────────────────────────────────────────────────
 
-BASELINE_MAX = 23  # 3 compliance_score + 1 baa_on_file + 19 device_count_per_site — Phase 3 drive-down in progress (Commit 1 reclassified metrics.calculate_compliance_score + frameworks.get_compliance_scores + frameworks.get_appliance_compliance_scores as operator_only per Task #103 Gate A; the bundle-aggregator class no longer claims them).
+BASELINE_MAX = 22  # 2 compliance_score + 1 baa_on_file + 19 device_count_per_site — Phase 3 drive-down in progress. Commit 1 (2026-05-15) reclassified metrics.calculate_compliance_score + frameworks.get_compliance_scores + frameworks.get_appliance_compliance_scores as operator_only. Commit 2 (2026-05-15) reclassified compliance_packet.CompliancePacket._calculate_compliance_score as operator_only (implementation-discovery override of Gate A MIGRATE verdict — packet is per-month historical snapshot, canonical helper is current-state rolling window; new PLANNED_METRICS entry historical_period_compliance_score blocks future drift).
 
 
 # ─────────────────────────────────────────────────────────────────────

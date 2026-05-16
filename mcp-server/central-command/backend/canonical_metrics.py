@@ -84,7 +84,15 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
             # Different metric semantics — does NOT delegate to
             # compute_compliance_score.
             {"signature": "metrics.calculate_compliance_score", "classification": "operator_only"},
-            {"signature": "compliance_packet.CompliancePacket._calculate_compliance_score", "classification": "migrate"},
+            # RECLASSIFIED 2026-05-15 (Task #103 Phase 3 Commit 2, implementation-
+            # discovery override of Gate A MIGRATE verdict): per-month HISTORICAL
+            # snapshot (`_period_start = datetime(year, month, 1)` — see
+            # compliance_packet.py:210). Canonical compute_compliance_score takes
+            # `window_days` as a CURRENT-state rolling lookback ending NOW, which
+            # cannot serve arbitrary historical-month queries. Different metric
+            # semantics → different metric class. See PLANNED_METRICS.
+            # historical_period_compliance_score for the canonical-pending entry.
+            {"signature": "compliance_packet.CompliancePacket._calculate_compliance_score", "classification": "operator_only"},
             {"signature": "db_queries.get_compliance_scores_for_site", "classification": "migrate"},
             {"signature": "db_queries.get_all_compliance_scores", "classification": "migrate"},
             # RECLASSIFIED 2026-05-15 (Task #103 Gate A): reads denormalized
@@ -246,6 +254,45 @@ PLANNED_METRICS: Dict[str, Dict[str, str]] = {
             "per-tenant scoping"
         ),
         "blocks_until": "design + Class-B Gate A on uptime calculator",
+    },
+    "historical_period_compliance_score": {
+        # Per-month historical-snapshot score surfaced by the
+        # compliance packet PDF generator (compliance_packet.py:448
+        # `CompliancePacket._calculate_compliance_score`). Bounds
+        # `checked_at >= period_start AND checked_at < period_end`
+        # where `_period_start = datetime(year, month, 1)` — a fixed
+        # month boundary, NOT a rolling lookback ending NOW.
+        #
+        # The current compliance_score canonical helper
+        # (`compute_compliance_score(conn, site_ids, window_days=N)`)
+        # cannot serve this — it queries `checked_at > NOW() -
+        # $2::int * INTERVAL '1 day'`. A historical packet generated
+        # months after the period would silently return current-state
+        # data instead of period-bounded data.
+        #
+        # Counsel Rule 1 + Auditor: customer-facing PDF surface, must
+        # have its own canonical helper. Until that helper lands, the
+        # packet generator's existing per-control 2-level averaging
+        # methodology stays in place (methodology_version=2.0 in the
+        # packet boilerplate) — that text already discloses the
+        # specific algorithm so auditors can verify.
+        #
+        # Task #103 Phase 3 Commit 2 (2026-05-15) — implementation-
+        # discovery finding overriding the original Gate A MIGRATE
+        # verdict (the fork's NEAR-canonical observation missed the
+        # period-bounded vs rolling-window semantic mismatch).
+        "canonical_helper_pending": (
+            "extend compute_compliance_score with optional "
+            "(period_start, period_end) parameters OR add a sibling "
+            "compute_period_compliance_score helper sharing the same "
+            "DISTINCT-ON-(site,check,host) latest-per-key shape with "
+            "period bounds substituted for window_days"
+        ),
+        "blocks_until": (
+            "design + Class-B Gate A on period-bounded canonical "
+            "helper; methodology-version cohort plan for any packet "
+            "score formula change"
+        ),
     },
     "per_framework_compliance_score": {
         # Per-framework score_percentage / is_compliant / at_risk /
