@@ -1894,3 +1894,231 @@ Total substrate invariants: 28 → 32. Three of the four +4 invariants were ship
 [truncated...]
 
 ---
+
+## 2026-04-25-session-211-post-round-table-5-step-plan.md
+
+# Session 211 — Post-round-table 5-step plan + sigauth identity-key closure
+
+**Date:** 2026-04-25
+**Span:** Single session, ~all-day
+**Trajectory:** Round-table-driven consistency hardening across 8 strict CI
+gates + 4-commit sigauth design correction.
+
+## Headline
+
+Closed the original 9-task round-table queue (Wave 1 + Wave 2) AND a
+follow-up 5-step plan (steps 1-4 done, step 5 deferred behind the
+fleet rollout that was step 4D). The trajectory was right but the
+position is best described as *honest fragility* — every soft spot is
+named, every named soft spot has a permanent gate, every gate has a
+ratchet. Round-table caught **8+ substantive bugs** I would otherwise
+have shipped, including 3 in code I'd written hours apart in the same
+session.
+
+## Strict CI gates locked today
+
+| Gate | Baseline / mode |
+|------|-----------------|
+| SQL columns INSERT/UPDATE | 0/0 (ratchet) |
+| ON CONFLICT uniqueness | 0 (strict) |
+| admin_audit_log column lockstep | strict |
+| Frontend mutation CSRF | 0 (brace-balanced parser, was regex) |
+| FILTER-attaches-to-aggregate | 0 (strict) |
+| Privileged-order 4-list lockstep (Py ↔ Go ↔ SQL) | strict |
+| Demo-path button → endpoint contract | strict |
+| Sigauth legacy-fallback regression guard | strict |
+| **Lifespan-pg-smoke as real gate** (#183) | post-205 hard fail |
+| **Documentation-drift gate** (#4) | strict |
+
+Pre-session: only `test_no_new_duplicate_pydantic_model_names` was
+strict. Net delta: +9 strict gates, +5 baseline ratchets locked at zero.
+
+## #179 sigauth identity-vs-evidence key (4-commit chain)
+
+The substrate `signature_verification_failures` invariant fired 100%
+on `north-valley-branch-2` because `signature_auth.py` fell back to
+`site_appliances.agent_public_key` (the EVIDENCE-bundle key) when
+verifying sigauth (the IDENTITY-key purpose). They're different keys
+by design — daemon writes evidence to `/var/lib/msp/keys/signing.key`
+and identity to `/var/lib/msp/agent.key`. Closed across:
+
+- **Commit A (`ba68584e`)** — migration 251 adds
+  `site_appliances.agent_identity_public_key VARCHAR(64)` with a
+  partial index on `(site_id, mac) WHERE NOT NULL`.
+  `ApplianceCheckin` Pydantic model gains the field. `sites.py` STEP
+  3.6c persists it scoped per-MAC like the evidence-key path.
+
+[truncated...]
+
+---
+
+## 2026-04-28-session-212-phase1-4-priorities-closure.md
+
+# Session 212 — Session 211 next-priorities closure + task #168 RCA deferral
+
+**Date:** 2026-04-28
+**Span:** Single session, ~3h
+**Trajectory:** 4-phase forward motion through Session 211's stated
+next-priorities. Phase 1-3 closed. Phase 4 (task #168 RCA) deferred
+behind a forensic-log gate per QA verdict B.
+
+## Headline
+
+All four "next session priorities" from Session 211 are addressed.
+Three closed (deploy verified, strict-mode flip auto-executed,
+P2 follow-ups landed); one (the underlying jitter that triggered
+Phase 1's verification) deferred behind a forensic-log capture gate
+because passive evidence cannot disambiguate the leading hypothesis
+(pgbouncer routing) from the "only 7C:D3 fails" observation that
+weakens it. Two QA round-tables, one substrate ratchet that fired
+on its first scan with the expected violation, two prod commits.
+
+## Phase-by-phase
+
+### Phase 1 — verify v0.4.13 fleet rollout (priority #2)
+
+- All 3 appliances on **0.4.13**, last checkin <1 min stale
+- `signature_verification_failures` on north-valley-branch-2
+  resolved 2026-04-25 20:10:11Z — within the predicted 2h drain
+  window
+- `sigauth_crypto_failures` resolved 2026-04-25 19:04:34Z (right at
+  Commit C deploy)
+- 180/180 valid sigauth observations in 1h on north-valley-branch-2,
+  0% fail rate. Affirmative signal — not "0 violations because 0
+  observations"
+
+QA condition added: `_check_legacy_bearer_only_checkin` must be silent
+for all 3 appliances (proxy for "are they actually emitting signed
+headers"). Confirmed via per-appliance EXISTS check on
+sigauth_observations within 1h. All 3 = `signing=true`.
+
+### Phase 2 — strict-mode sigauth flip (priority #1)
+
+**Surprise:** the auto-promotion worker
+(`sigauth_enforcement.sigauth_auto_promotion_loop`, 5-min cadence,
+60-sample/6h/0-failure threshold) **already executed the flip**
+autonomously at 2026-04-26 01:11:53Z — ~6h after v0.4.13 deploy. All
+3 appliances flipped observe→enforce simultaneously. Audit log entry
+per appliance: "sustained valid signatures: 359-360 samples in 6h, 0
+failures".
+
+Phase 2 reduced from "design + execute" to "verify + ratchet".
+Verification surfaced **4 sigauth rejections in 24h on
+
+[truncated...]
+
+---
+
+## 2026-04-29-session-213-flywheel orphan relocation + F2-F3 round-table P0.md
+
+# Session 213 - Flywheel Orphan Relocation + F2 F3 Round Table P0
+
+**Date:** 2026-04-29
+**Started:** 06:34
+**Previous Session:** 212
+
+---
+
+## Goals
+
+- [x] Diagnose post-relocate orphan-row recreation (mig 252+254 didn't stick)
+- [x] Trace upstream cause (`_flywheel_promotion_loop` aggregating execution_telemetry)
+- [x] Migration 255 — relocate execution_telemetry/incidents/l2_decisions
+- [x] QA round-table on flywheel system architecture
+- [x] Ship F2 (phantom-site precondition) + F3 (orphan-telemetry invariant)
+
+---
+
+## Progress
+
+### Completed
+
+**Migrations 254 + 255:**
+- `254_aggregated_pattern_stats_orphan_cleanup_retry.sql` — full Step 1+2+3 (merge → delete-collisions → rename) for orphan site cleanup. The original 252 left 115 orphan rows because asyncpg simple-query / explicit BEGIN/COMMIT interaction skipped sub-statements after the first.
+- `255_relocate_orphan_operational_history.sql` — closes the upstream cycle. Migrates 19,063 `execution_telemetry` rows, 533 `incidents`, 31 `l2_decisions` from `physical-appliance-pilot-1aea78` → `north-valley-branch-2`. Re-runs `aggregated_pattern_stats` Step 1+2+3 cleanup. **INTENTIONALLY skips `compliance_bundles`** (137,168 rows — Ed25519 + OTS-anchored, site_id is part of the cryptographic binding). Idempotent audit-log INSERT with NOT EXISTS guard.
+
+**Round-table verdict on flywheel (NEEDS-IMPROVEMENT, 7 findings):**
+- F1 (P0, next session) — Canonical telemetry view (`v_canonical_telemetry`) closes the relocate-orphan class architecturally
+- F2 (P0, shipped) — `PhantomSiteRolloutError` precondition in `safe_rollout_promoted_rule` for `scope='site'`
+- F3 (P0, shipped) — `flywheel_orphan_telemetry` sev1 invariant
+- F4 (P1) — Centralize site rename behind SQL function + CI gate
+- F5 (P1) — Deprecate duplicate `_flywheel_promotion_loop` in `background_tasks.py`
+- F6 (P3) — Federation tier for eligibility thresholds
+- F7 (P3) — Operator diagnostic endpoint `GET /api/admin/sites/{site_id}/flywheel-diagnostic`
+
+**F2 wired (commit `fe3ab3cc`):**
+- `flywheel_promote.py::PhantomSiteRolloutError` exception class
+- Precondition in `safe_rollout_promoted_rule` for `scope='site'` queries `SELECT 1 FROM site_appliances WHERE site_id=$1 AND deleted_at IS NULL LIMIT 1` and raises if 0 rows
+- `routes.py::promote_pattern` translates to HTTP 409 with structured remediation body pointing operator at admin_audit_log
+- `tests/test_flywheel_promote_candidate.py::FakeConn.fetchval` returns 1 (healthy-site fixture)
+
+**F3 wired (commit `fe3ab3cc`):**
+- `assertions.py::_check_flywheel_orphan_telemetry` queries 24h orphan rows, threshold > 10
+- Added to `ALL_ASSERTIONS` (sev1) + `_DISPLAY_METADATA` + `substrate_runbooks/flywheel_orphan_telemetry.md` (three-list lockstep green)
+- Total invariant count: **45 → 46**
+
+**Tests:**
+- 69 backend tests pass (lockstep + write-warning + flywheel_promote_candidate)
+- `test_assertion_metadata_complete` + `test_substrate_docs_present` green
+- Smoke import: `len(ALL_ASSERTIONS) == 46`
+
+[truncated...]
+
+---
+
+## 2026-04-30-session-214-F6 MVP slice + post-Session-213 hardening (P3 partition-aware drift + P2 inner-scan + F6 design spec + F6 MVP migration 261 + flywheel_federation_misconfigured invariant).md
+
+# Session 214 — F6 MVP slice + post-Session-213 hardening
+
+**Date:** 2026-04-30 (overnight continuation from Session 213)
+**Started:** 03:15 UTC
+**Previous Session:** 213
+
+---
+
+## Goals
+
+- [x] Item 3 — partition-aware drift detection (P3, deferred from Session 213 F4-followup)
+- [x] Item 4 — defense-in-depth inner scan within auto-EXEMPT files (P2, round-table deferred)
+- [x] Item 1 — F6 design spec (multi-day, design-first)
+- [x] Item 2 — confirmed 2026-05-05 sigauth watch is passive
+- [x] F6 MVP slice — schema + feature flag scaffolding
+- [x] F6 fast-follow — flywheel_federation_misconfigured sev3 substrate invariant
+
+---
+
+## Progress
+
+### Items 3 + 4 — partition-aware drift + inner-scan (commit `86df7625`)
+
+Two-pass UNION query in `_check_rename_site_immutable_list_drift`:
+- Pass 1: trigger directly on the table (regular + partitioned parents — relkind expansion from `'r'` to `IN ('r', 'p')` is the actual fix; round-table corrected my narrative)
+- Pass 2: trigger on a partition child → surface the PARENT (legacy/manual case)
+
+Defense-in-depth inner scan in `_inner_scan_misuse()` runs on auto-EXEMPT migration files; 3 regex patterns catch actual misuse (UPDATE compliance_bundles + canonical_site_id within 500 chars; INSERT same; reverse-direction). `_strip_sql_comments()` strips `-- ` and `/* */` first so docs co-mention doesn't false-positive.
+
+5 inner-scan self-tests + ratchet wired correctly. Round-table verdict: READY (first pass), 2 polish items (mig 191 narrative correction + runbook Verification SQL update) folded in.
+
+### F6 design spec (commit `86df7625`)
+
+`docs/specs/2026-04-30-f6-federation-eligibility-tier-design.md` — full scoping doc for Federation tier (local/org/platform). Three-week calibration window referenced; 4 round-table risks pre-anticipated; explicit "do NOT bundle with hotfix sessions".
+
+### F6 MVP slice (commit `7dee6d6c`)
+
+Migration 261 — `flywheel_eligibility_tiers` table. 3 seed rows (local/org/platform), ALL `enabled=FALSE`, `calibrated_at=NULL`. Schema-level CHECK constraints enforce calibration discipline (org_isolation_required=TRUE for tier_level >=1; distinct_orgs/sites required when calibrated_at is set).
+
+main.py Step 2 reads `FLYWHEEL_FEDERATION_ENABLED` env var (lenient parser matches `assertions.py::L2_ENABLED` sibling). Triple-gate activation: env=true AND tier.enabled=TRUE AND calibrated_at IS NOT NULL. Default OFF — production behavior unchanged.
+
+Round-table verdict: NEEDS-IMPROVEMENT. 2 P1 + 3 P2 ship-now items integrated:
+- P1-1: lenient parser instead of strict `== "true"` (sibling-subsystem mismatch was operator footgun)
+- P1-2: NULL out distinct_orgs/sites in higher-tier seeds + CHECK constraints forcing calibration to set them
+- P2-3: org_isolation_required column with CHECK (HIPAA boundary at schema level)
+- P2-4: logger.info → logger.warning + TODO for Prom counter
+- P2-5: reconciled min_distinct_sites=1 on local seed comment
+
+Reviewer said "the structural slice is sound. You did not ship a foot-gun. The OFF-state preservation property holds."
+
+
+[truncated...]
+
+---

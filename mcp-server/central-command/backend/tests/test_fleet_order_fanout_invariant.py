@@ -13,7 +13,7 @@ Source-shape sentinels pin Gate A's binding requirements:
   P1-1 — Action narrowing via action LIKE 'PRIVILEGED_ACCESS_%'
          (else COUNT(*)-class timeout on admin_audit_log).
   P1-2 — Registered at sev2 (NOT sev3 — sibling parity with
-         enable_emergency_access_failed_unack).
+         appliance_moved_unack).
 
 Plus structural:
   - function exists
@@ -51,7 +51,7 @@ def _read_function_body() -> str:
 
 def test_function_exists_and_registered_at_sev2():
     """Gate A P1-2: sev2 (NOT sev3 — sibling parity with
-    enable_emergency_access_failed_unack)."""
+    appliance_moved_unack)."""
     src = _read_src()
     assert "async def _check_fleet_order_fanout_partial_completion" in src
     m = re.search(
@@ -65,9 +65,10 @@ def test_function_exists_and_registered_at_sev2():
     )
     assert m.group(1) == "sev2", (
         f"severity={m.group(1)!r} — must be sev2 (NOT sev3). "
-        f"Gate A P1-2: sibling enable_emergency_access_failed_unack "
-        f"is sev2; fan-out partial completion is operationally "
-        f"comparable. sev3 falls below operator-attention threshold."
+        f"Gate A P1-2 + Gate B P1-A: sibling appliance_moved_unack "
+        f"(silent-fail-after-issuance class) is sev2; fan-out "
+        f"partial completion is operationally comparable. sev3 "
+        f"falls below operator-attention threshold."
     )
 
 
@@ -157,12 +158,16 @@ def test_6h_threshold():
     )
 
 
-def test_24h_window_for_partition_pruning():
-    """24h window for partition pruning on admin_audit_log (table
-    can be large)."""
+def test_168h_window_for_friday_evening_orphan_coverage():
+    """168h (7d) window per Gate B 2026-05-16 P1-B: original 6h-24h
+    band silently dropped Friday-evening orphans that would surface
+    Monday triage. PRIVILEGED_ACCESS_% rows are low-volume, so the
+    action LIKE filter bounds the 7d scan safely."""
     body = _read_function_body()
-    assert "INTERVAL '24 hours'" in body, (
-        "Query must bound the admin_audit_log scan to last 24h."
+    assert "INTERVAL '168 hours'" in body, (
+        "Query must bound the admin_audit_log scan to last 168h (7d). "
+        "Original 24h window silently lost Friday-evening orphans "
+        "before Monday triage. Gate B 2026-05-16 P1-B."
     )
 
 

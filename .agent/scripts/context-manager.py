@@ -130,11 +130,17 @@ def status():
             except (ValueError, TypeError):
                 marker = "📅"
                 overdue = False
-            print(f"  {marker} due {due_str}: {f.get('what', '?')}")
+            # Newer entries use `task` field; older entries use `what`.
+            print(f"  {marker} due {due_str}: {f.get('task') or f.get('what', '?')}")
             if f.get("doc"):
                 print(f"     doc: {f['doc']}")
             if f.get("owner"):
                 print(f"     owner: {f['owner']}")
+            # dependency_warnings surfaces coordination conflicts with
+            # sibling entries (e.g. two items touching the same migration
+            # path). Coach D8 feedback 2026-05-12 — pinned schema field.
+            for warning in f.get("dependency_warnings", []) or []:
+                print(f"     ⚠️  warn: {warning}")
 
     # Recent milestones (v2 field)
     for ms in progress.get("recent_milestones", []):

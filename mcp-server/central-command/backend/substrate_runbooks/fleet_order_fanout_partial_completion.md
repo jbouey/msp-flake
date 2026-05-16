@@ -20,10 +20,16 @@ offline OR not pulling orders. Mig 161 retries failed orders
 within 1h — anything still unacked at 6h is beyond retry budget.
 
 Why sev2 (not sev3 per parent Gate B sketch): per Gate A iter-4
-2026-05-16 §P1-2, sibling parity with
-`enable_emergency_access_failed_unack` (sev2). sev3 would fall
-below the operator-attention threshold for chain-of-trust-
-affected fan-outs.
+2026-05-16 §P1-2 + Gate B 2026-05-16 P1-A correction, sibling
+parity with `appliance_moved_unack` (sev2 — the silent-fail-
+after-issuance class). sev3 would fall below the operator-
+attention threshold for chain-of-trust-affected fan-outs.
+
+Why 6h–168h (7d) window: original 6h–24h band silently dropped
+Friday-evening orphans that would surface Monday triage (Gate B
+2026-05-16 P1-B correction). PRIVILEGED_ACCESS_% audit rows are
+low-volume (operator-initiated fan-outs, ~few per day), so the
+action LIKE filter bounds the 7d scan safely.
 
 ## Root cause categories
 

@@ -994,10 +994,17 @@ async def _check_fleet_order_fanout_partial_completion(
     completion. The operator sees the fan-out as 'issued' without
     seeing 'K-of-N never executed'.
 
-    Sev2 per Gate A 2026-05-16 §P1-2: sibling parity with
-    `enable_emergency_access_failed_unack` (sev2); sev3 would fall
-    below operator-attention threshold for chain-of-trust-affected
-    fan-outs.
+    Sev2 per Gate A 2026-05-16 §P1-2 + Gate B 2026-05-16 P1-A: the
+    cited sibling is `appliance_moved_unack` (sev2 at :2779) — the
+    silent-fail-after-issuance class. Justification stands on first
+    principles: chain-of-trust-affected privileged fan-out merits
+    operator-attention tier; sev3 falls below panel surfacing.
+
+    Window: 6h–168h (7d) per Gate B P1-B — original 6h–24h band
+    silently dropped Friday-evening orphans that would surface Monday
+    triage. PRIVILEGED_ACCESS_% audit rows are low-volume (operator-
+    initiated fan-outs, ~few per day), so the action LIKE filter
+    bounds the scan safely at 7d.
 
     Algorithm:
       - Scan admin_audit_log narrowed to action LIKE
@@ -1038,7 +1045,7 @@ async def _check_fleet_order_fanout_partial_completion(
                    jsonb_array_length(al.details->'fleet_order_ids') AS fan_out_size
               FROM admin_audit_log al
              WHERE al.action LIKE 'PRIVILEGED_ACCESS_%'
-               AND al.created_at > NOW() - INTERVAL '24 hours'
+               AND al.created_at > NOW() - INTERVAL '168 hours'
                AND al.created_at < NOW() - INTERVAL '6 hours'
                AND al.details ? 'fleet_order_ids'
                AND jsonb_array_length(al.details->'fleet_order_ids') > 1
@@ -2956,7 +2963,7 @@ ALL_ASSERTIONS: List[Assertion] = [
     Assertion(
         name="fleet_order_fanout_partial_completion",
         severity="sev2",
-        description="A fleet_cli --all-at-site fan-out (one privileged_access_attestation bundle covering N fleet_orders) has at least one target appliance unacked > 6h post-issuance. Per #118 (multi-device P1-2): fan-out creates ONE bundle + N orders via admin_audit_log.details->>'fleet_order_ids' jsonb array. At scale, some target appliances may be offline → silent partial completion. The operator sees the fan-out as 'issued' without seeing 'K-of-N never executed'. Sev2 per Gate A 2026-05-16 sibling parity with enable_emergency_access_failed_unack. 'skipped' status counts as ack (appliance at skip_version — Gate A P0-3 false-positive avoidance). Runbook: substrate_runbooks/fleet_order_fanout_partial_completion.md.",
+        description="A fleet_cli --all-at-site fan-out (one privileged_access_attestation bundle covering N fleet_orders) has at least one target appliance unacked > 6h post-issuance. Per #118 (multi-device P1-2): fan-out creates ONE bundle + N orders via admin_audit_log.details->>'fleet_order_ids' jsonb array. At scale, some target appliances may be offline → silent partial completion. The operator sees the fan-out as 'issued' without seeing 'K-of-N never executed'. Sev2 per Gate A 2026-05-16 / Gate B P1-A — sibling parity with appliance_moved_unack (silent-fail-after-issuance class). 'skipped' status counts as ack (appliance at skip_version — Gate A P0-3 false-positive avoidance). Runbook: substrate_runbooks/fleet_order_fanout_partial_completion.md.",
         check=_check_fleet_order_fanout_partial_completion,
     ),
     Assertion(

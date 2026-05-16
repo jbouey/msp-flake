@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
   "session": 220,
-  "updated": "2026-05-12T08:05:12.525669Z",
+  "updated": "2026-05-16T15:41:04.534165Z",
   "notes": "Schema v2 introduced Session 205. Free-text accumulation from v1 archived to .agent/archive/claude-progress.v1.json. active_tasks is now owned by Claude Code's TaskCreate, not this file \u2014 leave empty. Refreshed 2026-05-04 post-Session-215: session/version/milestone fields had drifted (file said 214/0.4.6/v37 vs reality 215/0.4.13/v38).",
   "versions": {
     "agent": "0.4.13",
@@ -110,9 +110,9 @@
       "due": "2026-05-22T00:00:00Z",
       "task": "D1: per-control granularity in calculate_compliance_score",
       "dependency_warnings": [
-        "Gate A 2026-05-12 returned APPROVE-WITH-FIXES — 4 P0s + 8 P1s; design's wrong-helper framing (mig 271 fixes calculate_compliance_score; customer-facing surfaces use compute_compliance_score). See audit/coach-d1-per-control-gate-a-2026-05-12.md before APPLY.",
-        "Touches compliance_scores rollup → coordinate with BUG 3 (compliance_status reader migration) so the same UI surface isn't double-migrated.",
-        "P3 entry (5/29) extends incidents.resolution_tier — pick mig numbers in lockstep when both ship (mig 269 D1, mig 310+ P3)."
+        "Gate A 2026-05-12 returned APPROVE-WITH-FIXES \u2014 4 P0s + 8 P1s; design's wrong-helper framing (mig 271 fixes calculate_compliance_score; customer-facing surfaces use compute_compliance_score). See audit/coach-d1-per-control-gate-a-2026-05-12.md before APPLY.",
+        "Touches compliance_scores rollup \u2192 coordinate with BUG 3 (compliance_status reader migration) so the same UI surface isn't double-migrated.",
+        "P3 entry (5/29) extends incidents.resolution_tier \u2014 pick mig numbers in lockstep when both ship (mig 269 D1, mig 310+ P3)."
       ],
       "why": "Coach found mig 268 assigns BUNDLE-level cb.check_result to each control via DISTINCT ON. Bundle with 5 controls + 1 failing host scores ALL 5 as failing. Disposition voted IMMEDIATE but actual scope is multi-hour schema design (evidence_framework_mappings.check_status column + framework_mapper writer update + 117K mapping backfill). Escalated to SCHEDULED.",
       "doc": "CLAUDE.md score-granularity entry; mig 268",
@@ -147,7 +147,7 @@
       "due": "2026-05-29T00:00:00Z",
       "task": "BUG 3 cleanup: migrate 10 legacy compliance_status readers to get_per_device_compliance helper",
       "dependency_warnings": [
-        "Touches compute_compliance_score surface — coordinate with D1 (5/22 per-control). Ship D1 first so the migrated readers see the right per-control shape, OR coordinate so the two PRs land together."
+        "Touches compute_compliance_score surface \u2014 coordinate with D1 (5/22 per-control). Ship D1 first so the migrated readers see the right per-control shape, OR coordinate so the two PRs land together."
       ],
       "why": "BUG 3 Path C round-table 2026-05-01 deprecated discovered_devices.compliance_status (mig 269). 14 callers currently read the column (4 doc references + 10 real reads in partners.py, routes.py, client_portal.py, device_sync.py legacy paths). CI gate ratchet baseline is 14; lower as each is migrated. The 10 real readers return the column to the frontend for display \u2014 migration requires changing response shapes to use the helper output.",
       "doc": "memory/feedback_bug3_per_device_compliance_2026_05_01.md; tests/test_compliance_status_not_read.py",
