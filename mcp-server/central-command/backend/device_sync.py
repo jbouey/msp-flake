@@ -267,7 +267,7 @@ async def sync_devices(report: DeviceSyncReport) -> DeviceSyncResponse:
                         # Prefer IP-format device_id over UUID — bridge MAC filtering
                         # switches device_id from MAC/UUID to IP, never go backwards.
                         await conn.execute(
-                            """
+                            r"""
                             UPDATE discovered_devices SET
                                 local_device_id = CASE
                                     WHEN $3 ~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' THEN $3

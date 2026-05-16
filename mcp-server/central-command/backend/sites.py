@@ -4853,7 +4853,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                         """, ws_rows)
 
                     # Deduplicate: remove IP-only entries when a named workstation has the same IP
-                    await conn.execute("""
+                    await conn.execute(r"""
                         DELETE FROM workstations w1
                         WHERE w1.site_id = $1
                         AND w1.hostname ~ '^\d+\.\d+\.\d+\.\d+$'
@@ -4867,7 +4867,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
 
                     # Remove appliance IPs and gateway from workstation list
                     # These are infrastructure devices, not compliance targets
-                    await conn.execute("""
+                    await conn.execute(r"""
                         DELETE FROM workstations
                         WHERE site_id = $1
                         AND (
@@ -4888,7 +4888,7 @@ async def appliance_checkin(checkin: ApplianceCheckin, request: Request, auth_si
                     """, checkin.site_id)
 
                     # Remove stale IP-only entries after 7 days (DHCP drift artifacts)
-                    await conn.execute("""
+                    await conn.execute(r"""
                         DELETE FROM workstations
                         WHERE site_id = $1
                         AND hostname ~ '^\d+\.\d+\.\d+\.\d+$'
