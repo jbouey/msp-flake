@@ -978,6 +978,106 @@ async def _check_cross_org_relocate_chain_orphan(
     return violations
 
 
+async def _check_bundle_chain_position_gap(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev1 — per-site evidence-chain integrity gate. Detects
+    non-contiguous `chain_position` values within compliance_bundles
+    for a single site_id (last 24h window).
+
+    Task #117 prerequisite (multi-device P1-1, Gate A 2026-05-16):
+    `evidence_chain.py::create_compliance_bundle` uses
+    `pg_advisory_xact_lock(hashtext(site_id), hashtext('attest'))` to
+    serialize chain writes per-site. The contention load test (Sub-
+    commits B-D) exercises 20-way concurrent writers against a single
+    test site — proving the lock works requires the substrate to
+    catch any gap. Pre-#117 NO per-site chain-integrity invariant
+    existed (only `cross_org_relocate_chain_orphan`, which is a
+    completely different shape).
+
+    Why sev1: chain-position gaps are the most direct form of
+    chain-of-custody corruption. Two bundles with the same prev_hash
+    (or any sequence break) means the chain walks differently across
+    two consecutive auditor-kit downloads — kit hash flips between
+    downloads, which is the visible tamper-evidence violation. Same
+    severity class as `load_test_marker_in_compliance_bundles` +
+    `cross_org_relocate_chain_orphan`.
+
+    Algorithm:
+      - PARTITION BY site_id (all 6 pg_advisory_xact_lock callsites
+        lock per-site; per-check-type partitioning would mis-attribute)
+      - WHERE created_at > NOW() - INTERVAL '24 hours' (partition
+        pruning on the monthly-partitioned compliance_bundles table)
+      - LAG(chain_position) over (PARTITION BY site_id ORDER BY
+        chain_position) — gap exists when
+        `chain_position - prev_chain_position > 1`
+      - Genesis bundle (LAG NULL) is naturally excluded by the
+        arithmetic predicate
+      - LIMIT 100 to bound log spam under widespread corruption
+
+    Carve-outs: NONE today. Historical mig 043 bundles predate the
+    advisory-lock fix (Session 207) but are outside the 24h window.
+    OTS retro-anchoring doesn't write new compliance_bundles rows
+    (only stamps existing rows via UPDATE), so chain_position is
+    untouched. cross_org_relocate copies bundles into the target
+    site's chain via a separate flow that preserves chain_position
+    contiguity (mig 280).
+    """
+    rows = await conn.fetch(
+        """
+        WITH ordered AS (
+            SELECT site_id,
+                   chain_position,
+                   bundle_id,
+                   created_at,
+                   LAG(chain_position) OVER (
+                       PARTITION BY site_id
+                       ORDER BY chain_position
+                   ) AS prev_chain_position
+              FROM compliance_bundles
+             WHERE created_at > NOW() - INTERVAL '24 hours'
+        )
+        SELECT site_id,
+               chain_position,
+               prev_chain_position,
+               bundle_id,
+               created_at,
+               chain_position - prev_chain_position AS gap_size
+          FROM ordered
+         WHERE prev_chain_position IS NOT NULL
+           AND chain_position - prev_chain_position > 1
+         ORDER BY site_id, chain_position
+         LIMIT 100
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "chain_position": int(r["chain_position"]),
+                "prev_chain_position": int(r["prev_chain_position"]),
+                "gap_size": int(r["gap_size"]),
+                "bundle_id": r["bundle_id"],
+                "created_at": (
+                    r["created_at"].isoformat() if r["created_at"] else None
+                ),
+                "interpretation": (
+                    f"chain_position gap of {int(r['gap_size'])} at "
+                    f"site_id={r['site_id']!r} bundle_id="
+                    f"{r['bundle_id']!r}. Expected next position "
+                    f"{int(r['prev_chain_position']) + 1}, got "
+                    f"{int(r['chain_position'])}. Indicates either "
+                    f"(a) the per-site advisory lock failed to "
+                    f"serialize a concurrent write, OR (b) a row was "
+                    f"deleted/skipped post-INSERT. Walk back from the "
+                    f"gap and quarantine the affected segment."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
 async def _check_cross_org_relocate_baa_receipt_unauthorized(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -2742,6 +2842,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         check=lambda c: _check_cross_org_relocate_chain_orphan(c),
     ),
     Assertion(
+        name="bundle_chain_position_gap",
+        severity="sev1",
+        description="A site_id has a non-contiguous chain_position in compliance_bundles within the last 24h. The per-site pg_advisory_xact_lock in evidence_chain.py::create_compliance_bundle MUST serialize chain writes — a gap means either the lock failed to serialize a concurrent writer OR a row was deleted/skipped post-INSERT. Sev1 because chain corruption is the most direct form of chain-of-custody violation (kit hash flips between consecutive auditor-kit downloads, breaking the tamper-evidence promise). Task #117 prerequisite (multi-device P1-1) — load test would prove nothing without this gate. Runbook: substrate_runbooks/bundle_chain_position_gap.md.",
+        check=_check_bundle_chain_position_gap,
+    ),
+    Assertion(
         name="cross_org_relocate_baa_receipt_unauthorized",
         severity="sev1",
         description="A completed cross_org_site_relocate_requests row has a target_org_id whose baa_relocate_receipt_signature_id (and addendum_signature_id) are both NULL. Outside-counsel approval (2026-05-06) condition #2 requires that the receiving org's BAA or addendum expressly authorize receipt of transferred site compliance records, recorded as a signature_id on the org row. Endpoint check at target-accept refuses without it; this invariant catches post-execute drift (admin un-authorizing the org after relocate completed, or a code-path bypass that skipped the check). Mig 283.",
@@ -3193,6 +3299,26 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "/api/journal/upload is reachable from the site's egress allowlist. "
             "Without this, forensics after an incident cannot use the hash-chained "
             "journal archive for that appliance.",
+    },
+    "bundle_chain_position_gap": {
+        "display_name": "Evidence chain has a position gap (chain-integrity violation)",
+        "recommended_action": (
+            "SEV1 — chain corruption. A site's compliance_bundles "
+            "rows have a non-contiguous chain_position in the last "
+            "24h. Auditor kit hash will flip between consecutive "
+            "downloads for the affected site. "
+            "Quarantine the affected bundle range "
+            "(see details.chain_position + .prev_chain_position) — "
+            "do NOT delete (HIPAA §164.316(b)(2)(i) 7-year retention "
+            "+ mig 151 trg_prevent_audit_deletion would reject "
+            "anyway). Find the writer that bypassed the per-site "
+            "advisory lock: tail mcp-server logs for "
+            "'evidence_chain' + 'create_compliance_bundle' around "
+            "details.created_at. If the load test (Task #117) is "
+            "running against this site, verify the synthetic-site "
+            "carve-out matches the configured load-test site_id. "
+            "See substrate_runbooks/bundle_chain_position_gap.md."
+        ),
     },
     "evidence_chain_stalled": {
         "display_name": "Evidence chain INSERT stalled fleet-wide",
