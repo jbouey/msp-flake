@@ -115,6 +115,69 @@ def test_fixed_window_still_caches():
     assert compliance_score._should_cache_score(30, None, None) is True
 
 
+def test_tz_naive_window_start_raises_value_error():
+    """Gate B P1 #109 closure: tz-naive datetimes silently shift by
+    server-TZ hours under the ::timestamptz cast, breaking monthly-
+    packet reproducibility. Helper must reject tz-naive upfront so
+    the caller is forced to pass `tzinfo=timezone.utc`.
+
+    Behavioral test — uses asyncio.run + an async stub that asserts
+    the ValueError is raised before any DB call."""
+    import asyncio
+    naive = datetime(2026, 1, 1)  # tz-naive — the bug class
+
+    async def _stub_conn():
+        class _DummyConn:
+            async def fetch(self, *a, **kw):
+                raise AssertionError("must not reach conn.fetch with tz-naive")
+            async def fetchrow(self, *a, **kw):
+                raise AssertionError("must not reach conn.fetchrow with tz-naive")
+            async def fetchval(self, *a, **kw):
+                raise AssertionError("must not reach conn.fetchval with tz-naive")
+        return _DummyConn()
+
+    async def _run():
+        conn = await _stub_conn()
+        try:
+            await compliance_score.compute_compliance_score(
+                conn, ["site-a"], window_start=naive,
+            )
+        except ValueError as e:
+            assert "window_start" in str(e) and "timezone-aware" in str(e)
+            return
+        raise AssertionError(
+            "tz-naive window_start must raise ValueError — Gate B P1 "
+            "#109 mandates tz-aware datetimes only."
+        )
+
+    asyncio.run(_run())
+
+
+def test_tz_naive_window_end_raises_value_error():
+    """Gate B P1 #109 closure: same as window_start, but for window_end.
+    Both bounds must be tz-aware for the cast to be deterministic."""
+    import asyncio
+    naive = datetime(2026, 1, 1)
+
+    async def _run():
+        class _DummyConn:
+            async def fetch(self, *a, **kw):
+                raise AssertionError("must not reach")
+        try:
+            await compliance_score.compute_compliance_score(
+                _DummyConn(), ["site-a"], window_end=naive,
+            )
+        except ValueError as e:
+            assert "window_end" in str(e) and "timezone-aware" in str(e)
+            return
+        raise AssertionError(
+            "tz-naive window_end must raise ValueError — Gate B P1 "
+            "#109 mandates tz-aware datetimes only."
+        )
+
+    asyncio.run(_run())
+
+
 def test_window_description_reflects_fixed_window():
     """When window_start/end set, window_description must describe
     the bounded range, not `last N days`. Customer-facing surfaces

@@ -226,6 +226,22 @@ async def compute_compliance_score(
         "X checks haven't been run since <date>" so they can
         diagnose stale appliances themselves.
     """
+    # Phase A Gate B P1 #109: tz-naive datetimes silently get
+    # interpreted in the PG server's timezone via the ::timestamptz
+    # cast — monthly-packet callers would silently shift by hours
+    # depending on server TZ. Reject upfront with a clear error so
+    # the caller migrates to explicit-UTC datetimes.
+    for arg_name, arg_val in (("window_start", window_start), ("window_end", window_end)):
+        if arg_val is not None and arg_val.tzinfo is None:
+            raise ValueError(
+                f"compute_compliance_score: `{arg_name}` must be a "
+                f"timezone-aware datetime (got tz-naive {arg_val!r}). "
+                f"Pass `datetime(..., tzinfo=timezone.utc)` — naive "
+                f"datetimes silently shift by server-TZ hours under "
+                f"the ::timestamptz cast and break monthly/quarterly "
+                f"packet reproducibility."
+            )
+
     # Phase A (Task #83): when window_start/end is set, window_days is
     # IGNORED. Build the description from whichever shape is in play.
     if window_start is not None or window_end is not None:
