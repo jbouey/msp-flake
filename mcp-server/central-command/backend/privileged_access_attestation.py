@@ -378,6 +378,7 @@ async def create_privileged_access_attestation(
     duration_minutes: Optional[int] = None,
     approvals: Optional[List[Dict[str, Any]]] = None,
     origin_ip: Optional[str] = None,
+    target_appliance_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Write a signed + hash-chained compliance_bundle for a privileged-
     access event. Enqueues for OTS anchoring via the existing batch
@@ -442,12 +443,20 @@ async def create_privileged_access_attestation(
         event["origin_ip"] = origin_ip
 
     checks_payload = [event]
-    summary_payload = {
+    # Gate A #118 P0: when ONE attestation bundle covers N target
+    # appliances (fleet_cli --all-at-site fan-out), the summary MUST
+    # encode count=N + target_appliance_ids=[...] so the auditor kit
+    # surface shows the multi-target shape. count=1 + no list would
+    # under-represent the privileged action's scope.
+    summary_payload: Dict[str, Any] = {
         "event_type": event_type,
         "actor": actor_email,
         "evidence_class": "privileged_access",
-        "count": 1,
+        "count": len(target_appliance_ids) if target_appliance_ids else 1,
     }
+    if target_appliance_ids:
+        # Sorted for byte-determinism of the canonical-JSON hash.
+        summary_payload["target_appliance_ids"] = sorted(target_appliance_ids)
 
     # Chain linkage — SAME site's prior bundle regardless of check_type.
     # This keeps the evidence chain single-threaded per site so any

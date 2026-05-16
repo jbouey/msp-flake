@@ -234,6 +234,29 @@ async def cmd_create(args: argparse.Namespace) -> None:
                 f"Known-good: api.osiriscare.net"
             )
 
+    # ── Task #118: --target-appliance-id / --all-at-site arg handling ──
+    import uuid as _uuid_mod
+    if getattr(args, "target_appliance_id", None) and getattr(args, "all_at_site", None):
+        sys.exit(
+            "--target-appliance-id and --all-at-site are mutually exclusive. "
+            "Use ONE to scope the order."
+        )
+    if getattr(args, "target_appliance_id", None):
+        # Validate UUID format upfront — typo-class catch at 250-appliance scale.
+        try:
+            _uuid_mod.UUID(args.target_appliance_id)
+        except (ValueError, AttributeError):
+            sys.exit(
+                f"--target-appliance-id must be a valid UUID, got "
+                f"{args.target_appliance_id!r}"
+            )
+        params["target_appliance_id"] = args.target_appliance_id
+    if getattr(args, "all_at_site", None):
+        # --all-at-site derives site_id; enumeration happens inside the
+        # conn.transaction() block below so the enumeration + bundle +
+        # N-INSERTs are atomic.
+        params["site_id"] = args.all_at_site
+
     # ── Phase 14: privileged-order attestation gate ───────────────────
     if order_type in PRIVILEGED_ORDER_TYPES:
         actor_email = (args.actor_email or "").strip()
@@ -256,13 +279,17 @@ async def cmd_create(args: argparse.Namespace) -> None:
         target_site = params.get("site_id")
         if not target_site:
             sys.exit(
-                f"Order type {order_type!r} requires --param site_id=<site>."
+                f"Order type {order_type!r} requires --param site_id=<site> "
+                f"or --all-at-site <site_id>."
             )
 
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=args.expires)
 
     signing_key = load_signing_key()
+    # Initial sign for the single-target case. The --all-at-site case
+    # re-signs per-appliance inside the loop below (each fleet_order
+    # gets a distinct signature because target_appliance_id differs).
     nonce, signature, signed_payload = sign_order(
         signing_key, order_type, params, now, expires_at
     )
@@ -280,121 +307,265 @@ async def cmd_create(args: argparse.Namespace) -> None:
         # connection is closed at the end of this function.
         await conn.execute("SET app.is_admin = 'true'")
 
-        # ── Phase 14: write the attestation bundle BEFORE the order ──
-        # If the bundle write fails, the order is NOT created. Same flow
-        # for enable_ and disable_ so revocation is auditable too.
-        attestation = None
-        if order_type in PRIVILEGED_ORDER_TYPES:
-            sys.path.insert(0, "/app")
-            try:
-                from dashboard_api.privileged_access_attestation import (
-                    create_privileged_access_attestation,
-                    count_recent_privileged_events,
-                    PrivilegedAccessAttestationError,
-                )
-            except ImportError:
-                sys.exit(
-                    "Phase 14 attestation module unavailable — refusing "
-                    "privileged order. Check deployment."
-                )
-            target_site = params["site_id"]
-            # Rate-limit check
-            if not args.override_rate_limit:
-                recent = await count_recent_privileged_events(
-                    conn, target_site, days=7, event_type=order_type,
-                )
-                if recent >= PRIVILEGED_RATE_LIMIT_PER_WEEK:
-                    sys.exit(
-                        f"RATE LIMIT: site {target_site!r} has had "
-                        f"{recent} {order_type} events in the last 7 days "
-                        f"(max {PRIVILEGED_RATE_LIMIT_PER_WEEK}). Anomalous "
-                        f"activity. If this is a genuine incident, pass "
-                        f"--override-rate-limit and document in the reason."
-                    )
-            try:
-                attestation = await create_privileged_access_attestation(
-                    conn,
-                    site_id=target_site,
-                    event_type=order_type,
-                    actor_email=args.actor_email.strip(),
-                    reason=args.reason.strip(),
-                    fleet_order_id=None,  # filled below after INSERT
-                    duration_minutes=int(params.get("duration_minutes", 0))
-                        if str(params.get("duration_minutes", "")).isdigit()
-                        else None,
-                )
-            except PrivilegedAccessAttestationError as e:
-                sys.exit(
-                    f"Attestation write failed — REFUSING to create privileged order.\n"
-                    f"  {e}\n"
-                    f"This is a HARD STOP. The order is not signed or inserted."
-                )
-
-            # Phase 14/Migration 175 chain enforcement: the attestation
-            # bundle_id is embedded in the order parameters AND covered
-            # by the signed_payload. The DB trigger enforce_privileged_
-            # order_attestation() will REJECT the INSERT if this is not
-            # linked to a real privileged_access bundle for the same site.
-            params["attestation_bundle_id"] = attestation["bundle_id"]
-            params["attestation_chain_position"] = attestation["chain_position"]
-            params["attestation_actor"] = args.actor_email.strip()
-            # Re-sign now that params include the attestation linkage
-            nonce, signature, signed_payload = sign_order(
-                signing_key, order_type, params, now, expires_at,
+        # ── Task #118: --all-at-site enumeration (must run BEFORE the
+        # txn block so --dry-run can exit cleanly; the actual INSERT
+        # loop below re-runs under the txn for atomicity).
+        target_appliance_ids: list[str] = []
+        site_appliance_rows: list[dict] = []
+        if getattr(args, "all_at_site", None):
+            site_appliance_rows_raw = await conn.fetch(
+                """
+                SELECT appliance_id, site_id, mac_address, hostname,
+                       status, last_checkin
+                  FROM site_appliances
+                 WHERE site_id = $1
+                   AND deleted_at IS NULL
+                 ORDER BY appliance_id
+                """,
+                args.all_at_site,
             )
+            target_appliance_ids = [r["appliance_id"] for r in site_appliance_rows_raw]
+            # Counsel Rule 7 (no unauth context): dry-run output is
+            # operator-facing CLI but the field allowlist still applies
+            # to prevent ip_addresses / daemon_health / agent_public_key
+            # leaking through pipe redirection / shared sessions.
+            site_appliance_rows = [
+                {
+                    "appliance_id": r["appliance_id"],
+                    "site_id": r["site_id"],
+                    "mac": r["mac_address"],
+                    "hostname": r["hostname"],
+                    "status": r["status"],
+                    "last_checkin": (
+                        r["last_checkin"].isoformat() if r["last_checkin"] else None
+                    ),
+                }
+                for r in site_appliance_rows_raw
+            ]
+            if not target_appliance_ids:
+                sys.exit(
+                    f"--all-at-site: no active appliances found at site "
+                    f"{args.all_at_site!r} (deleted_at IS NULL filter applied)"
+                )
 
-        row = await conn.fetchrow(
-            """
-            INSERT INTO fleet_orders
-                (order_type, parameters, skip_version, status, expires_at,
-                 created_by, nonce, signature, signed_payload)
-            VALUES ($1, $2::jsonb, $3, 'active', $4, $5, $6, $7, $8)
-            RETURNING id, order_type, status, created_at, expires_at
-            """,
-            order_type,
-            json.dumps(params),
-            args.skip_version,
-            expires_at,
-            # Phase 14: use actor email when privileged, preserve fleet-cli for non-privileged
-            args.actor_email.strip() if order_type in PRIVILEGED_ORDER_TYPES else "fleet-cli",
-            nonce,
-            signature,
-            signed_payload,
-        )
+        # ── --dry-run early exit ────────────────────────────────────
+        if getattr(args, "dry_run", False):
+            if getattr(args, "all_at_site", None):
+                dry_out = {
+                    "order_type": order_type,
+                    "site_id": args.all_at_site,
+                    "target_count": len(site_appliance_rows),
+                    "targets": site_appliance_rows,
+                    "fan_out": True,
+                }
+            elif getattr(args, "target_appliance_id", None):
+                dry_out = {
+                    "order_type": order_type,
+                    "target_count": 1,
+                    "targets": [{"appliance_id": args.target_appliance_id}],
+                    "fan_out": False,
+                }
+            else:
+                dry_out = {
+                    "order_type": order_type,
+                    "target_count": 1,
+                    "site_id": params.get("site_id"),
+                    "fan_out": False,
+                }
+            print(json.dumps(dry_out, indent=2, sort_keys=True))
+            return
 
-        # If we wrote an attestation, stamp the fleet_order_id onto its
-        # admin_audit_log entry so the two are cross-linked for review.
-        if attestation is not None:
+        # ── Task #118 P0: count-confirm prompt for privileged --all-at-site
+        # Operator types the appliance COUNT back. Random-N prompt is the
+        # right shape (not yes/no) — defensive friction at 250-appliance
+        # scale.
+        if (
+            getattr(args, "all_at_site", None)
+            and order_type in PRIVILEGED_ORDER_TYPES
+            and not args.override_rate_limit
+        ):
+            N = len(target_appliance_ids)
+            print(
+                f"\nAbout to issue {order_type!r} to {N} appliances at site "
+                f"{args.all_at_site!r}.",
+                file=sys.stderr,
+            )
+            print(
+                f"This is a PRIVILEGED action. To confirm, type the "
+                f"appliance count back: {N}",
+                file=sys.stderr,
+            )
             try:
-                await conn.execute(
-                    "UPDATE admin_audit_log SET details = details || "
-                    "jsonb_build_object('fleet_order_id', $1::text) "
-                    "WHERE (details->>'bundle_id') = $2",
-                    str(row["id"]), attestation["bundle_id"],
-                )
-            except Exception as e:
-                # audit cross-link is best-effort — surface to stderr so
-                # the operator running the CLI sees the chain-gap risk.
-                print(
-                    f"WARNING: fleet_order audit cross-link failed "
-                    f"(fleet_order_id={row['id']}, bundle_id="
-                    f"{attestation['bundle_id']}): {e}",
-                    file=sys.stderr,
+                confirm = input("count: ").strip()
+            except EOFError:
+                sys.exit("Confirmation aborted (no stdin).")
+            if confirm != str(N):
+                sys.exit(
+                    f"Confirmation failed (got {confirm!r}, expected {N!r}). "
+                    f"Aborting — no orders issued."
                 )
 
-        print(f"Fleet order created:")
-        print(f"  ID:         {row['id']}")
-        print(f"  Type:       {row['order_type']}")
-        print(f"  Status:     {row['status']}")
-        print(f"  Parameters: {json.dumps(params)}")
-        print(f"  Created:    {row['created_at'].isoformat()}")
-        print(f"  Expires:    {row['expires_at'].isoformat()}")
+        # ── Task #118 P0 + latent-bug fix: wrap bundle write + N
+        # fleet_order INSERTs in ONE asyncpg transaction. Pre-fix
+        # fleet_cli.cmd_create never wrapped, so _get_prev_bundle()'s
+        # `assert conn.is_in_transaction()` would have failed on every
+        # privileged invocation since the assertion landed 2026-05-09
+        # (latent bug — no privileged fleet_cli order has actually
+        # succeeded in main for 2 weeks). #118 ships the fix as
+        # part of the fan-out atomic-txn requirement.
+        attestation = None
+        fleet_order_rows: list[dict] = []
+
+        async with conn.transaction():
+            # ── Phase 14: write the attestation bundle BEFORE the order(s) ──
+            # If the bundle write fails, NO fleet_order is created. For
+            # --all-at-site fan-out, ONE bundle covers N orders (per
+            # Gate A: 1-bundle:N-orders shape — mig 175 trigger uses
+            # EXISTS which is satisfiable by N rows citing the same
+            # bundle_id).
+            if order_type in PRIVILEGED_ORDER_TYPES:
+                sys.path.insert(0, "/app")
+                try:
+                    from dashboard_api.privileged_access_attestation import (
+                        create_privileged_access_attestation,
+                        count_recent_privileged_events,
+                        PrivilegedAccessAttestationError,
+                    )
+                except ImportError:
+                    sys.exit(
+                        "Phase 14 attestation module unavailable — refusing "
+                        "privileged order. Check deployment."
+                    )
+                target_site = params["site_id"]
+                if not args.override_rate_limit:
+                    recent = await count_recent_privileged_events(
+                        conn, target_site, days=7, event_type=order_type,
+                    )
+                    if recent >= PRIVILEGED_RATE_LIMIT_PER_WEEK:
+                        sys.exit(
+                            f"RATE LIMIT: site {target_site!r} has had "
+                            f"{recent} {order_type} events in the last 7 days "
+                            f"(max {PRIVILEGED_RATE_LIMIT_PER_WEEK}). Anomalous "
+                            f"activity. If this is a genuine incident, pass "
+                            f"--override-rate-limit and document in the reason."
+                        )
+                try:
+                    attestation = await create_privileged_access_attestation(
+                        conn,
+                        site_id=target_site,
+                        event_type=order_type,
+                        actor_email=args.actor_email.strip(),
+                        reason=args.reason.strip(),
+                        fleet_order_id=None,  # filled below after INSERT
+                        duration_minutes=int(params.get("duration_minutes", 0))
+                            if str(params.get("duration_minutes", "")).isdigit()
+                            else None,
+                        # Task #118 P0: encode count=N + target_appliance_ids
+                        # in the bundle summary so the auditor surface shows
+                        # the multi-target shape.
+                        target_appliance_ids=(
+                            target_appliance_ids
+                            if getattr(args, "all_at_site", None)
+                            else None
+                        ),
+                    )
+                except PrivilegedAccessAttestationError as e:
+                    sys.exit(
+                        f"Attestation write failed — REFUSING to create privileged order.\n"
+                        f"  {e}\n"
+                        f"This is a HARD STOP. The order is not signed or inserted."
+                    )
+
+                # Phase 14/Migration 175 chain enforcement: bundle_id +
+                # chain_position + actor_email in params + covered by
+                # signed_payload. mig 175 trigger REJECTS the INSERT
+                # without these.
+                params["attestation_bundle_id"] = attestation["bundle_id"]
+                params["attestation_chain_position"] = attestation["chain_position"]
+                params["attestation_actor"] = args.actor_email.strip()
+
+            # ── Sign + INSERT loop ────────────────────────────────
+            # For --all-at-site: loop over target_appliance_ids; each
+            # order gets distinct target_appliance_id in params + a
+            # distinct signature. ALL orders cite the SAME bundle_id.
+            # For non-fan-out: single iteration.
+            if getattr(args, "all_at_site", None):
+                iter_targets = target_appliance_ids
+            else:
+                iter_targets = [None]  # one iteration, params unchanged
+
+            for per_target in iter_targets:
+                per_params = dict(params)
+                if per_target is not None:
+                    per_params["target_appliance_id"] = per_target
+                per_nonce, per_signature, per_signed_payload = sign_order(
+                    signing_key, order_type, per_params, now, expires_at,
+                )
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO fleet_orders
+                        (order_type, parameters, skip_version, status, expires_at,
+                         created_by, nonce, signature, signed_payload)
+                    VALUES ($1, $2::jsonb, $3, 'active', $4, $5, $6, $7, $8)
+                    RETURNING id, order_type, status, created_at, expires_at
+                    """,
+                    order_type,
+                    json.dumps(per_params),
+                    args.skip_version,
+                    expires_at,
+                    args.actor_email.strip() if order_type in PRIVILEGED_ORDER_TYPES else "fleet-cli",
+                    per_nonce,
+                    per_signature,
+                    per_signed_payload,
+                )
+                fleet_order_rows.append(dict(row))
+
+            # ── Cross-link UPDATE: post-loop aggregate so N orders
+            # sharing ONE bundle don't overwrite each other (Gate A
+            # P1-3 closure). Always emit `fleet_order_ids` as JSON
+            # array — N=1 case = array of 1 element.
+            if attestation is not None:
+                try:
+                    await conn.execute(
+                        "UPDATE admin_audit_log SET details = details || "
+                        "jsonb_build_object('fleet_order_ids', $1::jsonb) "
+                        "WHERE (details->>'bundle_id') = $2",
+                        json.dumps([str(r["id"]) for r in fleet_order_rows]),
+                        attestation["bundle_id"],
+                    )
+                except Exception as e:
+                    # audit cross-link is best-effort — surface to stderr
+                    print(
+                        f"WARNING: fleet_order audit cross-link failed "
+                        f"({len(fleet_order_rows)} order(s), bundle_id="
+                        f"{attestation['bundle_id']}): {e}",
+                        file=sys.stderr,
+                    )
+
+        # ── Operator-facing output (post-txn) ───────────────────────
+        if len(fleet_order_rows) == 1:
+            row = fleet_order_rows[0]
+            print(f"Fleet order created:")
+            print(f"  ID:         {row['id']}")
+            print(f"  Type:       {row['order_type']}")
+            print(f"  Status:     {row['status']}")
+            print(f"  Parameters: {json.dumps(params)}")
+            print(f"  Created:    {row['created_at'].isoformat()}")
+            print(f"  Expires:    {row['expires_at'].isoformat()}")
+            if args.skip_version:
+                print(f"  Skip ver:   {args.skip_version}")
+        else:
+            print(f"Fleet orders created ({len(fleet_order_rows)} at site "
+                  f"{args.all_at_site!r}):")
+            for row in fleet_order_rows:
+                print(f"  {row['id']}  ({row['status']}, expires "
+                      f"{row['expires_at'].isoformat()})")
         if attestation:
             print(f"  Attestation bundle_id: {attestation['bundle_id']}")
             print(f"  Attestation hash: {attestation['bundle_hash']}")
             print(f"  Chain position: {attestation['chain_position']}")
-        if args.skip_version:
-            print(f"  Skip ver:   {args.skip_version}")
+            if len(fleet_order_rows) > 1:
+                print(f"  Fan-out: 1 bundle ↔ {len(fleet_order_rows)} orders")
     finally:
         await conn.close()
 
@@ -491,6 +662,34 @@ def main() -> None:
         action="store_true",
         help="Override the per-site-per-week privileged-access rate "
              "limit. Requires an incident-track reason.",
+    )
+    # Task #118 (multi-device Counsel Rule 3 UX): first-class target
+    # appliance args. Pre-#118 the only way to target a specific
+    # appliance was --param target_appliance_id=<UUID> which is typo-
+    # risk at 250-appliance scale.
+    p_create.add_argument(
+        "--target-appliance-id",
+        metavar="UUID",
+        help="Target a specific appliance (alternative to --param "
+             "target_appliance_id=...). Mutually exclusive with "
+             "--all-at-site.",
+    )
+    p_create.add_argument(
+        "--all-at-site",
+        metavar="SITE_ID",
+        help="Fan out: issue the order to EVERY active appliance at "
+             "this site_id (one attestation bundle, N fleet_orders). "
+             "For privileged order types, requires --confirm + the "
+             "operator types the appliance COUNT back. Mutually "
+             "exclusive with --target-appliance-id.",
+    )
+    p_create.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the target appliances + the order shape, then "
+             "exit without signing or inserting. JSON-formatted for "
+             "piping. Output excludes ip_addresses / daemon_health "
+             "/ agent_public_key per Counsel Rule 7 (Layer-2 leak).",
     )
 
     # list
