@@ -2002,13 +2002,11 @@ async def _check_sensitive_workflow_advanced_without_baa(
 # are code-only and can land + tick before any real load runs fire.
 
 _LOAD_TEST_SYNTHETIC_FORBIDDEN_TABLES = (
-    # Tables that MUST NEVER carry a load-test synthetic marker — these
-    # back customer-facing aggregations / auditor kit / evidence chain.
-    # Adding a table here is the same as declaring a customer-facing
-    # surface. CI gate test_no_load_test_marker_in_compliance_bundles
-    # covers compliance_bundles structurally at build time; this
-    # invariant is the runtime backstop + extends to siblings.
-    "compliance_bundles",
+    # Customer-facing aggregation tables that MUST NEVER reference a
+    # synthetic site_id. The compliance_bundles invariant below is sev1
+    # (chain corruption); these are sev2 (visibility leak). All have
+    # a `site_id` column — verified against prod_columns.json fixture.
+    # Adding a table here = declaring it customer-facing.
     "incidents",
     "l2_decisions",
     "evidence_bundles",
@@ -2108,19 +2106,34 @@ async def _check_load_test_run_aborted_no_completion(
 async def _check_load_test_marker_in_compliance_bundles(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
-    """compliance_bundles is the Ed25519-chained / OTS-anchored evidence
-    table — auditor-kit determinism contract pins kit hash to its
-    content. ANY row carrying details->>'synthetic'='load_test'
-    corrupts the chain + flips kit hash between consecutive downloads.
-    CI gate test_no_load_test_marker_in_compliance_bundles covers
-    structurally at build time; this is the runtime backstop in case
-    a future code path bypasses the static scan (e.g., via dynamic
-    SQL construction)."""
+    """Defense-in-depth runtime backstop: compliance_bundles is Ed25519-
+    chained + OTS-anchored — its hash pins the auditor-kit determinism
+    contract. ANY bundle written for a synthetic site corrupts the
+    chain + flips kit hash between consecutive downloads.
+
+    Layered defenses (this is the THIRD layer):
+      1. CI gate test_no_load_test_marker_in_compliance_bundles —
+         scans Python source for 'load_test' literals near
+         compliance_bundles write callsites (build-time prevention)
+      2. DB CHECK constraint no_synthetic_bundles (mig 315) —
+         REJECTS any compliance_bundles row with site_id LIKE
+         'synthetic-%' at write time
+      3. THIS invariant — runtime scan for the bypass class:
+         sites.synthetic=TRUE that doesn't carry the 'synthetic-%'
+         site_id prefix (CHECK constraint is name-based, not
+         flag-based)
+
+    Gate B C5a-rev1 (2026-05-16): rewritten after fork verdict
+    audit/coach-c5a-pha-94-closure-gate-b-2026-05-16.md P0 found
+    that compliance_bundles has NO `details` column — the prior
+    query raised UndefinedColumnError every 60s tick + the sev1
+    invariant silently never fired."""
     rows = await conn.fetch(
         """
-        SELECT bundle_id, site_id, check_type, created_at
-          FROM compliance_bundles
-         WHERE details->>'synthetic' = 'load_test'
+        SELECT cb.bundle_id, cb.site_id, cb.check_type, cb.created_at
+          FROM compliance_bundles cb
+         WHERE cb.site_id LIKE 'synthetic-%'
+            OR cb.site_id IN (SELECT site_id FROM sites WHERE synthetic = TRUE)
          LIMIT 100
         """
     )
@@ -2133,12 +2146,12 @@ async def _check_load_test_marker_in_compliance_bundles(
                 "created_at": r["created_at"].isoformat() if r["created_at"] else None,
                 "interpretation": (
                     f"compliance_bundles bundle_id={r['bundle_id']} "
-                    f"carries synthetic='load_test' marker — Ed25519 "
-                    f"chain + auditor-kit determinism contract violated. "
-                    f"Quarantine the row + investigate the writer path. "
-                    f"CI gate test_no_load_test_marker_in_compliance_"
-                    f"bundles should have prevented this at build time — "
-                    f"find the bypass."
+                    f"writes to synthetic site site_id={r['site_id']!r} — "
+                    f"Ed25519 chain + auditor-kit determinism contract "
+                    f"violated. Quarantine + investigate writer. Layer 2 "
+                    f"(CHECK constraint no_synthetic_bundles) blocks "
+                    f"'synthetic-%' prefix at INSERT; this fires when a "
+                    f"non-prefixed site_id has sites.synthetic=TRUE."
                 ),
             },
         )
@@ -2149,36 +2162,39 @@ async def _check_load_test_marker_in_compliance_bundles(
 async def _check_synthetic_traffic_marker_orphan(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
-    """Wider class than the compliance_bundles invariant: scans a
-    curated set of customer-facing aggregation tables for rows
-    carrying details->>'synthetic'='load_test' OR
-    details->>'synthetic'='mttr_soak' (extends to plan-24's marker
-    per v2.1 spec P0-3 unification). The compliance_bundles-specific
-    invariant above is sev1 (chain corruption is more severe); this
-    sibling is sev2 (visibility/integrity, not crypto)."""
+    """Wider class than the compliance_bundles invariant: scans 4
+    customer-facing aggregation tables (incidents, l2_decisions,
+    evidence_bundles, aggregated_pattern_stats) for rows tied to
+    synthetic sites. Authority is `sites.synthetic=TRUE` (mig 315),
+    NOT a per-row details marker — most of these tables lack a
+    `details` JSONB column entirely.
+
+    Also catches the MTTR-soak shape on `incidents.details->>
+    'soak_test'='true'` (real marker per mig 303 + indexed partial).
+    Customer-facing aggregations should filter synthetic sites out
+    via the canonical `WHERE site_id NOT IN (SELECT site_id FROM
+    sites WHERE synthetic = TRUE)` predicate.
+
+    Gate B C5a-rev1 (2026-05-16): rewritten — prior query referenced
+    `details->>'synthetic'` which only exists on incidents (and the
+    real MTTR marker is `details->>'soak_test'='true'`, not
+    `synthetic='mttr_soak'`). 3 of 4 tables silently skipped pre-
+    rev1 via `except asyncpg.PostgresError`. Per fork verdict
+    audit/coach-c5a-pha-94-closure-gate-b-2026-05-16.md P0-2."""
     violations: List[Violation] = []
     for tbl in _LOAD_TEST_SYNTHETIC_FORBIDDEN_TABLES:
-        if tbl == "compliance_bundles":
-            # Covered by sev1 invariant above; don't double-report.
-            continue
-        try:
-            rows = await conn.fetch(
-                f"""
-                SELECT site_id, COUNT(*) AS hit_count,
-                       MIN(created_at) AS first_seen,
-                       MAX(created_at) AS last_seen
-                  FROM {tbl}
-                 WHERE details->>'synthetic' IN ('load_test','mttr_soak')
-                 GROUP BY site_id
-                 LIMIT 100
-                """
-            )
-        except asyncpg.PostgresError:
-            # Table lacks a `details` JSONB column or `created_at` —
-            # silently skip (the curated list expects all of these
-            # columns to exist; mismatch is a config bug, not a
-            # security event).
-            continue
+        rows = await conn.fetch(
+            f"""
+            SELECT t.site_id, COUNT(*) AS hit_count,
+                   MIN(t.created_at) AS first_seen,
+                   MAX(t.created_at) AS last_seen
+              FROM {tbl} t
+              JOIN sites s ON s.site_id = t.site_id
+             WHERE s.synthetic = TRUE
+             GROUP BY t.site_id
+             LIMIT 100
+            """
+        )
         for r in rows:
             violations.append(Violation(
                 site_id=r["site_id"],
@@ -2188,17 +2204,53 @@ async def _check_synthetic_traffic_marker_orphan(
                     "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
                     "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
                     "interpretation": (
-                        f"{int(r['hit_count'] or 0)} synthetic-marked "
-                        f"rows in {tbl} for site_id={r['site_id']!r} — "
+                        f"{int(r['hit_count'] or 0)} rows in {tbl} "
+                        f"for synthetic site site_id={r['site_id']!r} — "
                         f"load-harness or MTTR-soak traffic leaked into "
-                        f"a customer-facing aggregation. Investigate the "
-                        f"writer path + add a `IS NOT TRUE` filter to "
-                        f"the offending INSERT/UPDATE. Per v2.1 spec "
-                        f"P0-3 (marker unification: 'load_test' + "
-                        f"'mttr_soak')."
+                        f"a customer-facing aggregation. Add the "
+                        f"canonical filter "
+                        f"`WHERE site_id NOT IN (SELECT site_id FROM "
+                        f"sites WHERE synthetic = TRUE)` to the writer "
+                        f"or reader path."
                     ),
                 },
             ))
+
+    # Additional MTTR-soak marker check on incidents (mig 303 indexed
+    # partial). Catches the case where soak_test marker landed on a
+    # non-synthetic site_id (writer-side bug) — that wouldn't show in
+    # the sites-join above. Counts as a sibling but distinct row.
+    soak_rows = await conn.fetch(
+        """
+        SELECT i.site_id, COUNT(*) AS hit_count,
+               MIN(i.created_at) AS first_seen,
+               MAX(i.created_at) AS last_seen
+          FROM incidents i
+          LEFT JOIN sites s ON s.site_id = i.site_id
+         WHERE i.details->>'soak_test' = 'true'
+           AND (s.synthetic IS NOT TRUE OR s.site_id IS NULL)
+         GROUP BY i.site_id
+         LIMIT 100
+        """
+    )
+    for r in soak_rows:
+        violations.append(Violation(
+            site_id=r["site_id"],
+            details={
+                "table": "incidents",
+                "marker": "details.soak_test='true'",
+                "hit_count": int(r["hit_count"] or 0),
+                "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
+                "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+                "interpretation": (
+                    f"{int(r['hit_count'] or 0)} incidents tagged "
+                    f"soak_test='true' on NON-synthetic site_id={r['site_id']!r} — "
+                    f"the MTTR-soak writer is mis-routing markers. "
+                    f"Either the site_id is wrong or sites.synthetic "
+                    f"hasn't been flipped TRUE. Per mig 303 + 315."
+                ),
+            },
+        ))
     return violations
 
 

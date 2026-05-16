@@ -6,19 +6,32 @@
 ## What this means (plain English)
 
 Rows in a customer-facing aggregation table (incidents,
-l2_decisions, evidence_bundles, aggregated_pattern_stats) carry
-`details->>'synthetic'='load_test'` OR `'mttr_soak'`. Load-harness
-or MTTR-soak traffic that should have been filtered out by the
-universal `IS NOT TRUE` writer guards leaked into a customer-facing
-surface.
+l2_decisions, evidence_bundles, aggregated_pattern_stats) are
+tied to a **synthetic site** (i.e., `sites.synthetic = TRUE` —
+mig 315). Load-harness or MTTR-soak traffic that should have been
+filtered out by the universal synthetic-site filter leaked into
+a customer-facing surface.
 
-Per v2.1 spec P0-3 (marker unification): both 'load_test' (this
-spec) and 'mttr_soak' (plan-24) use the same `details.synthetic`
-shape so a single invariant catches both classes.
+The authority is `sites.synthetic = TRUE` — NOT a per-row details
+marker (most of these tables lack a `details` JSONB column
+entirely). A secondary check catches the MTTR-soak shape
+specifically: `incidents.details->>'soak_test' = 'true'` (real
+marker per mig 303, indexed) tagged on a NON-synthetic site —
+that's a writer-side mis-routing bug distinct from the wider
+synthetic-site leak.
 
 The sibling sev1 invariant `load_test_marker_in_compliance_bundles`
 covers the crypto-chain table separately — chain corruption is
 strictly worse than visibility leak.
+
+Gate B C5a-rev1 (2026-05-16): the prior implementation queried
+`details->>'synthetic' IN ('load_test','mttr_soak')` on all 4
+tables. Only `incidents` has a `details` column; the other 3
+silently skipped via `except asyncpg.PostgresError: continue`.
+AND the real MTTR-soak marker is `details.soak_test='true'` per
+mig 303, NOT `synthetic='mttr_soak'`. The invariant covered 0 of
+its 4 declared tables. Per fork verdict
+`audit/coach-c5a-pha-94-closure-gate-b-2026-05-16.md` §P0-2.
 
 ## Root cause categories
 
