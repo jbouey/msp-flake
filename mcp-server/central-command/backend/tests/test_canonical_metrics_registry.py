@@ -71,7 +71,7 @@ _BACKEND = pathlib.Path(__file__).resolve().parent.parent
 # Phase-3-drive-down territory.
 # ─────────────────────────────────────────────────────────────────────
 
-BASELINE_MAX = 26  # 6 compliance_score + 1 baa_on_file + 19 device_count_per_site — Phase 3 drive-down pending (per-callsite delegation to canonical helpers).
+BASELINE_MAX = 23  # 3 compliance_score + 1 baa_on_file + 19 device_count_per_site — Phase 3 drive-down in progress (Commit 1 reclassified metrics.calculate_compliance_score + frameworks.get_compliance_scores + frameworks.get_appliance_compliance_scores as operator_only per Task #103 Gate A; the bundle-aggregator class no longer claims them).
 
 
 # ─────────────────────────────────────────────────────────────────────

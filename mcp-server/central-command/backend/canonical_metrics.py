@@ -77,12 +77,27 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
         # `operator_only` (substrate-internal use only, never reaches
         # customer-facing surfaces).
         "allowlist": [
-            {"signature": "metrics.calculate_compliance_score", "classification": "migrate"},
+            # RECLASSIFIED 2026-05-15 (Task #103 Gate A): stateless 7-boolean
+            # averager (patching/antivirus/backup/logging/firewall/encryption/
+            # network); not a bundle aggregator. Real callers: metrics.py:257+
+            # 374 internal wrappers + fleet.py:171 admin get_fleet_overview.
+            # Different metric semantics — does NOT delegate to
+            # compute_compliance_score.
+            {"signature": "metrics.calculate_compliance_score", "classification": "operator_only"},
             {"signature": "compliance_packet.CompliancePacket._calculate_compliance_score", "classification": "migrate"},
             {"signature": "db_queries.get_compliance_scores_for_site", "classification": "migrate"},
             {"signature": "db_queries.get_all_compliance_scores", "classification": "migrate"},
-            {"signature": "frameworks.get_compliance_scores", "classification": "migrate"},
-            {"signature": "frameworks.get_appliance_compliance_scores", "classification": "migrate"},
+            # RECLASSIFIED 2026-05-15 (Task #103 Gate A): reads denormalized
+            # `compliance_scores` table populated by a separate pipeline (per-
+            # framework rollup with score_percentage/is_compliant/at_risk/
+            # data_completeness_pct), NOT compliance_bundles. Different
+            # metric class — see PLANNED_METRICS.per_framework_compliance_score
+            # for the canonical per-framework helper-pending entry.
+            {"signature": "frameworks.get_compliance_scores", "classification": "operator_only"},
+            # RECLASSIFIED 2026-05-15 (Task #103 Gate A): FastAPI endpoint
+            # wrapper around frameworks.get_compliance_scores; same per-
+            # framework rollup semantics. Reclassified together with #5.
+            {"signature": "frameworks.get_appliance_compliance_scores", "classification": "operator_only"},
             {"signature": "prometheus_metrics.*", "classification": "operator_only"},
         ],
         # Display-time None-passthrough: when canonical helper returns
@@ -231,6 +246,26 @@ PLANNED_METRICS: Dict[str, Dict[str, str]] = {
             "per-tenant scoping"
         ),
         "blocks_until": "design + Class-B Gate A on uptime calculator",
+    },
+    "per_framework_compliance_score": {
+        # Per-framework score_percentage / is_compliant / at_risk /
+        # data_completeness_pct surfaced by /api/frameworks/appliances/
+        # {appliance_id}/scores. Reads denormalized `compliance_scores`
+        # table (separate pipeline from compliance_bundles). Today's
+        # implementation lives in frameworks.get_compliance_scores +
+        # get_appliance_compliance_scores — those are classified
+        # `operator_only` in CANONICAL_METRICS.compliance_score to
+        # prevent confusion with the bundle-aggregator class, but the
+        # PER-FRAMEWORK metric class itself needs a canonical helper
+        # before any new customer-facing surface can expose it.
+        # Counsel's ask (Task #103 Gate A 2026-05-15): "Don't just
+        # hide it — register it."
+        "canonical_helper_pending": (
+            "per-framework canonical helper that delegates to "
+            "compliance_scores rollup table OR computes from "
+            "evidence_framework_mappings on-the-fly with parity guard"
+        ),
+        "blocks_until": "design + Class-B Gate A on per-framework helper",
     },
 }
 
