@@ -1,6 +1,8 @@
-# POSTURE_OVERLAY.md (v2.1, effective 2026-05-13)
+# POSTURE_OVERLAY.md (v2.2, effective 2026-05-16)
 
-> **Status:** PUBLISHED. Class-B Gate A APPROVE-WITH-FIXES (5 P0s applied in v2) → Class-B Gate B APPROVE-WITH-FIXES (5 P1s + 1 P2 frontmatter parity applied in v2.1). Counsel Priority #3 (Rule 5: no stale document may outrank the current posture overlay). Task #51.
+<!-- updated 2026-05-16 — Session-220 doc refresh -->
+
+> **Status:** PUBLISHED. v2.1 baseline (2026-05-13) Class-B Gate A + Gate B APPROVE-WITH-FIXES → v2.2 (2026-05-16) trivial+minor refresh per §6: Session 219–220 pointer-row additions (BAA-enforcement triad shipped; L1 escalate fix; delegate_signing_key privileged-chain; canonical compliance-score primitive; synthetic-site MTTR soak; substrate-engine per-assertion isolation; registry-integrity gate). Counsel Priority #3 (Rule 5: no stale document may outrank the current posture overlay). Task #51.
 > **Context:** OsirisCare is in **multi-device scaled enterprise hardening** posture. The overlay reflects platform commitments at multi-tenant, multi-appliance, multi-org scale.
 > **Authority of record:** Cite this overlay first for any topic-area authority question. Each owning doc carries its own state via frontmatter (§8); this overlay is the pointer-index.
 
@@ -61,7 +63,9 @@ When any prior document conflicts with the above, the rule-sets win.
 | HIPAA framework + scope | **PENDING REFRESH** — existing `docs/HIPAA_FRAMEWORK.md` self-declares stale (counsel's §164.504(e) framing has moved); refresh task TBD post master-BAA-v2.0 | Stale |
 | Cross-org site relocate (RT21) — v2.3 counsel approved + flag-disabled | `.agent/plans/21-counsel-briefing-packet-v2.4-2026-05-09.md` + code at `cross_org_site_relocate.py` | Flag-disabled |
 | F6 federation phase 2 (Tier 2 platform-aggregated learning) | `.agent/plans/f6-phase-2-enforcement-deferred.md` (foundation slice shipped; WRITE-path blocked on counsel) | Deferred — counsel-bundle |
-| BAA-gated workflows enforcement | TBD — Task #52 in flight; will land at `BAA_GATED_WORKFLOWS` constant + lockstep | In flight |
+| BAA-gated workflows enforcement (Counsel R6) | `mcp-server/central-command/backend/baa_enforcement.py` + `baa_status.py` + `tests/test_baa_gated_workflows_lockstep.py` + `assertions.py` `sensitive_workflow_advanced_without_baa` invariant | **SHIPPED** Session 220 (#52/#91/#92/#98) — 5 active workflows: owner_transfer, cross_org_relocate, evidence_export, new_site_onboarding, new_credential_entry. `_DEFERRED_WORKFLOWS`: partner_admin_transfer (#90), ingest (#37) |
+| Master BAA v1.0-INTERIM | `docs/legal/MASTER_BAA_v1.0_INTERIM.md` (effective 2026-05-13; decay 14d; v2.0 target 2026-06-03) | Live; counsel-hardening pending |
+| Master BAA v2.0 drafting preconditions | `docs/legal/v2.0-hardening-prerequisites.md` (PRE-1: D1 heartbeat-signature 7-day soak before any "continuously verified" language) | Preconditions tracked |
 | PHI scrubbing implementation | `appliance/internal/phiscrub/scrubber.go` (14 patterns) + master BAA Exhibit B catalogue | Stable |
 
 ### Architecture / engineering
@@ -72,8 +76,12 @@ When any prior document conflicts with the above, the rule-sets win.
 | Multi-appliance architecture (Layers 1-4) | memory `project_multi_appliance_architecture.md` | Active; D1 (Layer 8 of 10-layer liveness defense) pending |
 | Mesh + mDNS cross-subnet topology | memory `project_mesh_mdns_architecture.md` | Stable |
 | Liveness defense layers (10-layer) | memory `project_liveness_defense_layers.md` | Layer 8 inert pending Task #40 |
-| Substrate Integrity Engine (61+ invariants) | memory `project_substrate_integrity_engine.md` + `assertions.py` | Active; growing |
+| Substrate Integrity Engine (60+ invariants) | memory `project_substrate_integrity_engine.md` + `assertions.py` | Active; per-assertion `admin_transaction` isolation shipped Session 220 (commit `57960d4b`); CI gate `test_assertions_loop_uses_admin_transaction.py` |
+| Substrate-engine cascade-fail closure | `CLAUDE.md` "Substrate per-assertion `admin_transaction` cascade-fail closure" | Stable Session 220 |
 | Auditor-kit determinism contract | `CLAUDE.md` §"Auditor-kit determinism contract" + `auditor_kit_zip_primitives.py` | INVIOLABLE |
+| Canonical compliance-score (customer-facing) | `compliance_score.compute_compliance_score()` (current-window aggregator) + `compliance_score.compute_category_weighted_overall()` (NEW 2026-05-16, Session 220 Task #103) — both pinned by `test_no_ad_hoc_score_formula_in_endpoints` | Canonical — Counsel R1 close-out |
+| Canonical-source registry (Counsel R1) | `mcp-server/central-command/backend/canonical_metrics.py` + `tests/test_allowlist_signatures_resolve_to_real_symbols.py` (registry-integrity gate, 2026-05-15) | Phase 3 closed BASELINE 26→0 Session 220 #103 |
+| PLANNED_METRICS register (un-canonicalized score classes) | `canonical_metrics.py PLANNED_METRICS`: `historical_period_compliance_score`, `per_framework_compliance_score` (category_weighted promoted CANONICAL 2026-05-16) | Active |
 | Data model | `docs/DATA_MODEL.md` | Recent |
 | Provenance + chain-of-custody mechanics | `docs/PROVENANCE.md` | Recent |
 | Vault Transit (shadow → cutover) | memory `project_vault_transit_rollout.md` + `signing_method` column live | Shadow (cutover deferred) |
@@ -102,7 +110,31 @@ When any prior document conflicts with the above, the rule-sets win.
 | Cross-org governance pattern (dual-admin approval, two-actor state machines — RT21 cross-org-relocate, owner-transfer mig 273, partner-admin-transfer mig 274) | `CLAUDE.md` §"Owner-transfer state machines (Session 216)" + RT21 plans | Stable (cross-org-relocate flag-disabled awaiting counsel) |
 | Multi-tenant PgBouncer pooling (`admin_transaction` + `tenant_connection` invariant) | `CLAUDE.md` §"admin_transaction() for multi-statement admin paths" + `tenant_middleware.py` | Load-bearing |
 | Multi-org evidence chain anchoring (`client_org:<id>` / `partner_org:<id>` synthetic anchors) | `CLAUDE.md` §"Anchor-namespace convention for cryptographic chains (Session 216)" | Stable |
-| Fleet-wide enforcement at multi-tenant scale | TBD — once `BAA_GATED_WORKFLOWS` + `subprocessor_dataflow_drift` + canonical-source registry land, this row gets a doc | NOT INDEXED |
+| Fleet-wide enforcement at multi-tenant scale | `baa_enforcement.py` BAA-gated workflows triad (SHIPPED Session 220) + canonical-source registry (`canonical_metrics.py`) + per-assertion substrate isolation (`assertions.py`) — `subprocessor_dataflow_drift` invariant still TBD | Partially shipped Session 220; subprocessor-drift class TBD |
+
+### Session 219–220 audit-chain hardening anchors
+
+| Topic area | Owning anchor | Status note |
+|---|---|---|
+| L2 resolution requires `l2_decision_recorded` (audit-gap closure) | `CLAUDE.md` `resolution_tier='L2'` rule + mig 300 + `tests/test_l2_resolution_requires_decision_record.py` + sev2 substrate invariant `l2_resolution_without_decision_record` | Stable Session 219 #104 |
+| L1 escalate-action false-heal closure (1,137 prod L1-orphans corrected) | `CLAUDE.md` "L1 escalate-action false-heal class" + commits `3f0e5104` (daemon) + `3b2b8480` (backend) + sev2 substrate invariant `l1_resolution_without_remediation_step` + AST ratchet `appliance/internal/daemon/action_executor_success_key_test.go` | Two-layer fix shipped; mig 306 backfill Gate-A-pending (Task #117) |
+| `delegate_signing_key` privileged-chain registration | `CLAUDE.md` "delegate_signing_key privileged-chain registration" + mig 305 + 3-list lockstep (`fleet_cli.PRIVILEGED_ORDER_TYPES`, `privileged_access_attestation.ALLOWED_EVENTS`, mig 305 `v_privileged_types`) | Stable Session 220 — was zero-auth pre-fix |
+| Privileged-chain trigger function ADDITIVE-ONLY rule | `CLAUDE.md` "Privileged-chain trigger functions are ADDITIVE-ONLY" + `scripts/check_privileged_chain_lockstep.py` + task #111 (planned function-body diff gate) | Lock-in Session 220 |
+| Synthetic-site MTTR soak ground-truth | `CLAUDE.md` "Synthetic-site MTTR soak ground-truth" + mig 315 (`sites.synthetic`) + mig 323 (`substrate_violations.synthetic`) + `tests/test_mttr_soak_filter_universality.py` (hard-locked 0) + `tests/test_auditor_kit_refuses_synthetic_site.py` + `tests/test_l2_orphan_invariant_includes_synthetic_sites.py` | Stable Session 220 #66 B1 |
+| `site_appliances` unfiltered-SELECT ratchet | `tests/test_no_unfiltered_site_appliances_select.py` BASELINE_MAX=0 (BUG 1 close, 2026-05-15) | **CLOSED** Session 220 — was 81 |
+| `compliance_status` reader ratchet | BUG 3 close-out — driven 7→0 Session 220 (#23) | **CLOSED** Session 220 |
+| `discovered_devices` reader ratchet | Task #74 Phase 2 close — driven 5→0 Session 220 | **CLOSED** Session 220 |
+| Gate B full-pre-push-test-sweep mandate | `CLAUDE.md` "Gate B MUST run the full pre-push test sweep" + `.githooks/full-test-sweep.sh` + `tests/test_pre_push_ci_parity.py SOURCE_LEVEL_TESTS` | Lock-in Session 220 |
+| Two-gate adversarial-review protocol (Gate A + Gate B) | memory `feedback_round_table_at_gates_enterprise.md` + `feedback_consistency_coach_pre_completion_gate.md` + `CLAUDE.md` "TWO-GATE adversarial review" | Locked-in 2026-05-11 (Session 219); Gate B sweep mandate added 2026-05-13 (Session 220) |
+| Adversarial 2nd-eye via fork (author cannot self-play lenses) | `CLAUDE.md` "Adversarial 2nd-eye review is MANDATORY via fork" + memory `feedback_round_table_at_gates_enterprise.md` | Locked-in 2026-05-11 |
+| Schema fixtures sidecar convention | `CLAUDE.md` "Schema fixtures regenerate together" + `tests/fixtures/schema/` (`prod_columns.json`, `prod_column_types.json` NEW, `prod_column_widths.json`, `prod_unique_indexes.json`) + `tests/test_schema_fixture_parity.py` + `tests/test_no_param_cast_against_mismatched_column.py` | Stable Session 220 #77 |
+| Reserved-migrations ledger (mig-number collision avoidance) | `CLAUDE.md` "Migration numbers are claimed via the RESERVED_MIGRATIONS ledger" + `mcp-server/central-command/backend/migrations/RESERVED_MIGRATIONS.md` + `tests/test_migration_number_collision.py` | Stable Session 220 #59 |
+
+---
+
+## §3.5 — Latest session-rollup lessons doc
+
+The current authoritative session-rollup is `docs/lessons/sessions-219-220.md` (covers 2026-05-09 — 2026-05-16). Previous rollups (`sessions-200-209.md`, `sessions-210-212.md`, `sessions-213-215.md`, `sessions-216-217.md`, `sessions-218.md`) remain authoritative for their date ranges. When a topic ages out, the rollup is the closing word; this overlay's pointer is the authority for currency.
 
 ---
 
@@ -250,13 +282,14 @@ posture_overlay_authoritative: true | false  # is this doc the OWNING authority 
 title: "POSTURE_OVERLAY"
 description: "Canonical pointer-index for OsirisCare platform posture; cite this overlay first for any topic-area authority"
 topic_area: "platform-posture"
-last_verified: 2026-05-13
+last_verified: 2026-05-16
 decay_after_days: 30
 supersedes: []
 superseded_by: null
 posture_overlay_authoritative: true
 gate_a_status: "v1 APPROVED-WITH-FIXES — 5 P0 findings all applied in v2"
 gate_b_status: "v2 APPROVED-WITH-FIXES (2026-05-13) — 5 P1 findings + 1 P2 frontmatter parity all applied inline; publish-to-docs sign-off YES"
+v2_2_refresh_class: "trivial+minor per §6 — pointer-row additions only; no §2/§6/§7/§8 structural changes; Session 220 doc-refresh fork 2026-05-16"
 ---
 ```
 
@@ -278,4 +311,4 @@ Plus regression scan: no new banned-language, no urgency-overshoot framing, cros
 
 — OsirisCare engineering
    on behalf of the privacy officer
-   2026-05-13
+   2026-05-13 (v2.1 publish) — refreshed 2026-05-16 (v2.2 Session-220 trivial+minor)

@@ -1,5 +1,7 @@
 # Emergency Access Policy (Session 205 — Phase 14 T0)
 
+<!-- updated 2026-05-16 — Session-220 doc refresh -->
+
 Emergency access = a time-bounded privileged route into a customer's
 appliance for incident response. On OsirisCare, the mechanism is the
 signed fleet-order pair (`enable_emergency_access` /
@@ -9,6 +11,11 @@ Central Command into the site appliance for N minutes.
 This doc is the written policy the Session 205 round table called
 for. It is **enforced by code** (T0 shipped in Phase 14) and
 **extended by workflow** (T1–T4 design).
+
+**Authority chain:** This policy implements Counsel's Rule 3 (no
+privileged action without attested chain of custody, 2026-05-13 gold
+authority). Cite `docs/POSTURE_OVERLAY.md` (v2.2, 2026-05-16) as the
+canonical pointer-index for the privileged-access-chain topic area.
 
 ---
 
@@ -134,6 +141,90 @@ default) remain single-signer. Implementation via the existing
 `signing_method` column: new value `'shamir-2-of-3'` with a
 coordination endpoint that collects shares and reassembles the key
 for the single sign operation.
+
+---
+
+## Session 219–220 hardening (2026-05-09 — 2026-05-16)
+
+Five chain-of-custody surfaces hardened this period. All five are
+load-bearing to the inviolable rule above; each was either a chain
+hole closed or a new enforcement layer added.
+
+1. **`delegate_signing_key` registered as privileged (mig 305,
+   Session 220).** Weekly audit cadence found
+   `appliance_delegation.py:258 POST /delegate-key` was zero-auth —
+   anyone could mint an Ed25519 signing key bound to any
+   caller-supplied `appliance_id`, then sign evidence-chain entries
+   against the customer-facing attestation chain. Functionally
+   equivalent to `signing_key_rotation` which was already privileged.
+   Added to all 3 lockstep lists: `fleet_cli.PRIVILEGED_ORDER_TYPES`,
+   `privileged_access_attestation.ALLOWED_EVENTS`, mig 305
+   `v_privileged_types`. Prod audit at fix time: 1 historical row in
+   `delegated_keys`, synthetic test data, already expired — **zero
+   customer exposure**.
+
+2. **Privileged-chain trigger functions are ADDITIVE-ONLY (Session
+   220 lock-in).** Gate B v1 caught a silent weakening of
+   `enforce_privileged_order_attestation` when adding
+   `delegate_signing_key` to `v_privileged_types`: the mig 305 first
+   draft rewrote the function body from scratch, dropping the
+   `parameters->>'site_id'` cross-bundle check + the
+   `PRIVILEGED_CHAIN_VIOLATION` error prefix + the `USING HINT`
+   clause. NEVER rewrite the trigger function body from scratch when
+   extending `v_privileged_types` — copy the prior migration's
+   function body VERBATIM and append only the new array entry. Lockstep
+   checker `scripts/check_privileged_chain_lockstep.py` proves LIST
+   parity; function-body diff gate is task #111.
+
+3. **L1 escalate-action false-heal closure (Session 219, two-layer
+   fix).** 9 builtin Go rules in
+   `appliance/internal/healing/builtin_rules.go` use
+   `Action: "escalate"`. Pre-fix the daemon's escalate handler
+   returned no `"success"` key; backend `main.py:4870` persisted
+   daemon-supplied tier without server-side check. Net effect:
+   **1,137 prod L1-orphans** across 3 chaos-lab check_types over 90
+   days. Two-layer fix shipped: Layer 1 daemon (explicit
+   `success: false` on escalate + fail-closed defaults); Layer 2
+   backend (downgrades `resolution_tier='L1' → 'monitoring'` when
+   `check_type in MONITORING_ONLY_CHECKS`). Substrate invariant
+   `l1_resolution_without_remediation_step` (sev2) detects regressions.
+   Go AST ratchet
+   `appliance/internal/daemon/action_executor_success_key_test.go`
+   pins the success-key invariant.
+
+4. **L2 resolution requires attested decision row (mig 300, Session
+   219).** Substrate invariant `l2_resolution_without_decision_record`
+   (sev2) caught 26 north-valley-branch-2 incidents tagged
+   `resolution_tier='L2'` with no matching `l2_decisions` row — a
+   ghost-L2 audit gap violating the data-flywheel + attestation chain.
+   Fix: introduce `l2_decision_recorded: bool` gate; refuse to set L2
+   without the audit row — escalates to L3 instead. Pinned by
+   `tests/test_l2_resolution_requires_decision_record.py`.
+
+5. **BAA-enforcement triad — Counsel R6 machine-enforcement (Session
+   220, Tasks #52/#91/#92/#98).** Triad: List 1 =
+   `baa_enforcement.BAA_GATED_WORKFLOWS` (5 active: `owner_transfer`,
+   `cross_org_relocate`, `evidence_export`, `new_site_onboarding`,
+   `new_credential_entry`); List 2 = enforcing callsites
+   (`require_active_baa`, `enforce_or_log_admin_bypass`,
+   `check_baa_for_evidence_export`); List 3 = sev1 substrate invariant
+   `sensitive_workflow_advanced_without_baa` (`assertions.py`). CI
+   gate `tests/test_baa_gated_workflows_lockstep.py` pins List 1 ↔
+   List 2. `_DEFERRED_WORKFLOWS`: `partner_admin_transfer` (#90 —
+   partner-internal role swap, zero PHI flow), `ingest` (#37, counsel
+   queue). Build-time (lockstep) + runtime (invariant scan) coverage
+   for all 5 active workflows.
+
+6. **Substrate-engine per-assertion `admin_transaction` isolation
+   (Session 220, commit `57960d4b`).** Pre-fix the Substrate Integrity
+   Engine held ONE `admin_connection` for all 60+ assertions per 60s
+   tick. One `asyncpg.InterfaceError` poisoned the conn — every
+   subsequent assertion in the tick blinded (including the
+   privileged-chain invariants). Fix: per-assertion
+   `admin_transaction(pool)` blocks. One InterfaceError now costs 1
+   assertion (1.6% tick fidelity), not all 60+ (100%). CI gate
+   `tests/test_assertions_loop_uses_admin_transaction.py` pins the
+   design.
 
 ---
 

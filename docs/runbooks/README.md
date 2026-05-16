@@ -1,8 +1,12 @@
 # Operational Runbooks
 
+<!-- updated 2026-05-16 — Session-220 doc refresh -->
+
 This directory holds every operational runbook — the step-by-step procedure someone on-call at 2am follows to recover a known failure class. One runbook per failure class. Pre-approved steps, HIPAA citations where relevant, evidence-capture discipline.
 
 **Not here:** architecture docs (see `docs/ARCHITECTURE.md`), decisions (see `docs/adr/`), incident write-ups (see `docs/postmortems/`), SOPs (see `docs/sop/`), or the runbook framework spec (`docs/RUNBOOKS.md`).
+
+**Substrate invariant runbooks** live at `mcp-server/central-command/backend/substrate_runbooks/*.md` (one per invariant, ~78 files, alerted by the Substrate Integrity Engine 60s tick). Don't confuse them with these operator runbooks — substrate runbooks are alert-driven references, these are 2am-playbook procedures.
 
 For the file-naming + review-cadence rules, see [`docs/AGENTS.md`](../AGENTS.md).
 

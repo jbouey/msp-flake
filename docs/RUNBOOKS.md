@@ -1,5 +1,15 @@
 # Runbooks & Evidence Bundles
 
+<!-- updated 2026-05-16 — Session-220 doc refresh -->
+
+> **Two runbook families:** (1) **operational runbooks** — human procedures
+> for an on-call operator (`docs/runbooks/*.md`); (2) **substrate
+> invariant runbooks** — per-invariant remediation references read by
+> the Substrate Integrity Engine (`mcp-server/central-command/backend/
+> substrate_runbooks/*.md`). Every substrate invariant MUST ship with a
+> matching runbook file — `tests/test_substrate_docs_present` is the CI
+> gate; missing runbooks blocked 3 deploys in Session 220 alone.
+
 ## Runbook Structure
 
 Each runbook is a YAML file with pre-approved steps, HIPAA citations, and required evidence fields.
@@ -168,6 +178,74 @@ Every monitored event generates standardized evidence:
 Generated: 2025-11-01 00:05:00 UTC
 Signature: sha256:x9y8z7...
 ```
+
+## Substrate Integrity Engine (Session 207+, hardened Session 219-220)
+
+The Substrate Integrity Engine runs every 60s and asserts ~78 invariants
+against production state. Each invariant is sev0/sev1/sev2 and resolves
+to a markdown runbook under `mcp-server/central-command/backend/
+substrate_runbooks/*.md` (operator reads on alert).
+
+### Per-assertion `admin_transaction` isolation (Session 219 commit `57960d4b`)
+
+Pre-fix the engine held ONE `admin_connection` across all 60+ assertions
+per tick. One `asyncpg.InterfaceError` poisoned the conn and blinded
+every subsequent assertion — 1.6% intended fidelity loss became 100%
+cascade-fail.
+
+Fix: per-assertion `admin_transaction(pool)` blocks at
+`assertions.py::run_assertions_once`. `_ttl_sweep` runs in its OWN
+independent block so sigauth reclaim doesn't get dropped by transient
+upstream errors. CI gate `tests/test_assertions_loop_uses_admin_transaction.py`
+(5 tests) pins the design.
+
+### Healing-tier integrity invariants (Session 220)
+
+| Invariant | Severity | Detects |
+|---|---|---|
+| `l1_resolution_without_remediation_step` | sev2 | L1 escalate-action false-heal — daemon returns "escalated" w/ no `success` key, backend persisted as L1. Pre-fix: 1,137 prod orphans across 90 days. |
+| `l2_resolution_without_decision_record` | sev2 | `resolution_tier='L2'` set without matching `l2_decisions` row — ghost-L2 audit gap. Mig 300 backfills with `pattern_signature='L2-ORPHAN-BACKFILL-MIG-300'`. |
+| `chronic_without_l2_escalation` | sev1 | Recurring incidents (≥3 in 7d) never escalated to L2 — flywheel deadweight. |
+| `sensitive_workflow_advanced_without_baa` | sev1 | BAA-gated workflow advanced without an active BAA. See "BAA enforcement triad" below. |
+| `cross_org_relocate_chain_orphan` | sev1 | `sites.prior_client_org_id` set but no completed relocate state-machine row — bypass-path detector. |
+| `canonical_compliance_score_drift` | sev1 | Customer-facing compliance score diverges from canonical helper output. |
+| `daemon_heartbeat_signature_unverified` | sev1 | D1 backend heartbeat-verification soak telemetry (precondition for Master BAA v2.0). |
+
+Full list under `mcp-server/central-command/backend/substrate_runbooks/`.
+
+### Healing-tier semantics (Session 220 L1 escalate-action fix)
+
+The Go daemon returns `{"success": false}` on the `escalate` action
+(`appliance/internal/healing/healing_executor.go:106-110`) and
+`l1_engine.go:335-350` fail-closed defaults `Success = false` on
+missing-key AND `output == nil` paths. The backend (`main.py:4870`)
+downgrades `resolution_tier='L1' → 'monitoring'` when
+`check_type in MONITORING_ONLY_CHECKS` as a server-side safety net for
+the asynchronous daemon fleet-update window.
+
+**Commit-order rule:** ship backend Layer 2 FIRST (live in ~5min); the
+daemon Layer 1 fix follows over hours-to-days as fleet updates roll out.
+
+## BAA Enforcement Triad (Counsel Rule 6, Session 220 Tasks #52/#91/#92/#98)
+
+Every CE-mutating workflow MUST be either gated by `require_active_baa(workflow)`
+or explicitly registered in `_DEFERRED_WORKFLOWS` with a written
+exemption rationale. Triad:
+
+1. **List 1** — `baa_enforcement.BAA_GATED_WORKFLOWS`. Active members:
+   `owner_transfer`, `cross_org_relocate`, `evidence_export`,
+   `new_site_onboarding`, `new_credential_entry`.
+2. **List 2** — enforcing callsites: `require_active_baa(workflow)`
+   (client-owner context), `enforce_or_log_admin_bypass(...)` (admin
+   carve-out, logs `baa_enforcement_bypass` to `admin_audit_log` —
+   never blocks), `check_baa_for_evidence_export(_auth, site_id)`
+   (method-aware auditor-kit branches).
+3. **List 3** — `sensitive_workflow_advanced_without_baa` sev1
+   substrate invariant scans state-machine tables +
+   `admin_audit_log auditor_kit_download` rows over last 30d.
+
+CI gate `tests/test_baa_gated_workflows_lockstep.py` pins List 1 ↔ List 2.
+Cliff date 2026-06-12 for full coverage on all CE-mutating workflows.
 
 ## HIPAA Control Mapping
 

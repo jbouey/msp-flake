@@ -1,8 +1,10 @@
 # Manual Operations Checklist
 
+<!-- updated 2026-05-16 — Session-220 doc refresh -->
+
 **Purpose:** Track all manual interventions required for MSP HIPAA Compliance Platform
 **Owner:** Lead Operator
-**Last Updated:** November 1, 2025
+**Last Updated:** 2026-05-16 (Session 220 refresh)
 **Status:** Living document - update as procedures change
 
 ---
@@ -11,12 +13,137 @@
 
 1. [Initial Deployment (One-Time)](#initial-deployment-one-time)
 2. [Per-Client Onboarding](#per-client-onboarding)
-3. [Weekly Operations](#weekly-operations)
-4. [Monthly Operations](#monthly-operations)
-5. [Quarterly Operations](#quarterly-operations)
-6. [Annual Operations](#annual-operations)
-7. [Emergency Procedures](#emergency-procedures)
-8. [Audit Support](#audit-support)
+3. [Pre-Flight Checks for Customer-State Mutations (Session 220)](#pre-flight-checks-for-customer-state-mutations-session-220)
+4. [TWO-GATE Protocol for Design Work (Session 219-220)](#two-gate-protocol-for-design-work-session-219-220)
+5. [Deploy Verification Process Rule (Session 215)](#deploy-verification-process-rule-session-215)
+6. [Weekly Operations](#weekly-operations)
+7. [Monthly Operations](#monthly-operations)
+8. [Quarterly Operations](#quarterly-operations)
+9. [Annual Operations](#annual-operations)
+10. [Emergency Procedures](#emergency-procedures)
+11. [Audit Support](#audit-support)
+
+---
+
+## Pre-Flight Checks for Customer-State Mutations (Session 220)
+
+**Counsel Rule 6 — machine-enforced.** Before initiating ANY workflow
+that touches Covered-Entity state on behalf of a customer, verify the
+BAA enforcement triad will not block you mid-flight.
+
+### Five Gated Workflows (BAA_GATED_WORKFLOWS)
+
+1. `owner_transfer` — client-org primary-owner role transfer
+2. `cross_org_relocate` — site movement between client orgs
+3. `evidence_export` — auditor-kit ZIP download
+4. `new_site_onboarding` — site provisioning under a client org
+5. `new_credential_entry` — adding a privileged credential to a site
+
+### Pre-Flight Checklist (run BEFORE customer call)
+
+- [ ] **Verify org has active BAA**
+  ```bash
+  curl -sf https://api.osiriscare.net/admin/baa-status?client_org_id=<id> \
+    -H "Cookie: osiris_admin_session=$(cat ~/.osiris-admin-session)" \
+    | jq '.baa_enforcement_ok, .baa_version, .signed_at'
+  # baa_enforcement_ok=true → workflow will proceed
+  # baa_enforcement_ok=false → must remediate before mutation
+  ```
+
+- [ ] **If admin carve-out is intended** (legitimate operator override),
+  log the reason ≥20 chars BEFORE the action. The bypass is logged to
+  `admin_audit_log` as `baa_enforcement_bypass` and the substrate
+  invariant `sensitive_workflow_advanced_without_baa` reads
+  `details->>'auth_method'` to distinguish admin bypass from client/
+  partner-portal path.
+
+- [ ] **Privileged-order pre-flight** (chain of custody):
+  - `--actor-email <your-named-email>` (NEVER `system`, `fleet-cli`, `admin`)
+  - `--reason "<≥20 char human explanation>"`
+  - Rate limit: 3/site/week — check before starting if you have
+    historical context with that site
+  - Order types under enforcement (4-list lockstep — Session 220 mig 305):
+    `enable_emergency_access`, `disable_emergency_access`,
+    `bulk_remediation`, `signing_key_rotation`, `delegate_signing_key`
+
+- [ ] **Sub-100ms check** — DO NOT run `ALTER TABLE fleet_orders DISABLE
+  TRIGGER` for bulk-ops. The chain enforcement trigger
+  (`trg_enforce_privileged_chain`, mig 175) is a load-bearing invariant.
+
+- [ ] **Verify after mutation** — check the substrate dashboard
+  (`/admin/substrate-health`) within 5 minutes of the mutation;
+  `sensitive_workflow_advanced_without_baa` and
+  `cross_org_relocate_chain_orphan` fire on 60s tick.
+
+---
+
+## TWO-GATE Protocol for Design Work (Session 219-220)
+
+**Locked in 2026-05-11.** Any new system / deliverable / design doc /
+endpoint / CLI tool that mutates production state / 24h+ soak / load
+test / chaos run MUST receive a fork-based 4-lens adversarial review
+(Steve / Maya / Carol / Coach) at BOTH gates.
+
+### Gate A (pre-execution)
+
+Before any migration applies, any new system runs, any soak fires:
+
+- [ ] Write the design doc with NO author-written "Steve says X / Maya says
+      Y" sections — the antipattern this rule exists to prevent
+- [ ] Dispatch fork via `Agent(subagent_type="general-purpose")` with a
+      fresh context window; the brief MUST name the 4 lenses explicitly
+- [ ] Wait for written verdict at `audit/coach-<topic>-A-YYYY-MM-DD.md`
+- [ ] **APPROVE** / **APPROVE-WITH-FIXES** (address P0 before run) / **BLOCK** (redesign)
+- [ ] P0 findings CANNOT be deferred — must close before execution
+- [ ] P1 findings can be carried as named TaskCreate followups IF the
+      deferral itself passes Gate B review
+
+### Gate B (pre-completion)
+
+Before any commit body says "shipped" / "complete" / task is marked done:
+
+- [ ] Run the curated source-level sweep: `bash .githooks/full-test-sweep.sh`
+      (~92s, 266 tests; matches CI stub-isolation)
+- [ ] Dispatch second fork (fresh context) with the diff + sweep output
+- [ ] Verdict at `audit/coach-<topic>-B-YYYY-MM-DD.md`
+- [ ] **Diff-only review = automatic BLOCK** — fork MUST audit what's
+      MISSING from the diff, not just what's TOUCHED
+- [ ] Commit body MUST cite BOTH gate verdicts
+
+### Why both gates are mandatory (Session 220 lessons)
+
+Three Session 220 deploy outages shipped under diff-scoped Gate B
+review:
+
+- L1 Phase 1 (`39c31ade`) missed `substrate_runbooks/l1_resolution_without_remediation_step.md` → CI red
+- Zero-auth Commit 1 (`94339410`) missed the Go daemon's
+  `dangerousOrderTypes` 4th list + regressed `test_site_id_enforcement`
+- Zero-auth Commit 2 (`eea92d6c`) regressed soft-delete ratchet 83→84
+
+Each was caught only by re-running the full sweep, not by diff review.
+
+---
+
+## Deploy Verification Process Rule (Session 215)
+
+Every commit MUST follow this sequence before any "shipped" claim:
+
+```bash
+# 1. Pre-push gates (.githooks/pre-push compiles every backend .py
+#    through python3.11 + runs SOURCE_LEVEL_TESTS, ~45s)
+git push origin main
+
+# 2. Wait for CI green
+gh run watch  # OR until-loop on `gh run list` (use SHA PREFIX, not full 40-char)
+
+# 3. Verify deployed SHA matches what you pushed
+curl -sf https://api.osiriscare.net/api/version | jq
+# Expect: runtime_sha == disk_sha == HEAD commit SHA
+```
+
+If runtime_sha != disk_sha, the deploy is in-flight or stale —
+investigate before any "shipped" claim. Pinned by
+`tests/test_pre_push_allowlist_only_references_git_tracked_files`.
 
 ---
 

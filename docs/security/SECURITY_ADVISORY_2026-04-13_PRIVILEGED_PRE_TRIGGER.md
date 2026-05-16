@@ -110,3 +110,6 @@ auto-resolve — the disclosure is the resolution.
 **Round-table reference:** `audit/round-table-verdict-2026-05-08.md` RT-1.2.
 **Audit reference:** `audit/coach-e2e-attestation-audit-2026-05-08.md` F-P0-2.
 **Maintainer:** OsirisCare engineering, jbouey2006@gmail.com.
+
+<!-- updated 2026-05-16 — Session-220 doc refresh: pointer-verification only. Substrate invariant `pre_mig175_privileged_unattested` still firing as designed for the 3 disclosed rows. Privileged-chain catalog extended in mig 305 with `delegate_signing_key` (Session 220) — see `docs/security/emergency-access-policy.md` §"Session 219–220 hardening" and `docs/POSTURE_OVERLAY.md` (v2.2) §3 for the current authority. Counsel Rule 3 (no privileged action without attested chain of custody) is now the gold-authority framing — this advisory's enforcement model remains intact under that rule. -->
+

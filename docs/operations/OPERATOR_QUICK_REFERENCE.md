@@ -1,6 +1,64 @@
 # Operator Quick Reference Card
 
+<!-- updated 2026-05-16 — Session-220 doc refresh -->
+
 **Print this page and keep near your workstation**
+**Last refreshed:** 2026-05-16 (Session 220)
+
+---
+
+## Runtime Substrate Invariants (Session 220 cheat sheet)
+
+Engine runs every 60s. Per-assertion `admin_transaction` isolation
+(Session 219 commit `57960d4b`) means one bad assertion costs 1.6% tick
+fidelity, not 100%. Alert via `/admin/substrate-health` panel.
+
+| Invariant | Severity | What it catches |
+|---|---|---|
+| `l1_resolution_without_remediation_step` | sev2 | L1 escalate-action false-heal — daemon `escalate` returned w/o `success:false` key |
+| `l2_resolution_without_decision_record` | sev2 | `resolution_tier='L2'` set without `l2_decisions` row (mig 300 backfill = `pattern_signature='L2-ORPHAN-BACKFILL-MIG-300'`) |
+| `chronic_without_l2_escalation` | sev1 | ≥3 recurrences/7d never escalated |
+| `sensitive_workflow_advanced_without_baa` | sev1 | BAA-gated workflow advanced w/o active BAA |
+| `cross_org_relocate_chain_orphan` | sev1 | `prior_client_org_id` set w/o completed relocate row |
+| `canonical_compliance_score_drift` | sev1 | Customer-facing score diverges from canonical helper |
+| `daemon_heartbeat_signature_unverified` | sev1 | D1 heartbeat-verify soak telemetry |
+
+Full runbooks: `mcp-server/central-command/backend/substrate_runbooks/*.md`
+
+---
+
+## CI Ratchets Hard-Locked at 0 (Session 220)
+
+If a PR breaks ANY of these, the build fails — no exceptions, no
+"baseline bump":
+
+| Ratchet | Test | Closed in |
+|---|---|---|
+| MTTR-soak universal-filter | `test_mttr_soak_filter_universality.py` | #66 B1 |
+| `discovered_devices` raw reader | `test_no_raw_discovered_devices_count.py` | #74 Phase 2 |
+| `compliance_status` reader | `test_no_unfiltered_compliance_status_select.py` | #23 BUG 3 |
+| `site_appliances` unfiltered (BUG 1) | `test_no_unfiltered_site_appliances_select.py` | #66/#74 |
+| Legal.tsx /legal/baa version literal | `test_legal_baa_page_reflects_current_version.py` | #100 |
+| Canonical metrics registry | `test_canonical_metrics_*` | #50/#103 |
+
+**Canonical device-count source of truth:** `canonical_devices` table
+(mig 319, Task #73 Phase 1 + #74 Phase 2 close-out). Never SELECT raw
+`discovered_devices` for a count.
+
+---
+
+## Master BAA Posture (Session 220 Task #56)
+
+- **Active version:** v1.0-INTERIM, effective 2026-05-13, decay-after 14d
+- **Location:** `docs/legal/MASTER_BAA_v1.0_INTERIM.md`
+- **Binding mechanism:** signup-flow e-signature
+- **Target supersede:** v2.0 counsel-hardened, target 2026-06-03
+- **v2.0 preconditions:** `docs/legal/v2.0-hardening-prerequisites.md`
+  (PRE-1 = D1 heartbeat-verify ≥7d clean soak before any
+  "continuously verified" claim)
+
+CI backstop: `tests/test_baa_artifacts_no_heartbeat_verification_overclaim.py`
+(baseline 0).
 
 ---
 
@@ -258,6 +316,69 @@ echo "Signing key age: $age_days days"
 
 ---
 
+## Privileged-Order Chain of Custody (Session 220 cheat sheet)
+
+Privileged orders (`enable_emergency_access`, `disable_emergency_access`,
+`bulk_remediation`, `signing_key_rotation`, `delegate_signing_key`)
+require 4-list lockstep:
+
+1. `fleet_cli.PRIVILEGED_ORDER_TYPES` (CLI refusal layer)
+2. `privileged_access_attestation.ALLOWED_EVENTS` (attestation gate)
+3. mig 305 `v_privileged_types` (DB trigger `trg_enforce_privileged_chain`)
+4. Go daemon `appliance/internal/orders/processor.go::dangerousOrderTypes`
+
+**Before issuing any privileged order:**
+```bash
+fleet_cli issue --order-type signing_key_rotation \
+  --site-id <site> \
+  --actor-email "you@osiriscare.com" \
+  --reason "<≥20 char human explanation>"
+# CLI refuses if:
+#   - actor-email is generic (system/fleet-cli/admin)
+#   - reason <20 chars
+#   - rate limit (3/site/week) exceeded
+#   - attestation_bundle_id creation failed
+```
+
+**NEVER:**
+- `ALTER TABLE fleet_orders DISABLE TRIGGER` for bulk ops
+- Skip the OTS enqueue for `privileged_access` bundles
+- Flip `client_approval_required=false` without a consent-config bundle
+
+---
+
+## Migration Number Claim (Session 220 Task #59)
+
+Every new `migrations/NNN_*.sql` MUST be pre-claimed:
+
+1. Add a row to `mcp-server/central-command/backend/migrations/RESERVED_MIGRATIONS.md`
+2. Drop a line-anchored marker in the design doc: `<!-- mig-claim:NNN task:#TT -->`
+3. When the migration ships, REMOVE the ledger row in the same commit
+
+CI gate: `tests/test_migration_number_collision.py` enforces no
+double-claims, no claims-on-shipped, marker↔ledger parity, ≤30
+active rows.
+
+---
+
+## Pre-Push Local Sweep (Session 218-220)
+
+`.githooks/pre-push` runs ~45s — required local gate:
+
+- python3.11 syntax compile of every backend `.py` (catches f-string
+  backslash class — 3 deploy outages in Session 218)
+- SOURCE_LEVEL_TESTS curated array (~45s fast lane)
+
+`.githooks/full-test-sweep.sh` runs ~92s — required at Gate B:
+
+- 266 tests, parallel `-P 6`, matches CI stub-isolation
+- Tunables: `PRE_PUSH_PARALLEL=N` / `PRE_PUSH_SKIP_FULL=1`
+
+If a test fails at pre-push, FIX THE ROOT CAUSE — never push with
+`--no-verify` unless the user explicitly asks.
+
+---
+
 ## Red Flags (Investigate Immediately)
 
 ⚠️ **Service down >15 minutes**
@@ -417,4 +538,4 @@ python3 /opt/msp/scripts/generate-monthly-summary.py --month 2025-10
 
 **Print Date:** _______________
 **Operator Name:** _______________
-**Last Updated:** November 1, 2025
+**Last Updated:** 2026-05-16 (Session 220 refresh)
