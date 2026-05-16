@@ -78,7 +78,7 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
         # customer-facing surfaces).
         "allowlist": [
             {"signature": "metrics.calculate_compliance_score", "classification": "migrate"},
-            {"signature": "compliance_packet.ComplianceReport._calculate_compliance_score", "classification": "migrate"},
+            {"signature": "compliance_packet.CompliancePacket._calculate_compliance_score", "classification": "migrate"},
             {"signature": "db_queries.get_compliance_scores_for_site", "classification": "migrate"},
             {"signature": "db_queries.get_all_compliance_scores", "classification": "migrate"},
             {"signature": "frameworks.get_compliance_scores", "classification": "migrate"},
@@ -95,7 +95,7 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
         "canonical_helper": "baa_status.is_baa_on_file_verified",
         "permitted_inline_in_module": "baa_status",
         "allowlist": [
-            {"signature": "client_attestation_letter._get_baa_signature_row", "classification": "migrate"},
+            {"signature": "client_attestation_letter._get_current_baa", "classification": "migrate"},
             # partner_portfolio_attestation paths to be added once
             # source-grep confirms callsite shape.
         ],

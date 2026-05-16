@@ -133,6 +133,117 @@ def test_allowlist_classifications_are_valid():
             )
 
 
+def test_allowlist_signatures_resolve_to_real_symbols():
+    """Every `module.symbol[.method]` signature in the migrate-class
+    allowlist must resolve to a real Python symbol in the backend.
+    Catches registry drift like the Session 220 finding:
+    `compliance_packet.ComplianceReport._calculate_compliance_score`
+    pointed at a class that didn't exist (real class:
+    `CompliancePacket`) — the registry would have rotted forever if
+    no one tried to use the entry. Same lesson found
+    `client_attestation_letter._get_baa_signature_row` should be
+    `_get_current_baa`.
+
+    Out of scope:
+      - `operator_only` entries with wildcard `<module>.*` patterns
+        (intentionally point at a whole-module class, not a specific
+        symbol)
+      - `write_path` entries that are line-number anchored
+        (`file.py:LINE` shape — checked by sibling
+        `test_no_raw_discovered_devices_count.py` instead)
+      - Skipped if the module can't import in test context (relative-
+        import chains that need the FastAPI app bootstrap); the
+        signature still gets a basic shape-check but the symbol-
+        resolve is best-effort.
+    """
+    import importlib
+    import re
+
+    # Skip wildcards + line-anchored entries — different gate class
+    SKIP_PATTERN = re.compile(r"\.\*$|\.py:\d+$")
+
+    failures: list[str] = []
+    for metric_class, spec in CANONICAL_METRICS.items():
+        for entry in spec.get("allowlist", []):
+            sig = entry.get("signature", "")
+            if not sig or SKIP_PATTERN.search(sig):
+                continue
+            # Only enforce on `migrate` — operator_only / write_path
+            # entries are documentation, not active drive-down targets
+            if entry.get("classification") != "migrate":
+                continue
+            parts = sig.split(".")
+            if len(parts) < 2:
+                failures.append(
+                    f"{metric_class}.allowlist[{sig!r}]: signature "
+                    "is not in module.symbol shape"
+                )
+                continue
+            mod_name = parts[0]
+            try:
+                mod = importlib.import_module(mod_name)
+            except ImportError:
+                # Module can't import in test context (likely needs
+                # the FastAPI app bootstrap). Best-effort: do a shape
+                # check by looking at the source file directly.
+                import pathlib
+                src_path = _BACKEND / f"{mod_name}.py"
+                if not src_path.exists():
+                    failures.append(
+                        f"{metric_class}.allowlist[{sig!r}]: module "
+                        f"`{mod_name}` not found at {src_path}"
+                    )
+                    continue
+                src = src_path.read_text()
+                # Look for any of: `def <last>(`, `class <part>:`,
+                # `<last> =` (module-level constant)
+                last = parts[-1]
+                middle_class = parts[1] if len(parts) >= 3 else None
+                if middle_class:
+                    # method-on-class shape: verify class exists +
+                    # method exists somewhere in the file (best-effort)
+                    if f"class {middle_class}" not in src:
+                        failures.append(
+                            f"{metric_class}.allowlist[{sig!r}]: class "
+                            f"`{middle_class}` not found in {mod_name}.py"
+                        )
+                        continue
+                if f"def {last}(" not in src and f"async def {last}(" not in src \
+                        and f"\n{last} =" not in src and f"\n{last}: " not in src:
+                    failures.append(
+                        f"{metric_class}.allowlist[{sig!r}]: symbol "
+                        f"`{last}` not found in {mod_name}.py"
+                    )
+                continue
+            except Exception as e:
+                failures.append(
+                    f"{metric_class}.allowlist[{sig!r}]: unexpected import "
+                    f"error: {e}"
+                )
+                continue
+            # Module imported — walk the parts
+            cur = mod
+            ok = True
+            for p in parts[1:]:
+                if hasattr(cur, p):
+                    cur = getattr(cur, p)
+                else:
+                    ok = False
+                    break
+            if not ok:
+                failures.append(
+                    f"{metric_class}.allowlist[{sig!r}]: symbol resolution "
+                    f"failed at `.{p}` (chain broke)"
+                )
+    assert not failures, (
+        "Registry-integrity drift in CANONICAL_METRICS allowlist:\n"
+        + "\n".join(f"  - {f}" for f in failures)
+        + "\n\nFix the signatures or remove dead entries — the registry "
+        "is the auditable manifest of Counsel Rule 1 enforcement; broken "
+        "entries silently degrade gate value."
+    )
+
+
 def test_already_gated_entries_cite_evidence_test():
     """Per Gate B P1-2: entries marked `already_gated: True` must cite
     the test/file that PROVES the gate is wired (auditor-grade).
