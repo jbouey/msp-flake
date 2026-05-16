@@ -44,11 +44,36 @@
 2. Restart mcp-server. Every signed order now originates from Vault.
 3. `signing.key` on mcp-server remains as emergency fallback for 30 days — DO NOT delete yet.
 4. Add a startup invariant `INV-SIGNING-BACKEND-VAULT` checking the Vault key version matches the last known-good version in DB. Breaks startup if an attacker rotated the Vault key without authorization.
-5. Run a `rotate_server_pubkey` fleet order to each appliance carrying the Vault-sourced pubkey. The pubkey on disk stays the same physical bytes (it's the pubkey we minted the Vault key FOR), but we re-sign the rotation with Vault to prove end-to-end.
+5. ~~Run a `rotate_server_pubkey` fleet order to each appliance.~~ **DROPPED 2026-05-16 (Task #47).** See rationale below.
 
-**Open decision for Phase C:** do we generate a NEW Ed25519 key in Vault (different pubkey from the current disk one) and require every appliance to accept a rotation? Or do we import the existing disk key into Vault as the same pubkey? The first is cleaner but requires a fleet-wide rotation ceremony. The second is operationally easier but means the key has lived on disk at some point, which partially defeats the purpose.
+**Decision (resolved 2026-05-16):** Import the existing disk-born Ed25519 key into Vault Transit (same pubkey preserved). No appliance-side rotation, no `rotate_server_pubkey` ceremony, no fleet-wide order.
 
-Recommendation: **generate new key in Vault, force fleet rotation**, retire the disk-born key. Timing: when every appliance is on daemon version that supports `rotate_server_pubkey`. Verify via `SELECT agent_version, COUNT(*) FROM site_appliances GROUP BY agent_version` before cutover.
+**Why we dropped the rotate ceremony:**
+
+- **Appliance fleet readiness risk.** A `rotate_server_pubkey` ceremony requires every appliance to be on a daemon version that supports the order + actively reachable at ceremony time. Per `SELECT agent_version, COUNT(*) FROM site_appliances GROUP BY agent_version`, the fleet currently spans multiple versions; offline / lagging daemons would either fall behind the new pubkey (signature verification failures) or block the cutover indefinitely.
+- **Counsel Rule 3 chain-of-custody.** A pubkey rotation is itself a `signing_key_rotation`-class privileged event (already lockstep-registered). Doing a fleet-wide rotation as part of Phase C cutover stacks two privileged events (cutover + rotation) on the same window — harder to attest each independently in the auditor kit.
+- **"Key has lived on disk at some point" trade-off is acceptable.** Counsel-grade view (2026-05-16): the disk-born key has lived on a single hardened VPS host since OsirisCare inception, with no exfiltration audit-log evidence. Importing into Vault elevates the storage posture going forward without re-litigating the historical blast radius — which is already in scope for the standing SECURITY_ADVISORY_YYYY-MM-DD_SIGNING_KEY_ISOLATION.md disclosure.
+- **Reversibility.** With the same pubkey preserved across the cutover, rollback is operationally trivial: flip `SIGNING_BACKEND=file` back, restart mcp-server, every appliance accepts the new (well, same) signatures with no fleet-side action. See `docs/runbooks/VAULT_ROLLBACK_RUNBOOK.md`.
+
+**Operator action for step 5 (replaces the rotate ceremony):**
+
+```bash
+# On the Vault host (10.100.0.3), import the existing Ed25519 key into Transit
+# Pre-flight: backup signing.key + its sha256 to 1Password "OsirisCare > Vault Phase C cutover"
+sha256sum /opt/mcp-server/secrets/signing.key | tee signing.key.sha256
+# Convert to Vault's Transit ed25519 import shape
+vault transit import-version osiriscare-signing -type=ed25519 \
+    -ciphertext="<encrypted-with-vault-public-import-key>"
+# Verify the imported pubkey matches the disk pubkey (the appliances'
+# pinned key) — MUST match byte-for-byte or rollback immediately
+vault read transit/keys/osiriscare-signing | grep public_key
+diff <(openssl pkey -in /opt/mcp-server/secrets/signing.key -pubout -outform DER | base64) \
+     <(vault read -field=keys/1/public_key transit/keys/osiriscare-signing)
+# At this point Vault holds the SAME pubkey the appliances already trust
+```
+
+Once the import + diff verification passes, proceed with step 1 (flip
+`SIGNING_BACKEND=vault`). No appliance-side change required.
 
 ## Phase D: retire (30 days after Phase C, clean)
 
