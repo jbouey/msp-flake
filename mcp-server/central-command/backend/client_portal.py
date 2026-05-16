@@ -1160,20 +1160,19 @@ async def get_site_compliance_health(
                 total_failed += cnt
 
         # --- Compute per-category scores from total basket ---
-        breakdown = {}
-        overall_sum = 0
-        cats_with_data = 0
-        for cat in categories:
-            total = cat_pass[cat] + cat_fail[cat] + cat_warn[cat]
-            if total > 0:
-                score = round(((cat_pass[cat] + 0.5 * cat_warn[cat]) / total) * 100)
-                breakdown[cat] = score
-                overall_sum += score
-                cats_with_data += 1
-            else:
-                breakdown[cat] = None
+        # Delegates to the canonical category_weighted_compliance_score
+        # primitive (Task #103 Fork B close-out 2026-05-16). Same per-
+        # category formula `(pass + 0.5*warn) / total * 100`. Passes
+        # `category_weights=None` → unweighted average across
+        # categories-with-data (matches the prior client-portal inline
+        # behavior — distinct from routes.get_admin_compliance_health
+        # which is HIPAA-weighted).
+        from .compliance_score import compute_category_weighted_overall
 
-        overall = round(overall_sum / cats_with_data, 1) if cats_with_data > 0 else None
+        breakdown, overall = compute_category_weighted_overall(
+            cat_pass, cat_fail, cat_warn,
+            category_weights=None,
+        )
 
         # 30-day trend (daily scores)
         trend_rows = await conn.fetch("""

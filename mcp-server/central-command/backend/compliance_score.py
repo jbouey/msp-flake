@@ -427,3 +427,87 @@ async def compute_compliance_score(
     if _cache_enabled and _cache_key is not None:
         cache_set(_cache_key, _result, _SCORE_CACHE_TTL_SECONDS)
     return _result
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Canonical primitive — category_weighted_compliance_score formula
+# (Task #103 Fork B close-out 2026-05-16; Fork A spec §2 minimal first
+# pass — full canonical helper extension is Class-B Gate A future
+# work).
+#
+# Three customer-facing surfaces compute the per-category compliance
+# breakdown + overall score with the same `(pass + 0.5*warn) / total`
+# partial-credit formula. Pre-extraction, the formula was duplicated:
+#
+#   db_queries.get_compliance_scores_for_site (HIPAA-weighted)
+#   db_queries.get_all_compliance_scores      (HIPAA-weighted; per-site)
+#   routes.get_admin_compliance_health        (HIPAA-weighted)
+#   client_portal.get_site_compliance_health  (UNWEIGHTED average)
+#
+# Counsel Rule 1: one canonical source per formula. This helper IS the
+# canonical primitive — all four callsites delegate. Behavior unchanged
+# per callsite (HIPAA-weighted callers pass `category_weights=
+# HIPAA_CATEGORY_WEIGHTS`; the unweighted caller passes `None`).
+# ─────────────────────────────────────────────────────────────────────
+
+def compute_category_weighted_overall(
+    cat_pass: Dict[str, int],
+    cat_fail: Dict[str, int],
+    cat_warn: Dict[str, int],
+    *,
+    category_weights: Optional[Dict[str, float]] = None,
+    partial_credit_warning: float = 0.5,
+    default_weight: float = 0.06,
+    breakdown_round_decimals: int = 0,
+    overall_round_decimals: int = 1,
+) -> tuple:
+    """Compute per-category compliance breakdown + overall score.
+
+    Args:
+        cat_pass / cat_fail / cat_warn: per-category counts. Categories
+            with `total == 0` map to `None` in the breakdown.
+        category_weights: per-category weights for the overall average.
+            None → unweighted average across categories with data.
+        partial_credit_warning: weight given to warnings (default 0.5).
+        default_weight: fallback weight for categories missing from
+            `category_weights` (default 0.06).
+        breakdown_round_decimals: decimals for per-category score (0 = int).
+        overall_round_decimals: decimals for overall score (1 = float).
+
+    Returns:
+        (breakdown, overall_score) where:
+            breakdown: Dict[category, Optional[int|float]]
+            overall_score: Optional[float] — None if no category has data
+    """
+    breakdown: Dict[str, Optional[Any]] = {}
+    weighted_sum = 0.0
+    weight_sum = 0.0
+    unweighted_scores: List[float] = []
+
+    for cat in cat_pass:
+        total = cat_pass[cat] + cat_fail[cat] + cat_warn[cat]
+        if total > 0:
+            raw = ((cat_pass[cat] + partial_credit_warning * cat_warn[cat]) / total) * 100
+            score = round(raw, breakdown_round_decimals) if breakdown_round_decimals > 0 else round(raw)
+            breakdown[cat] = score
+            if category_weights is not None:
+                w = category_weights.get(cat, default_weight)
+                weighted_sum += score * w
+                weight_sum += w
+            else:
+                unweighted_scores.append(score)
+        else:
+            breakdown[cat] = None
+
+    if category_weights is not None:
+        overall: Optional[float] = (
+            round(weighted_sum / weight_sum, overall_round_decimals)
+            if weight_sum > 0 else None
+        )
+    else:
+        overall = (
+            round(sum(unweighted_scores) / len(unweighted_scores), overall_round_decimals)
+            if unweighted_scores else None
+        )
+
+    return breakdown, overall

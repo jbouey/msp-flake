@@ -699,30 +699,20 @@ async def get_compliance_scores_for_site(db: AsyncSession, site_id: str) -> Dict
         elif status in ("non_compliant", "fail"):
             cat_fail[category] += 1
 
-    # Unified formula: score = (passes + 0.5 * warnings) / total * 100
-    # Overall uses HIPAA-weighted average (encryption/access_control weighted higher)
-    result_scores = {}
-    weighted_sum = 0.0
-    weight_sum = 0.0
+    # Delegate to canonical category_weighted_compliance_score primitive
+    # (Task #103 Fork B close-out 2026-05-16). Same `(pass + 0.5*warn) /
+    # total * 100` per-category formula + HIPAA_CATEGORY_WEIGHTS overall
+    # weighting as the prior inline computation — behavior unchanged.
+    from .compliance_score import compute_category_weighted_overall
 
-    for category in CATEGORY_CHECKS:
-        total = cat_pass[category] + cat_warn[category] + cat_fail[category]
-        if total > 0:
-            avg = ((cat_pass[category] + 0.5 * cat_warn[category]) / total) * 100
-            result_scores[category] = round(avg)
-            weight = HIPAA_CATEGORY_WEIGHTS.get(category, 0.06)
-            weighted_sum += avg * weight
-            weight_sum += weight
-        else:
-            result_scores[category] = None
+    breakdown, overall_score = compute_category_weighted_overall(
+        cat_pass, cat_fail, cat_warn,
+        category_weights=HIPAA_CATEGORY_WEIGHTS,
+    )
 
-    # Overall score = HIPAA-weighted average of category scores
-    if weight_sum > 0:
-        result_scores["score"] = round(weighted_sum / weight_sum, 1)
-    else:
-        result_scores["score"] = None
-
-    result_scores["has_data"] = weight_sum > 0
+    result_scores: Dict[str, Any] = dict(breakdown)
+    result_scores["score"] = overall_score
+    result_scores["has_data"] = overall_score is not None
 
     return result_scores
 

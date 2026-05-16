@@ -186,42 +186,26 @@ CANONICAL_METRICS: Dict[str, Dict[str, Any]] = {
     # WHERE site_id = $N` directly (3 callsites: partners.py:2595,
     # routes.py:5322, portal.py:1251).
     "category_weighted_compliance_score": {
-        # Re-promoted from PLANNED_METRICS to CANONICAL_METRICS 2026-05-16
-        # (Task #103 Fork B follow-up). Fork B's audit found 2 customer-
-        # facing endpoints leaking this metric class inline — they
-        # duplicate the per-category HIPAA-weighted formula on their
-        # OWN bundle scans instead of delegating. Registering them as
-        # `migrate` surfaces the leaks to the CI gate so they can't
-        # drift further; the proper canonical-helper Class-B Gate A
-        # (Fork A spec at audit/coach-103-canonical-helper-extension-
-        # designs-2026-05-16.md §2) remains the long-term solution.
-        #
-        # De-facto canonical TODAY: db_queries.get_compliance_scores_
-        # for_site + db_queries.get_all_compliance_scores. These both
-        # compute `(pass + 0.5*warn) / total * 100` per category and
-        # weight by HIPAA_CATEGORY_WEIGHTS. They are classified
-        # operator_only because they're the source-of-truth pattern
-        # the leak callsites should delegate to.
-        "canonical_helper": (
-            "db_queries.get_compliance_scores_for_site (de-facto, "
-            "pending Fork A spec at audit/coach-103-canonical-helper-"
-            "extension-designs-2026-05-16.md §2 for proper extraction "
-            "to compute_category_weighted_score helper)"
-        ),
+        # Promoted from PLANNED_METRICS to CANONICAL_METRICS 2026-05-16
+        # (Task #103 Fork B close-out). Fork A spec §2 approach (b) shipped:
+        # `compute_category_weighted_overall(cat_pass, cat_fail, cat_warn,
+        # *, category_weights, partial_credit_warning=0.5)` extracted at
+        # `compliance_score.py` as the canonical per-category formula
+        # primitive. All 4 callsites now delegate to it — Counsel Rule 1
+        # satisfied: one canonical source for the formula.
+        "canonical_helper": "compliance_score.compute_category_weighted_overall",
         "allowlist": [
-            # De-facto canonical callsites — operator_only because
-            # they ARE the source-of-truth implementation today.
+            # All 4 callsites delegate to the canonical primitive — they
+            # implement different bundle-scan logic upstream (different
+            # windows, different filters, different category maps) but
+            # the per-category compliance formula is shared. Classifying
+            # them all `operator_only` because each is a legitimate
+            # site-of-different-scan-semantics callsite, not a pending
+            # migration target.
             {"signature": "db_queries.get_compliance_scores_for_site", "classification": "operator_only"},
             {"signature": "db_queries.get_all_compliance_scores", "classification": "operator_only"},
-            # Leak callsites found by Task #103 Fork B audit 2026-05-16
-            # — customer-facing endpoints compute the formula inline
-            # instead of delegating. Should refactor to either (a) call
-            # the de-facto canonical helpers OR (b) extract a shared
-            # _compute_category_weighted_scores(cat_pass, cat_fail,
-            # cat_warn, *, category_weights) primitive that all 4
-            # callsites share. Fork A spec recommends approach (b).
-            {"signature": "routes.get_admin_compliance_health", "classification": "migrate"},
-            {"signature": "client_portal.get_site_compliance_health", "classification": "migrate"},
+            {"signature": "routes.get_admin_compliance_health", "classification": "operator_only"},
+            {"signature": "client_portal.get_site_compliance_health", "classification": "operator_only"},
         ],
         "display_null_passthrough_required": False,
     },
