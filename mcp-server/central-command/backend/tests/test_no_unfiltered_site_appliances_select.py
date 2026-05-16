@@ -19,11 +19,13 @@ without the filter. NOT all are bugs:
 - recovery paths (provisioning.py admin_restore) need to see
   soft-deleted rows to revive them
 
-So this gate uses a RATCHET pattern: BASELINE_MAX=94 (count
-post-BUG-1-fix). New unfiltered queries fail CI. Each removal
-requires lowering BASELINE_MAX (lockstep — like the
-test_no_same_origin_credentials.py and test_no_direct_site_id_update.py
-patterns).
+So this gate uses a RATCHET pattern. BASELINE_MAX = 0 as of
+2026-05-15 (Session 220 close-out): every `FROM site_appliances`
+in the backend either filters `deleted_at IS NULL` near the query
+or carries an explicit `# noqa: site-appliances-deleted-include`
+marker with rationale. Each removal requires lowering BASELINE_MAX
+in lockstep (same pattern as test_no_same_origin_credentials.py
+and test_no_direct_site_id_update.py).
 
 Per-line opt-out: `# noqa: site-appliances-deleted-include —
 <reason>` on the same or nearby line marks the query as
