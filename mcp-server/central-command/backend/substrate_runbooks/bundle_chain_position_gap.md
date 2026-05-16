@@ -108,8 +108,12 @@ severity class as `load_test_marker_in_compliance_bundles` +
 
 - **>3 chain gaps in 24h on the same site:** P0 — the per-site
   advisory lock is functionally broken for that site. Pause all
-  writes to the site (via flipping `sites.status='paused'` or a
-  service-bus rate-limit) and investigate before reopening.
+  writes to the site by flipping `sites.status='inactive'`
+  (the CHECK constraint allows `pending|online|offline|inactive`
+  — `inactive` is the operator-applied pause shape; appliance
+  checkins still write but no privileged operations advance).
+  Investigate before flipping back to `online`. (Task #132 closure
+  — pre-fix this runbook cited `paused` which the CHECK rejects.)
 - **Gap on a customer-active site:** mandatory customer
   notification + counsel review.
 - **Gap on the Task #117 load-test site:** EXPECTED if the

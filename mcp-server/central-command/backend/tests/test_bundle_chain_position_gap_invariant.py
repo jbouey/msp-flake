@@ -189,7 +189,13 @@ def test_display_metadata_entry_exists():
 def test_no_table_join_needed():
     """The query reads compliance_bundles alone (no JOIN to sites
     or other tables) — chain_position is on compliance_bundles
-    directly. Verify no accidental JOIN that would change shape."""
+    directly. Verify no accidental JOIN that would change shape.
+
+    Task #133 closure (Gate B P2-2): use word-boundary token match
+    instead of substring. Pre-fix `"JOIN" not in body` would false-
+    positive on any identifier containing JOIN (e.g., 'cooljoiner').
+    Word-boundary regex `\\bJOIN\\b` matches only the SQL keyword
+    in isolation."""
     src = _read_src()
     m = re.search(
         r"async def _check_bundle_chain_position_gap.*?(?=\nasync def |\Z)",
@@ -197,7 +203,12 @@ def test_no_table_join_needed():
     )
     assert m
     body = m.group(0)
-    assert "JOIN" not in body.upper().replace("LAG", "").replace(" OR ", ""), (
+    # Strip SQL comments + Python docstring lines so the comment
+    # "(no JOIN to sites or other tables)" in our own docstring
+    # doesn't false-trip the check.
+    sql_only = re.sub(r'"""[^"]*?"""', "", body, flags=re.DOTALL)
+    sql_only = re.sub(r"--.*?\n", "\n", sql_only)
+    assert not re.search(r"\bJOIN\b", sql_only, re.IGNORECASE), (
         "_check_bundle_chain_position_gap should query "
         "compliance_bundles directly with no JOIN. Adding a JOIN "
         "(e.g., to sites) would slow the per-tick scan + risk "

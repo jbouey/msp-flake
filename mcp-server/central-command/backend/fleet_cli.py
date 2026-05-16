@@ -456,7 +456,15 @@ async def cmd_create(args: argparse.Namespace) -> None:
                         event_type=order_type,
                         actor_email=args.actor_email.strip(),
                         reason=args.reason.strip(),
-                        fleet_order_id=None,  # filled below after INSERT
+                        # Task #127 closure (Gate B P1-3): fleet_cli
+                        # post-#118 uses the cross-link UPDATE pattern
+                        # (admin_audit_log.details->>'fleet_order_ids'
+                        # array) instead of the singular fleet_order_id
+                        # kwarg. Omitting here = the kwarg's None
+                        # default — matches privileged_access_api's
+                        # behavior when it has no order yet. The
+                        # privileged_access_api flow still passes a
+                        # real fleet_order_id when it has one.
                         duration_minutes=int(params.get("duration_minutes", 0))
                             if str(params.get("duration_minutes", "")).isdigit()
                             else None,
