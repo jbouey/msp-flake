@@ -210,6 +210,31 @@ def test_bearer_revoke_wired_into_complete():
     )
 
 
+def test_bearer_revoke_gated_to_synthetic_sites():
+    """Commit 5a Gate B P1-A closure: the bearer_revoked UPDATE must
+    JOIN `sites` and gate on `s.synthetic = TRUE`. Without this gate
+    an admin typo on revoke_bearer_appliance_id could revoke a real
+    customer appliance's bearer, taking the customer's daemon offline.
+    Per audit/coach-62-c3-gate-b-2026-05-16.md §P1-A.
+    """
+    src = _read_api()
+    # The UPDATE block must reference both sites.synthetic AND a join
+    # condition to sa.site_id. Anchor on `bearer_revoked = TRUE` and
+    # scan the surrounding ±15 lines.
+    m = re.search(
+        r"(.{0,500})SET\s+bearer_revoked\s*=\s*TRUE(.{0,500})",
+        src,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert m, "could not locate bearer_revoked UPDATE block"
+    block = m.group(1) + m.group(2)
+    assert "s.synthetic" in block and "= TRUE" in block, (
+        "bearer_revoked UPDATE missing `sites.synthetic = TRUE` gate. "
+        "Without this, admin typo can revoke a real customer appliance's "
+        "bearer (Gate B P1-A)."
+    )
+
+
 def test_admin_audit_log_writes_on_state_transitions():
     """Source-grep check: every state-transition endpoint (start /
     abort / complete) must call _audit(...) so admin_audit_log gets

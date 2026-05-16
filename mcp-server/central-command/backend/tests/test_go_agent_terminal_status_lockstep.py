@@ -40,18 +40,40 @@ _PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Anchor the search to the specific function/loop that owns the
+# terminal-status filter — otherwise the first `status NOT IN (...)`
+# in the file wins, which silently flaps when an unrelated sibling
+# check adds its own. Update if either function is renamed.
+_ANCHORS = {
+    "main.py": "_go_agent_status_decay_loop",
+    "assertions.py": "_check_go_agent_heartbeat_stale",
+}
+
 
 def _extract_terminal_set(path: pathlib.Path) -> set[str]:
     text = path.read_text()
-    matches = _PATTERN.findall(text)
+    anchor = _ANCHORS.get(path.name)
+    if not anchor:
+        raise AssertionError(f"No anchor registered for {path.name}")
+    # Find the anchor function body, then the first NOT IN inside it.
+    anchor_match = re.search(
+        rf"(?:async\s+)?def\s+{re.escape(anchor)}\b(.*?)(?=\n(?:async\s+)?def\s+\w+\b|\Z)",
+        text,
+        re.DOTALL,
+    )
+    if not anchor_match:
+        raise AssertionError(
+            f"Could not find function `{anchor}` in {path.name}. Either "
+            f"the function was renamed (update _ANCHORS) or removed "
+            f"(regression)."
+        )
+    matches = _PATTERN.findall(anchor_match.group(1))
     if not matches:
         raise AssertionError(
-            f"Could not find `status NOT IN (...)` pattern in {path.name}. "
-            f"Either the exclusion was removed (regression) or the SQL was "
-            f"refactored to a different shape — update this test."
+            f"Could not find `status NOT IN (...)` pattern inside "
+            f"{anchor} in {path.name}. Either the exclusion was removed "
+            f"(regression) or refactored — update this test."
         )
-    # Use the FIRST match in each file. Both files only have one
-    # such filter today; if more appear, the test should expand.
     raw = matches[0]
     values = set(re.findall(r"'([^']+)'", raw))
     return values

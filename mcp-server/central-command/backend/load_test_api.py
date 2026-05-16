@@ -400,20 +400,29 @@ async def complete_run(
             run_id, final, json.dumps(new_metadata),
         )
 
-        # Commit 3: synthetic bearer revocation. If the k6 wrapper used
-        # a synthetic appliance bearer for the run, flip
-        # site_appliances.bearer_revoked=TRUE so future requests with
-        # the same bearer return 401 (`bearer_revoked`). Closes the
-        # bearer lifecycle per v2.1 spec §P1-5.
+        # Commit 3 / Commit 5a Gate B P1-A closure: synthetic bearer
+        # revocation, GATED to sites.synthetic=TRUE only. Without this
+        # gate, an admin typo on revoke_bearer_appliance_id could
+        # silently revoke a REAL customer appliance's bearer, taking
+        # the customer's daemon offline. The JOIN to sites.synthetic
+        # (mig 315) blocks the revoke at the SQL level — no row
+        # update + audit row carries `bearer_revoked_appliance_id`
+        # null with `revoke_rejected_reason` so operators can see the
+        # refusal in the run history. Closes audit/coach-62-c3-gate-b-
+        # 2026-05-16.md §P1-A.
         bearer_revoked_appliance: Optional[str] = None
+        revoke_rejected_reason: Optional[str] = None
         if req.revoke_bearer_appliance_id:
             try:
                 result = await conn.execute(
                     """
-                    UPDATE site_appliances
+                    UPDATE site_appliances sa
                        SET bearer_revoked = TRUE
-                     WHERE appliance_id = $1
-                       AND bearer_revoked = FALSE
+                      FROM sites s
+                     WHERE sa.appliance_id = $1
+                       AND sa.bearer_revoked = FALSE
+                       AND sa.site_id = s.site_id
+                       AND s.synthetic = TRUE
                     """,
                     req.revoke_bearer_appliance_id,
                 )
@@ -422,11 +431,22 @@ async def complete_run(
                     n = int(result.split(" ")[1])
                     if n > 0:
                         bearer_revoked_appliance = req.revoke_bearer_appliance_id
+                    else:
+                        # Zero rows updated — either appliance not
+                        # found, already revoked, or (the security-
+                        # relevant case) site is NOT synthetic.
+                        revoke_rejected_reason = (
+                            "no synthetic appliance matched the supplied "
+                            "appliance_id (either non-existent, already "
+                            "revoked, OR site.synthetic=FALSE — load-test "
+                            "revocation refuses real customer appliances)"
+                        )
             except Exception:
                 logger.exception(
                     "bearer_revoke failed for appliance_id %s on run %s",
                     req.revoke_bearer_appliance_id, run_id,
                 )
+                revoke_rejected_reason = "exception during revoke; see logs"
 
         await _audit(
             conn,
@@ -438,6 +458,7 @@ async def complete_run(
                 "final_status": final,
                 "had_metrics_summary": bool(req.metrics_summary),
                 "bearer_revoked_appliance_id": bearer_revoked_appliance,
+                "revoke_rejected_reason": revoke_rejected_reason,
             },
             ip_address=(request.client.host if request.client else None),
         )
@@ -446,6 +467,7 @@ async def complete_run(
         "run_id": run_id,
         "status": final,
         "bearer_revoked_appliance_id": bearer_revoked_appliance,
+        "revoke_rejected_reason": revoke_rejected_reason,
     }
 
 

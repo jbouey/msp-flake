@@ -1996,6 +1996,212 @@ async def _check_sensitive_workflow_advanced_without_baa(
     return violations
 
 
+# Task #62 v2.1 Commit 5a (2026-05-16): load-harness substrate invariants.
+# Promised in mig 316 comments + v2.1 spec §"Substrate invariant" notes.
+# Ships standalone of Commit 4 ops (CX22 + Vault Transit) — invariants
+# are code-only and can land + tick before any real load runs fire.
+
+_LOAD_TEST_SYNTHETIC_FORBIDDEN_TABLES = (
+    # Tables that MUST NEVER carry a load-test synthetic marker — these
+    # back customer-facing aggregations / auditor kit / evidence chain.
+    # Adding a table here is the same as declaring a customer-facing
+    # surface. CI gate test_no_load_test_marker_in_compliance_bundles
+    # covers compliance_bundles structurally at build time; this
+    # invariant is the runtime backstop + extends to siblings.
+    "compliance_bundles",
+    "incidents",
+    "l2_decisions",
+    "evidence_bundles",
+    "aggregated_pattern_stats",
+)
+
+
+async def _check_load_test_run_stuck_active(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """A load_test_runs row in starting/running/aborting state with
+    started_at older than 6h indicates a k6 process that crashed or
+    a wrapper that never called /complete — the partial unique index
+    will block any NEW run until this one is reaped."""
+    rows = await conn.fetch(
+        """
+        SELECT run_id::text AS run_id,
+               started_at,
+               status,
+               started_by,
+               scenario_sha,
+               EXTRACT(EPOCH FROM (now() - started_at))/3600 AS hours_open
+          FROM load_test_runs
+         WHERE status IN ('starting','running','aborting')
+           AND started_at < now() - INTERVAL '6 hours'
+        """
+    )
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "run_id": r["run_id"],
+                "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+                "status": r["status"],
+                "started_by": r["started_by"],
+                "scenario_sha": r["scenario_sha"],
+                "hours_open": float(r["hours_open"] or 0),
+                "interpretation": (
+                    f"load-test run {r['run_id']} stuck in {r['status']!r} "
+                    f"for {float(r['hours_open'] or 0):.1f}h — k6 likely "
+                    f"died without calling /complete. Partial unique "
+                    f"index blocks any NEW run; reap via POST /api/admin/"
+                    f"load-test/{{run_id}}/complete with final_status="
+                    f"'failed'."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_load_test_run_aborted_no_completion(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """A load_test_runs row with abort_requested_at set but status
+    still NOT terminal (aborted/completed/failed) and abort older
+    than 30 min indicates the abort-bridge regressed — k6 should
+    poll /status every iteration + exit within 30s of seeing
+    'aborting'. 30 min without transition = abort propagation broken."""
+    rows = await conn.fetch(
+        """
+        SELECT run_id::text AS run_id,
+               status,
+               abort_requested_at,
+               abort_requested_by,
+               abort_reason,
+               EXTRACT(EPOCH FROM (now() - abort_requested_at))/60 AS minutes_since_abort
+          FROM load_test_runs
+         WHERE abort_requested_at IS NOT NULL
+           AND status NOT IN ('aborted','completed','failed')
+           AND abort_requested_at < now() - INTERVAL '30 minutes'
+        """
+    )
+    return [
+        Violation(
+            site_id=None,
+            details={
+                "run_id": r["run_id"],
+                "status": r["status"],
+                "abort_requested_at": r["abort_requested_at"].isoformat() if r["abort_requested_at"] else None,
+                "abort_requested_by": r["abort_requested_by"],
+                "abort_reason": r["abort_reason"],
+                "minutes_since_abort": float(r["minutes_since_abort"] or 0),
+                "interpretation": (
+                    f"abort requested {float(r['minutes_since_abort'] or 0):.0f} min "
+                    f"ago but run still in {r['status']!r} — k6 abort-poll "
+                    f"bridge regressed or k6 wrapper crashed. Reap via "
+                    f"POST /api/admin/load-test/{{run_id}}/complete with "
+                    f"final_status='failed'."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_load_test_marker_in_compliance_bundles(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """compliance_bundles is the Ed25519-chained / OTS-anchored evidence
+    table — auditor-kit determinism contract pins kit hash to its
+    content. ANY row carrying details->>'synthetic'='load_test'
+    corrupts the chain + flips kit hash between consecutive downloads.
+    CI gate test_no_load_test_marker_in_compliance_bundles covers
+    structurally at build time; this is the runtime backstop in case
+    a future code path bypasses the static scan (e.g., via dynamic
+    SQL construction)."""
+    rows = await conn.fetch(
+        """
+        SELECT bundle_id, site_id, check_type, created_at
+          FROM compliance_bundles
+         WHERE details->>'synthetic' = 'load_test'
+         LIMIT 100
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "bundle_id": r["bundle_id"],
+                "check_type": r["check_type"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "interpretation": (
+                    f"compliance_bundles bundle_id={r['bundle_id']} "
+                    f"carries synthetic='load_test' marker — Ed25519 "
+                    f"chain + auditor-kit determinism contract violated. "
+                    f"Quarantine the row + investigate the writer path. "
+                    f"CI gate test_no_load_test_marker_in_compliance_"
+                    f"bundles should have prevented this at build time — "
+                    f"find the bypass."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_synthetic_traffic_marker_orphan(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Wider class than the compliance_bundles invariant: scans a
+    curated set of customer-facing aggregation tables for rows
+    carrying details->>'synthetic'='load_test' OR
+    details->>'synthetic'='mttr_soak' (extends to plan-24's marker
+    per v2.1 spec P0-3 unification). The compliance_bundles-specific
+    invariant above is sev1 (chain corruption is more severe); this
+    sibling is sev2 (visibility/integrity, not crypto)."""
+    violations: List[Violation] = []
+    for tbl in _LOAD_TEST_SYNTHETIC_FORBIDDEN_TABLES:
+        if tbl == "compliance_bundles":
+            # Covered by sev1 invariant above; don't double-report.
+            continue
+        try:
+            rows = await conn.fetch(
+                f"""
+                SELECT site_id, COUNT(*) AS hit_count,
+                       MIN(created_at) AS first_seen,
+                       MAX(created_at) AS last_seen
+                  FROM {tbl}
+                 WHERE details->>'synthetic' IN ('load_test','mttr_soak')
+                 GROUP BY site_id
+                 LIMIT 100
+                """
+            )
+        except asyncpg.PostgresError:
+            # Table lacks a `details` JSONB column or `created_at` —
+            # silently skip (the curated list expects all of these
+            # columns to exist; mismatch is a config bug, not a
+            # security event).
+            continue
+        for r in rows:
+            violations.append(Violation(
+                site_id=r["site_id"],
+                details={
+                    "table": tbl,
+                    "hit_count": int(r["hit_count"] or 0),
+                    "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
+                    "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+                    "interpretation": (
+                        f"{int(r['hit_count'] or 0)} synthetic-marked "
+                        f"rows in {tbl} for site_id={r['site_id']!r} — "
+                        f"load-harness or MTTR-soak traffic leaked into "
+                        f"a customer-facing aggregation. Investigate the "
+                        f"writer path + add a `IS NOT TRUE` filter to "
+                        f"the offending INSERT/UPDATE. Per v2.1 spec "
+                        f"P0-3 (marker unification: 'load_test' + "
+                        f"'mttr_soak')."
+                    ),
+                },
+            ))
+    return violations
+
+
 # Ordered list of registered assertions. Add new ones at the bottom.
 ALL_ASSERTIONS: List[Assertion] = [
     Assertion(
@@ -2478,6 +2684,30 @@ ALL_ASSERTIONS: List[Assertion] = [
         severity="sev1",
         description="A BAA-gated sensitive workflow advanced in the last 30 days for a client_org with no active formal BAA (baa_status.baa_enforcement_ok=FALSE) and no legitimate carve-out. Tasks #52 + #92 + #98 (Counsel Rule 6 / §164.504(e)) — List 3 of the BAA-enforcement lockstep. 5 workflow scans: (1) cross_org_relocate via cross_org_site_relocate_requests, (2) owner_transfer via client_org_owner_transfer_requests, (3) evidence_export via admin_audit_log auditor_kit_download rows (denormalized site_id+client_org_id from commit 5ce77722, filtered to client_portal+partner_portal auth_methods), (4) new_site_onboarding via the sites table, (5) new_credential_entry via site_credentials JOIN sites. The CI gate test_baa_gated_workflows_lockstep.py catches an un-gated endpoint at build time; this invariant is the runtime backstop for a code path that bypassed require_active_baa / enforce_or_log_admin_bypass / check_baa_for_evidence_export OR an org whose BAA lapsed after the action. State-machine + admin-path advances write a baa_enforcement_bypass admin_audit_log row and are excluded; evidence_export uses raise-403 (no bypass row) and is method-aware (admin + legacy ?token= carved out). Runbook: substrate_runbooks/sensitive_workflow_advanced_without_baa.md.",
         check=lambda c: _check_sensitive_workflow_advanced_without_baa(c),
+    ),
+    Assertion(
+        name="load_test_run_stuck_active",
+        severity="sev2",
+        description="A load_test_runs row in starting/running/aborting older than 6h indicates a k6 process that crashed or a wrapper that never called /complete. The partial unique index will block any NEW run until reaped. Task #62 v2.1 Commit 5a (2026-05-16). Runbook: substrate_runbooks/load_test_run_stuck_active.md.",
+        check=_check_load_test_run_stuck_active,
+    ),
+    Assertion(
+        name="load_test_run_aborted_no_completion",
+        severity="sev3",
+        description="A load_test_runs row with abort_requested_at set + status not terminal + abort > 30 min ago. The abort-bridge regressed — k6 should poll /status every iteration + exit within 30s. Task #62 v2.1 Commit 5a. Runbook: substrate_runbooks/load_test_run_aborted_no_completion.md.",
+        check=_check_load_test_run_aborted_no_completion,
+    ),
+    Assertion(
+        name="load_test_marker_in_compliance_bundles",
+        severity="sev1",
+        description="compliance_bundles row carries details->>'synthetic'='load_test'. Corrupts Ed25519 chain + flips auditor-kit determinism hash between consecutive downloads. CI gate test_no_load_test_marker_in_compliance_bundles covers structurally at build time; this is the runtime backstop. Task #62 v2.1 Commit 5a / Gate A P0-2 + P1-6. Runbook: substrate_runbooks/load_test_marker_in_compliance_bundles.md.",
+        check=_check_load_test_marker_in_compliance_bundles,
+    ),
+    Assertion(
+        name="synthetic_traffic_marker_orphan",
+        severity="sev2",
+        description="Synthetic-marked rows ('load_test' OR 'mttr_soak') in customer-facing aggregation tables (incidents / l2_decisions / evidence_bundles / aggregated_pattern_stats). Per v2.1 spec P0-3 marker unification — extends to plan-24's MTTR-soak marker. Task #62 v2.1 Commit 5a. Runbook: substrate_runbooks/synthetic_traffic_marker_orphan.md.",
+        check=_check_synthetic_traffic_marker_orphan,
     ),
 ]
 
@@ -3365,6 +3595,58 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "instead), so a violation there is unambiguously a gate-"
             "bypass or post-action BAA lapse. See "
             "substrate_runbooks/sensitive_workflow_advanced_without_baa.md."
+        ),
+    },
+    "load_test_run_stuck_active": {
+        "display_name": "Load-test run stuck active beyond 6h",
+        "recommended_action": (
+            "k6 crashed or its wrapper never called /complete on a "
+            "load-harness run. The partial unique index will block "
+            "any NEW run until this one transitions to a terminal "
+            "state. Reap via POST /api/admin/load-test/{run_id}/"
+            "complete with final_status='failed'. See "
+            "substrate_runbooks/load_test_run_stuck_active.md."
+        ),
+    },
+    "load_test_run_aborted_no_completion": {
+        "display_name": "Load-test abort not honored within 30 min",
+        "recommended_action": (
+            "Operator or AlertManager requested abort > 30 min ago "
+            "but k6 has not transitioned to terminal. The abort-poll "
+            "bridge regressed — k6 should poll /status every iteration "
+            "+ exit within 30s. Force-terminate: POST /api/admin/load-"
+            "test/{run_id}/complete with final_status='failed' + "
+            "pkill -9 k6 on CX22. See substrate_runbooks/load_test_"
+            "run_aborted_no_completion.md."
+        ),
+    },
+    "load_test_marker_in_compliance_bundles": {
+        "display_name": "Synthetic marker in evidence chain — CHAIN INTEGRITY",
+        "recommended_action": (
+            "SEV1 — chain-integrity event. A compliance_bundles row "
+            "carries details->>'synthetic'='load_test'. Auditor-kit "
+            "determinism hash will flip between consecutive downloads "
+            "for the affected site. Page on-call security. Quarantine "
+            "the row (do NOT delete), find the writer "
+            "(git log -S 'load_test' --since=<days> + grep INSERT "
+            "INTO compliance_bundles), re-run the chain verifier for "
+            "blast-radius assessment. If a customer auditor has "
+            "already downloaded a kit containing the row, loop in "
+            "counsel. See substrate_runbooks/load_test_marker_in_"
+            "compliance_bundles.md."
+        ),
+    },
+    "synthetic_traffic_marker_orphan": {
+        "display_name": "Synthetic marker in customer aggregation",
+        "recommended_action": (
+            "Load-harness or MTTR-soak traffic leaked into a customer-"
+            "facing aggregation table (incidents / l2_decisions / "
+            "evidence_bundles / aggregated_pattern_stats). Add the "
+            "universal IS NOT TRUE filter pattern at the writer "
+            "callsite + re-aggregate the affected customer metric. "
+            "Sev2 (vs the sev1 sibling on compliance_bundles): no "
+            "crypto chain corruption, just visibility leak. See "
+            "substrate_runbooks/synthetic_traffic_marker_orphan.md."
         ),
     },
 }
