@@ -177,3 +177,120 @@ def test_perf_cache_clear_marked_test_only():
     whole cache from a request-path."""
     src = (_BACKEND / "perf_cache.py").read_text()
     assert "Test-only" in src or "test-only" in src.lower()
+
+
+# Gate B P1 #110 closure (2026-05-16) — bounded LRU tests.
+
+
+def test_max_entries_constant_exists():
+    """_MAX_ENTRIES must be defined + exported in cache_stats so the
+    operator can observe the cap. Pinned so a future PR can't
+    silently remove the bound."""
+    import perf_cache
+    assert hasattr(perf_cache, "_MAX_ENTRIES"), (
+        "perf_cache._MAX_ENTRIES must exist — Gate B P1 #110 mandates "
+        "a bounded LRU. Removing it re-introduces the unbounded-growth "
+        "memory leak."
+    )
+    assert isinstance(perf_cache._MAX_ENTRIES, int) and perf_cache._MAX_ENTRIES > 0
+    stats = perf_cache.cache_stats()
+    assert "max_entries" in stats, (
+        "cache_stats() must surface max_entries for operator "
+        "observability (Gate B P1 #110)."
+    )
+
+
+def test_store_evicts_oldest_when_over_cap(monkeypatch):
+    """When _STORE exceeds _MAX_ENTRIES, oldest entries are LRU-
+    evicted. Set the cap low (10), fill past it, assert oldest gone."""
+    import perf_cache
+    perf_cache.cache_clear()
+    monkeypatch.setattr(perf_cache, "_MAX_ENTRIES", 10)
+    for i in range(15):
+        perf_cache.cache_set(f"k{i}", f"v{i}", ttl_seconds=600.0)
+    stats = perf_cache.cache_stats()
+    assert stats["entries"] == 10, (
+        f"Expected _STORE bounded to 10 entries, got {stats['entries']}. "
+        "LRU eviction in cache_set is broken."
+    )
+    # Oldest 5 (k0..k4) should be evicted; newest 10 (k5..k14) survive.
+    assert perf_cache.cache_get("k0") is None
+    assert perf_cache.cache_get("k4") is None
+    assert perf_cache.cache_get("k5") == "v5"
+    assert perf_cache.cache_get("k14") == "v14"
+    perf_cache.cache_clear()
+
+
+def test_get_promotes_to_lru_end(monkeypatch):
+    """cache_get on a fresh entry should LRU-touch (move_to_end) so
+    accessed entries outlive cold entries during eviction."""
+    import perf_cache
+    perf_cache.cache_clear()
+    monkeypatch.setattr(perf_cache, "_MAX_ENTRIES", 3)
+    perf_cache.cache_set("cold", "v-cold", ttl_seconds=600.0)
+    perf_cache.cache_set("warm", "v-warm", ttl_seconds=600.0)
+    perf_cache.cache_set("hot", "v-hot", ttl_seconds=600.0)
+    # Touch cold — should move it to MRU.
+    assert perf_cache.cache_get("cold") == "v-cold"
+    # Now insert a 4th — should evict whatever's at LRU front, which
+    # should be "warm" (cold was just touched, hot is freshly inserted).
+    perf_cache.cache_set("brand_new", "v-new", ttl_seconds=600.0)
+    assert perf_cache.cache_get("warm") is None, (
+        "warm should have been LRU-evicted — cache_get did not "
+        "move_to_end on cold."
+    )
+    assert perf_cache.cache_get("cold") == "v-cold"
+    assert perf_cache.cache_get("hot") == "v-hot"
+    perf_cache.cache_clear()
+
+
+def test_locks_dict_bounded(monkeypatch):
+    """_LOCKS must also be LRU-capped — pre-fix it grew without
+    bound via cached_call's setdefault. Verify by spinning many
+    unique keys through cached_call and asserting _LOCKS size stays
+    within cap."""
+    import asyncio
+    import perf_cache
+    perf_cache.cache_clear()
+    monkeypatch.setattr(perf_cache, "_MAX_ENTRIES", 5)
+
+    async def _producer(k):
+        return f"v-{k}"
+
+    async def _run():
+        # Issue 20 distinct cached_call invocations.
+        for i in range(20):
+            await perf_cache.cached_call(
+                f"k{i}", 600.0, lambda i=i: _producer(i),
+            )
+
+    asyncio.run(_run())
+    assert len(perf_cache._LOCKS) <= 5, (
+        f"_LOCKS grew to {len(perf_cache._LOCKS)} > cap 5. The LRU "
+        "eviction on cached_call's setdefault path is broken — "
+        "_LOCKS leaks unboundedly with high cardinality cache keys."
+    )
+    perf_cache.cache_clear()
+
+
+def test_invalidate_drops_matching_lock():
+    """cache_invalidate must also pop the matching _LOCKS entry so
+    explicit invalidation doesn't leak a stale lock."""
+    import asyncio
+    import perf_cache
+    perf_cache.cache_clear()
+
+    async def _producer():
+        return "v"
+
+    async def _run():
+        await perf_cache.cached_call("k", 600.0, _producer)
+
+    asyncio.run(_run())
+    assert "k" in perf_cache._LOCKS
+    perf_cache.cache_invalidate("k")
+    assert "k" not in perf_cache._STORE
+    assert "k" not in perf_cache._LOCKS, (
+        "cache_invalidate must pop the matching lock — without this, "
+        "explicit invalidation leaks _LOCKS entries."
+    )
