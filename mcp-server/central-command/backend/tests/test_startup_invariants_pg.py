@@ -40,6 +40,7 @@ DROP TABLE IF EXISTS client_audit_log CASCADE;
 DROP TABLE IF EXISTS portal_access_log CASCADE;
 DROP TABLE IF EXISTS fleet_orders CASCADE;
 DROP TABLE IF EXISTS compliance_bundles CASCADE;
+DROP TABLE IF EXISTS vault_signing_key_versions CASCADE;
 DROP TABLE IF EXISTS sites CASCADE;
 DROP FUNCTION IF EXISTS prevent_audit_deletion() CASCADE;
 
