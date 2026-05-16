@@ -1,15 +1,51 @@
 # MSP Platform Architecture
 
-**Last Updated:** 2026-03-22 (Session 183)
-**Go Daemon:** v0.3.26 (appliance) | Go Agents on NVDC01, NVWS01, iMac
-**ISO Version:** installer-v8-dialog-tui (deployed to physical appliance)
-**Python Agent:** Deprecated — Go daemon is production agent
+**Last Updated:** 2026-05-16 (Session 220 doc refresh)
+**Go Daemon:** v0.4.x (appliance) | Go Agents on NVDC01, NVWS01, iMac
+**ISO Version:** installer-v40+ (physical appliance reflashed per Phase 1 ISO bumps)
+**Python Agent:** Deprecated since Session 196 — Go daemon is the production agent
+
+> **2026-05-16 update.** This doc is a base-camp architecture overview;
+> the canonical current-truth pointer-index for operational/legal/
+> security/architectural posture is `docs/POSTURE_OVERLAY.md` (v2.1,
+> 2026-05-13 effective). Read that overlay FIRST for any topic-area
+> authority question.
+>
+> **Recent structural additions** (sessions 213-220, see
+> `docs/lessons/sessions-219-220.md` and prior session rollups):
+> - **canonical_devices** table (mig 319) + reconciliation loop for
+>   multi-appliance device dedup (Task #73)
+> - **Substrate Integrity Engine** (60s tick, ~15 invariants, per-
+>   assertion `admin_transaction` since the Session 219 cascade-fail
+>   closure)
+> - **BAA enforcement triad** — `BAA_GATED_WORKFLOWS` build-time list +
+>   `require_active_baa()` runtime factory + `sensitive_workflow_
+>   advanced_without_baa` (sev1) substrate invariant
+> - **Master BAA v1.0-INTERIM** (formal HIPAA-complete instrument,
+>   binding via signup-flow e-signature)
+> - **Counsel's 7 Hard Rules** (gold authority — see CLAUDE.md)
+> - **Cross-org site relocate** (mig 281+282, 3-actor state machine,
+>   attestation-gated feature flag)
+> - **Synthetic-site MTTR soak** (mig 315+323, `status='inactive'`
+>   quarantined site for ground-truth substrate verification)
+> - **6 ratchet CI baselines hard-locked at 0** (mttr-soak universal-
+>   filter, discovered_devices, compliance_status, site_appliances/
+>   BUG 1, Legal.tsx, canonical_metrics) — see sessions-219-220.md
+> - **Per-appliance signing keys** (Session 196: `site_appliances.
+>   agent_public_key`, NOT `sites.agent_public_key` — multi-appliance
+>   sites use per-MAC keys)
+> - **OTS-anchored evidence chain** (Ed25519 + SHA-256 hash chain +
+>   OpenTimestamps Bitcoin anchoring)
+> - **Vault Transit signing rollout** (LIVE shadow mode on Hetzner
+>   89.167.76.203; Phase C cutover in progress per Tasks #36/#42-#49)
 
 ## Overview
 
 **Stack:** NixOS + MCP + LLM
 **Target:** Small to mid-sized clinics (NEPA region)
 **Service Model:** HIPAA compliance monitoring + evidence capture + operator-authorized remediation
+**Legal instrument:** Master BAA v1.0-INTERIM (binding upon signup-flow
+e-signature, counsel-hardening to v2.0 target 2026-06-03)
 
 ## Production Infrastructure
 

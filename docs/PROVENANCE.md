@@ -1,7 +1,7 @@
 # Software Provenance & Time Framework
 
-> **Last verified:** 2025-12-03. **Stale on Vault posture +
-> chain anchoring details.**
+> **Last verified:** 2026-05-16 (Session 220 doc refresh; prior
+> verification 2025-12-03).
 >
 > What's accurate: core principle of cryptographic provability +
 > temporal ordering; OTS-anchoring concept; Ed25519 signatures.
@@ -26,8 +26,43 @@
 >   2026-05-06): chain stays anchored at original site_id;
 >   `sites.prior_client_org_id` provides the lookup pointer.
 >
+> **2026-05-16 update (Session 220):**
+> - **Auditor-kit determinism contract** (Session 218 round-table):
+>   two consecutive downloads with no chain progression and no OTS
+>   pending→anchored transitions MUST produce byte-identical ZIPs.
+>   Implementation: `auditor_kit_zip_primitives.py::_kit_zwrite`
+>   (pinned `date_time` + `compress_type=ZIP_DEFLATED` +
+>   `external_attr=0o644<<16`) + `_KIT_COMPRESSLEVEL=6` (zlib level
+>   pinned for cross-CPython byte-identity) + `sort_keys=True` on
+>   every JSON dump. Pinned by `tests/test_auditor_kit_integration.
+>   py` (10 tests open the actual ZIP) +
+>   `tests/test_auditor_kit_deterministic.py` (source-shape gates).
+> - **L2 audit-gap closure** (mig 300): `resolution_tier='L2'` now
+>   requires an `l2_decision_recorded` boolean reference within the
+>   same try-block as the `record_l2_decision()` call. Substrate
+>   invariant `l2_resolution_without_decision_record` (sev2) detects
+>   regressions. Backfill mig 300 inserts synthetic `l2_decisions`
+>   rows with `pattern_signature='L2-ORPHAN-BACKFILL-MIG-300'` for
+>   the 26 historical orphans.
+> - **L1 escalate-action audit chain** (mig 306 backfill pending):
+>   1,137 prod L1-orphans corrected via daemon `escalate` success-
+>   key fix + backend `MONITORING_ONLY_CHECKS` downgrade. Audit
+>   chain integrity restored.
+> - **BAA enforcement triad** (Session 220 #52 + #91 + #92 + #98 +
+>   #99 + #90 + #97): 5 customer-state-mutating workflows
+>   machine-enforced. Auditor-kit downloads now write structured
+>   `auditor_kit_download` rows to `admin_audit_log` with
+>   denormalized site_id + client_org_id. Sev1 substrate invariant
+>   `sensitive_workflow_advanced_without_baa` scans state-machine
+>   tables + admin_audit_log last-30d.
+> - **Master BAA v1.0-INTERIM** shipped 2026-05-13 — Article 8 (Bridge
+>   Clause) makes pre-cutover Ed25519-signed compliance bundles
+>   immutable under the cryptographic-attestation chain.
+>
 > **Canonical current authority:** `~/Downloads/OsirisCare_Owners_
 > Manual_and_Auditor_Packet.pdf` Part 2 §2.2 (cryptographic chain).
+> See `docs/lessons/sessions-219-220.md` for the full Session 219-220
+> evidence-chain audit-gap closures.
 
 ## Overview
 

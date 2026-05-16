@@ -1,9 +1,20 @@
 # PHI Data Flow Attestation — OsirisCare Platform
 
-**Document Version:** 1.1
-**Date:** 2026-05-06 (originally 2026-03-23)
+**Document Version:** 1.2
+**Date:** 2026-05-16 (updated; originally 2026-03-23, v1.1 2026-05-06)
 **Author:** OsirisCare Engineering
 **Review Schedule:** Annually or upon architectural change
+
+> **2026-05-16 update (v1.2):** BAA enforcement triad shipped (Session
+> 220 #52 + #91 + #92 + #98 + #99 + #90 + #97). Counsel Rule 6 machine-
+> enforcement: 5 customer-state-mutating workflows (`owner_transfer`,
+> `cross_org_relocate`, `evidence_export`, `new_site_onboarding`,
+> `new_credential_entry`) now require active BAA + machine-enforced
+> blocking at three layers — `BAA_GATED_WORKFLOWS` build-time CI list,
+> `require_active_baa()` runtime callsite factory, and
+> `sensitive_workflow_advanced_without_baa` (sev1) substrate invariant
+> scanning state-machine tables + `admin_audit_log` last-30d. See
+> `docs/lessons/sessions-219-220.md` for full mechanics.
 
 > **Framing update (2026-05-06).** Earlier revisions of this document
 > used absolute language ("PHI-free infrastructure", "NO PHI stored",
