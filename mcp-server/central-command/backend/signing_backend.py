@@ -432,6 +432,28 @@ def get_signing_backend():
     return _BACKEND_SINGLETON
 
 
+# Vault P0 iter-4 P0-D (2026-05-16): fallback counter. Tracks every
+# time current_signing_method() hits the silent-fallback path so the
+# operator has direct evidence of the silent failure class. Read via
+# the /metrics endpoint; the substrate invariant
+# signing_backend_drifted_from_vault cross-checks this against
+# observed fleet_orders.signing_method drift.
+_FALLBACK_COUNT = 0
+_FALLBACK_LAST_REASON: Optional[str] = None
+
+
+def get_signing_backend_fallback_count() -> int:
+    """Operator/test accessor — count of silent-fallback hits since
+    process start. Exposed to /metrics in metrics.py."""
+    return _FALLBACK_COUNT
+
+
+def get_signing_backend_fallback_last_reason() -> Optional[str]:
+    """Operator/test accessor — last exception message that triggered
+    a fallback. None if the helper has never fallen back."""
+    return _FALLBACK_LAST_REASON
+
+
 def current_signing_method() -> str:
     """Return the active PRIMARY backend's name for fleet_orders.signing_method.
 
@@ -448,11 +470,43 @@ def current_signing_method() -> str:
     Module-level callsite imports ONLY (CI gate test_no_dual_import_for_
     signing_method.py enforces) — never inside try/except inside function
     bodies (iter-1 revert root cause class).
+
+    Vault P0 iter-4 Commit 2 hardening (Gate A P0-D, 2026-05-16):
+    the fallback path now logs at ERROR with structured details +
+    increments _FALLBACK_COUNT + sets _FALLBACK_LAST_REASON. Pre-fix,
+    the bare `except Exception: return SIGNING_BACKEND_PRIMARY` was a
+    false-negative blind spot for the substrate invariant
+    signing_backend_drifted_from_vault (which compares observed
+    signing_method against env PRIMARY — if helper silently returned
+    PRIMARY due to Vault error, the invariant saw no drift).
     """
+    global _FALLBACK_COUNT, _FALLBACK_LAST_REASON
     try:
         backend = get_signing_backend()
-    except Exception:
-        return SIGNING_BACKEND_PRIMARY if SIGNING_BACKEND == "shadow" else SIGNING_BACKEND
+    except Exception as e:
+        _FALLBACK_COUNT += 1
+        _FALLBACK_LAST_REASON = f"{type(e).__name__}: {e}"
+        fallback_value = (
+            SIGNING_BACKEND_PRIMARY if SIGNING_BACKEND == "shadow" else SIGNING_BACKEND
+        )
+        logger.error(
+            "current_signing_method_fallback",
+            extra={
+                "exception_type": type(e).__name__,
+                "exception_message": str(e),
+                "fallback_value": fallback_value,
+                "fallback_count_since_start": _FALLBACK_COUNT,
+                "interpretation": (
+                    "get_signing_backend() raised; falling back to env "
+                    "default for signing_method attribution. Substrate "
+                    "invariant signing_backend_drifted_from_vault will "
+                    "fire if observed fleet_orders.signing_method "
+                    "diverges from configured primary."
+                ),
+            },
+            exc_info=True,
+        )
+        return fallback_value
     primary = getattr(backend, "_primary", backend)
     name = getattr(primary, "name", "file")
     if name == "shadow":

@@ -5446,6 +5446,18 @@
     "status",
     "workstation_id"
   ],
+  "vault_signing_key_versions": [
+    "approved_at",
+    "approved_by",
+    "first_observed_at",
+    "id",
+    "key_name",
+    "key_version",
+    "known_good",
+    "last_observed_at",
+    "pubkey_b64",
+    "pubkey_hex"
+  ],
   "watchdog_events": [
     "appliance_id",
     "chain_hash",

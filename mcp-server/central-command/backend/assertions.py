@@ -2014,6 +2014,73 @@ _LOAD_TEST_SYNTHETIC_FORBIDDEN_TABLES = (
 )
 
 
+async def _check_signing_backend_drifted_from_vault(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """fleet_orders signed in the last hour with a signing_method that
+    differs from the configured SIGNING_BACKEND_PRIMARY env. This is
+    the "code path silently fell back" class — operator configured
+    Vault as primary but some callsite ended up signing via file.
+
+    Vault Phase C iter-4 Commit 2 (2026-05-16). Anchored to mig 311
+    (vault_signing_key_versions) + INV-SIGNING-BACKEND-VAULT startup
+    invariant; this is the runtime backstop for both.
+
+    Shadow-mode carve-out: when SIGNING_BACKEND=shadow, the shadow
+    wrapper delegates to a primary backend (file or vault), so
+    comparing observed methods against 'shadow' literal would always
+    be a false positive. Compare against SIGNING_BACKEND_PRIMARY
+    instead.
+    """
+    import os as _os
+    backend_mode = _os.getenv("SIGNING_BACKEND", "file").strip().lower()
+    primary = _os.getenv("SIGNING_BACKEND_PRIMARY", "file").strip().lower()
+    if backend_mode == "shadow":
+        expected = primary
+    else:
+        expected = backend_mode
+
+    rows = await conn.fetch(
+        """
+        SELECT signing_method, COUNT(*) AS n
+          FROM fleet_orders
+         WHERE created_at > NOW() - INTERVAL '1 hour'
+         GROUP BY signing_method
+        """
+    )
+    if not rows:
+        return []  # No recent signing activity — no signal.
+
+    unexpected = [r for r in rows if r["signing_method"] != expected]
+    if not unexpected:
+        return []
+
+    return [Violation(
+        site_id=None,
+        details={
+            "expected_signing_method": expected,
+            "observed_methods": {r["signing_method"]: int(r["n"]) for r in rows},
+            "unexpected_count": sum(int(r["n"]) for r in unexpected),
+            "interpretation": (
+                f"fleet_orders signed in the last hour include signing_"
+                f"method values other than the configured "
+                f"SIGNING_BACKEND_PRIMARY={expected!r}. Either (a) a "
+                f"code path silently fell back to a different backend "
+                f"(check signing_backend.current_signing_method silent "
+                f"swallow class), OR (b) operator changed the env mid-"
+                f"hour without coordinated restart. Investigate via "
+                f"SELECT signing_method, COUNT(*) FROM fleet_orders "
+                f"WHERE created_at > NOW() - INTERVAL '1 hour' GROUP BY 1."
+            ),
+            "remediation": (
+                "Tail mcp-server logs for 'current_signing_method_"
+                "fallback' errors. If found, the singleton-build "
+                "failed + the helper fell back to env default."
+            ),
+        },
+    )]
+
+
 async def _check_load_test_run_stuck_active(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -2736,6 +2803,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         severity="sev1",
         description="A BAA-gated sensitive workflow advanced in the last 30 days for a client_org with no active formal BAA (baa_status.baa_enforcement_ok=FALSE) and no legitimate carve-out. Tasks #52 + #92 + #98 (Counsel Rule 6 / §164.504(e)) — List 3 of the BAA-enforcement lockstep. 5 workflow scans: (1) cross_org_relocate via cross_org_site_relocate_requests, (2) owner_transfer via client_org_owner_transfer_requests, (3) evidence_export via admin_audit_log auditor_kit_download rows (denormalized site_id+client_org_id from commit 5ce77722, filtered to client_portal+partner_portal auth_methods), (4) new_site_onboarding via the sites table, (5) new_credential_entry via site_credentials JOIN sites. The CI gate test_baa_gated_workflows_lockstep.py catches an un-gated endpoint at build time; this invariant is the runtime backstop for a code path that bypassed require_active_baa / enforce_or_log_admin_bypass / check_baa_for_evidence_export OR an org whose BAA lapsed after the action. State-machine + admin-path advances write a baa_enforcement_bypass admin_audit_log row and are excluded; evidence_export uses raise-403 (no bypass row) and is method-aware (admin + legacy ?token= carved out). Runbook: substrate_runbooks/sensitive_workflow_advanced_without_baa.md.",
         check=lambda c: _check_sensitive_workflow_advanced_without_baa(c),
+    ),
+    Assertion(
+        name="signing_backend_drifted_from_vault",
+        severity="sev2",
+        description="fleet_orders signed in the last hour with a signing_method that differs from the configured SIGNING_BACKEND_PRIMARY env. Task #45 / Vault P0 iter-4 Commit 2 (2026-05-16). Runtime backstop for the silent-fallback class — `signing_backend.current_signing_method()` had a silent except: return 'file' fallback that masked Vault errors; this invariant catches the resulting signing_method drift in fleet_orders. Shadow-mode carve-out: when SIGNING_BACKEND=shadow, compares against SIGNING_BACKEND_PRIMARY rather than the literal 'shadow'. Runbook: substrate_runbooks/signing_backend_drifted_from_vault.md.",
+        check=_check_signing_backend_drifted_from_vault,
     ),
     Assertion(
         name="load_test_run_stuck_active",
@@ -3647,6 +3720,23 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "instead), so a violation there is unambiguously a gate-"
             "bypass or post-action BAA lapse. See "
             "substrate_runbooks/sensitive_workflow_advanced_without_baa.md."
+        ),
+    },
+    "signing_backend_drifted_from_vault": {
+        "display_name": "Signing backend drifted from configured primary",
+        "recommended_action": (
+            "SEV2 — fleet_orders signed in the last hour include "
+            "signing_method values other than the configured SIGNING_"
+            "BACKEND_PRIMARY env. Either (a) a code path silently fell "
+            "back to a different backend — tail mcp-server logs for "
+            "'current_signing_method_fallback' errors, find the "
+            "exception that triggered the fallback; OR (b) operator "
+            "changed the env mid-hour without coordinated restart, "
+            "in which case the invariant clears on next deploy. "
+            "Investigate via SELECT signing_method, COUNT(*) FROM "
+            "fleet_orders WHERE created_at > NOW() - INTERVAL '1 hour' "
+            "GROUP BY 1. See substrate_runbooks/signing_backend_"
+            "drifted_from_vault.md."
         ),
     },
     "load_test_run_stuck_active": {

@@ -5446,6 +5446,18 @@
     "status": "character varying",
     "workstation_id": "uuid"
   },
+  "vault_signing_key_versions": {
+    "approved_at": "timestamp with time zone",
+    "approved_by": "text",
+    "first_observed_at": "timestamp with time zone",
+    "id": "bigint",
+    "key_name": "text",
+    "key_version": "integer",
+    "known_good": "boolean",
+    "last_observed_at": "timestamp with time zone",
+    "pubkey_b64": "text",
+    "pubkey_hex": "text"
+  },
   "watchdog_events": {
     "appliance_id": "character varying",
     "chain_hash": "text",

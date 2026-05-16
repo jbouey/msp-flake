@@ -12,7 +12,6 @@
 
 | Number | Status | Claimed-by (design doc) | Claimed-at | Expected ship | Task | Notes |
 |--------|--------|------------------------|------------|---------------|------|-------|
-| 311 | BLOCKED | (Vault P0 bundle — see audit/coach-vault-phase-c-gate-a-2026-05-12.md) | 2026-05-12 | 2026-05-27 | #43 | BLOCKED on staging precondition + 24-48h reverse-shadow before cut |
 | 317 | reserved | (P-F9 profitability v2 — pending re-design per Gate A BLOCK) | 2026-05-13 | 2026-05-30 | #58 | `partner_profitability_assumptions` table |
 | 318 | reserved | (P-F9 profitability v2 — pending re-design per Gate A BLOCK) | 2026-05-13 | 2026-05-30 | #58 | `partner_profitability_packets` table (companion) |
 
