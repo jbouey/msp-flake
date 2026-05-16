@@ -1,4 +1,4 @@
-"""Load harness run-ledger API (Task #62 v2.1 Commit 2, 2026-05-16).
+"""Load harness run-ledger API (Task #62 v2.1 Commits 2 + 3, 2026-05-16).
 
 Admin-only endpoints over the `load_test_runs` table (mig 316). The
 run-ledger is the server-side anchor the AlertManager-driven abort
@@ -10,20 +10,23 @@ every iteration and exits within 30s when it sees the transition.
 Spec: `.agent/plans/40-load-testing-harness-design-v2.1-2026-05-16.md`
 Gate A: `audit/coach-62-load-harness-v1-gate-a-2026-05-16.md`
    (APPROVE-WITH-FIXES; v2.1 closed 3 P0s + 7 P1s structurally)
+Gate B (C2): `audit/coach-93-c2-and-62-c2-gate-b-2026-05-16.md`
+   (APPROVE-WITH-FIXES; 1 P1 + 3 P2 closed in Commit 3)
 
 Endpoint summary:
-  POST /api/admin/load-test/runs              — start (k6 wrapper)
-  POST /api/admin/load-test/{run_id}/abort    — abort (operator or AM)
-  POST /api/admin/load-test/{run_id}/complete — complete (k6 wrapper)
-  GET  /api/admin/load-test/status            — current active run
-  GET  /api/admin/load-test/runs              — history (paginated)
+  POST /api/admin/load-test/runs               — start (k6 wrapper)
+  POST /api/admin/load-test/{run_id}/started   — flip starting→running (k6 post-warmup)
+  POST /api/admin/load-test/{run_id}/abort     — abort (operator or AM)
+  POST /api/admin/load-test/{run_id}/complete  — complete (k6 wrapper)
+  GET  /api/admin/load-test/status             — current active run
+  GET  /api/admin/load-test/runs               — history (paginated)
 
 Authorization:
   All endpoints require `Depends(require_admin)`. The AlertManager
   rule POSTs with a service-account bearer that resolves to an admin
-  user with a named human email (on-call rotation's primary). This
-  matches the existing `admin_transaction` precedent in
-  `appliance_relocation_api.py`.
+  user with a named human email (on-call rotation's primary). Every
+  audit row carries the bearer's authenticated email — no body-
+  supplied actor_email overrides (Gate B P2 #108 closure).
 
 NOT a privileged-chain endpoint:
   These endpoints mutate synthetic-load test infrastructure only —
@@ -34,10 +37,12 @@ NOT a privileged-chain endpoint:
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
@@ -89,12 +94,11 @@ class AbortRunRequest(BaseModel):
                     "send the rule name + threshold; operator-initiated "
                     "aborts describe what was observed."
     )
-    actor_email: Optional[str] = Field(
-        default=None,
-        description="If AlertManager (service account) is calling, this "
-                    "carries the named human on-call email. Operator-"
-                    "initiated calls leave this null and use admin email."
-    )
+    # Gate B P2 #108 closure: actor_email is NO LONGER a body parameter.
+    # The audit row always uses the bearer's authenticated email. For
+    # AlertManager-driven aborts, the AlertManager bearer must be issued
+    # to the on-call rotation's named human — same person, same email,
+    # no body-side spoofing surface. Carry-forward task #108 closed.
 
 
 class CompleteRunRequest(BaseModel):
@@ -107,6 +111,13 @@ class CompleteRunRequest(BaseModel):
         default=None,
         description="k6 output summary (p95/p99/error-rate by endpoint). "
                     "Merged into metadata JSONB."
+    )
+    revoke_bearer_appliance_id: Optional[str] = Field(
+        default=None,
+        description="If the k6 wrapper used a synthetic appliance bearer, "
+                    "pass the appliance_id here so the /complete handler "
+                    "flips site_appliances.bearer_revoked=TRUE (mig 324). "
+                    "Real-appliance bearer rotation does NOT use this path."
     )
 
 
@@ -146,7 +157,7 @@ async def _audit(
             actor_email,
             action,
             target,
-            __import__("json").dumps(details),
+            json.dumps(details),
             ip_address,
         )
     except Exception:
@@ -196,20 +207,20 @@ async def start_run(
                 actor,
                 req.scenario_sha,
                 req.target_endpoints,
-                __import__("json").dumps(req.metadata or {}),
+                json.dumps(req.metadata or {}),
             )
-        except Exception as e:
-            # Partial unique index conflict → another run is active.
-            msg = str(e).lower()
-            if "uniq_load_test_runs_one_active" in msg or "duplicate key" in msg:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "another load-test run is currently active. "
-                        "Abort or complete it before starting a new one."
-                    ),
-                )
-            raise
+        except asyncpg.UniqueViolationError:
+            # Gate B P2 #107 closure: asyncpg-typed check instead of
+            # substring-matching the error string. SQLSTATE 23505 +
+            # UniqueViolationError class is the contract; index name
+            # no longer appears in source.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "another load-test run is currently active. "
+                    "Abort or complete it before starting a new one."
+                ),
+            )
 
         await _audit(
             conn,
@@ -233,6 +244,59 @@ async def start_run(
     }
 
 
+@router.post("/{run_id}/started")
+async def mark_run_running(
+    run_id: str,
+    request: Request,
+    admin: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    """k6 wrapper calls this after the warmup phase completes to
+    transition starting → running. The substrate invariant
+    `load_test_run_stuck_active` (Commit 5) scans status IN
+    ('starting','running') — without this transition the runtime
+    state machine is incomplete (Gate B P1 #105 closure).
+
+    Idempotent: already-running runs return 200 with noop=True.
+    Refuses to transition out of terminal states.
+    """
+    actor = _admin_email(admin)
+    pool = await get_pool()
+    async with admin_transaction(pool) as conn:
+        row = await conn.fetchrow(
+            "SELECT status FROM load_test_runs WHERE run_id = $1::uuid",
+            run_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+        if row["status"] == "running":
+            return {"run_id": run_id, "status": "running", "noop": True}
+        if row["status"] != "starting":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"cannot transition to running from status "
+                    f"{row['status']!r} — only 'starting' is valid"
+                ),
+            )
+
+        await conn.execute(
+            "UPDATE load_test_runs SET status = 'running' "
+            "WHERE run_id = $1::uuid AND status = 'starting'",
+            run_id,
+        )
+
+        await _audit(
+            conn,
+            actor_email=actor,
+            action="load_test_run_running",
+            target=f"load_test_runs/{run_id}",
+            details={"run_id": run_id},
+            ip_address=(request.client.host if request.client else None),
+        )
+
+    return {"run_id": run_id, "status": "running"}
+
+
 @router.post("/{run_id}/abort")
 async def abort_run(
     run_id: str,
@@ -242,13 +306,10 @@ async def abort_run(
 ) -> Dict[str, Any]:
     """Mark a run for abort. k6 polls status every iteration; exits
     within 30s of seeing 'aborting'. Idempotent — already-aborting
-    runs return 200 with no-op."""
-    actor = req.actor_email or _admin_email(admin)
-    if "@" not in actor:
-        raise HTTPException(
-            status_code=400,
-            detail="actor_email must be a named human email",
-        )
+    runs return 200 with no-op. Actor email is ALWAYS the bearer's
+    authenticated email — Gate B P2 #108 closed the body-supplied
+    actor_email spoofing surface."""
+    actor = _admin_email(admin)
 
     pool = await get_pool()
     async with admin_transaction(pool) as conn:
@@ -324,7 +385,7 @@ async def complete_run(
             final = req.final_status
 
         # Merge metrics_summary into metadata.
-        new_metadata = dict(__import__("json").loads(row["metadata"] or "{}")) if isinstance(row["metadata"], str) else dict(row["metadata"] or {})
+        new_metadata = dict(json.loads(row["metadata"] or "{}")) if isinstance(row["metadata"], str) else dict(row["metadata"] or {})
         if req.metrics_summary:
             new_metadata["metrics_summary"] = req.metrics_summary
 
@@ -336,8 +397,36 @@ async def complete_run(
                    metadata = $3::jsonb
              WHERE run_id = $1::uuid
             """,
-            run_id, final, __import__("json").dumps(new_metadata),
+            run_id, final, json.dumps(new_metadata),
         )
+
+        # Commit 3: synthetic bearer revocation. If the k6 wrapper used
+        # a synthetic appliance bearer for the run, flip
+        # site_appliances.bearer_revoked=TRUE so future requests with
+        # the same bearer return 401 (`bearer_revoked`). Closes the
+        # bearer lifecycle per v2.1 spec §P1-5.
+        bearer_revoked_appliance: Optional[str] = None
+        if req.revoke_bearer_appliance_id:
+            try:
+                result = await conn.execute(
+                    """
+                    UPDATE site_appliances
+                       SET bearer_revoked = TRUE
+                     WHERE appliance_id = $1
+                       AND bearer_revoked = FALSE
+                    """,
+                    req.revoke_bearer_appliance_id,
+                )
+                # asyncpg execute returns 'UPDATE N' — extract N.
+                if isinstance(result, str) and result.startswith("UPDATE "):
+                    n = int(result.split(" ")[1])
+                    if n > 0:
+                        bearer_revoked_appliance = req.revoke_bearer_appliance_id
+            except Exception:
+                logger.exception(
+                    "bearer_revoke failed for appliance_id %s on run %s",
+                    req.revoke_bearer_appliance_id, run_id,
+                )
 
         await _audit(
             conn,
@@ -348,11 +437,16 @@ async def complete_run(
                 "run_id": run_id,
                 "final_status": final,
                 "had_metrics_summary": bool(req.metrics_summary),
+                "bearer_revoked_appliance_id": bearer_revoked_appliance,
             },
             ip_address=(request.client.host if request.client else None),
         )
 
-    return {"run_id": run_id, "status": final}
+    return {
+        "run_id": run_id,
+        "status": final,
+        "bearer_revoked_appliance_id": bearer_revoked_appliance,
+    }
 
 
 @router.get("/status")

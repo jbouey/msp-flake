@@ -611,17 +611,34 @@ async def require_appliance_bearer(request: Request) -> str:
 
     from sqlalchemy import text
     async with async_session() as db:
+        # Task #62 v2.1 Commit 3 (2026-05-16): LEFT JOIN site_appliances
+        # to consume the bearer_revoked flag (mig 324). One query on
+        # the hot path — bearer_revoked=TRUE rejects with 401. Legacy
+        # site-level keys (NULL appliance_id) skip the JOIN naturally
+        # via COALESCE-to-FALSE.
         result = await db.execute(
             text("""
-                SELECT ak.site_id, ak.appliance_id FROM api_keys ak
-                WHERE ak.key_hash = :key_hash AND ak.active = true
-                LIMIT 1
+                SELECT ak.site_id,
+                       ak.appliance_id,
+                       COALESCE(sa.bearer_revoked, FALSE) AS bearer_revoked
+                  FROM api_keys ak
+                  LEFT JOIN site_appliances sa USING (appliance_id)
+                 WHERE ak.key_hash = :key_hash AND ak.active = true
+                 LIMIT 1
             """),
             {"key_hash": key_hash}
         )
         row = result.fetchone()
 
     if row:
+        if row.bearer_revoked:
+            # Synthetic-load test bearer was revoked at run completion
+            # (or operator manually revoked). 401 — caller should treat
+            # as terminal, not retry.
+            raise HTTPException(
+                status_code=401,
+                detail="bearer_revoked",
+            )
         # Stash bearer-bound appliance_id so callers can upgrade to the
         # _full variant without re-running the lookup.
         try:

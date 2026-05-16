@@ -4707,6 +4707,7 @@
     "assignment_epoch",
     "auth_failure_count",
     "auth_failure_since",
+    "bearer_revoked",
     "boot_counter",
     "config",
     "created_at",

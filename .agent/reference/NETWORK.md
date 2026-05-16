@@ -430,3 +430,54 @@ Shipped → Received → Connectivity → Scanning → Baseline → Active
 - `scanning`: Network discovery complete
 - `baseline`: Baseline enforcement applied
 - `active`: Validation period complete
+
+
+---
+
+## CX22 load-harness peer (Task #62 v2.1, P1-7)
+
+The load harness runs k6 on a dedicated Hetzner CX22 box bound into the
+WG mesh as peer `.4` (10.100.0.4). Spec lives in
+`.agent/plans/40-load-testing-harness-design-v2.1-2026-05-16.md` §P1-7.
+
+### Firewall posture (CX22 nftables — peer .4 only)
+
+**Outbound (egress allow):**
+- `central-command.osiriscare.com:443` (TLS) ONLY. Backend reachability
+  for run-control endpoints (`/api/admin/load-test/*`) + Wave-1 targets.
+- DNS: `1.1.1.1:53`, `1.0.0.1:53` (Cloudflare only).
+- WG hub: UDP/51820 to VPS IP (mesh keepalive).
+- All other egress: **denied**.
+
+**Inbound (ingress deny):**
+- k6 + the wrapper are outbound-only. The control plane is via SSH
+  over WG from the operator workstation (port 22 on the WG IP).
+- All other ingress: **denied**.
+
+**Carol P1-7 verification commands** (run from CX22 .4):
+```bash
+nc -zv vault.osiriscare.com 8200          # MUST return refused/timeout
+nc -zv central-command.osiriscare.com 443 # MUST succeed (run-control)
+nc -zv 1.1.1.1 53                         # MUST succeed (DNS)
+nc -zv 8.8.8.8 53                         # MUST return refused/timeout
+```
+
+### Bearer storage (Vault Transit secret-path — Commit 4 wiring)
+
+Synthetic appliance bearers used by k6 are issued at run start and
+stored at Vault Transit path `secret/load-test/<run_id>/bearer` with
+7-day TTL. CX22 fetches the bearer via SSH-tunnel proxy from the
+operator workstation at k6 startup — NEVER a direct Vault client on
+the box (Counsel Rule 1: synthetic bearer secret material does not
+live on the load-generation surface).
+
+On run completion the k6 wrapper POSTs
+`/api/admin/load-test/{run_id}/complete` with `revoke_bearer_
+appliance_id`, which flips `site_appliances.bearer_revoked=TRUE`
+(mig 324). Bearer is single-run; replay returns 401 (`bearer_
+revoked`).
+
+**Sequencing**: bearer-issuance integration with Vault Transit ships
+in Commit 4 (CX22 + Vault Phase C dependencies); Commits 2 + 3
+implemented the run ledger + revocation column + revocation write
+path standalone so Commit 3 could ship without Vault hands-on.

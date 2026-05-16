@@ -7,6 +7,7 @@
 **Companion:** task #94 plan-24 (substrate-MTTR soak v2 — share isolation pattern + sequencing pin).
 
 <!-- mig-claim:316 task:#62 -->
+<!-- mig-claim:324 task:#62 -->
 
 This v2.1 supersedes v1 + the partial v2 packet (`audit/load-harness-v2-design-2026-05-13.md`). Read v1 for the why-now framing; this doc carries the ship-ready design.
 

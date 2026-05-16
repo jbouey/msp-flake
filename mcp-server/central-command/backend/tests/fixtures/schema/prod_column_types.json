@@ -4707,6 +4707,7 @@
     "assignment_epoch": "bigint",
     "auth_failure_count": "integer",
     "auth_failure_since": "timestamp with time zone",
+    "bearer_revoked": "boolean",
     "boot_counter": "bigint",
     "config": "jsonb",
     "created_at": "timestamp with time zone",

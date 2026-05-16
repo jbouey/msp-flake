@@ -28,6 +28,7 @@ _MAIN = _BACKEND.parent.parent / "main.py"  # mcp-server/main.py
 
 _EXPECTED_ENDPOINTS = {
     ("POST", "/runs"),
+    ("POST", "/{run_id}/started"),  # Commit 3 — Gate B P1 #105 closure (starting→running)
     ("POST", "/{run_id}/abort"),
     ("POST", "/{run_id}/complete"),
     ("GET", "/status"),
@@ -146,6 +147,69 @@ def test_router_is_included_in_main():
     )
 
 
+def test_abort_request_has_no_actor_email_body_field():
+    """Gate B P2 #108 closure (2026-05-16): AbortRunRequest must NOT
+    declare an `actor_email` body field. Caller-supplied actor_email
+    was a body-side spoofing surface — the audit row now ALWAYS uses
+    the bearer's authenticated email. Sentinel prevents re-introduction.
+    """
+    src = _read_api()
+    m = re.search(
+        r"class AbortRunRequest\(BaseModel\):(.*?)(?:\nclass |\n# ---|\Z)",
+        src,
+        re.DOTALL,
+    )
+    assert m, "could not locate AbortRunRequest class"
+    body = m.group(1)
+    assert "actor_email" not in body or "actor_email is NO LONGER" in body, (
+        "AbortRunRequest re-introduced an `actor_email` body field — "
+        "Gate B P2 #108 closed this spoofing surface. Use the bearer's "
+        "authenticated email via _admin_email(admin) instead."
+    )
+
+
+def test_no_inline_dunder_import_json():
+    """Gate B P2 #106 closure: `__import__(\"json\")` is forbidden — use
+    module-top `import json` instead. Sentinel pins the cleanup."""
+    src = _read_api()
+    assert "__import__" not in src, (
+        "load_test_api.py reintroduced `__import__` — Gate B P2 #106 "
+        "closed this; use module-top `import json` instead."
+    )
+
+
+def test_uniqueviolation_check_uses_asyncpg_typed_exception():
+    """Gate B P2 #107 closure: 409-on-concurrent-runs detection must
+    use `asyncpg.UniqueViolationError`, NOT substring-match on the
+    index name. Sentinel prevents regression to string-matching."""
+    src = _read_api()
+    assert "asyncpg.UniqueViolationError" in src, (
+        "start_run no longer catches asyncpg.UniqueViolationError — "
+        "Gate B P2 #107 mandated typed-exception detection over "
+        "substring-matching the error message."
+    )
+    assert "uniq_load_test_runs_one_active" not in src, (
+        "load_test_api.py still references the index name "
+        "`uniq_load_test_runs_one_active` in source — Gate B P2 #107 "
+        "closed this info leak. The typed exception is the contract."
+    )
+
+
+def test_bearer_revoke_wired_into_complete():
+    """Commit 3: /complete must accept `revoke_bearer_appliance_id`
+    and issue an UPDATE on site_appliances.bearer_revoked. Closes
+    the synthetic bearer lifecycle per v2.1 spec §P1-5."""
+    src = _read_api()
+    assert "revoke_bearer_appliance_id" in src, (
+        "CompleteRunRequest is missing the revoke_bearer_appliance_id "
+        "field — Commit 3 mig 324 wiring incomplete."
+    )
+    assert "bearer_revoked = TRUE" in src or "bearer_revoked=TRUE" in src, (
+        "complete_run handler does not UPDATE site_appliances.bearer_"
+        "revoked — Commit 3 mig 324 wiring incomplete."
+    )
+
+
 def test_admin_audit_log_writes_on_state_transitions():
     """Source-grep check: every state-transition endpoint (start /
     abort / complete) must call _audit(...) so admin_audit_log gets
@@ -153,7 +217,7 @@ def test_admin_audit_log_writes_on_state_transitions():
     src = _read_api()
     # Find the three handler bodies by anchoring on `async def
     # start_run`, `async def abort_run`, `async def complete_run`.
-    for handler in ("start_run", "abort_run", "complete_run"):
+    for handler in ("start_run", "mark_run_running", "abort_run", "complete_run"):
         m = re.search(
             rf"async def {handler}\b.*?\n(.*?)\n(?:@router|\Z)",
             src,
