@@ -42514,6 +42514,96 @@
         ]
       }
     },
+    "/api/frameworks/{framework}/assessment-questions": {
+      "get": {
+        "description": "Returns the assessment/SRA question bank for a supported framework.\n\nPer #41 Phase A Gate A P0-1: unsupported frameworks return 400\nexplicitly (NEVER silently fall back to HIPAA).\nPer Gate A P0-2 + P0-4: allowlist is compliance_frameworks.\nSUPPORTED_FRAMEWORKS — single source of truth across the\nbackend; CI gate enforces parity.",
+        "operationId": "get_framework_assessment_questions_api_frameworks__framework__assessment_questions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "framework",
+            "required": true,
+            "schema": {
+              "title": "Framework",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Framework Assessment Questions Api Frameworks  Framework  Assessment Questions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Framework Assessment Questions",
+        "tags": [
+          "frameworks"
+        ]
+      }
+    },
+    "/api/frameworks/{framework}/policy-templates": {
+      "get": {
+        "description": "Returns the policy document templates for a supported framework.\n\nSame allowlist + raise-on-unknown shape as assessment-questions.",
+        "operationId": "get_framework_policy_templates_api_frameworks__framework__policy_templates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "framework",
+            "required": true,
+            "schema": {
+              "title": "Framework",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Framework Policy Templates Api Frameworks  Framework  Policy Templates Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Framework Policy Templates",
+        "tags": [
+          "frameworks"
+        ]
+      }
+    },
     "/api/install/failure-report/{mac}": {
       "post": {
         "description": "Record one failed provisioning attempt for this MAC.\n\nIdempotent upsert:\n  - If install_sessions has a row for this MAC, UPDATE last_error_*\n    columns + increment provision_attempts + refresh last_seen.\n  - If no row exists, INSERT a minimal row (site_id='', hostname\n    unknown — will be filled in once provisioning eventually\n    succeeds and the real install_sessions INSERT in sites.py runs).\n\nThe install_sessions table was originally scoped to the installer's\nlive-USB phase; v36 extends it to also track the installed-system\nauto-provision retry loop. Both phases report against the same\nMAC key so a single row per MAC tracks the full lifecycle.",

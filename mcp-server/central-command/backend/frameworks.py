@@ -22,6 +22,32 @@ try:
 except ImportError:
     from .auth import require_auth
 
+# #41 Phase A single-source allowlist (Gate A P0-2 + P0-4).
+# Imported from the zero-dep module so this file doesn't depend on
+# compliance_frameworks.py's full SQLAlchemy/FastAPI graph just to
+# read the allowlist.
+try:
+    from .framework_allowlist import SUPPORTED_FRAMEWORKS
+except ImportError:
+    from framework_allowlist import SUPPORTED_FRAMEWORKS  # noqa: F401
+
+# #41 Phase A: framework question bank + policy template surface
+# (Gate A recommended-scope item 1). Relative-then-absolute fallback.
+try:
+    from .framework_templates import (
+        get_assessment_questions,
+        get_policy_templates,
+        get_framework_display_name,
+        UnsupportedFrameworkError,
+    )
+except ImportError:
+    from framework_templates import (  # type: ignore[no-redef]
+        get_assessment_questions,
+        get_policy_templates,
+        get_framework_display_name,
+        UnsupportedFrameworkError,
+    )
+
 logger = logging.getLogger(__name__)
 
 # Import framework service (will be available after package install)
@@ -386,7 +412,12 @@ async def update_appliance_frameworks(
     Evidence bundles will be tagged for all enabled frameworks.
     """
     # Validate frameworks
-    valid_frameworks = {"hipaa", "soc2", "pci_dss", "nist_csf", "cis"}
+    # #41 Phase A: single-source allowlist (Gate A P0-2 + P0-4).
+    # Pre-fix had 5 frameworks in this literal set, but only HIPAA had
+    # end-to-end binding (soc2 missing endpoint, glba missing allowlist
+    # entirely). Now bound to compliance_frameworks.SUPPORTED_FRAMEWORKS;
+    # CI lockstep gate prevents the literal-set drift class.
+    valid_frameworks = SUPPORTED_FRAMEWORKS
     for fw in request.enabled_frameworks:
         if fw not in valid_frameworks:
             raise HTTPException(
@@ -480,7 +511,12 @@ async def get_appliance_control_status(
     This is the audit-supportive view showing every control and its evidence status.
     """
     # Validate framework
-    valid_frameworks = {"hipaa", "soc2", "pci_dss", "nist_csf", "cis"}
+    # #41 Phase A: single-source allowlist (Gate A P0-2 + P0-4).
+    # Pre-fix had 5 frameworks in this literal set, but only HIPAA had
+    # end-to-end binding (soc2 missing endpoint, glba missing allowlist
+    # entirely). Now bound to compliance_frameworks.SUPPORTED_FRAMEWORKS;
+    # CI lockstep gate prevents the literal-set drift class.
+    valid_frameworks = SUPPORTED_FRAMEWORKS
     if framework not in valid_frameworks:
         raise HTTPException(
             status_code=400,
@@ -721,6 +757,56 @@ async def get_infrastructure_checks() -> Dict[str, Any]:
             "total_checks": 0,
             "warning": "Framework service not available",
         }
+
+
+# =============================================================================
+# #41 Phase A — Question-Bank + Policy-Template surface (Gate A scope 1)
+# =============================================================================
+
+@router.get("/{framework}/assessment-questions")
+async def get_framework_assessment_questions(
+    framework: str,
+    _auth: dict = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Returns the assessment/SRA question bank for a supported framework.
+
+    Per #41 Phase A Gate A P0-1: unsupported frameworks return 400
+    explicitly (NEVER silently fall back to HIPAA).
+    Per Gate A P0-2 + P0-4: allowlist is compliance_frameworks.
+    SUPPORTED_FRAMEWORKS — single source of truth across the
+    backend; CI gate enforces parity.
+    """
+    try:
+        questions = get_assessment_questions(framework)
+    except UnsupportedFrameworkError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "framework": framework,
+        "display_name": get_framework_display_name(framework),
+        "questions": questions,
+        "count": len(questions),
+    }
+
+
+@router.get("/{framework}/policy-templates")
+async def get_framework_policy_templates(
+    framework: str,
+    _auth: dict = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Returns the policy document templates for a supported framework.
+
+    Same allowlist + raise-on-unknown shape as assessment-questions.
+    """
+    try:
+        templates = get_policy_templates(framework)
+    except UnsupportedFrameworkError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "framework": framework,
+        "display_name": get_framework_display_name(framework),
+        "templates": templates,
+        "count": len(templates),
+    }
 
 
 # =============================================================================

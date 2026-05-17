@@ -59,11 +59,21 @@ def test_glba_question_has_glba_reference():
 # Fallback tests
 # ---------------------------------------------------------------------------
 
-def test_unknown_framework_falls_back():
-    questions = get_assessment_questions("unknown")
-    assert len(questions) == 40, (
-        f"Unknown framework should fall back to HIPAA (40 questions), got {len(questions)}"
-    )
+def test_unknown_framework_raises_no_silent_fallback():
+    """Post-#41 Phase A (Gate A P0-1): silent HIPAA fallback REMOVED.
+    Unknown framework MUST raise UnsupportedFrameworkError. Returning
+    HIPAA's 40 questions for an unknown framework was a misleading-
+    data class (auditor reading a 'GLBA' report would see HIPAA
+    questions misattributed)."""
+    import pytest
+    try:
+        from framework_templates import UnsupportedFrameworkError
+    except ImportError:
+        from dashboard_api.framework_templates import UnsupportedFrameworkError
+    with pytest.raises(UnsupportedFrameworkError):
+        get_assessment_questions("unknown")
+    with pytest.raises(UnsupportedFrameworkError):
+        get_policy_templates("unknown")
 
 
 # ---------------------------------------------------------------------------

@@ -3,17 +3,28 @@
 Central Command source of truth for compliance frameworks.
 Appliances sync framework definitions from here.
 
-Supported Frameworks:
-- HIPAA (Healthcare)
-- SOC 2 (Service Organizations)
-- PCI-DSS (Payment Card Industry)
-- NIST CSF (Cybersecurity Framework)
-- NIST 800-171 (Defense Contractors)
-- SOX (Financial Reporting)
-- GDPR (EU Data Protection)
-- CMMC (DoD Cybersecurity)
-- ISO 27001 (Information Security)
-- CIS Controls (Best Practices)
+**Currently end-to-end-bound frameworks** (per #41 Phase A close
+2026-05-17 — see audit/coach-41-soc2-glba-question-banks-gate-a-
+2026-05-17.md):
+
+- HIPAA (Healthcare) — all 34 control_mappings.yaml checks
+  + full question bank + evidence_framework_mappings backfilled
+- SOC 2 (Service Organizations) — question bank live; YAML 18/34
+  (#41-P1-2 followup to finish 16 remaining)
+- GLBA Safeguards Rule (Financial) — question bank live; YAML 0/34
+  (#41-P1-1 followup to backfill at least 12 §314.4(c) checks)
+
+Other frameworks (PCI-DSS, NIST CSF, NIST 800-171, SOX, GDPR,
+CMMC, ISO 27001, CIS) appear in FRAMEWORK_METADATA + display
+names but do NOT have end-to-end binding (no question bank, no
+YAML mappings, no evidence_framework_mappings backfill). They
+are scaffolding for future work; do not advertise as supported
+on customer-facing surfaces until each ships its own #41-style
+wiring task.
+
+The single source of truth for "framework is wired end-to-end" is
+`SUPPORTED_FRAMEWORKS` below — imported by frameworks.py + the
+CI lockstep gate `tests/test_framework_allowlist_lockstep.py`.
 """
 
 import os
@@ -30,6 +41,17 @@ from .partners import require_partner
 from .auth import require_auth, require_site_access
 
 logger = logging.getLogger(__name__)
+
+
+# --- #41 Phase A single-source allowlist (Gate A P0-4) ------------------
+#
+# Re-export from the zero-dep module `framework_allowlist.py` so
+# callers that need only the constant can import it without dragging
+# SQLAlchemy / asyncpg / FastAPI through this module.
+try:
+    from .framework_allowlist import SUPPORTED_FRAMEWORKS
+except ImportError:
+    from framework_allowlist import SUPPORTED_FRAMEWORKS  # noqa: F401
 
 
 def _parse_jsonb(val):

@@ -168,6 +168,7 @@ SOURCE_LEVEL_TESTS=(
     "tests/test_no_compliance_bundles_appliance_id_writes.py"
     "tests/test_vault_key_approval_lockstep.py"
     "tests/test_no_admin_connection_with_inline_transaction.py"
+    "tests/test_framework_allowlist_lockstep.py"
     "tests/test_no_sql_function_interval_concat.py"
     "tests/test_canonical_not_used_for_compliance_bundles.py"
     "tests/test_canonical_metrics_registry.py"
