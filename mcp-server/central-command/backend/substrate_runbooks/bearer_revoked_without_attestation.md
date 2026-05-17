@@ -113,8 +113,8 @@ fires when (1) exists without (2).
 
 - Invariant clears on next 60s tick once the attestation row
   exists OR `bearer_revoked` is reset to FALSE
-- Test: `tests/test_substrate_bearer_revoked_attestation_orphan.py`
-  (Sub-B follow-up) pins the SQL shape
+- Test: `tests/test_bearer_revoked_attestation_invariant.py`
+  pins the SQL shape + sev1 registration + carve-outs
 
 ## Escalation
 
