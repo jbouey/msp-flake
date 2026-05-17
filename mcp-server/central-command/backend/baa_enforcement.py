@@ -111,6 +111,26 @@ _DEFERRED_WORKFLOWS = {
         "paying customer's appliance fleet mid-window. Routed to the "
         "Task #37 counsel queue."
     ),
+    "bulk_bearer_revoke": (
+        "INTENTIONALLY UN-GATED per Task #123 Sub-B Gate A v2 P0-2 "
+        "(audit/coach-123-sub-b-design-gate-a-recheck-2026-05-17.md). "
+        "Admin-initiated emergency workforce-access revocation under "
+        "§164.308(a)(4). Unlike partner_admin_transfer's zero-CE-state "
+        "shape, bulk_bearer_revoke DOES mutate CE-customer rows "
+        "(site_appliances.bearer_revoked + api_keys.active) — but "
+        "the action REVOKES access, it does NOT REVEAL information. "
+        "Gating on BAA-on-file would create the perverse outcome of "
+        "being unable to disable a compromised bearer DURING a "
+        "BAA-related breach. Operationally closer to `ingest` deferral "
+        "(blocking would cause more harm than it prevents) than to "
+        "`evidence_export` gating (which prevents PHI disclosure). "
+        "Chain-of-custody is satisfied via the Ed25519 attestation "
+        "(privileged_access bundle with event_type='bulk_bearer_revoke') "
+        "+ admin_audit_log row in the same admin_transaction — the "
+        "audit trail does NOT depend on the BAA gate. Not a follow-up; "
+        "a determinate decision. May be revisited if Counsel rules "
+        "emergency-response actions require pre-flight BAA verification."
+    ),
 }
 
 
