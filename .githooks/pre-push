@@ -27,6 +27,7 @@ CHANGED=$(git diff --name-only "@{u}..HEAD" 2>/dev/null || git diff --name-only 
 BACKEND_CHANGED=0
 ISO_CHANGED=0
 FRONTEND_CHANGED=0
+APPLIANCE_CHANGED=0
 # Silent-skip-class fix (Task #68, 2026-05-13):
 # `git diff @{u}..HEAD` exits 0 with EMPTY stdout when HEAD == upstream
 # (the exact state during manual verification reruns AFTER a successful
@@ -45,12 +46,14 @@ if [ -z "$CHANGED" ]; then
     BACKEND_CHANGED=1
     ISO_CHANGED=1
     FRONTEND_CHANGED=1
+    APPLIANCE_CHANGED=1
 else
     for f in $CHANGED; do
         case "$f" in
             mcp-server/central-command/frontend/*) FRONTEND_CHANGED=1 ;;
             mcp-server/*) BACKEND_CHANGED=1 ;;
             iso/*)        ISO_CHANGED=1 ;;
+            appliance/*)  APPLIANCE_CHANGED=1 ;;
         esac
     done
 fi
@@ -548,4 +551,39 @@ if [ "$FRONTEND_CHANGED" -eq 1 ]; then
         echo "[pre-push] ✓ frontend vitest clean"
     fi
     cd "$REPO_ROOT"
+fi
+
+# Appliance Go-test gate — #123 Sub-A Gate B P1-2 (2026-05-17,
+# commit b029c2d1). The deploy workflow (.github/workflows/deploy-
+# central-command.yml) does NOT run Go tests; only mcp-server/**
+# paths trigger CI. #123 Sub-A's original commit (16906008) shipped
+# with bulk_bearer_revoke in Go dangerousOrderTypes but no handler,
+# breaking TestDangerousHandlersRegistered (the round-table-2026-
+# 04-29 P3 invariant). Prod-verified at e9971cb4 only because no
+# Go tests run server-side. This local gate closes the class:
+# every appliance/ change runs `go test ./internal/orders/...`
+# (~1.5s cold, ~0.4s cached). Scoped to internal/orders for now
+# (the dangerousOrderTypes + privileged-chain class); broader
+# `./...` scope would need its own Gate A.
+# Skip with PRE_PUSH_SKIP_GO=1 if blocked (emergency only).
+if [ "$APPLIANCE_CHANGED" -eq 1 ] && [ -z "$PRE_PUSH_SKIP_GO" ]; then
+    if command -v go >/dev/null 2>&1; then
+        echo "[pre-push] appliance go test ./internal/orders/..."
+        cd "$REPO_ROOT/appliance"
+        if ! go test -count=1 ./internal/orders/... > /tmp/go-prepush.log 2>&1; then
+            echo "[pre-push] ❌ go test failed — push blocked"
+            echo ""
+            tail -40 /tmp/go-prepush.log
+            echo ""
+            echo "[pre-push] Fix the failing test(s), then re-push."
+            echo "[pre-push] Skip go-test (emergency only): PRE_PUSH_SKIP_GO=1 git push"
+            echo "[pre-push] Bypass entirely: git push --no-verify"
+            exit 1
+        fi
+        echo "[pre-push] ✓ appliance go test clean"
+        cd "$REPO_ROOT"
+    else
+        echo "[pre-push] ⚠ go not on PATH — skipping appliance go-test gate"
+        echo "[pre-push]   (install Go locally to close the #123 Sub-A regression class)"
+    fi
 fi
