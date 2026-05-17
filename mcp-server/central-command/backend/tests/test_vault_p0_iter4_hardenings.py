@@ -165,15 +165,19 @@ def test_vault_signing_key_versions_in_schema_fixture():
     assert "vault_signing_key_versions" in types, (
         "prod_column_types.json must list vault_signing_key_versions."
     )
-    # 10 columns expected per the mig.
+    # Minimum 10-column shape from mig 311 — all must remain. Newer
+    # columns (e.g. attestation_bundle_id from mig 328 / #116) added
+    # via additive migrations are explicitly allowed via superset
+    # check (not equality). The lockstep concern is "mig 311 shape
+    # still present", not "no other columns ever".
     expected_cols = {
         "id", "key_name", "key_version", "pubkey_hex", "pubkey_b64",
         "first_observed_at", "last_observed_at", "known_good",
         "approved_by", "approved_at",
     }
     fixture_cols = set(cols["vault_signing_key_versions"])
-    assert fixture_cols == expected_cols, (
-        f"vault_signing_key_versions fixture columns differ from "
-        f"mig 311 shape. Fixture: {sorted(fixture_cols)}; "
-        f"Expected: {sorted(expected_cols)}."
+    missing = expected_cols - fixture_cols
+    assert not missing, (
+        f"vault_signing_key_versions fixture is missing mig 311 "
+        f"columns: {sorted(missing)}. Fixture: {sorted(fixture_cols)}."
     )

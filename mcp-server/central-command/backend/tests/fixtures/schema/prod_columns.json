@@ -5450,6 +5450,7 @@
   "vault_signing_key_versions": [
     "approved_at",
     "approved_by",
+    "attestation_bundle_id",
     "first_observed_at",
     "id",
     "key_name",

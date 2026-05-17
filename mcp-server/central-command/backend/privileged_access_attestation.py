@@ -271,6 +271,20 @@ ALLOWED_EVENTS = {
     # lockstep checker: ALLOWED_EVENTS ⊇ PRIVILEGED_ORDER_TYPES).
     "client_org_created",
     "baa_signed",
+    # Task #116 closure 2026-05-17 — Vault key-version `known_good`
+    # admin approval (audit/coach-116-vault-admin-approval-gate-a-
+    # 2026-05-17.md, Option B). vault_signing_key_versions is a
+    # fleet-global table with NO appliance target and NO site
+    # anchor; mig 175's enforce_privileged_order_attestation
+    # REQUIRES parameters->>'site_id' which doesn't apply here.
+    # Synthetic anchor namespace: `vault:<key_name>:v<key_version>`
+    # (mirrors `partner_org:<id>` + `client_org:<id>` Session 216
+    # convention). NOT in PRIVILEGED_ORDER_TYPES — admin-API class
+    # (server-side UPDATE on vault_signing_key_versions, NOT a
+    # fleet_order with daemon consumer). The lockstep CI gate
+    # permits ALLOWED_EVENTS ⊇ {PRIVILEGED_ORDER_TYPES,
+    # v_privileged_types}; reverse not required.
+    "vault_key_version_approved",
 }
 
 

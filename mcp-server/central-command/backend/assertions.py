@@ -2456,6 +2456,80 @@ async def _check_load_test_marker_in_compliance_bundles(
     ]
 
 
+async def _check_vault_key_version_approved_without_attestation(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev1 — #116 mig 328 runtime backstop. Catches the dangling-
+    reference case: known_good=TRUE with attestation_bundle_id set
+    but pointing at a non-existent compliance_bundles row, OR
+    pointing at a row whose check_type != 'privileged_access', OR
+    whose site_id doesn't match the synthetic anchor 'vault:<key_
+    name>:v<key_version>' for this approval.
+
+    The mig 328 CHECK closes attestation_bundle_id IS NULL at the
+    DB. This invariant closes:
+      - dangling FK (compliance_bundles row was DELETEd post-hoc)
+      - wrong check_type (a non-privileged-access bundle was passed)
+      - wrong site_id anchor (chain-of-custody isolation broken)
+
+    Sev1 because the Vault key is the trust root for the entire
+    signing fleet; an unattested known_good approval propagates
+    silent trust to every downstream Ed25519 signature."""
+    rows = await conn.fetch(
+        """
+        SELECT v.id,
+               v.key_name,
+               v.key_version,
+               v.attestation_bundle_id,
+               v.approved_by,
+               v.approved_at,
+               cb.bundle_id AS cb_bundle_id,
+               cb.check_type AS cb_check_type,
+               cb.site_id AS cb_site_id
+          FROM vault_signing_key_versions v
+          LEFT JOIN compliance_bundles cb
+                 ON cb.bundle_id = v.attestation_bundle_id
+         WHERE v.known_good = TRUE
+           AND (
+                 cb.bundle_id IS NULL
+              OR cb.check_type != 'privileged_access'
+              OR cb.site_id != 'vault:' || v.key_name || ':v' || v.key_version::text
+           )
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=f"vault:{r['key_name']}:v{r['key_version']}",
+            details={
+                "vault_key_version_id": int(r["id"]),
+                "key_name": r["key_name"],
+                "key_version": int(r["key_version"]),
+                "attestation_bundle_id": r["attestation_bundle_id"],
+                "approved_by": r["approved_by"],
+                "cb_bundle_id": r["cb_bundle_id"],
+                "cb_check_type": r["cb_check_type"],
+                "cb_site_id": r["cb_site_id"],
+                "interpretation": (
+                    f"vault_signing_key_versions row id={r['id']} "
+                    f"(key_name={r['key_name']!r}, "
+                    f"version={r['key_version']}) is known_good=TRUE "
+                    f"but its attestation_bundle_id={r['attestation_bundle_id']!r} "
+                    f"does NOT resolve to a valid privileged_access "
+                    f"compliance_bundles row with the expected "
+                    f"synthetic anchor "
+                    f"site_id='vault:{r['key_name']}:v{r['key_version']}'. "
+                    f"This is a chain-of-custody gap on the Vault "
+                    f"trust root — quarantine the row + investigate "
+                    f"whether the bundle was DELETEd or the wrong "
+                    f"id was written."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
 async def _check_compliance_bundles_appliance_id_write_regression(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -3230,6 +3304,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         severity="sev2",
         description="compliance_bundles row exists for site_id='load-test-chain-contention-site' OUTSIDE an active load_test_runs window (no row covering the bundle's created_at). #117 Sub-commit B (mig 325). Fires when a production writer accidentally targets the load-test seed site — defends the Counsel Rule 4 'no silent orphan coverage' principle for synthetic infrastructure. The chain-contention test seeds 20 appliances + 20 bearers tied to this site; bundles are expected ONLY during k6 soak windows. Runbook: substrate_runbooks/load_test_chain_contention_site_orphan.md.",
         check=_check_load_test_chain_contention_site_orphan,
+    ),
+    Assertion(
+        name="vault_key_version_approved_without_attestation",
+        severity="sev1",
+        description="A vault_signing_key_versions row has known_good=TRUE but attestation_bundle_id is NULL OR doesn't reference a real compliance_bundles row (check_type='privileged_access' with matching synthetic anchor 'vault:<key_name>:v<key_version>'). Belt-and-suspenders for #116 — mig 328 CHECK constraint closes the NULL case at the DB; this invariant catches the dangling-reference case at runtime (e.g., if a future migration weakens the CHECK or DELETEs a referenced compliance_bundles row). Sev1 because flipping known_good=TRUE without attestation breaks the chain-of-custody for the Vault key the entire signing fleet trusts. Runbook: substrate_runbooks/vault_key_version_approved_without_attestation.md.",
+        check=_check_vault_key_version_approved_without_attestation,
     ),
     Assertion(
         name="compliance_bundles_appliance_id_write_regression",
@@ -4232,6 +4312,27 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "Sev2 (vs the sev1 sibling on compliance_bundles): no "
             "crypto chain corruption, just visibility leak. See "
             "substrate_runbooks/synthetic_traffic_marker_orphan.md."
+        ),
+    },
+    "vault_key_version_approved_without_attestation": {
+        "display_name": "Vault key approved without chain-of-custody attestation",
+        "recommended_action": (
+            "SEV1 — chain-of-custody gap on the Vault trust root. "
+            "A vault_signing_key_versions row has known_good=TRUE "
+            "but its attestation_bundle_id does NOT resolve to a "
+            "valid privileged_access compliance_bundles row with the "
+            "expected synthetic anchor 'vault:<key_name>:v<key_"
+            "version>'. Page on-call security. Quarantine the row: "
+            "UPDATE vault_signing_key_versions SET known_good=FALSE "
+            "WHERE id=<id> (allowed — CHECK only enforces "
+            "approved-when-known-good, not the reverse). Investigate "
+            "whether the compliance_bundles row was DELETEd (forgery "
+            "class — see mig 151 trg_prevent_audit_deletion) or "
+            "whether the wrong attestation_bundle_id was written "
+            "(endpoint-bug class — check vault_key_approval_api.py). "
+            "Until cleared, the signing fleet may be trusting a "
+            "rotated key without operator approval. See substrate_"
+            "runbooks/vault_key_version_approved_without_attestation.md."
         ),
     },
     "compliance_bundles_appliance_id_write_regression": {

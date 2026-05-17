@@ -190,6 +190,13 @@ def test_allowed_events_matches_expected_set():
         # class — NOT in PRIVILEGED_ORDER_TYPES. ALLOWED_EVENTS: 62.
         "client_org_created",
         "baa_signed",
+        # Task #116 (2026-05-17) — Vault key-version known_good
+        # admin approval. Synthetic anchor: vault:<key_name>:v<key_
+        # version>. NOT in PRIVILEGED_ORDER_TYPES (no fleet_order
+        # consumer). NOT in mig v_privileged_types (no site anchor
+        # — mig 175 trigger can't gate). Option B per Gate A.
+        # ALLOWED_EVENTS: 63.
+        "vault_key_version_approved",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

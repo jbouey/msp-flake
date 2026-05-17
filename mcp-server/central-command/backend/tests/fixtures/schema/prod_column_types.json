@@ -5450,6 +5450,7 @@
   "vault_signing_key_versions": {
     "approved_at": "timestamp with time zone",
     "approved_by": "text",
+    "attestation_bundle_id": "text",
     "first_observed_at": "timestamp with time zone",
     "id": "bigint",
     "key_name": "text",
