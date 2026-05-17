@@ -192,9 +192,16 @@ def render_chain_lock_metrics() -> str:
     lines.append(
         "# HELP chain_lock_serialization_violations_total Count of times "
         "two in-process tasks held the per-site critical section "
-        "simultaneously. ANY non-zero value indicates the advisory lock "
-        "is not serializing (process-local; cross-replica detection via "
-        "bundle_chain_position_gap substrate invariant)."
+        "simultaneously AT LOCK-ACQUIRE TIME. ANY non-zero value "
+        "indicates the advisory lock is not serializing the acquire-"
+        "call windows (process-local; cross-replica detection via "
+        "bundle_chain_position_gap substrate invariant). NOTE: the "
+        "holder-set window is currently scoped to the lock-acquire "
+        "call only (Sub-C.1 wrap shape). Two acquires that both "
+        "RETURN simultaneously trip the detector — which is the "
+        "exact Postgres-lock-failure scenario worth catching. "
+        "Whole-critical-section overlap detection arrives in Sub-"
+        "C.2 (Sub-C.1 Gate B P1 follow-up)."
     )
     lines.append("# TYPE chain_lock_serialization_violations_total counter")
     for site_id, count in _serialization_violations_total.items():
