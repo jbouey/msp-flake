@@ -762,11 +762,22 @@ async def cmd_provision_bulk_create(args: argparse.Namespace) -> None:
 
     # Count-confirm (mirror #118 P1-1 random-nonce pattern — but for
     # bulk-create the COUNT confirm is sufficient because this is NOT
-    # a privileged-class event + N is bounded ≤100).
-    typed = input(
-        f"This will create {len(rows)} provision codes for partner "
-        f"{partner_uuid}. Type the count back to confirm: "
-    ).strip()
+    # a privileged-class event + N is bounded ≤100). Gate B P1 fix
+    # (audit/coach-119-bulk-onboarding-gate-b-2026-05-16.md): handle
+    # EOFError on closed stdin (CI/script pipe context) — fail-closed
+    # so a no-stdin invocation can NEVER silently proceed past
+    # confirmation.
+    try:
+        typed = input(
+            f"This will create {len(rows)} provision codes for partner "
+            f"{partner_uuid}. Type the count back to confirm: "
+        ).strip()
+    except EOFError:
+        sys.exit(
+            "Confirmation aborted: stdin closed (CI/piped context). "
+            "Re-run interactively, or use --dry-run to preview "
+            "without creating codes."
+        )
     if typed != str(len(rows)):
         sys.exit(f"confirmation mismatch (got {typed!r}, expected "
                  f"{len(rows)!r}). Aborting — no codes issued.")

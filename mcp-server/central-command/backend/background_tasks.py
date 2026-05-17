@@ -2071,6 +2071,48 @@ async def _gather_partner_digest_data(conn, partner_id: str) -> dict:
         for r in activity_rows
     ]
 
+    # #120 multi-device P2-1 FLOOR track — fleet_health aggregate
+    # (audit/coach-120-partner-digest-gate-a-2026-05-16.md). AGGREGATE
+    # COUNTS ONLY — Counsel Rule 2 + Rule 7. No clinic/IP/MAC/host
+    # leaks into SMTP. Soft-delete-aware (sa.deleted_at IS NULL on
+    # JOIN line per Session 218 RT33 P1). Direct base-table query —
+    # NO MV (RT33 P2 Steve veto on RLS-bypass).
+    fleet_health_row = await conn.fetchrow(
+        """
+        SELECT
+          COUNT(*) FILTER (
+            WHERE sa.deleted_at IS NULL
+              AND COALESCE(last_hb.ts, sa.last_checkin) < NOW() - INTERVAL '24 hours'
+          ) AS offline_24h,
+          COUNT(*) FILTER (
+            WHERE sa.deleted_at IS NULL
+              AND COALESCE(last_hb.ts, sa.last_checkin) < NOW() - INTERVAL '7 days'
+          ) AS offline_7d,
+          COUNT(DISTINCT co.id) FILTER (
+            WHERE co.baa_expiration_date IS NOT NULL
+              AND co.baa_expiration_date BETWEEN CURRENT_DATE
+                                             AND CURRENT_DATE + INTERVAL '30 days'
+          ) AS baa_expiring_30d,
+          COUNT(DISTINCT fo.id) FILTER (
+            WHERE fo.status = 'active'
+              AND fo.created_at < NOW() - INTERVAL '6 hours'
+          ) AS chronic_unack_orders
+        FROM sites s
+        LEFT JOIN site_appliances sa ON sa.site_id = s.site_id AND sa.deleted_at IS NULL
+        LEFT JOIN LATERAL (
+          SELECT MAX(received_at) AS ts FROM appliance_heartbeats
+          WHERE appliance_id = sa.appliance_id
+            AND received_at > NOW() - INTERVAL '30 days'
+        ) last_hb ON TRUE
+        LEFT JOIN client_orgs co ON co.id = s.client_org_id
+        LEFT JOIN fleet_orders fo
+               ON fo.parameters->>'target_appliance_id' = sa.appliance_id::text
+        WHERE s.partner_id = $1
+          AND s.status != 'inactive'
+        """,
+        partner_id,
+    )
+
     return {
         "week_label": week_label,
         "stats": {
@@ -2083,6 +2125,16 @@ async def _gather_partner_digest_data(conn, partner_id: str) -> dict:
         },
         "attention_sites": attention_sites,
         "activity_highlights": activity_highlights,
+        "fleet_health": {
+            "offline_24h": int((fleet_health_row or {}).get("offline_24h") or 0),
+            "offline_7d": int((fleet_health_row or {}).get("offline_7d") or 0),
+            "baa_expiring_30d": int(
+                (fleet_health_row or {}).get("baa_expiring_30d") or 0
+            ),
+            "chronic_unack_orders": int(
+                (fleet_health_row or {}).get("chronic_unack_orders") or 0
+            ),
+        },
     }
 
 

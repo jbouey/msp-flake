@@ -1027,6 +1027,7 @@ def send_partner_weekly_digest(
     stats: dict,
     attention_sites: list[dict],
     activity_highlights: list[dict],
+    fleet_health: Optional[dict] = None,
 ) -> bool:
     """Friday morning partner digest — week in review.
 
@@ -1035,6 +1036,16 @@ def send_partner_weekly_digest(
                        clinic_name, risk_score, reason)
     `activity_highlights`: up to 5 notable events this week
                            (dicts with when, clinic_name, incident_type, outcome)
+    `fleet_health` (#120 multi-device P2-1 FLOOR track, audit/coach-120-
+                   partner-digest-gate-a-2026-05-16.md):
+                   optional aggregate counts dict —
+                   {offline_24h, offline_7d, baa_expiring_30d,
+                    chronic_unack_orders}. Renders a new "Fleet
+                   health" section between the self-heal card and
+                   the attention sites table when present. AGGREGATE
+                   COUNTS ONLY — never per-row / never per-appliance.
+                   Counsel Rule 2 + Rule 7 + Maya opaque-mode
+                   harmonization rule (Session 218 lock-in).
     """
     if not is_email_configured():
         logger.warning("SMTP not configured — skipping partner weekly digest")
@@ -1077,6 +1088,63 @@ def send_partner_weekly_digest(
     self_heal = float(stats.get("self_heal_pct") or 0)
     heal_tone = "#047857" if self_heal >= 95 else "#b45309" if self_heal >= 85 else "#b91c1c"
 
+    # #120 FLOOR track — Fleet health block. AGGREGATE COUNTS ONLY:
+    # no clinic names, no MACs, no IPs, no hostnames, no client-org
+    # names. Counsel Rule 2 (no raw PHI cross-boundary) + Rule 7
+    # (no unauth context). Each tile links the operator to the
+    # authenticated partner portal where per-row detail lives
+    # behind auth. Omitted from email entirely when None.
+    fleet_health_html = ""
+    if fleet_health is not None:
+        # Only AGGREGATE NUMERIC counters allowed in this block. If
+        # any future caller leaks a clinic name or appliance_id into
+        # fleet_health, the opaque-mode test gate
+        # (tests/test_email_opacity_harmonized.py) catches it.
+        off24 = int(fleet_health.get("offline_24h") or 0)
+        off7d = int(fleet_health.get("offline_7d") or 0)
+        baa_30d = int(fleet_health.get("baa_expiring_30d") or 0)
+        chron = int(fleet_health.get("chronic_unack_orders") or 0)
+        # Tone: green when all zero (healthy fleet), amber if any
+        # non-zero (operator should triage in the portal).
+        any_red = (off24 + off7d + baa_30d + chron) > 0
+        bg = "#fef3c7" if any_red else "#ecfdf5"
+        border = "#fcd34d" if any_red else "#a7f3d0"
+        title_tone = "#92400e" if any_red else "#065f46"
+
+        def _tile(label: str, value: int, hint: str = "") -> str:
+            return (
+                f'<td style="padding:10px;text-align:center;width:25%;'
+                f'border-right:1px solid {border};">'
+                f'<div style="font-size:24px;font-weight:700;color:{title_tone};">'
+                f'{value:,}</div>'
+                f'<div style="font-size:11px;color:#475569;text-transform:uppercase;'
+                f'letter-spacing:0.05em;">{html.escape(label)}</div>'
+                f'{f"<div style=\"font-size:10px;color:#64748b;margin-top:2px;\">{html.escape(hint)}</div>" if hint else ""}'
+                f'</td>'
+            )
+
+        fleet_health_html = (
+            f'<div style="background:{bg};border:1px solid {border};'
+            f'border-radius:8px;padding:10px 6px;margin-bottom:16px;">'
+            f'<div style="font-size:11px;text-transform:uppercase;'
+            f'letter-spacing:0.05em;color:{title_tone};padding:0 8px 6px 8px;">'
+            f'Fleet health</div>'
+            f'<table style="width:100%;border-collapse:collapse;">'
+            f'<tr>'
+            f'{_tile("Offline 24h+", off24)}'
+            f'{_tile("Offline 7d+", off7d)}'
+            f'{_tile("BAA expiring 30d", baa_30d)}'
+            f'<td style="padding:10px;text-align:center;width:25%;">'
+            f'<div style="font-size:24px;font-weight:700;color:{title_tone};">'
+            f'{chron:,}</div>'
+            f'<div style="font-size:11px;color:#475569;text-transform:uppercase;'
+            f'letter-spacing:0.05em;">Stuck orders</div>'
+            f'</td>'
+            f'</tr>'
+            f'</table>'
+            f'</div>'
+        )
+
     html_body = f"""
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{safe_brand} · Week in review · {html.escape(week_label)}</title></head>
@@ -1101,6 +1169,8 @@ def send_partner_weekly_digest(
       {stats.get('incidents', 0):,} issues detected across {stats.get('clients', 0)} clients · {stats.get('l1_count', 0):,} auto-healed without your touch
     </div>
   </div>
+
+  {fleet_health_html}
 
   <h2 style="font-size:13px;text-transform:uppercase;letter-spacing:0.05em;color:{primary_color};margin:18px 0 8px 0;border-bottom:1px solid #e2e8f0;padding-bottom:4px;">
     Needs attention next week
