@@ -2420,8 +2420,17 @@ async def _check_load_test_marker_in_compliance_bundles(
         """
         SELECT cb.bundle_id, cb.site_id, cb.check_type, cb.created_at
           FROM compliance_bundles cb
-         WHERE cb.site_id LIKE 'synthetic-%'
-            OR cb.site_id IN (SELECT site_id FROM sites WHERE synthetic = TRUE)
+         WHERE (cb.site_id LIKE 'synthetic-%'
+             OR cb.site_id IN (SELECT site_id FROM sites WHERE synthetic = TRUE))
+           -- Task #117 Sub-commit B (mig 325) carve-out: the chain-
+           -- contention load-test site INTENTIONALLY writes real
+           -- compliance_bundles (the entire point is to exercise the
+           -- per-site advisory lock under N-way contention). It uses
+           -- sites.load_test_chain_contention=TRUE (NOT sites.synthetic)
+           -- + non-'synthetic-' prefix to bypass the no_synthetic_bundles
+           -- CHECK. This carve-out is the defensive layer in case a
+           -- future migration accidentally flips synthetic=TRUE here.
+           AND cb.site_id != 'load-test-chain-contention-site'
          LIMIT 100
         """
     )
@@ -2440,6 +2449,85 @@ async def _check_load_test_marker_in_compliance_bundles(
                     f"(CHECK constraint no_synthetic_bundles) blocks "
                     f"'synthetic-%' prefix at INSERT; this fires when a "
                     f"non-prefixed site_id has sites.synthetic=TRUE."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
+async def _check_load_test_chain_contention_site_orphan(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev2 — compliance_bundles row exists for site_id='load-test-
+    chain-contention-site' OUTSIDE an active load_test_runs window.
+
+    Task #117 Sub-commit B (mig 325) per Gate A Option C. The chain-
+    contention test seeds 20 appliances + 20 bearers + 1 site row
+    (sites.load_test_chain_contention=TRUE, NOT sites.synthetic=TRUE
+    so no_synthetic_bundles CHECK passes + real bundles can be
+    written). Bundles are EXPECTED on this site_id during k6 soak
+    windows; they are an ORPHAN if no load_test_runs row covers the
+    bundle's created_at.
+
+    Counsel Rule 4 alignment: orphan-coverage detection on synthetic
+    infrastructure. Without this gate a production writer could
+    silently target the seed site (e.g., a test fixture leaks into
+    prod, a typo'd site_id constant) and we'd never see it —
+    bundles would just accumulate on a non-customer site.
+
+    Trigger conditions:
+      - bundle exists for site_id='load-test-chain-contention-site'
+      - bundle's created_at is NOT within [started_at, COALESCE(
+        completed_at, started_at + INTERVAL '4 hours')] of ANY
+        load_test_runs row (4h max soak per #117 design)
+
+    Auto-resolves when: stray bundle ages out of scope OR a
+    load_test_runs row gets backfilled (admin op).
+
+    Action narrowing: bound the scan to last 7d compliance_bundles
+    on this single site — synthetic infrastructure should rarely
+    accumulate bundles, so 7d is generous + the partial index on
+    sites.load_test_chain_contention=TRUE makes the load_test_runs
+    join cheap. LIMIT 50.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT cb.bundle_id, cb.site_id, cb.check_type, cb.created_at
+          FROM compliance_bundles cb
+         WHERE cb.site_id = 'load-test-chain-contention-site'
+           AND cb.created_at > NOW() - INTERVAL '7 days'
+           AND NOT EXISTS (
+             SELECT 1
+               FROM load_test_runs ltr
+              WHERE cb.created_at >= ltr.started_at
+                AND cb.created_at <= COALESCE(
+                    ltr.completed_at,
+                    ltr.started_at + INTERVAL '4 hours'
+                )
+           )
+         ORDER BY cb.created_at DESC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "bundle_id": r["bundle_id"],
+                "check_type": r["check_type"],
+                "created_at": (
+                    r["created_at"].isoformat() if r["created_at"] else None
+                ),
+                "interpretation": (
+                    f"compliance_bundles bundle_id={r['bundle_id']!r} "
+                    f"writes to load-test seed site "
+                    f"site_id={r['site_id']!r} OUTSIDE any active "
+                    f"load_test_runs window — a production writer is "
+                    f"accidentally targeting the synthetic infrastructure. "
+                    f"Investigate writer + quarantine bundle. See "
+                    f"substrate_runbooks/load_test_chain_contention_"
+                    f"site_orphan.md."
                 ),
             },
         )
@@ -3074,6 +3162,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         severity="sev2",
         description="Synthetic-marked rows ('load_test' OR 'mttr_soak') in customer-facing aggregation tables (incidents / l2_decisions / evidence_bundles / aggregated_pattern_stats). Per v2.1 spec P0-3 marker unification — extends to plan-24's MTTR-soak marker. Task #62 v2.1 Commit 5a. Runbook: substrate_runbooks/synthetic_traffic_marker_orphan.md.",
         check=_check_synthetic_traffic_marker_orphan,
+    ),
+    Assertion(
+        name="load_test_chain_contention_site_orphan",
+        severity="sev2",
+        description="compliance_bundles row exists for site_id='load-test-chain-contention-site' OUTSIDE an active load_test_runs window (no row covering the bundle's created_at). #117 Sub-commit B (mig 325). Fires when a production writer accidentally targets the load-test seed site — defends the Counsel Rule 4 'no silent orphan coverage' principle for synthetic infrastructure. The chain-contention test seeds 20 appliances + 20 bearers tied to this site; bundles are expected ONLY during k6 soak windows. Runbook: substrate_runbooks/load_test_chain_contention_site_orphan.md.",
+        check=_check_load_test_chain_contention_site_orphan,
     ),
 ]
 
@@ -4070,6 +4164,25 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "Sev2 (vs the sev1 sibling on compliance_bundles): no "
             "crypto chain corruption, just visibility leak. See "
             "substrate_runbooks/synthetic_traffic_marker_orphan.md."
+        ),
+    },
+    "load_test_chain_contention_site_orphan": {
+        "display_name": "Load-test site orphan bundle (synthetic infra)",
+        "recommended_action": (
+            "SEV2 — a compliance_bundles row exists for the load-"
+            "test seed site OUTSIDE any active load_test_runs window. "
+            "A production writer is accidentally targeting the "
+            "synthetic infrastructure. Identify the writer via psql "
+            "(SELECT bundle_id, check_type, created_at FROM compliance_"  # noqa: site-appliances-deleted-include
+            "bundles WHERE site_id = 'load-test-chain-contention-site' "
+            "ORDER BY created_at DESC LIMIT 20) + git log -S 'load-"
+            "test-chain-contention-site' --since=<days>. Quarantine "
+            "the row (do NOT delete — §164.316(b)(2)(i) 7y retention "
+            "+ mig 151 trg_prevent_audit_deletion). Counsel Rule 4: "
+            "synthetic infra orphan detection is sev2; if the bundle "
+            "originated from a customer-facing endpoint, escalate to "
+            "sev1 + page on-call. See substrate_runbooks/load_test_"
+            "chain_contention_site_orphan.md."
         ),
     },
 }

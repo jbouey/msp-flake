@@ -4918,6 +4918,7 @@
     "last_partner_reviewed_at": "timestamp with time zone",
     "last_partner_reviewed_by": "text",
     "lead_at": "timestamp with time zone",
+    "load_test_chain_contention": "boolean",
     "maintenance_reason": "text",
     "maintenance_set_by": "text",
     "maintenance_until": "timestamp with time zone",

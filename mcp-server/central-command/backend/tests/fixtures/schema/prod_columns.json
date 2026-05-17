@@ -4918,6 +4918,7 @@
     "last_partner_reviewed_at",
     "last_partner_reviewed_by",
     "lead_at",
+    "load_test_chain_contention",
     "maintenance_reason",
     "maintenance_set_by",
     "maintenance_until",
