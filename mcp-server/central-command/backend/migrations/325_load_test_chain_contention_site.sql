@@ -177,7 +177,9 @@ SELECT
     'load-test-appliance-' || LPAD(i::text, 2, '0'),
     -- sha256 of 'load-test-bearer-NN' for k6-deterministic auth
     encode(digest('load-test-bearer-' || LPAD(i::text, 2, '0'), 'sha256'), 'hex'),
-    'load-test-bearer-' || LPAD(i::text, 2, '0') || '-prefix',
+    -- key_prefix is varchar(16); keep <=16 chars (3rd CI deploy fail
+    -- on f606c7fe was 'load-test-bearer-NN-prefix' = 26 chars >16).
+    'lt-bearer-' || LPAD(i::text, 2, '0'),
     TRUE,
     'Task #117 Sub-commit B (mig 325) — load-harness pre-seeded bearer '
         || 'for chain-contention scenario, appliance ' || LPAD(i::text, 2, '0')
