@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 
 try:
     from .fleet import get_pool
-    from .tenant_middleware import admin_connection
+    from .tenant_middleware import admin_transaction
     from .auth import require_admin
     from .privileged_access_attestation import (
         create_privileged_access_attestation,
@@ -40,7 +40,7 @@ try:
     )
 except ImportError:  # pragma: no cover — production package path
     from fleet import get_pool  # type: ignore[no-redef]
-    from tenant_middleware import admin_connection  # type: ignore[no-redef]
+    from tenant_middleware import admin_transaction  # type: ignore[no-redef]
     from auth import require_admin  # type: ignore[no-redef]
     from privileged_access_attestation import (  # type: ignore[no-redef]
         create_privileged_access_attestation,
@@ -120,7 +120,16 @@ async def mark_vault_key_version_known_good(
         )
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # Per Gate B P1-1 (audit/coach-116-sub-b-gate-b-2026-05-17.md) +
+    # tenant_middleware.py:147-157 routing-risk caveat: this is a
+    # multi-statement admin path (SELECT FOR UPDATE → attestation
+    # writes → UPDATE → audit_log INSERT). PgBouncer transaction-pool
+    # mode can route SET LOCAL app.is_admin + subsequent statements
+    # to different backends under admin_connection — bug class
+    # documented in commit 303421cc. admin_transaction is the
+    # canonical helper that pins all queries to one backend within
+    # one explicit transaction.
+    async with admin_transaction(pool) as conn:
         # Step 1: lock the row.
         row = await conn.fetchrow(
             """
