@@ -8,40 +8,23 @@ to v2) + audit/coach-123-sub-b-design-gate-a-recheck-2026-05-17.md
 
 POST /api/admin/sites/{site_id}/appliances/revoke-bearers
 
-What this does:
-  1. Validate caller-supplied appliance_ids belong to {site_id} (no
-     cross-site spoof). Soft-deleted + missing both return identical
-     404 (Gate A v2 P0-3 existence-oracle fix).
-  2. Inside one admin_transaction (Sub-A precedent + tenant_middleware
-     PgBouncer routing-risk rule):
-       a. SELECT … FOR UPDATE — TOCTOU lock against concurrent calls
-       b. Partition: to_flip[] (bearer_revoked=FALSE) vs
-          already_revoked[] (bearer_revoked=TRUE — P1-5 idempotency)
-       c. Write privileged_access compliance_bundles row with
-          event_type='bulk_bearer_revoke' + target_appliance_ids[]
-          (mirrors #118 fan-out shape)
-       d. UPDATE site_appliances SET bearer_revoked=TRUE for to_flip[]
-       e. UPDATE api_keys SET active=FALSE for to_flip[]
-       f. INSERT admin_audit_log row with denormalized actor + reason
-          + not_actionable[] (admin-context-only forensics)
-  3. Return 200 with revoked/already_revoked/attestation_bundle_id.
-
-Recovery path (out of scope here): per-appliance
-`watchdog_reset_api_key` privileged event mints a new bearer.
+See the design doc for the full atomic sequence. Briefly: inside
+one admin_transaction, lock the rows, partition into to-flip vs
+already-revoked, write the privileged_access attestation, flip
+columns for to-flip only, write admin_audit_log row.
 
 BAA enforcement: bulk_bearer_revoke is registered in
 baa_enforcement._DEFERRED_WORKFLOWS — emergency workforce-access
 revocation MUST NOT be gated on BAA-on-file because the perverse
 outcome of blocking revocation DURING a BAA-related breach defeats
-the security purpose. See _DEFERRED_WORKFLOWS rationale.
+the security purpose.
 
 Privileged-chain registration (Sub-A foundation):
-  - fleet_cli.PRIVILEGED_ORDER_TYPES ✓
-  - privileged_access_attestation.ALLOWED_EVENTS ✓
-  - mig 329 v_privileged_types ✓
-  - PYTHON_ONLY allowlist (NOT Go dangerousOrderTypes — daemon
-    never receives this order; daemon's next checkin hits 401 via
-    shared.py:614-640 short-circuit) ✓
+  - fleet_cli.PRIVILEGED_ORDER_TYPES
+  - privileged_access_attestation.ALLOWED_EVENTS
+  - mig 329 v_privileged_types
+  - PYTHON_ONLY allowlist (daemon never receives this order; its
+    next checkin hits 401 via shared.py:614-640 short-circuit)
 """
 from __future__ import annotations
 
