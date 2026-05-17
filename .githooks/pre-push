@@ -352,6 +352,16 @@ SOURCE_LEVEL_TESTS=(
     # `PRIVILEGED-CHAIN-BODY-CHANGE:` token in commit body. Closes
     # the same-commit hash-bump-and-weaken attack class.
     "tests/test_canonical_hash_change_requires_token.py"
+    # 2026-05-17 Session 220 #123 Sub-A Gate B P1-1. CI
+    # 25992642977 caught a runbook prose drift (a substrate
+    # runbook referencing a nonexistent test filename) that
+    # local pre-push missed because test_runbook_truth_check
+    # was not in this curated list. The deploy-fail cost a
+    # CI round-trip + manual recovery commit (e9971cb4).
+    # Class rule: any runbook prose pinned to source paths
+    # MUST be validated locally. The test is fast (~0.3s,
+    # 7 source-shape gates) — net cost trivial.
+    "tests/test_runbook_truth_check.py"
     # 2026-05-11 Session 220 task #121. Pins the regression class
     # where BaseHTTPMiddleware.dispatch raises HTTPException —
     # Starlette TaskGroup wraps the raise as BaseExceptionGroup,

@@ -131,6 +131,53 @@ def test_runbook_exists_with_sev1_framing():
     )
 
 
+def test_event_type_literal_parity_writer_vs_invariant():
+    """#123 Sub-A Gate B P1-4 — pin that the 'bulk_bearer_revoke'
+    literal appears in BOTH the writer (privileged_access_attestation.py
+    ALLOWED_EVENTS set) AND the invariant reader (assertions.py
+    _check_bearer_revoked_without_attestation SQL body).
+
+    Without this gate, a typo in EITHER side becomes a silent
+    chain-of-custody hole: writer emits one literal, invariant
+    looks for another, every revocation appears unattested OR
+    every revocation appears attested. Both directions are bugs.
+
+    Gate B b029c2d1 surfaced this class as a P1 follow-up.
+    """
+    paa_path = _BACKEND / "privileged_access_attestation.py"
+    paa_src = _read(paa_path)
+    assertions_src = _read(_ASSERTIONS)
+    invariant_body = _body()
+
+    LITERAL = "'bulk_bearer_revoke'"
+
+    # Writer side — literal is the canonical event_type in ALLOWED_EVENTS
+    # (extracted from the set literal, not from comments)
+    import privileged_access_attestation as paa  # noqa: E402
+    assert "bulk_bearer_revoke" in paa.ALLOWED_EVENTS, (
+        "Writer's ALLOWED_EVENTS missing 'bulk_bearer_revoke' — "
+        "any attestation write attempt will raise "
+        "PrivilegedAccessAttestationError (line 428)."
+    )
+
+    # Invariant side — literal must appear in the SQL body
+    assert LITERAL in invariant_body, (
+        f"Invariant SQL body missing literal {LITERAL} — every "
+        f"revocation bundle will be treated as non-matching = "
+        f"false POSITIVE flood (every bearer_revoked row trips "
+        f"the sev1 invariant)."
+    )
+
+    # Cross-check: assertions.py registration's description string
+    # also pins the literal (so an auditor reading _DISPLAY_METADATA
+    # sees the same event_type name the SQL queries on).
+    assert "event_type='bulk_bearer_revoke'" in assertions_src, (
+        "Assertion registration description must cite "
+        "event_type='bulk_bearer_revoke' verbatim. Auditor-facing "
+        "documentation drift = chain-of-custody confusion class."
+    )
+
+
 def test_display_metadata_registered_with_actionable_recommendation():
     src = _read(_ASSERTIONS)
     m = re.search(
