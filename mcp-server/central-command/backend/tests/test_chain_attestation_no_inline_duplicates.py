@@ -86,6 +86,24 @@ ALLOWED_DIRECT_CALL_MODULES = {
                                   # admin-class, ALLOWED_EVENTS-only,
                                   # synthetic anchor (vault:<key_name>:
                                   # v<key_version>).
+    "bulk_bearer_revoke_api.py",  # Task #123 Sub-B 2026-05-17 —
+                                  # admin batch bearer revocation.
+                                  # Specialized fan-out shape (one
+                                  # attestation bundle covers N
+                                  # target_appliance_ids via #118
+                                  # precedent — `target_appliance_ids`
+                                  # kwarg on the writer). The
+                                  # attestation IS the chain-of-
+                                  # custody evidence for the
+                                  # site_appliances.bearer_revoked
+                                  # + api_keys.active mutations
+                                  # (mirror Sub-A sev1 invariant in
+                                  # assertions.py:2479-2502). Same
+                                  # posture as vault_key_approval_api
+                                  # — admin-class, atomic single-txn,
+                                  # 3-list lockstep per mig 329 +
+                                  # PYTHON_ONLY. Real site_id anchor
+                                  # (not synthetic).
 }
 
 # Modules permitted to compose the chain-gap pattern inline (P0-CHAIN-GAP +
