@@ -171,17 +171,17 @@ def test_fleet_health_block_links_to_authenticated_portal_not_inline_detail():
 def test_gather_fleet_health_filters_soft_delete_on_join():
     """Session 218 RT33 P1 rule: site_appliances JOIN line must
     include `sa.deleted_at IS NULL` filter on the JOIN line itself
-    (not in WHERE on continuation line)."""
+    (not in WHERE on continuation line). Per-counter subquery shape
+    (Gate B P0-2 fix) means the JOIN appears in each scalar
+    subquery — assert at least once."""
     body = _gather_data_body()
-    # Find the fleet_health query
     fh_query_match = re.search(
         r"fleet_health_row\s*=\s*await\s+conn\.fetchrow\(\s*\"\"\"(.*?)\"\"\"",
         body, re.DOTALL,
     )
     assert fh_query_match, "fleet_health_row fetch query not found"
     query = fh_query_match.group(1)
-    # JOIN line must carry the deleted_at filter
-    assert "LEFT JOIN site_appliances sa ON sa.site_id = s.site_id AND sa.deleted_at IS NULL" in query, (
+    assert "site_appliances sa ON sa.site_id = s2.site_id AND sa.deleted_at IS NULL" in query, (
         "fleet_health query: site_appliances JOIN must filter "
         "sa.deleted_at IS NULL on the JOIN line itself (Session 218 "
         "RT33 P1 rule)."
@@ -196,9 +196,55 @@ def test_gather_fleet_health_filters_inactive_sites():
     )
     assert fh_query_match
     query = fh_query_match.group(1)
-    assert "s.status != 'inactive'" in query, (
-        "fleet_health query: must filter s.status != 'inactive' "
-        "(Session 218 RT33 P1 rule on site-list queries)."
+    # Per-counter subqueries: each filters status != 'inactive'.
+    assert query.count("s2.status != 'inactive'") >= 4, (
+        "fleet_health query: each per-counter subquery must filter "
+        "s2.status != 'inactive' (Session 218 RT33 P1 rule on site-"
+        "list queries). 4 counters × 1 filter each = ≥4 occurrences."
+    )
+
+
+def test_gather_fleet_health_uses_observed_at_not_received_at():
+    """Gate B 2026-05-16 P0-1 fix: appliance_heartbeats column is
+    observed_at (NOT received_at — Gate A skeleton had a typo).
+    UndefinedColumnError would fire on every Friday cron without
+    this fix."""
+    body = _gather_data_body()
+    fh_query_match = re.search(
+        r"fleet_health_row\s*=\s*await\s+conn\.fetchrow\(\s*\"\"\"(.*?)\"\"\"",
+        body, re.DOTALL,
+    )
+    assert fh_query_match
+    query = fh_query_match.group(1)
+    assert "received_at" not in query, (
+        "fleet_health query must NOT reference appliance_heartbeats."
+        "received_at — that column does NOT exist. Use observed_at "
+        "(actual column per mig 191 + prod_columns.json fixture)."
+    )
+    assert "observed_at" in query, (
+        "fleet_health query must reference appliance_heartbeats."
+        "observed_at (Gate B 2026-05-16 P0-1 fix)."
+    )
+
+
+def test_gather_fleet_health_uses_per_counter_subqueries():
+    """Gate B 2026-05-16 P0-2 fix: per-counter scalar subqueries
+    instead of one mega-JOIN. The mega-JOIN multiplied offline
+    appliance counts by matching fleet_orders rows."""
+    body = _gather_data_body()
+    fh_query_match = re.search(
+        r"fleet_health_row\s*=\s*await\s+conn\.fetchrow\(\s*\"\"\"(.*?)\"\"\"",
+        body, re.DOTALL,
+    )
+    assert fh_query_match
+    query = fh_query_match.group(1)
+    # 4 counters × 1 SELECT each = ≥4 SELECTs.
+    select_count = len(re.findall(r"\bSELECT\b", query, re.IGNORECASE))
+    assert select_count >= 4, (
+        f"fleet_health query must use per-counter subqueries (≥4 "
+        f"SELECTs); found {select_count}. Mega-JOIN risks "
+        f"multiplicative over-count of offline appliances by "
+        f"fleet_orders rows (Gate B 2026-05-16 P0-2)."
     )
 
 

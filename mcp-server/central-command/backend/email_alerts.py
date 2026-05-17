@@ -1111,7 +1111,10 @@ def send_partner_weekly_digest(
         border = "#fcd34d" if any_red else "#a7f3d0"
         title_tone = "#92400e" if any_red else "#065f46"
 
-        def _tile(label: str, value: int, hint: str = "") -> str:
+        def _tile(label: str, value: int) -> str:
+            # Plain tile renderer; no nested f-string with escapes
+            # (Python 3.11 bans backslashes in f-string expression
+            # parts — caught by CI smoke-import on de696071).
             return (
                 f'<td style="padding:10px;text-align:center;width:25%;'
                 f'border-right:1px solid {border};">'
@@ -1119,7 +1122,6 @@ def send_partner_weekly_digest(
                 f'{value:,}</div>'
                 f'<div style="font-size:11px;color:#475569;text-transform:uppercase;'
                 f'letter-spacing:0.05em;">{html.escape(label)}</div>'
-                f'{f"<div style=\"font-size:10px;color:#64748b;margin-top:2px;\">{html.escape(hint)}</div>" if hint else ""}'
                 f'</td>'
             )
 
