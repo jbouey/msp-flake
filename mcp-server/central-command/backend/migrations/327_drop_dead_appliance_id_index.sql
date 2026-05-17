@@ -1,0 +1,27 @@
+-- Migration 327 — DROP dead idx_compliance_bundles_appliance_type
+--
+-- #122 Phase 1 P1-3 closure. Index on
+-- (appliance_id, reported_at DESC, check_type) was added by mig 047
+-- but compliance_bundles.appliance_id has been NULL on every row
+-- since mig 268's writer-canonicalization. A b-tree index on an
+-- always-NULL column wastes space + maintenance cost on every
+-- INSERT.
+--
+-- SINGLE-STATEMENT FILE per CLAUDE.md rule "CREATE INDEX
+-- CONCURRENTLY = single-statement file; no BEGIN/COMMIT, no
+-- trailing COMMENT". Same applies to DROP INDEX CONCURRENTLY —
+-- multi-statement triggers Postgres implicit txn wrap which
+-- breaks the CONCURRENTLY guarantee (no lock blocking writers
+-- during the index swap).
+--
+-- Safe to drop: 0 readers (grep across backend confirmed),
+-- 0 writers writing to appliance_id (mig 268 wiring), pg_stat_user_
+-- indexes will show idx_scan = 0 over the past 30d.
+--
+-- Forward-compat: if a future task re-introduces a writer to
+-- compliance_bundles.appliance_id (which the AST CI gate
+-- `test_no_compliance_bundles_appliance_id_writes` will reject),
+-- the index can be recreated then. Mig 327 is the deprecation
+-- step, not a one-way door.
+
+DROP INDEX CONCURRENTLY IF EXISTS idx_compliance_bundles_appliance_type;

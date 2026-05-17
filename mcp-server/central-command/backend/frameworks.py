@@ -316,10 +316,15 @@ async def get_control_status(
     framework: str
 ) -> List[Dict[str, Any]]:
     """Get control-level status for a framework"""
+    # mig 326 (#122 Phase 1) renamed the view's `outcome` column to
+    # `status` — the pre-mig view aliased it via `outcome as status`
+    # but outcome was always NULL (cb.outcome never populated by
+    # evidence_chain.py writers; verified mig 268 root-cause). Post-
+    # mig the view exposes `cb.check_result AS status` directly.
     query = text("""
         SELECT
             control_id,
-            outcome as status,
+            status,
             last_checked
         FROM v_control_status
         WHERE appliance_id = :appliance_id

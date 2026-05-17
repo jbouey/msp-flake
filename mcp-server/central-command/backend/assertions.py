@@ -2456,6 +2456,61 @@ async def _check_load_test_marker_in_compliance_bundles(
     ]
 
 
+async def _check_compliance_bundles_appliance_id_write_regression(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev2 — compliance_bundles.appliance_id is DEPRECATED (mig 268;
+    #122 Phase 1). Per Gate A: column is NULL on every row from all
+    4 production writers. Non-zero count over the last hour means a
+    regression re-introduced a writer.
+
+    Why not sev1: column is not in the signed payload (verified
+    evidence_chain.py:1443) and not customer-facing. A regression
+    would not corrupt chain integrity — but it WOULD block the
+    Phase 2/3 quiet-soak + DROP COLUMN sequence. Sev2 lands the
+    invariant on operator dashboards within minutes of a regression.
+
+    Why 1 hour window: tight enough to fire fast on a freshly-
+    deployed regression; loose enough that a few minutes of
+    propagation delay won't false-positive.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT bundle_id, site_id, appliance_id, created_at, check_type
+          FROM compliance_bundles
+         WHERE appliance_id IS NOT NULL
+           AND created_at > NOW() - INTERVAL '1 hour'
+         ORDER BY created_at DESC
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "bundle_id": r["bundle_id"],
+                "appliance_id": r["appliance_id"],
+                "check_type": r["check_type"],
+                "created_at": (
+                    r["created_at"].isoformat() if r["created_at"] else None
+                ),
+                "interpretation": (
+                    f"compliance_bundles bundle_id={r['bundle_id']!r} "
+                    f"was written within the last hour with non-NULL "
+                    f"appliance_id={r['appliance_id']!r}. Column is "
+                    f"DEPRECATED since mig 268. A regression re-"
+                    f"introduced a writer — find via "
+                    f"`git log -S 'compliance_bundles' --since=24h` + "
+                    f"grep for INSERT/UPDATE callsites. Fix forward + "
+                    f"DELETE the orphan row (allowed — column will be "
+                    f"DROPped in Phase 3 anyway)."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
 async def _check_load_test_chain_contention_site_orphan(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -3175,6 +3230,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         severity="sev2",
         description="compliance_bundles row exists for site_id='load-test-chain-contention-site' OUTSIDE an active load_test_runs window (no row covering the bundle's created_at). #117 Sub-commit B (mig 325). Fires when a production writer accidentally targets the load-test seed site — defends the Counsel Rule 4 'no silent orphan coverage' principle for synthetic infrastructure. The chain-contention test seeds 20 appliances + 20 bearers tied to this site; bundles are expected ONLY during k6 soak windows. Runbook: substrate_runbooks/load_test_chain_contention_site_orphan.md.",
         check=_check_load_test_chain_contention_site_orphan,
+    ),
+    Assertion(
+        name="compliance_bundles_appliance_id_write_regression",
+        severity="sev2",
+        description="A compliance_bundles row was written within the last 1 hour with appliance_id IS NOT NULL. Column is DEPRECATED since mig 268 — all production writers (evidence_chain.py:1443, runbook_consent.py:460, appliance_relocation.py:222/383, privileged_access_attestation.py:497) omit it. Per-appliance binding lives in evidence_chain.matched_appliance_id → site_appliances JOIN on agent_public_key fingerprint (Session 196 rule). Non-zero here means a regression re-introduced a writer; investigate via git log -S 'compliance_bundles' --since=24h. #122 Phase 1 (audit/coach-122-...gate-a-2026-05-16.md). Runbook: substrate_runbooks/compliance_bundles_appliance_id_write_regression.md.",
+        check=_check_compliance_bundles_appliance_id_write_regression,
     ),
 ]
 
@@ -4171,6 +4232,22 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "Sev2 (vs the sev1 sibling on compliance_bundles): no "
             "crypto chain corruption, just visibility leak. See "
             "substrate_runbooks/synthetic_traffic_marker_orphan.md."
+        ),
+    },
+    "compliance_bundles_appliance_id_write_regression": {
+        "display_name": "Deprecated column written: compliance_bundles.appliance_id",
+        "recommended_action": (
+            "SEV2 — a writer regressed and started populating "
+            "compliance_bundles.appliance_id (DEPRECATED mig 268). "
+            "Find the writer via `git log -S 'compliance_bundles' "
+            "--since=24h` + grep for INSERT/UPDATE callsites. Fix "
+            "forward (drop the column from the INSERT/UPDATE column "
+            "list). The column IS slated for DROP in Phase 3 of "
+            "#122; non-zero count here blocks the quiet-soak window "
+            "and pushes the DROP date. The orphan rows may be DELETEd "
+            "(allowed — column is being removed anyway; not part of "
+            "the signed payload). See substrate_runbooks/compliance_"
+            "bundles_appliance_id_write_regression.md."
         ),
     },
     "load_test_chain_contention_site_orphan": {
