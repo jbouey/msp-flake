@@ -117,20 +117,31 @@ def test_mig_325_uses_inactive_status_not_paused():
     )
 
 
-def test_mig_325_client_org_id_is_null():
-    """Counsel Rule 4: synthetic infrastructure must NOT pretend to
-    be customer-owned data. client_org_id NULL on the seed row."""
+def test_mig_325_client_org_id_uses_synthetic_placeholder():
+    """CI on f606c7fe caught: sites.client_org_id is NOT NULL on prod.
+    Counsel Rule 4 intent (no customer attribution) is preserved by
+    using a synthetic placeholder UUID prefix `00000000-0000-4000-
+    8000-00000000ff05` + name/email that explicitly say SYNTHETIC.
+    Same pattern as mig 303's synthetic-mttr-soak (ff04). The plain
+    SQL must reference the synthetic UUID — NEVER point at a real
+    customer org_id."""
     body = _read_mig()
-    assert re.search(
-        r"client_org_id[,\s]*\n[\s\S]{0,200}\bNULL\b",
-        body,
-    ) or re.search(
-        r"NULL,\s*--\s*NOT a customer org",
-        body,
-    ), (
-        "mig 325 must seed client_org_id=NULL on the load-test site "
-        "(Counsel Rule 4: synthetic infra must not pretend to be "
-        "customer-owned)."
+    assert "00000000-0000-4000-8000-00000000ff05" in body, (
+        "mig 325 must use the well-known synthetic client_org UUID "
+        "'00000000-0000-4000-8000-00000000ff05'::uuid for the "
+        "chain-contention site (sites.client_org_id is NOT NULL on "
+        "prod; cannot use NULL). The ff-prefix makes this unmistakable "
+        "as a synthetic placeholder."
+    )
+    # Must pre-create the client_orgs row before the sites INSERT so
+    # the FK is valid.
+    assert "INSERT INTO client_orgs" in body, (
+        "mig 325 must pre-create the synthetic client_orgs row before "
+        "the sites INSERT so the FK reference resolves."
+    )
+    assert "SYNTHETIC" in body, (
+        "mig 325's synthetic client_orgs row must be labelled SYNTHETIC "
+        "in the name (operator-grep + auditor-scan visibility)."
     )
 
 

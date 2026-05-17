@@ -70,13 +70,35 @@ CREATE INDEX IF NOT EXISTS idx_sites_load_test_chain_contention
     ON sites (site_id)
     WHERE load_test_chain_contention = TRUE;
 
--- ── 2. Seed the synthetic site row ───────────────────────────────
+-- ── 2a. Synthetic client_org placeholder ─────────────────────────
+-- sites.client_org_id is NOT NULL on prod (CI deploy on f606c7fe
+-- caught this when the original NULL-setting INSERT raised
+-- NotNullViolationError). Pre-create a synthetic client_orgs row
+-- with a well-known UUID — same pattern as mig 303 (synthetic-
+-- mttr-soak uses ff04; we use ff05). Name + email make it
+-- unmistakably non-customer for any auditor / operator scan.
+-- Counsel Rule 4 intent (no customer attribution) preserved at
+-- the prose level via name + email + non-realistic UUID prefix.
+INSERT INTO client_orgs (id, name, primary_email, status, created_at, updated_at)
+VALUES (
+    '00000000-0000-4000-8000-00000000ff05'::uuid,
+    'SYNTHETIC-chain-contention-load-test (substrate validation, NOT a real customer)',
+    'chain-contention-load-test@example.invalid',
+    'active',
+    NOW(),
+    NOW()
+)
+ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+    updated_at = NOW();
+
+-- ── 2b. Seed the synthetic site row ──────────────────────────────
 -- Status='inactive' (per Gate B P2-1 Sub-A correction — sites_status_
 -- check accepts pending|online|offline|inactive, NEVER the disallowed
 -- legacy value that mig 303 explicitly noted as invalid).
--- client_org_id NULL — the site is OPERATIONALLY orphaned (no
--- customer), matching the Counsel Rule 4 expectation that synthetic
--- infrastructure NOT pretend to be customer-owned data.
+-- client_org_id points at the synthetic placeholder above (NOT NULL
+-- per schema constraint). Name + UUID-prefix make non-customer
+-- intent explicit at every operational surface.
 INSERT INTO sites (
     site_id, clinic_name, tier, industry,
     status, client_org_id,
@@ -88,7 +110,7 @@ INSERT INTO sites (
     'small',     -- sites_tier_check accepts small|mid|large
     'synthetic',
     'inactive',  -- sites_status_check accepts pending|online|offline|inactive
-    NULL,        -- NOT a customer org; load-harness internal only
+    '00000000-0000-4000-8000-00000000ff05'::uuid,  -- synthetic placeholder per 2a
     FALSE,       -- NOT synthetic-prefix-class (need real bundles)
     TRUE,        -- THIS flag — what makes us a load-test site
     NOW(),
