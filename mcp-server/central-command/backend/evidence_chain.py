@@ -1380,9 +1380,22 @@ async def submit_evidence(
 
         # Per-site advisory lock serializes chain_position assignment.
         # Without this, concurrent submissions race (caused 1,125 broken links).
-        await conn.execute(
-            "SELECT pg_advisory_xact_lock(hashtext($1))", site_id
-        )
+        # #117 Sub-C.1 (chain_lock_metrics): wrap the lock acquisition
+        # + the prev_bundle SELECT in chain_lock_timer for per-site
+        # wait-time + concurrent-holder telemetry. No-op for non-
+        # load-test sites (production allocations are zero). Per
+        # audit/coach-130-chain-lock-metrics-gate-a-2026-05-16.md
+        # the timer is honest only if pg_advisory_xact_lock issues
+        # IMMEDIATELY on enter (no pre-lock work allowed inside the
+        # with-block before the lock call).
+        try:
+            from .chain_lock_metrics import chain_lock_timer
+        except ImportError:
+            from chain_lock_metrics import chain_lock_timer  # type: ignore[no-redef]
+        async with chain_lock_timer(site_id):
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))", site_id
+            )
 
         # Bundle-id dedup under the lock. Migration 151's prevent_audit_deletion
         # trigger makes DELETE+INSERT upsert impossible (correctly — DELETE on
