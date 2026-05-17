@@ -136,6 +136,16 @@ ON CONFLICT (appliance_id) DO UPDATE SET
 -- sends as Bearer in Authorization header. These bearers ONLY work
 -- against site_id='load-test-chain-contention-site' (require_appliance_
 -- bearer's _enforce_site_id check rejects cross-site use).
+-- Gate B 2026-05-16 P0 fix: api_keys has NO UNIQUE constraint on
+-- key_hash (only PK on id) — `ON CONFLICT (key_hash)` would raise
+-- InvalidColumnReferenceError at apply time. Use WHERE NOT EXISTS
+-- correlated subquery for idempotency instead (same shape as the
+-- Session 210-B promoted_rules lesson, except here we cannot add a
+-- UNIQUE because mig 209's BEFORE-INSERT trigger deliberately
+-- supports key rotation — multiple key_hash rows per appliance is
+-- legitimate, only one stays active at a time). Re-runs become
+-- no-ops: the SELECT yields zero candidate rows once the 20 seed
+-- bearers exist.
 INSERT INTO api_keys (
     site_id, appliance_id, key_hash, key_prefix, active,
     description, created_at
@@ -153,7 +163,14 @@ SELECT
         || 'Cross-site blocked by require_appliance_bearer enforcement.',
     NOW()
 FROM generate_series(0, 19) AS i
-ON CONFLICT (key_hash) DO NOTHING;
+WHERE NOT EXISTS (
+    SELECT 1
+      FROM api_keys ak
+     WHERE ak.key_hash = encode(
+         digest('load-test-bearer-' || LPAD(i::text, 2, '0'), 'sha256'),
+         'hex'
+     )
+);
 
 -- ── 5. Documentation rows in admin_audit_log ──────────────────────
 -- Belt-and-suspenders provenance: a SQL-grep for 'load-test-chain-
@@ -161,8 +178,12 @@ ON CONFLICT (key_hash) DO NOTHING;
 -- Non-privileged action prefix — does NOT engage mig 175 enforce-
 -- privileged-order-attestation chain (seed is an idempotent infra
 -- write, not a runtime authorization event).
+-- Gate B 2026-05-16 P2-2 fix: dropped misleading ON CONFLICT (admin_
+-- audit_log PK is id SERIAL — no row would ever conflict). Use WHERE
+-- NOT EXISTS for actual idempotency so re-applying the mig doesn't
+-- write a duplicate provenance row.
 INSERT INTO admin_audit_log (action, target, details, username, created_at)
-VALUES (
+SELECT
     'LOAD_TEST_SEED_APPLIED',
     'load-test-chain-contention-site',
     jsonb_build_object(
@@ -178,7 +199,10 @@ VALUES (
     ),
     'mig-325',
     NOW()
-)
-ON CONFLICT DO NOTHING;
+WHERE NOT EXISTS (
+    SELECT 1 FROM admin_audit_log
+     WHERE action = 'LOAD_TEST_SEED_APPLIED'
+       AND target = 'load-test-chain-contention-site'
+);
 
 COMMIT;

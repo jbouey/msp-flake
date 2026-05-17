@@ -2490,6 +2490,13 @@ async def _check_load_test_chain_contention_site_orphan(
     accumulate bundles, so 7d is generous + the partial index on
     sites.load_test_chain_contention=TRUE makes the load_test_runs
     join cheap. LIMIT 50.
+
+    Gate B 2026-05-16 P1-1 fix: COALESCE buffer extended 4h → 24h.
+    Original 4h band false-positived on chaos tests, admin ops, or
+    clock-stalled load_test_runs rows that legitimately extend
+    beyond the #117 design max (30min). 24h is the worst-case bound
+    — anything >24h orphaned really IS an orphan worth surfacing,
+    and synthetic infra should never have a covering-row gap >1d.
     """
     rows = await conn.fetch(
         """
@@ -2503,7 +2510,7 @@ async def _check_load_test_chain_contention_site_orphan(
               WHERE cb.created_at >= ltr.started_at
                 AND cb.created_at <= COALESCE(
                     ltr.completed_at,
-                    ltr.started_at + INTERVAL '4 hours'
+                    ltr.started_at + INTERVAL '24 hours'
                 )
            )
          ORDER BY cb.created_at DESC

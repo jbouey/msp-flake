@@ -47,7 +47,9 @@ sev3 falls below operator-attention threshold for this class.
 
 ## Immediate action
 
-1. **Identify the writer:**
+1. **Identify the writer (always keep the `created_at` predicate
+   for partition pruning — compliance_bundles is monthly-partitioned
+   via mig 138; an unbounded scan walks every partition):**
    ```sql
    SELECT bundle_id, check_type, created_at, chain_position
      FROM compliance_bundles

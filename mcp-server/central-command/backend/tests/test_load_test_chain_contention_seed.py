@@ -156,12 +156,26 @@ def test_mig_325_uses_correct_site_id_literal():
     )
 
 
-def test_mig_325_uses_idempotent_on_conflict():
-    """Re-applying the migration must be safe."""
-    body = _read_mig()
-    assert body.count("ON CONFLICT") >= 3, (
-        "mig 325 must use ON CONFLICT … DO NOTHING/UPDATE on all 3+ "
-        "INSERTs (sites, site_appliances, api_keys) for idempotency."
+def test_mig_325_is_idempotent_via_on_conflict_or_where_not_exists():
+    """Re-applying the migration must be safe. Per Gate B 2026-05-16
+    P0/P2-2: api_keys + admin_audit_log have no useful UNIQUE for
+    ON CONFLICT — use WHERE NOT EXISTS instead. sites + site_
+    appliances have natural unique keys + use ON CONFLICT."""
+    body = _strip_sql_comments(_read_mig())
+    # sites + site_appliances use ON CONFLICT (have PRIMARY KEY).
+    assert body.count("ON CONFLICT") >= 2, (
+        "mig 325 must use ON CONFLICT on the 2 INSERTs whose target "
+        "tables have PRIMARY/UNIQUE keys (sites, site_appliances)."
+    )
+    # api_keys + admin_audit_log use WHERE NOT EXISTS (no UNIQUE on
+    # the conflict-relevant cols).
+    assert body.count("WHERE NOT EXISTS") >= 2, (
+        "mig 325 must use WHERE NOT EXISTS for the 2 INSERTs whose "
+        "target tables lack a UNIQUE constraint on the dedupe column "
+        "(api_keys.key_hash + admin_audit_log provenance row). Per "
+        "Gate B P0 fix: ON CONFLICT (key_hash) raised "
+        "InvalidColumnReferenceError because api_keys has no UNIQUE "
+        "on key_hash; same class as Session 210-B promoted_rules."
     )
 
 
@@ -234,8 +248,13 @@ def test_new_invariant_uses_7_day_window():
     )
 
 
-def test_new_invariant_4h_max_soak_buffer():
-    """Per Gate A: 4h max soak per #117 design. COALESCE buffer."""
+def test_new_invariant_24h_max_soak_buffer():
+    """Gate B P1-1 fix: COALESCE buffer extended 4h → 24h. Original
+    4h false-positived on chaos tests + admin ops + clock-stalled
+    runs that legitimately extended beyond the #117 design max.
+    24h is the worst-case bound — anything orphaned >24h really IS
+    an orphan; synthetic infra should never have a covering-row gap
+    longer than a day."""
     src = _read_assertions()
     m = re.search(
         r"async def _check_load_test_chain_contention_site_orphan.*?"
@@ -244,10 +263,11 @@ def test_new_invariant_4h_max_soak_buffer():
     )
     assert m
     body = m.group(0)
-    assert "INTERVAL '4 hours'" in body, (
-        "Invariant must use INTERVAL '4 hours' COALESCE buffer (max "
-        "soak duration per #117 design — clocks the load_test_runs "
-        "row's effective end-time when completed_at is NULL)."
+    assert "INTERVAL '24 hours'" in body, (
+        "Invariant must use INTERVAL '24 hours' COALESCE buffer per "
+        "Gate B 2026-05-16 P1-1 fix (4h was the worst-of-both-worlds "
+        "middle ground that false-positived on long-running soak "
+        "while still being too short for chaos-test/admin-op cases)."
     )
 
 
