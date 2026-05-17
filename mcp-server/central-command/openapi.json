@@ -8416,6 +8416,39 @@
         "title": "ManualDeviceAdd",
         "type": "object"
       },
+      "MarkKnownGoodRequest": {
+        "description": "Body for the approval endpoint.\n\n`expected_pubkey_hex` defends against TOCTOU per Gate A P0-4:\nthe operator MUST out-of-band verify the Vault key + pubkey\n(e.g. via `vault read -format=json transit/keys/<name>`) BEFORE\nsubmitting. The endpoint refuses if the DB row's stored\npubkey_hex doesn't match — catches the case where the row was\nfirst-observed honest but Vault state changed between first-\nobservation and operator approval (rotation, compromise).",
+        "properties": {
+          "actor_email": {
+            "description": "Named-human email of the approving admin. Audit-actor naming rule: NEVER 'system' / 'admin' / 'operator' / 'fleet-cli'.",
+            "maxLength": 255,
+            "minLength": 5,
+            "title": "Actor Email",
+            "type": "string"
+          },
+          "expected_pubkey_hex": {
+            "description": "Ed25519 pubkey (hex) the operator out-of-band observed in Vault. Must match the row's stored pubkey_hex (TOCTOU defense).",
+            "maxLength": 128,
+            "minLength": 64,
+            "title": "Expected Pubkey Hex",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Operational reason ≥20ch. Appears on auditor kit + chain-of-custody record.",
+            "maxLength": 500,
+            "minLength": 20,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_email",
+          "reason",
+          "expected_pubkey_hex"
+        ],
+        "title": "MarkKnownGoodRequest",
+        "type": "object"
+      },
       "MeshTargetAck": {
         "properties": {
           "appliance_id": {
@@ -18732,6 +18765,61 @@
         "summary": "Record Field Undefined",
         "tags": [
           "telemetry"
+        ]
+      }
+    },
+    "/api/admin/vault/key-versions/{key_version_id}/mark-known-good": {
+      "post": {
+        "description": "Approve a vault_signing_key_versions row as known_good=TRUE.\n\nAtomic single-txn sequence per Gate A P0-4:\n  1. SELECT FOR UPDATE the row (lock against concurrent approval)\n  2. Idempotency: 409 if known_good=TRUE already\n  3. TOCTOU defense: expected_pubkey_hex == row.pubkey_hex\n  4. Named-actor validation: req.actor_email NOT in _BANNED_ACTORS\n  5. create_privileged_access_attestation with anchor\n     'vault:<key_name>:v<key_version>'\n  6. UPDATE the row SET known_good=TRUE, approved_by,\n     approved_at, attestation_bundle_id\n  7. admin_audit_log row for operator-visible UI",
+        "operationId": "mark_vault_key_version_known_good_api_admin_vault_key_versions__key_version_id__mark_known_good_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_version_id",
+            "required": true,
+            "schema": {
+              "title": "Key Version Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkKnownGoodRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mark Vault Key Version Known Good Api Admin Vault Key Versions  Key Version Id  Mark Known Good Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Vault Key Version Known Good",
+        "tags": [
+          "vault-key-approval"
         ]
       }
     },

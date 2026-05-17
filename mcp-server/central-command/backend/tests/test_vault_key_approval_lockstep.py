@@ -223,6 +223,71 @@ def test_runbook_exists_and_documents_quarantine():
 # ── Schema fixture parity ────────────────────────────────────────
 
 
+def test_sub_b_endpoint_exists_and_is_admin_gated():
+    """#116 Sub-B: vault_key_approval_api.py exists + uses
+    require_admin Depends + writes the synthetic anchor."""
+    api = _BACKEND / "vault_key_approval_api.py"
+    assert api.exists(), f"Sub-B endpoint file missing: {api}"
+    body = _read(api)
+    assert "Depends(require_admin)" in body, (
+        "endpoint must require admin auth (Gate A P0-4)"
+    )
+    # Synthetic anchor per Gate A P0-3
+    assert "vault:" in body and ":v" in body, (
+        "endpoint must build the synthetic anchor 'vault:<key_name>:"
+        "v<key_version>' (Gate A P0-3 binding)"
+    )
+    # Idempotency: 409 on already-approved
+    assert "status_code=409" in body, (
+        "endpoint must return 409 on already-known_good rows "
+        "(Gate A P0-4 idempotency binding)"
+    )
+    # TOCTOU defense: expected_pubkey_hex check
+    assert "expected_pubkey_hex" in body, (
+        "endpoint must accept expected_pubkey_hex + refuse on "
+        "mismatch (Gate A P0-4 TOCTOU defense)"
+    )
+    # FOR UPDATE lock on the row
+    assert "FOR UPDATE" in body, (
+        "endpoint must SELECT FOR UPDATE the row to lock against "
+        "concurrent approval"
+    )
+    # admin_audit_log row for operator visibility (P1-2)
+    assert "admin_audit_log" in body
+    assert "'vault_key_version_approved'" in body, (
+        "endpoint must use the canonical event_type literal"
+    )
+
+
+def test_sub_b_router_wired_in_main():
+    """Endpoint is only usable if its router is included in main.py."""
+    main = pathlib.Path(__file__).resolve().parents[4] / "mcp-server" / "main.py"
+    if not main.exists():
+        pytest.skip("mcp-server/main.py not in this checkout")
+    body = _read(main)
+    assert "vault_key_approval_router" in body, (
+        "main.py must import + include the vault_key_approval router"
+    )
+    assert "include_router(vault_key_approval_router)" in body
+
+
+def test_sub_b_banned_actors_includes_bot_names():
+    """Maya rule: NEVER 'system' / 'admin' / 'operator' / 'fleet-cli'
+    as audit-actor for chain-of-custody events."""
+    body = _read(_BACKEND / "vault_key_approval_api.py")
+    m = re.search(
+        r"_BANNED_ACTORS\s*=\s*frozenset\(\s*\{([^}]+)\}\s*\)",
+        body, re.DOTALL,
+    )
+    assert m, "_BANNED_ACTORS frozenset must be a module-level constant"
+    banned = m.group(1)
+    for required in ("system", "admin", "operator", "fleet-cli", '""'):
+        assert required in banned, (
+            f"_BANNED_ACTORS missing {required!r}. Maya audit-actor-"
+            f"naming rule applies."
+        )
+
+
 def test_prod_columns_fixture_includes_attestation_bundle_id():
     """Per CLAUDE.md schema-fixture-blind rule: prod_columns.json
     must include the new column or future column-presence tests

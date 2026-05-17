@@ -73,6 +73,19 @@ ALLOWED_DIRECT_CALL_MODULES = {
                                   # at partner_org:<partner_id>).
                                   # Same posture as
                                   # client_privacy_officer.py.
+    "vault_key_approval_api.py",  # Task #116 Sub-B 2026-05-17 —
+                                  # vault key-version known_good
+                                  # admin approval. Specialized
+                                  # state-machine transition (single
+                                  # one-way flip pending → known_good)
+                                  # where the chain-anchored
+                                  # attestation IS the cryptographic
+                                  # evidence mig 328 CHECK requires.
+                                  # Same posture as client_privacy_
+                                  # officer + partner_ba_compliance —
+                                  # admin-class, ALLOWED_EVENTS-only,
+                                  # synthetic anchor (vault:<key_name>:
+                                  # v<key_version>).
 }
 
 # Modules permitted to compose the chain-gap pattern inline (P0-CHAIN-GAP +
