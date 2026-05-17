@@ -185,9 +185,16 @@ def generate_api_key() -> str:
     return secrets.token_urlsafe(32)
 
 
-def generate_provision_code() -> str:
-    """Generate a short provision code for QR."""
-    return secrets.token_hex(8).upper()  # 16 char hex string
+# Re-export from shared provision_code module (#119 P1-1 extract —
+# fleet_cli must NOT import partners.py because that drags FastAPI
+# into the CLI startup path). The function definition lives in
+# provision_code.py; this name stays here for backward compatibility
+# with existing call-sites in this file. Relative-then-absolute
+# fallback to survive both package-import + flat-cwd contexts.
+try:
+    from .provision_code import generate_provision_code  # type: ignore[no-redef]
+except ImportError:
+    from provision_code import generate_provision_code  # noqa: E402, F401
 
 
 def generate_magic_token() -> str:

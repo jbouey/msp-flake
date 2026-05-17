@@ -629,6 +629,215 @@ async def cmd_list(args: argparse.Namespace) -> None:
         await conn.close()
 
 
+# ──────────────────────────────────────────────────────────────────
+# Task #119 — provision bulk-create (operator-side ergonomics)
+# ──────────────────────────────────────────────────────────────────
+# Mirrors POST /api/partners/me/provisions/bulk semantics (single
+# all-or-nothing txn, single aggregate audit row, 100-entry cap).
+# Operators use this when onboarding a partner the partner-admin
+# hasn't yet self-served, or with a 20-row CSV spreadsheet they
+# already maintain. Counsel-Rule-3 N/A (not a privileged event
+# class); Counsel-Rule-4 closed by all-or-nothing txn.
+# Gate A: audit/coach-119-bulk-onboarding-gate-a-2026-05-16.md.
+
+# Allowlist for CSV / JSON columns. P1-2 binding — closes CSV
+# injection of arbitrary kwargs (e.g. expires_days=99999).
+_PROVISION_BULK_INPUT_COLUMNS = frozenset(
+    {"client_name", "target_site_id"}
+)
+
+# Maya rule (audit-actor naming): NEVER 'system' / 'fleet-cli' /
+# 'admin'. CLI must reject blank or bot-y values for --actor-email.
+_BANNED_ACTOR_EMAILS = frozenset(
+    {"system", "fleet-cli", "admin", "operator", ""}
+)
+
+
+def _provision_bulk_load_input(path: str) -> list[dict]:
+    """Load JSON or CSV into a list of {client_name, target_site_id}
+    dicts. Strict allowlist on columns; any unknown column raises
+    sys.exit per Gate A P1-2 (CSV-injection defense)."""
+    p = Path(path)
+    if not p.is_file():
+        sys.exit(f"--input {path!r}: not a regular file")
+    text = p.read_text(encoding="utf-8")
+    rows: list[dict] = []
+    if path.endswith(".json"):
+        data = json.loads(text)
+        if not isinstance(data, list):
+            sys.exit(f"--input {path!r}: top-level JSON must be a list")
+        for i, raw in enumerate(data):
+            if not isinstance(raw, dict):
+                sys.exit(f"--input {path!r}: entry {i} is not an object")
+            unknown = set(raw.keys()) - _PROVISION_BULK_INPUT_COLUMNS
+            if unknown:
+                sys.exit(
+                    f"--input {path!r}: entry {i} has unknown column(s) "
+                    f"{sorted(unknown)!r}. Allowed: "
+                    f"{sorted(_PROVISION_BULK_INPUT_COLUMNS)!r}"
+                )
+            rows.append({k: raw.get(k) for k in _PROVISION_BULK_INPUT_COLUMNS})
+    else:
+        import csv
+        reader = csv.DictReader(text.splitlines())
+        for i, raw in enumerate(reader):
+            unknown = set(raw.keys()) - _PROVISION_BULK_INPUT_COLUMNS
+            if unknown:
+                sys.exit(
+                    f"--input {path!r}: row {i} has unknown column(s) "
+                    f"{sorted(unknown)!r}. Allowed: "
+                    f"{sorted(_PROVISION_BULK_INPUT_COLUMNS)!r}"
+                )
+            rows.append({k: raw.get(k) for k in _PROVISION_BULK_INPUT_COLUMNS})
+    return rows
+
+
+async def cmd_provision_bulk_create(args: argparse.Namespace) -> None:
+    """Operator-side bulk provision-code create. Single all-or-nothing
+    txn + single aggregate admin_audit_log row (#119 Gate A P0-1).
+
+    NOT IDEMPOTENT: each run produces fresh provision_codes via
+    secrets.token_hex(8). Re-running the same --input twice creates
+    DIFFERENT codes both times. Use --dry-run first to preview.
+    """
+    import uuid as _uuid_mod
+    # 2026-05-13 dashboard-outage class: function-scope bare local
+    # imports fail in production package context (cwd=/app, not
+    # /app/dashboard_api). Relative-then-absolute fallback.
+    try:
+        from .provision_code import generate_provision_code, is_valid_site_id
+    except ImportError:
+        from provision_code import generate_provision_code, is_valid_site_id  # noqa: I900
+
+    # P0-3: --actor-email mandatory + rejected for bot-y values.
+    actor = (args.actor_email or "").strip().lower()
+    if "@" not in actor or actor in _BANNED_ACTOR_EMAILS:
+        sys.exit(
+            f"--actor-email must name a real human (got {actor!r}). "
+            f"Audit chain requires a non-bot actor email. Banned "
+            f"values: {sorted(_BANNED_ACTOR_EMAILS)!r}."
+        )
+
+    # P0-2: 100-entry hard cap. Defensive: check the parsed input
+    # BEFORE opening a DB connection.
+    rows = _provision_bulk_load_input(args.input)
+    if not rows:
+        sys.exit(f"--input {args.input!r}: zero rows parsed")
+    if len(rows) > 100:
+        sys.exit(
+            f"--input {args.input!r}: {len(rows)} rows exceeds the "
+            f"100-entry hard cap (matches "
+            f"POST /me/provisions/bulk server-side cap). Split the "
+            f"file intentionally — silent DoS of the audit chain "
+            f"is not a desirable failure mode."
+        )
+
+    # Pre-flight validation per Gate A Carol P0-3.
+    try:
+        partner_uuid = _uuid_mod.UUID(args.partner_id)
+    except (ValueError, AttributeError):
+        sys.exit(f"--partner-id must be a valid UUID, got {args.partner_id!r}")
+    for i, r in enumerate(rows):
+        sid = (r.get("target_site_id") or "").strip()
+        if sid and not is_valid_site_id(sid):
+            sys.exit(
+                f"row {i}: target_site_id={sid!r} must match "
+                f"[a-z0-9][a-z0-9-]{{0,49}} (matches existing site_id "
+                f"convention). Empty (let claim assign) is OK."
+            )
+
+    # --dry-run: preview + exit. Stays inside operator terminal.
+    if args.dry_run:
+        print(json.dumps(
+            {
+                "partner_id": str(partner_uuid),
+                "actor_email": actor,
+                "count": len(rows),
+                "expires_days": args.expires_days,
+                "rows": rows,
+            },
+            indent=2, sort_keys=True,
+        ))
+        return
+
+    # Count-confirm (mirror #118 P1-1 random-nonce pattern — but for
+    # bulk-create the COUNT confirm is sufficient because this is NOT
+    # a privileged-class event + N is bounded ≤100).
+    typed = input(
+        f"This will create {len(rows)} provision codes for partner "
+        f"{partner_uuid}. Type the count back to confirm: "
+    ).strip()
+    if typed != str(len(rows)):
+        sys.exit(f"confirmation mismatch (got {typed!r}, expected "
+                 f"{len(rows)!r}). Aborting — no codes issued.")
+
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=args.expires_days)
+    conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
+    try:
+        await conn.execute("SET app.is_admin = 'true'")
+        # Verify partner exists ONCE before opening the txn so we
+        # fail fast without holding a transaction.
+        exists = await conn.fetchval(
+            "SELECT 1 FROM partners WHERE id = $1::uuid", partner_uuid
+        )
+        if not exists:
+            sys.exit(f"partner {partner_uuid} not found in partners table")
+        results: list[dict] = []
+        async with conn.transaction():
+            for entry in rows:
+                code = generate_provision_code()
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO appliance_provisions (
+                        partner_id, provision_code, target_site_id,
+                        client_name, expires_at
+                    ) VALUES ($1::uuid, $2, $3, $4, $5)
+                    RETURNING id, provision_code, created_at
+                    """,
+                    partner_uuid, code,
+                    (entry.get("target_site_id") or None),
+                    (entry.get("client_name") or None),
+                    expires_at,
+                )
+                results.append({
+                    "id": str(row["id"]),
+                    "provision_code": row["provision_code"],
+                    "client_name": entry.get("client_name"),
+                    "target_site_id": entry.get("target_site_id"),
+                    "qr_content": f"osiris://{code}",
+                })
+            # P0-1: SINGLE aggregate audit row, NOT N rows. Encodes
+            # the full provision_ids[] array + count cardinality.
+            await conn.execute(
+                """
+                INSERT INTO admin_audit_log
+                    (username, action, target, details, ip_address, created_at)
+                VALUES ($1, 'provision_bulk_create', $2, $3::jsonb, NULL, $4)
+                """,
+                actor,
+                f"partner:{partner_uuid}",
+                json.dumps({
+                    "count": len(results),
+                    "expires_days": args.expires_days,
+                    "provision_ids": [r["id"] for r in results],
+                }),
+                now,
+            )
+        print(json.dumps(
+            {
+                "partner_id": str(partner_uuid),
+                "actor_email": actor,
+                "count": len(results),
+                "expires_at": expires_at.isoformat(),
+                "provisions": results,
+            },
+            indent=2, sort_keys=True,
+        ))
+    finally:
+        await conn.close()
+
+
 async def cmd_cancel(args: argparse.Namespace) -> None:
     conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
     try:
@@ -717,6 +926,38 @@ def main() -> None:
     p_cancel = sub.add_parser("cancel", help="Cancel an active fleet order")
     p_cancel.add_argument("order_id", help="Fleet order UUID")
 
+    # Task #119: provision-bulk-create. Mirrors POST /api/partners/me/
+    # provisions/bulk semantics. Operator-side ergonomics for the
+    # 20-appliance onboarding fatigue gap (multi-device P1-3).
+    p_pbc = sub.add_parser(
+        "provision-bulk-create",
+        help="Bulk-create N appliance_provisions codes for a partner "
+             "from a CSV or JSON file (max 100, all-or-nothing)",
+    )
+    p_pbc.add_argument(
+        "--partner-id", required=True, metavar="UUID",
+        help="UUID of the target partner (will be UUID-validated)",
+    )
+    p_pbc.add_argument(
+        "--input", required=True, metavar="PATH",
+        help="Path to JSON list or CSV file. Columns: client_name, "
+             "target_site_id (optional). Unknown columns rejected.",
+    )
+    p_pbc.add_argument(
+        "--expires-days", type=int, default=30,
+        help="Provision-code expiry in days (default: 30)",
+    )
+    p_pbc.add_argument(
+        "--actor-email", required=True,
+        help="Email of the human initiating this bulk-create. REQUIRED. "
+             "Written to admin_audit_log; cannot be 'system' / "
+             "'fleet-cli' / 'admin' / 'operator' / blank.",
+    )
+    p_pbc.add_argument(
+        "--dry-run", action="store_true",
+        help="Parse + validate + print JSON preview without inserting.",
+    )
+
     args = parser.parse_args()
 
     import uuid as _uuid
@@ -727,7 +968,12 @@ def main() -> None:
         except ValueError:
             sys.exit(f"Invalid UUID: {args.order_id}")
 
-    handler = {"create": cmd_create, "list": cmd_list, "cancel": cmd_cancel}[args.command]
+    handler = {
+        "create": cmd_create,
+        "list": cmd_list,
+        "cancel": cmd_cancel,
+        "provision-bulk-create": cmd_provision_bulk_create,
+    }[args.command]
     asyncio.run(handler(args))
 
 
