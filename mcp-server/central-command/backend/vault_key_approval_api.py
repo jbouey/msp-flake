@@ -36,6 +36,7 @@ try:
     from .auth import require_admin
     from .privileged_access_attestation import (
         create_privileged_access_attestation,
+        count_recent_privileged_events,
         PrivilegedAccessAttestationError,
     )
 except ImportError:  # pragma: no cover — production package path
@@ -44,6 +45,7 @@ except ImportError:  # pragma: no cover — production package path
     from auth import require_admin  # type: ignore[no-redef]
     from privileged_access_attestation import (  # type: ignore[no-redef]
         create_privileged_access_attestation,
+        count_recent_privileged_events,
         PrivilegedAccessAttestationError,
     )
 
@@ -87,6 +89,18 @@ class MarkKnownGoodRequest(BaseModel):
 _BANNED_ACTORS = frozenset(
     {"system", "admin", "operator", "fleet-cli", ""}
 )
+
+# Task #143 (mirror of #123 Sub-B Gate B P1-1) — per-anchor rate
+# limit cap. Compromised-admin nuclear-loop defense. Cap = 3 per
+# vault key-version anchor per 7-day window. Operational reality:
+# vault key approvals are EXTREMELY rare events (quarterly cadence
+# at most); the idempotency check at line 152 returns 409 for
+# re-call against the same already-known_good row, so the rate
+# limit catches the case where an attacker rapidly rotates through
+# many key_versions or spams the audit log via repeated failed
+# attempts on the same anchor.
+_RATE_LIMIT_WINDOW_DAYS = 7
+_RATE_LIMIT_PER_WINDOW = 3
 
 
 @router.post("/vault/key-versions/{key_version_id}/mark-known-good")
@@ -176,6 +190,31 @@ async def mark_vault_key_version_known_good(
 
         # Synthetic anchor per Gate A P0-3.
         anchor = f"vault:{row['key_name']}:v{row['key_version']}"
+
+        # Task #143 (mirror of #123 Sub-B Gate B P1-1) — rate-limit
+        # check after lookup but before attestation write.
+        recent = await count_recent_privileged_events(
+            conn,
+            site_id=anchor,
+            days=_RATE_LIMIT_WINDOW_DAYS,
+            event_type="vault_key_version_approved",
+        )
+        if recent >= _RATE_LIMIT_PER_WINDOW:
+            logger.warning(
+                "vault_key_version_approved rate-limited anchor=%s "
+                "actor=%s recent=%d cap=%d",
+                anchor, actor, recent, _RATE_LIMIT_PER_WINDOW,
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"rate limit exceeded: {recent} approval events at "
+                    f"this anchor in the last {_RATE_LIMIT_WINDOW_DAYS} "
+                    f"days (cap {_RATE_LIMIT_PER_WINDOW}). Vault key "
+                    f"approvals are extraordinary events — escalate "
+                    f"via CISO-paged path if this is legitimate."
+                ),
+            )
 
         # Step 5: write the attestation BEFORE the UPDATE so a
         # failure here aborts the txn cleanly (UPDATE doesn't fire).

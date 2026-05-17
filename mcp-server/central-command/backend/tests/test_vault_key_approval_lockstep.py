@@ -288,6 +288,30 @@ def test_sub_b_banned_actors_includes_bot_names():
         )
 
 
+def test_sub_b_rate_limit_per_anchor_per_window():
+    """Task #143 (mirror of #123 Sub-B Gate B P1-1): per-anchor rate
+    limit caps compromised-admin nuclear-loop class. Cap = 3 per
+    vault key-version anchor per 7-day window.
+    """
+    body = _read(_BACKEND / "vault_key_approval_api.py")
+    assert "_RATE_LIMIT_PER_WINDOW = 3" in body, (
+        "Per-anchor rate limit (3 per 7-day window) missing — Task "
+        "#143 mirror of #123 Sub-B Gate B P1-1 nuclear-loop defense."
+    )
+    assert "count_recent_privileged_events" in body, (
+        "Endpoint must call count_recent_privileged_events to enforce "
+        "the rate limit."
+    )
+    assert "status_code=429" in body, (
+        "Rate-limit hit must return 429 (not silently pass)."
+    )
+    assert 'event_type="vault_key_version_approved"' in body, (
+        "Rate-limit count must filter on event_type="
+        "'vault_key_version_approved' (NOT global privileged_access "
+        "count — other event types are their own concern)."
+    )
+
+
 def test_prod_columns_fixture_includes_attestation_bundle_id():
     """Per CLAUDE.md schema-fixture-blind rule: prod_columns.json
     must include the new column or future column-presence tests
