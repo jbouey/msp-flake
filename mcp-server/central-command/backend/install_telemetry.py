@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_transaction
 
 logger = logging.getLogger("install_telemetry")
 
@@ -103,7 +103,10 @@ async def post_failure_report(mac: str, report: FailureReport) -> Dict[str, Any]
     now = datetime.now(timezone.utc)
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #138 routing-risk anti-pattern fix: admin_transaction pins
+    # SET LOCAL + multi-statement work to one PgBouncer backend
+    # in one explicit txn (tenant_middleware.py:147-157 caveat).
+    async with admin_transaction(pool) as conn:
         # UPSERT on mac_address. The table's PK is session_id but we
         # uniquely key by MAC via the (site_id, mac_address) unique
         # index — if no row exists for this MAC we create one with a
@@ -200,7 +203,10 @@ async def post_net_survey(mac: str, report: NetSurveyReport) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #138 routing-risk anti-pattern fix: admin_transaction pins
+    # SET LOCAL + multi-statement work to one PgBouncer backend
+    # in one explicit txn (tenant_middleware.py:147-157 caveat).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT session_id FROM install_sessions "
             "WHERE mac_address = $1 ORDER BY last_seen DESC LIMIT 1",

@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .fleet import get_pool
 from .partners import require_partner_role
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 
 try:
     from .shared import check_rate_limit
@@ -183,7 +183,10 @@ async def sign_agreement(
     user_agent = (request.headers.get("user-agent") or "")[:500]
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #138 routing-risk anti-pattern fix: admin_transaction pins
+    # SET LOCAL + multi-statement work to one PgBouncer backend
+    # in one explicit txn (tenant_middleware.py:147-157 caveat).
+    async with admin_transaction(pool) as conn:
         # If partner_user_id present, pull their email + role for the record.
         if partner_user_id:
             prow = await conn.fetchrow(

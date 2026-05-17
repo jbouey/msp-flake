@@ -135,7 +135,10 @@ async def create_invite(
     partner_user_id = partner.get("partner_user_id")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #138 routing-risk anti-pattern fix: admin_transaction pins
+    # SET LOCAL + multi-statement work to one PgBouncer backend
+    # in one explicit txn (tenant_middleware.py:147-157 caveat).
+    async with admin_transaction(pool) as conn:
         try:
             row = await conn.fetchrow(
                 """
@@ -264,7 +267,10 @@ async def revoke_invite(
     """Revoke an unconsumed invite. Consumed invites cannot be revoked —
     the Migration 229 trigger blocks the transition."""
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #138 routing-risk anti-pattern fix: admin_transaction pins
+    # SET LOCAL + multi-statement work to one PgBouncer backend
+    # in one explicit txn (tenant_middleware.py:147-157 caveat).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             """
             UPDATE partner_invites
@@ -379,7 +385,10 @@ async def consume_invite_for_signup(
 
     token_sha256 = _sha256_hex(token)
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #138 routing-risk anti-pattern fix: admin_transaction pins
+    # SET LOCAL + multi-statement work to one PgBouncer backend
+    # in one explicit txn (tenant_middleware.py:147-157 caveat).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             """
             UPDATE partner_invites

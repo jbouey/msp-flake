@@ -230,7 +230,10 @@ async def start_signup(req: SignupStart, request: Request) -> Dict[str, Any]:
         partner_id = str(invrow["partner_id"])
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #138 routing-risk anti-pattern fix: admin_transaction pins
+    # SET LOCAL + multi-statement work to one PgBouncer backend
+    # in one explicit txn (tenant_middleware.py:147-157 caveat).
+    async with admin_transaction(pool) as conn:
         await conn.execute(
             """
             INSERT INTO signup_sessions
@@ -279,7 +282,10 @@ async def sign_baa(req: SignupBaaSign, request: Request) -> Dict[str, Any]:
         )
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #138 routing-risk anti-pattern fix: admin_transaction pins
+    # SET LOCAL + multi-statement work to one PgBouncer backend
+    # in one explicit txn (tenant_middleware.py:147-157 caveat).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT email, stripe_customer_id, plan, practice_name, state, "
             "       expires_at, completed_at "
@@ -383,7 +389,10 @@ async def create_checkout(req: SignupCheckout, request: Request) -> Dict[str, An
         )
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #138 routing-risk anti-pattern fix: admin_transaction pins
+    # SET LOCAL + multi-statement work to one PgBouncer backend
+    # in one explicit txn (tenant_middleware.py:147-157 caveat).
+    async with admin_transaction(pool) as conn:
         row = await conn.fetchrow(
             "SELECT email, stripe_customer_id, plan, baa_signed_at, "
             "       completed_at, expires_at, partner_invite_token, partner_id "

@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection
+from .tenant_middleware import admin_connection, admin_transaction
 from .shared import require_appliance_bearer_full, check_rate_limit
 from .credential_crypto import encrypt_credential, decrypt_credential
 from .auth import require_admin
@@ -226,7 +226,11 @@ async def retrieve_breakglass(
             actor, appliance_id, retry_after,
         )
         pool = await get_pool()
-        async with admin_connection(pool) as conn, conn.transaction():
+        # #138: admin_connection+conn.transaction() is the routing-
+        # risk anti-pattern per tenant_middleware.py:147-157.
+        # admin_transaction pins SET LOCAL + multi-statement work
+        # to one PgBouncer backend in one explicit txn.
+        async with admin_transaction(pool) as conn:
             await conn.execute(
                 """
                 INSERT INTO admin_audit_log
