@@ -282,9 +282,21 @@ ALLOWED_EVENTS = {
     # convention). NOT in PRIVILEGED_ORDER_TYPES — admin-API class
     # (server-side UPDATE on vault_signing_key_versions, NOT a
     # fleet_order with daemon consumer). The lockstep CI gate
-    # permits ALLOWED_EVENTS ⊇ {PRIVILEGED_ORDER_TYPES,
-    # v_privileged_types}; reverse not required.
+    # permits ALLOWED_EVENTS ⊇ (PRIVILEGED_ORDER_TYPES,
+    # v_privileged_types); reverse not required.
     "vault_key_version_approved",
+    # Task #123 Sub-A 2026-05-17 — Batch bearer revocation primitive
+    # for multi-device-fleet incident response (audit/coach-123-
+    # batch-bearer-revocation-gate-a-2026-05-17.md). Site-anchored
+    # event (real site_id, not synthetic): one attestation bundle
+    # covers N target appliances at one site, mirroring #118 fan-out.
+    # IS in PRIVILEGED_ORDER_TYPES + mig 329 v_privileged_types + Go
+    # daemon's dangerousOrderTypes (4-list lockstep). Operator
+    # follow-up: per-appliance `watchdog_reset_api_key` to recover
+    # the revoked appliance — separate privileged event with its
+    # own attestation. See substrate_runbooks/bearer_revoked_
+    # without_attestation.md for the chain-of-custody invariant.
+    "bulk_bearer_revoke",
 }
 
 

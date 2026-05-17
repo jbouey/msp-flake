@@ -197,6 +197,13 @@ def test_allowed_events_matches_expected_set():
         # — mig 175 trigger can't gate). Option B per Gate A.
         # ALLOWED_EVENTS: 63.
         "vault_key_version_approved",
+        # Task #123 Sub-A (2026-05-17) — Batch bearer revocation
+        # privileged event. Real site_id anchor (one bundle covers
+        # N target appliances at one site, mirroring #118 fan-out).
+        # IS in all 4 lockstep lists: PRIVILEGED_ORDER_TYPES + this
+        # set + mig 329 v_privileged_types + Go daemon's
+        # dangerousOrderTypes. ALLOWED_EVENTS: 64.
+        "bulk_bearer_revoke",
     }
     assert paa.ALLOWED_EVENTS == expected, (
         f"ALLOWED_EVENTS drifted.\n"

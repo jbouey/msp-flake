@@ -544,6 +544,22 @@ var dangerousOrderTypes = map[string]bool{
 	// re-add when a handler is implemented OR keep the list honest.
 	// `TestDangerousHandlersRegistered` (below) enforces the
 	// every-entry-has-a-handler invariant going forward.
+	//
+	// #123 Sub-A 2026-05-17 — bulk_bearer_revoke is server-side
+	// only (admin endpoint UPDATE on site_appliances.bearer_
+	// revoked + api_keys.active in one admin_transaction). The
+	// daemon never RECEIVES this order type from the queue —
+	// revocation happens at the Central Command DB layer, then
+	// the daemon's next checkin hits 401 because shared.py:614-
+	// 640 short-circuits on bearer_revoked=TRUE. Listing here is
+	// a defense-in-depth lockstep entry (per 4-list rule in
+	// CLAUDE.md privileged-chain section) so an attacker who
+	// somehow injects a bulk_bearer_revoke into the order queue
+	// has signature verification REQUIRED before any handler
+	// dispatch (currently no handler exists; processor will
+	// "unknown order type" deny). 4-list lockstep verified by
+	// `scripts/check_privileged_chain_lockstep.py`.
+	"bulk_bearer_revoke": true,
 }
 
 func (p *Processor) verifySignature(order *Order) error {

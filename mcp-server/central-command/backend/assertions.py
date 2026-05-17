@@ -2456,6 +2456,73 @@ async def _check_load_test_marker_in_compliance_bundles(
     ]
 
 
+async def _check_bearer_revoked_without_attestation(
+    conn: asyncpg.Connection,
+) -> List[Violation]:
+    """Sev1 — #123 Sub-A. site_appliances row has bearer_revoked=TRUE
+    but no preceding compliance_bundles row with check_type=
+    'privileged_access' AND parameters->>'event_type'=
+    'bulk_bearer_revoke' anchors it.
+
+    Counsel Rule 3 (no privileged action without attested chain of
+    custody) for bearer revocation specifically. Every revocation
+    must be auditor-traceable to a named human + reason.
+
+    Carve-outs:
+      - sites.synthetic=TRUE — load-test infrastructure (load_test_
+        api.py:415-449 path). Load harness teardown legitimately
+        revokes its own synthetic bearers without attestation.
+      - bearer_revoked=TRUE rows older than 60 days — pre-#123
+        backfill scope creep; runbook escalates to Phase 2 cleanup
+        if any pre-#123 rows surface.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT sa.appliance_id,
+               sa.site_id,
+               sa.hostname,
+               s.synthetic
+          FROM site_appliances sa
+          JOIN sites s ON s.site_id = sa.site_id
+         WHERE sa.bearer_revoked = TRUE
+           AND COALESCE(s.synthetic, FALSE) = FALSE
+           AND sa.deleted_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1
+               FROM compliance_bundles cb
+              WHERE cb.site_id = sa.site_id
+                AND cb.check_type = 'privileged_access'
+                AND cb.summary::jsonb->>'event_type' = 'bulk_bearer_revoke'
+                AND (cb.summary::jsonb->'target_appliance_ids') ?
+                    sa.appliance_id::text
+           )
+         ORDER BY sa.site_id, sa.appliance_id
+         LIMIT 50
+        """
+    )
+    return [
+        Violation(
+            site_id=r["site_id"],
+            details={
+                "appliance_id": r["appliance_id"],
+                "hostname": r["hostname"],
+                "interpretation": (
+                    f"site_appliances.bearer_revoked=TRUE for "
+                    f"appliance_id={r['appliance_id']!r} "
+                    f"(site={r['site_id']!r}) without a preceding "
+                    f"compliance_bundles row attesting the revocation. "
+                    f"Chain-of-custody gap — investigate writer + "
+                    f"emit retroactive attestation OR re-enable "
+                    f"bearer via signing_key_rotation flow. See "
+                    f"substrate_runbooks/bearer_revoked_without_"
+                    f"attestation.md."
+                ),
+            },
+        )
+        for r in rows
+    ]
+
+
 async def _check_vault_key_version_approved_without_attestation(
     conn: asyncpg.Connection,
 ) -> List[Violation]:
@@ -3304,6 +3371,12 @@ ALL_ASSERTIONS: List[Assertion] = [
         severity="sev2",
         description="compliance_bundles row exists for site_id='load-test-chain-contention-site' OUTSIDE an active load_test_runs window (no row covering the bundle's created_at). #117 Sub-commit B (mig 325). Fires when a production writer accidentally targets the load-test seed site — defends the Counsel Rule 4 'no silent orphan coverage' principle for synthetic infrastructure. The chain-contention test seeds 20 appliances + 20 bearers tied to this site; bundles are expected ONLY during k6 soak windows. Runbook: substrate_runbooks/load_test_chain_contention_site_orphan.md.",
         check=_check_load_test_chain_contention_site_orphan,
+    ),
+    Assertion(
+        name="bearer_revoked_without_attestation",
+        severity="sev1",
+        description="A site_appliances row has bearer_revoked=TRUE but no preceding compliance_bundles row attests the revocation. #123 Sub-A invariant per audit/coach-123-batch-bearer-revocation-gate-a-2026-05-17.md. Pre-mig 324 only the load-test gated path (load_test_api.py:415-449, sites.synthetic=TRUE) wrote bearer_revoked=TRUE; post-#123 the admin endpoint becomes the canonical writer + writes a privileged_access compliance_bundles row with event_type='bulk_bearer_revoke' in the same admin_transaction. Sev1 because revocation IS a §164.308(a)(4) workforce-access action — every revocation must be auditor-traceable to a named actor + reason. Carve-out: load-test sites bypass (sites.synthetic=TRUE). Runbook: substrate_runbooks/bearer_revoked_without_attestation.md.",
+        check=_check_bearer_revoked_without_attestation,
     ),
     Assertion(
         name="vault_key_version_approved_without_attestation",
@@ -4312,6 +4385,25 @@ _DISPLAY_METADATA: Dict[str, Dict[str, str]] = {
             "Sev2 (vs the sev1 sibling on compliance_bundles): no "
             "crypto chain corruption, just visibility leak. See "
             "substrate_runbooks/synthetic_traffic_marker_orphan.md."
+        ),
+    },
+    "bearer_revoked_without_attestation": {
+        "display_name": "Bearer revoked without chain-of-custody attestation",
+        "recommended_action": (
+            "SEV1 — chain-of-custody gap on a bearer revocation. A "
+            "site_appliances row has bearer_revoked=TRUE but no "
+            "preceding compliance_bundles row with check_type="
+            "'privileged_access' AND event_type='bulk_bearer_revoke' "
+            "anchors it. §164.308(a)(4) workforce-access requirement: "
+            "every bearer revocation must be auditor-traceable to a "
+            "named human + reason. Page on-call security. Find the "
+            "writer via psql audit + git log -S 'bearer_revoked' "
+            "--since=24h. If revocation was operator-intended, emit "
+            "retroactive attestation via POST /api/admin/sites/{id}/"
+            "appliances/revoke-bearers (replays into the chain). If "
+            "unintended, re-enable the bearer via the signing_key_"
+            "rotation flow + investigate the bypass code path. See "
+            "substrate_runbooks/bearer_revoked_without_attestation.md."
         ),
     },
     "vault_key_version_approved_without_attestation": {
