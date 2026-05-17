@@ -244,6 +244,30 @@ def test_router_wired_in_main():
     )
 
 
+def test_rate_limit_per_site_per_week():
+    """#123 Sub-B Gate B P1-1: per-site rate-limit cap defends against
+    a compromised admin spinning the nuclear button. Mirrors
+    fleet_cli.PRIVILEGED_RATE_LIMIT_PER_WEEK=3.
+    """
+    src = _read(_MODULE)
+    assert "_RATE_LIMIT_PER_WINDOW = 3" in src, (
+        "Per-site rate limit (3 per 7-day window) missing — Gate B "
+        "P1-1 nuclear-loop defense."
+    )
+    assert "count_recent_privileged_events" in src, (
+        "Endpoint must call count_recent_privileged_events to enforce "
+        "the rate limit."
+    )
+    assert "status_code=429" in src, (
+        "Rate-limit hit must return 429 (not silently pass)."
+    )
+    assert 'event_type="bulk_bearer_revoke"' in src, (
+        "Rate-limit count must filter on event_type='bulk_bearer_revoke' "
+        "(NOT global privileged_access count — other event types are "
+        "their own concern)."
+    )
+
+
 def test_event_type_literal_parity_end_to_end():
     """Sub-A Gate B P1-4 carryover, extended to cover the end-to-end
     write path through this endpoint:

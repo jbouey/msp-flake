@@ -365,6 +365,15 @@ SOURCE_LEVEL_TESTS=(
     # MUST be validated locally. The test is fast (~0.3s,
     # 7 source-shape gates) — net cost trivial.
     "tests/test_runbook_truth_check.py"
+    # 2026-05-17 Session 220 #123 Sub-B Gate B P1-2. The Sub-B
+    # implementation burned TWO CI roundtrips (e9b3183c + c26731f1)
+    # because these two gates only ran server-side. Class closure:
+    # any new endpoint that calls create_privileged_access_attestation
+    # MUST be allowlisted in chain_attestation, and any new file
+    # with SQL-like docstring prose MUST be schema-clean. Both checks
+    # are fast (<1s) — no excuse to keep them CI-only.
+    "tests/test_chain_attestation_no_inline_duplicates.py"
+    "tests/test_sql_columns_match_schema.py"
     # 2026-05-11 Session 220 task #121. Pins the regression class
     # where BaseHTTPMiddleware.dispatch raises HTTPException —
     # Starlette TaskGroup wraps the raise as BaseExceptionGroup,

@@ -42,6 +42,7 @@ try:
     from .auth import require_admin
     from .privileged_access_attestation import (
         create_privileged_access_attestation,
+        count_recent_privileged_events,
         PrivilegedAccessAttestationError,
     )
 except ImportError:  # pragma: no cover — production package path
@@ -50,6 +51,7 @@ except ImportError:  # pragma: no cover — production package path
     from auth import require_admin  # type: ignore[no-redef]
     from privileged_access_attestation import (  # type: ignore[no-redef]
         create_privileged_access_attestation,
+        count_recent_privileged_events,
         PrivilegedAccessAttestationError,
     )
 
@@ -70,6 +72,16 @@ _APPLIANCE_ID_RE = re.compile(r"^[a-fA-F0-9-]{32,40}$")
 _BANNED_ACTORS = frozenset(
     {"system", "admin", "operator", "fleet-cli", ""}
 )
+
+# Gate B P1-1 (audit/coach-123-sub-b-impl-gate-b-2026-05-17.md):
+# per-site rate limit caps a compromised-admin nuclear-loop.
+# Mirrors the fleet_cli.PRIVILEGED_RATE_LIMIT_PER_WEEK = 3 cap for
+# CLI-issued privileged orders. 3 emergency bearer revocations at one
+# site in a 7-day window is already extraordinary — anything higher
+# is either a real incident wave (operator should call a separate
+# admin-recovery flow) or a compromised admin spinning the endpoint.
+_RATE_LIMIT_WINDOW_DAYS = 7
+_RATE_LIMIT_PER_WINDOW = 3
 
 
 class RevokeBearersRequest(BaseModel):
@@ -205,6 +217,35 @@ async def revoke_bearers(
             if r["bearer_revoked"]
         )
         hostnames_by_id = {r["appliance_id"]: r["hostname"] for r in live_rows}
+
+        # Gate B P1-1 rate-limit check (compromised-admin defense).
+        # Counts privileged_access attestations with this event_type
+        # at this site in the last 7 days. Cap = 3. Operator who hits
+        # the cap during a real incident wave should escalate via
+        # CISO-paged emergency admin-recovery flow (out of scope).
+        recent = await count_recent_privileged_events(
+            conn,
+            site_id=site_id,
+            days=_RATE_LIMIT_WINDOW_DAYS,
+            event_type="bulk_bearer_revoke",
+        )
+        if recent >= _RATE_LIMIT_PER_WINDOW:
+            logger.warning(
+                "bulk_bearer_revoke rate-limited site=%s actor=%s "
+                "recent=%d cap=%d",
+                site_id, actor, recent, _RATE_LIMIT_PER_WINDOW,
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"rate limit exceeded: {recent} bulk_bearer_revoke "
+                    f"events at this site in the last "
+                    f"{_RATE_LIMIT_WINDOW_DAYS} days (cap "
+                    f"{_RATE_LIMIT_PER_WINDOW}). Escalate via CISO-paged "
+                    f"emergency admin-recovery flow if this is a real "
+                    f"incident wave."
+                ),
+            )
 
         # Step 4: write attestation FIRST so a failure aborts the txn
         # cleanly before any UPDATEs land.
