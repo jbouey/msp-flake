@@ -287,11 +287,15 @@ ALLOWED_EVENTS = {
     "vault_key_version_approved",
     # Task #123 Sub-A 2026-05-17 — Batch bearer revocation primitive
     # for multi-device-fleet incident response (audit/coach-123-
-    # batch-bearer-revocation-gate-a-2026-05-17.md). Site-anchored
-    # event (real site_id, not synthetic): one attestation bundle
-    # covers N target appliances at one site, mirroring #118 fan-out.
-    # IS in PRIVILEGED_ORDER_TYPES + mig 329 v_privileged_types + Go
-    # daemon's dangerousOrderTypes (4-list lockstep). Operator
+    # batch-bearer-revocation-gate-a-2026-05-17.md + Gate B
+    # b029c2d1 P0 fix). Site-anchored event (real site_id, not
+    # synthetic): one attestation bundle covers N target appliances
+    # at one site, mirroring #118 fan-out. BACKEND-ONLY (mirrors
+    # delegate_signing_key): IS in PRIVILEGED_ORDER_TYPES + mig 329
+    # v_privileged_types (3-list lockstep). NOT in Go
+    # dangerousOrderTypes — the daemon never receives this order
+    # type. PYTHON_ONLY allowlist in tests/test_privileged_order_
+    # four_list_lockstep.py documents the asymmetry. Operator
     # follow-up: per-appliance `watchdog_reset_api_key` to recover
     # the revoked appliance — separate privileged event with its
     # own attestation. See substrate_runbooks/bearer_revoked_

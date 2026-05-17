@@ -545,21 +545,17 @@ var dangerousOrderTypes = map[string]bool{
 	// `TestDangerousHandlersRegistered` (below) enforces the
 	// every-entry-has-a-handler invariant going forward.
 	//
-	// #123 Sub-A 2026-05-17 — bulk_bearer_revoke is server-side
-	// only (admin endpoint UPDATE on site_appliances.bearer_
-	// revoked + api_keys.active in one admin_transaction). The
-	// daemon never RECEIVES this order type from the queue —
-	// revocation happens at the Central Command DB layer, then
-	// the daemon's next checkin hits 401 because shared.py:614-
-	// 640 short-circuits on bearer_revoked=TRUE. Listing here is
-	// a defense-in-depth lockstep entry (per 4-list rule in
-	// CLAUDE.md privileged-chain section) so an attacker who
-	// somehow injects a bulk_bearer_revoke into the order queue
-	// has signature verification REQUIRED before any handler
-	// dispatch (currently no handler exists; processor will
-	// "unknown order type" deny). 4-list lockstep verified by
-	// `scripts/check_privileged_chain_lockstep.py`.
-	"bulk_bearer_revoke": true,
+	// #123 Sub-A 2026-05-17 — bulk_bearer_revoke is INTENTIONALLY
+	// NOT in dangerousOrderTypes per Gate B b029c2d1 P0. The
+	// daemon never receives this order type — revocation is a
+	// pure server-side UPDATE on site_appliances.bearer_revoked
+	// + api_keys.active inside admin_transaction at the Central
+	// Command DB layer. The daemon's next checkin hits 401
+	// because shared.py:614-640 short-circuits on bearer_revoked
+	// =TRUE. Mirrors the mig 305 delegate_signing_key precedent
+	// (also Python-only). The PYTHON_ONLY allowlist in
+	// tests/test_privileged_order_four_list_lockstep.py
+	// documents this asymmetry.
 }
 
 func (p *Processor) verifySignature(order *Order) error {

@@ -185,12 +185,19 @@ PRIVILEGED_ORDER_TYPES = {
     # v_privileged_types is enforced by CI.
     "delegate_signing_key",
     # #123 Sub-A (audit/coach-123-batch-bearer-revocation-gate-a-
-    # 2026-05-17.md). Multi-device-fleet batch bearer revocation
-    # primitive. Fan-out shape: --all-at-site mirrors #118 (one
-    # attestation bundle covers N target appliances at one site).
-    # 4-list lockstep with privileged_access_attestation.ALLOWED_
-    # EVENTS + mig 329 v_privileged_types + Go daemon's
-    # dangerousOrderTypes is enforced by CI.
+    # 2026-05-17.md + Gate B b029c2d1 P0 fix). Multi-device-fleet
+    # batch bearer revocation primitive. Fan-out shape:
+    # --all-at-site mirrors #118 (one attestation bundle covers
+    # N target appliances at one site). BACKEND-ONLY (mirrors
+    # delegate_signing_key precedent): the daemon never receives
+    # this order type — revocation is a server-side UPDATE on
+    # site_appliances.bearer_revoked + api_keys.active inside
+    # admin_transaction; the daemon's next checkin hits 401 via
+    # shared.py:614-640. 3-list lockstep:
+    # PRIVILEGED_ORDER_TYPES + ALLOWED_EVENTS + mig 329
+    # v_privileged_types. PYTHON_ONLY allowlist in
+    # tests/test_privileged_order_four_list_lockstep.py documents
+    # the asymmetry vs Go dangerousOrderTypes.
     "bulk_bearer_revoke",
 }
 PRIVILEGED_RATE_LIMIT_PER_WEEK = 3  # per site, per event_type

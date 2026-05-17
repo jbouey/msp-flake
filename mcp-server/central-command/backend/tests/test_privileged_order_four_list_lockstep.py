@@ -66,6 +66,17 @@ PYTHON_ONLY: Set[str] = {
     # backend issuance path (3 lists: PRIVILEGED_ORDER_TYPES +
     # ALLOWED_EVENTS + mig 305 v_privileged_types).
     "delegate_signing_key",
+    # #123 Sub-A 2026-05-17 — bulk_bearer_revoke is BACKEND-ONLY.
+    # Gate B fork b029c2d1 caught the original 4-list framing as a
+    # P0 — the Go-side entry broke TestDangerousHandlersRegistered
+    # because no daemon handler exists. Revocation is a pure
+    # server-side UPDATE on site_appliances.bearer_revoked +
+    # api_keys.active inside one admin_transaction; the daemon's
+    # next checkin hits 401 via shared.py:614-640 short-circuit.
+    # Same shape as delegate_signing_key above. 3-list lockstep:
+    # PRIVILEGED_ORDER_TYPES + ALLOWED_EVENTS + mig 329 v_privileged_
+    # types. Verified by scripts/check_privileged_chain_lockstep.py.
+    "bulk_bearer_revoke",
 }
 
 GO_ONLY: Set[str] = {
