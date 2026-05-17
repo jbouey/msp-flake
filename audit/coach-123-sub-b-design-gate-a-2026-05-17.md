@@ -1,0 +1,66 @@
+# Gate A — #123 Sub-B design — 2026-05-17
+
+**Design doc:** `.agent/plans/123-sub-b-design-2026-05-17.md`
+**Reviewer:** fresh-context fork (opus-4.7[1m])
+**Verdict:** BLOCK
+
+## 2-line summary
+
+Design mirrors `vault_key_approval_api.py` shape cleanly (admin_transaction + _BANNED_ACTORS + FOR UPDATE intent) and idempotency partition is correct, BUT **3 P0 schema-fixture-blind defects** ship in the SQL/pydantic surface and **1 P0 BAA gap** (this IS a CE-mutating workflow per Counsel Rule 6 and is missing from `BAA_GATED_WORKFLOWS`). Cannot proceed without correcting `::uuid[]` casts, `appliance_ids: List[UUID]` pydantic typing, soft-delete oracle, and BAA-gate decision.
+
+## Steve (architect)
+
+- **P0 — `::uuid[]` casts will fail at runtime.** Design lines 15, 16, 56 use `appliance_id = ANY($2::uuid[])` and `WHERE site_id = $1` shape. Per `prod_column_types.json`, `site_appliances.appliance_id` is `character varying`, `site_appliances.site_id` is `character varying`, `api_keys.appliance_id` is `text`, `api_keys.site_id` is `character varying`. This is the EXACT outage class `tests/test_no_uuid_cast_on_text_column.py:39-40` was created to catch (2026-05-13 signature_auth.py:618 outage). Use `$2::text[]`. Pydantic schema (line 79) must be `appliance_ids: List[str]` not `List[UUID]` — `UUID` will reject a varchar value that happens to be non-uuid-shaped (Carol commit `7d9c33db` width class). Maya P1 `incident_correlation_id` (line 82) is also `Optional[UUID]` — verify `incidents.id` is uuid first or downgrade to str.
+- **P1 — TOCTOU on the partition is real; FOR UPDATE is the right close.** vault precedent at `vault_key_approval_api.py:141` uses `FOR UPDATE` exactly for this. Recommend `SELECT … FROM site_appliances WHERE site_id=$1 AND appliance_id = ANY($2::text[]) FOR UPDATE` — Postgres holds row locks until commit, partition becomes safe. SERIALIZABLE is overkill + thrashes PgBouncer; per-row lock is the precedent.
+- **P1 — width-discrepancy ghost defect.** `prod_column_widths.json`: `api_keys.site_id=255` but `site_appliances.site_id=50`. INSERTs into api_keys never trip; UPDATE-by-site_id is fine. BUT: if any caller passes a site_id ≤255 chars that doesn't exist in site_appliances (>50 cap), the `len(existing) != len(set(appliance_ids))` check would 404 it. Class is benign here but flag for the test plan.
+- **incident_correlation_id FK question (Gate A Q3) is the wrong question** — design should answer it: opaque UUID is fine, FK would require fleet-wide unification of incident IDs that doesn't exist. Document as opaque, don't FK.
+
+## Maya (security/HIPAA)
+
+- **P0 — Counsel Rule 6 (BAA enforcement) NOT addressed.** `baa_enforcement.BAA_GATED_WORKFLOWS` at `baa_enforcement.py:79-85` lists `{owner_transfer, cross_org_relocate, evidence_export, new_site_onboarding, new_credential_entry}`. Bulk bearer revocation is a workforce-access action on a CE-customer appliance (§164.308(a)(4)) and disconnects the daemon from continuing PHI-adjacent telemetry collection — this is CE-mutating. Design must either (a) add `"bulk_bearer_revoke"` to `BAA_GATED_WORKFLOWS` + wire `require_active_baa("bulk_bearer_revoke")` dependency + extend `sensitive_workflow_advanced_without_baa` invariant scanning, OR (b) register in `_DEFERRED_WORKFLOWS` with a Counsel §164.504(e) memo justifying admin-only carve-out. Silent omission = the exact class CLAUDE.md "BAA enforcement 3-list lockstep" rule was added to prevent. `tests/test_baa_gated_workflows_lockstep.py` will not fail (no callsite to detect), but Counsel Rule 6 is unaddressed.
+- **P0 — soft-delete 409 IS an existence oracle.** Design line 66 returns 409 with `f"appliances are soft-deleted ... : {[r['appliance_id'] for r in soft_deleted]}"` — echoes back which IDs were valid-but-deleted vs missing. Combined with cross-site 404 (which lists the missing set at line 63), an attacker who guesses appliance_ids can distinguish (a) belongs-here-and-live, (b) belongs-here-but-deleted, (c) doesn't-belong. Admin endpoint is auth-gated so the practical risk is low, but Counsel Rule 7 (no unauth context — though admin is auth, oracle classes are a Maya bright line). Fix: return 404 for both cases with identical body `"some appliances not found"`. Log the detailed distinction in `admin_audit_log` for forensics.
+- **P1 — `email-validator==2.3.0` IS pinned in `requirements.lock:20`** — `EmailStr` is safe. No action needed but design should note it.
+- **P1 — max=50 cap is conservative-enough at current fleet size; per-org override is unnecessary.** Counsel Rule 4 (no orphan coverage) doesn't apply — this is opt-in operator action, not a default-policy fan-out.
+- **§164.308(a)(4) framing (named human + 20-char reason) is auditor-defensible** — matches the existing `bulk_remediation` + `enable_emergency_access` chain shape that already shipped through counsel review.
+
+## Carol (test/CI)
+
+- **Schema-fixture coverage VERIFIED across all 4 sidecars:** (1) `prod_columns.json:126` lists api_keys columns including `active` + `appliance_id` + `site_id`. (2) `prod_column_types.json`: `api_keys.active=boolean`, `api_keys.appliance_id=text`, `api_keys.site_id=character varying`; `site_appliances.bearer_revoked=boolean`, `site_appliances.appliance_id=character varying`, `site_appliances.deleted_at=timestamp with time zone`. (3) `prod_column_widths.json`: `api_keys.site_id=255`, `site_appliances.site_id=50`, `site_appliances.appliance_id=50`. (4) `prod_unique_indexes.json`: only `api_keys[(id)]` unique — there is **NO** unique constraint on `(site_id, appliance_id)` for either table, so `ON CONFLICT` is not available. This is the `ad2f3281` class — design's UPDATE-by-WHERE is correct (no ON CONFLICT proposed), good.
+- **P1 — design's test plan AST-scan vs runtime coverage is asymmetric.** `test_bulk_bearer_revoke_endpoint.py` (source-shape) cannot verify the `::text[]` cast survives execution. Sub-A's `test_bulk_bearer_revoke_event_type_consistency.py` (Carol Gate B P1#4) was deferred — re-raise here: every invariant-writer parity needs a runtime gate. `_pg.py` tests are SOURCE_LEVEL_TESTS-excluded (the .py glob in `.githooks/full-test-sweep.sh` runs all `test_*.py` non-`*_pg.py`); CI parity sweep will pick them up but pre-push won't. Acceptable but cite explicitly.
+- **P1 — vault precedent at `tests/test_vault_key_approval_lockstep.py` is SOURCE-SHAPE ONLY** (`_extract_python_set` regex over file text) — no PG integration test exists for vault. Sub-B raises the bar by adding `_pg.py` — good, but the asymmetry with vault precedent should be conscious, not accidental.
+- **P0 — runbook/design contract drift.** Sub-A's substrate invariant at `assertions.py:2495-2497` queries `cb.summary::jsonb->>'event_type'` AND `cb.summary::jsonb->'target_appliance_ids' ? sa.appliance_id::text`. Design Gate A Q (Maya Q4) says writer writes `target_appliance_ids[]` under `summary_payload`. Verified at `privileged_access_attestation.py:485-489`: writer stores in `summary_payload["target_appliance_ids"]`. Parity holds. BUT the design line 73 (audit denormalization paragraph) calls the field `parameters->>'event_type'` while the invariant reads `summary->>'event_type'`. Design has a documentation defect that, if it surfaces in the implementation, would produce silent invariant non-fire. The implementation MUST write to `summary`, not `parameters`. Pin parity test.
+
+## Coach (consistency-coach)
+
+- **P0 — BAA enforcement omission (echoes Maya).** Sub-B design ships an endpoint that mutates CE-customer infrastructure WITHOUT touching BAA enforcement. CLAUDE.md "BAA enforcement 3-list lockstep" rule names this exact class. Design must explicitly answer: gate or defer. Cannot ship with question silent.
+- **Runbook fwd-reference parity: GOOD.** Verified `substrate_runbooks/bearer_revoked_without_attestation.md` line 96 cites `POST /api/admin/sites/<site_id>/appliances/revoke-bearers` and line 108 cites idempotency on already-TRUE — matches design verbatim. Design's plan to update runbook §"Immediate action" step 2 in the same commit is correct; the fwd-reference language at runbook line 103 ("The endpoint is idempotent...") matches design lines 22-39 partition shape exactly.
+- **P1-5 idempotency partition match: GOOD.** Runbook step 2 (lines 95-107) says "endpoint is idempotent on the already-TRUE column; it'll write the missing attestation without flipping". Design's `to_flip[] vs already_revoked[]` partition (lines 34-38) matches this exactly. The contract Sub-A's runbook asserted IS satisfied by Sub-B's shape.
+- **Sub-A Gate B P1 sweep:** P1-3 (synthetic UPDATE gate) — Sub-B unrelated, correct. P1-4 (event_type literal parity test) — Sub-B SHOULD ship this test; design's test plan does NOT include it. **Add `tests/test_bulk_bearer_revoke_event_type_consistency.py` to Sub-B file list** — pins writer ↔ invariant literal parity. P1-5 (idempotency) — satisfied. P1-1/2/6 are Sub-A-side or out-of-scope.
+- **`bulk_bearer_revoke` literal usage VERIFIED:** writer at `privileged_access_attestation.py:303` registers in ALLOWED_EVENTS; sev1 invariant at `assertions.py:2495` queries on `summary->>'event_type' = 'bulk_bearer_revoke'`; PYTHON_ONLY allowlist at `test_privileged_order_four_list_lockstep.py:79` registered. Endpoint MUST pass exactly `event_type="bulk_bearer_revoke"` to `create_privileged_access_attestation()` — design line 14 implies this; pin with parity test.
+- **`incident_correlation_id` denormalized to both attestation summary AND admin_audit_log details** (design line 44) is correct for forensics; admin_audit_log denormalization satisfies "BAA enforcement triad" pattern if (when) Sub-B becomes BAA-gated.
+
+## P0 (must close BEFORE implementation begins)
+
+1. **Fix `::uuid[]` casts → `::text[]`.** `site_appliances.{appliance_id,site_id}` and `api_keys.{appliance_id,site_id}` are all text/varchar per `prod_column_types.json`. Update design lines 15, 16, 56 to `::text[]`. Update pydantic `appliance_ids: List[UUID]` → `List[str]` with a regex constraint (e.g. `Field(pattern=r"^[a-z0-9-]+$", max_length=50)` matching `site_appliances.appliance_id` width=50). Same for `incident_correlation_id` — verify `incidents.id` column type or downgrade to `Optional[str]`. This is the 2026-05-13 outage class.
+
+2. **Address Counsel Rule 6 BAA enforcement.** Either: (a) add `"bulk_bearer_revoke"` to `baa_enforcement.BAA_GATED_WORKFLOWS`, wire `require_active_baa("bulk_bearer_revoke")` dependency at endpoint, extend `sensitive_workflow_advanced_without_baa` invariant SQL to scan `admin_audit_log WHERE action='bulk_bearer_revoke' AND created_at > now()-interval '30 days'` excluding admin-bypass + denormalized auth_method carve-outs; OR (b) register in `_DEFERRED_WORKFLOWS` with a written §164.504(e) Counsel memo (mirroring `partner_admin_transfer` rationale at `baa_enforcement.py:91-106`) explaining why a workforce-access revocation on a CE-customer appliance doesn't require BAA enforcement. Silent omission BLOCKS.
+
+3. **Soft-delete 404 vs 409 oracle.** Collapse the 409 (line 66) into a 404 with identical body to the cross-site 404 (line 63). Log the soft-delete distinction in `admin_audit_log.details` for operator-side forensics only. Maya bright line.
+
+4. **summary vs parameters jsonb path defect in design prose (line 73).** Design says "denormalized `details`" for audit row but also references "`parameters->>'event_type'`" — Sub-A invariant queries `summary->>'event_type'`. Implementation MUST write `event_type` to `summary` (not `parameters`). Correct design prose to eliminate ambiguity; add parity test (P1-4 from Sub-A Gate B) to Sub-B file list.
+
+## P1 (named follow-ups, ship same commit OR followup task)
+
+1. **Add `FOR UPDATE` to the partition SELECT** (design line 51-59) to close the TOCTOU window per vault precedent `vault_key_approval_api.py:141`. Per-row lock is the right granularity.
+
+2. **Add `tests/test_bulk_bearer_revoke_event_type_consistency.py`** to Sub-B file list — pins writer literal in `privileged_access_attestation.py` ↔ invariant SQL literal in `assertions.py` ↔ endpoint dispatch literal ↔ admin_audit_log action literal. Closes Sub-A Gate B P1-4 here at Sub-B (deferred-from-Sub-A).
+
+3. **Pre-implementation re-grep:** before implementing, grep `mcp-server/central-command/backend/` for any other privileged endpoint that uses `::uuid` cast against text columns — Sub-B's outage class may have siblings.
+
+4. **Document the `_pg.py` exclusion-from-pre-push reality in Sub-B test file docstring** so a future reader doesn't assume pre-push covers it.
+
+5. **Add a runtime smoke (in `_pg.py`) that asserts substrate invariant clears 60s after endpoint write** — the runbook recovery procedure depends on it, but no test in design verifies the full loop.
+
+## Recommendation
+
+**BLOCK pending P0 closure.** Foundation (Sub-A) is solid and the design mirrors the vault precedent correctly in shape, but the 4 P0s above are mechanical-but-load-bearing: (1) and (4) are deploy-fail at the first synthetic invocation; (2) is a Counsel Rule 6 silent omission that this exact rule was added to prevent; (3) is the Maya oracle bright line. Address all four, re-run Gate A on the revised design, then proceed to implementation. P1s can ship in the same commit or as named TaskCreate followups per TWO-GATE protocol.
