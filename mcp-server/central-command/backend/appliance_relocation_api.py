@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .fleet import get_pool
-from .tenant_middleware import admin_connection, admin_transaction
+from .tenant_middleware import admin_transaction
 from .auth import require_admin
 from .privileged_access_attestation import (
     create_privileged_access_attestation,
@@ -79,7 +79,16 @@ async def acknowledge_relocation(
         raise HTTPException(status_code=403, detail="admin identity missing")
 
     pool = await get_pool()
-    async with admin_connection(pool) as conn, conn.transaction():
+    # #137 Sub-B Gate B precedent fix (audit/coach-116-sub-b-gate-b-
+    # 2026-05-17.md): admin_connection + conn.transaction() is the
+    # anti-pattern flagged in tenant_middleware.py:147-157 — under
+    # PgBouncer transaction-pool mode the SET LOCAL app.is_admin
+    # and subsequent statements can route to DIFFERENT backends
+    # (Session 212 routing-risk caveat). admin_transaction pins
+    # SET LOCAL + all multi-statement work to ONE backend in ONE
+    # explicit txn. Mirrors the swap shipped in vault_key_approval_
+    # api.py via #116 Sub-B P1 fix.
+    async with admin_transaction(pool) as conn:
         # Verify the detection bundle exists + belongs to the right
         # appliance (by appliance_id → site lookup).
         sa = await conn.fetchrow(
